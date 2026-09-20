@@ -4,8 +4,8 @@
 - 官方网站:<https://llmskirmish.com>
 - 最新版本:`@llmskirmish/skirmish` v0.1.2(2026-01 前后)
 - 仓库星数:~45,主仓库单一主分支,2 名核心贡献者
-- 文档版本:v1.0(对齐 model-war docs/fsr.md v1.3)
-- 状态:活跃维护;本仓库对应 [fsr.md §3.1](../fsr.md) 中提到的"直接先例"
+- 文档版本:v1.0(独立竞品分析:只描述 LLM Skirmish 自身实现,不随 model-war 文档版本走)
+- 状态:活跃维护;本仓库对应 [fsr.md §2.1](../fsr.md) 中提到的"直接先例"
 
 > 本文档不复制 model-war 的决策结论,只描述 LLM Skirmish 自身的实现。对比分析放在最后一节。
 
@@ -294,21 +294,21 @@ skirmish view [id]   # 在浏览器打开本地或云端回放(启动静态 serv
 | 沙箱 | vm(本地)+ isolated-vm(托管) | 计划 quickjs-wasi(见 hld §5) |
 | 模型接入 | OpenCode + Docker + 编排器,完整 pipeline | v0 仅离线"读规则 → 调模型 → 冻结",**引擎不接模型** |
 | 交付 | 网站 + 排名 + 静态回放可视化 | CLI + JSONL 回放(v0);视频内容生产在 v0 外 |
-| 确定性 | SeededRandom + IdGenerator + 同输入必同 tick 流 | 全整数运算 + 同上要求(见 fsr §2.3) |
-| 评分 | 标准 ELO(K=32,init 1500) | 赛制与积分规则**待定**(srs §6) |
+| 确定性 | SeededRandom + IdGenerator + 同输入必同 tick 流 | 全整数运算 + 同上要求(见 hld《确定性保障》) |
+| 评分 | 标准 ELO(K=32,init 1500) | 名次积分制为主(srs FR-8;计分细则见 hld《排名》) |
 | 取分机制 | spawn-only 与 spawn-and-creeps 可切换 | 领土/资源/经济复合,四方对称 |
 | 脚本语言 | JavaScript(LLM 写的 `loop()`) | **TypeScript 子集**(引擎同构,沙箱成熟) |
 | 提示可见性 | OBJECTIVE.md 全文公开 | 私有 + 版本号 + diff;规则改动要回写 fsr/srs/gdd/hld |
 
-> 关键启示:LLM Skirmish 已验证"LLM 写陌生 RTS API 代码 + 自动跑出有差异胜率"在工程上是**可落地**的(见 fsr §3.1)。但它的评测协议偏向"模型迭代能力",与 model-war 要测的"一次写出好策略"不是同一能力——两者并存,各自证明不同的模型擅长面。
+> 关键启示:LLM Skirmish 已验证"LLM 写陌生 RTS API 代码 + 自动跑出有差异胜率"在工程上是**可落地**的(见 fsr §2.1)。但它的评测协议偏向"模型迭代能力",与 model-war 要测的"一次写出好策略"不是同一能力——两者并存,各自证明不同的模型擅长面。
 
 ## 8. 我们能学 / 不能学的东西
 
 ### 8.1 可以借鉴
 
-- **runner 三层抽象**(BaseRunner → MatchRunner/IsolatedRunner):把"沙箱机制"与"host 逻辑"解耦,日后上更强的隔离运行时不用改 driver/processor。**hld 应明确类似分层**
+- **runner 三层抽象**(BaseRunner → MatchRunner/IsolatedRunner):把"沙箱机制"与"host 逻辑"解耦。model-war 采用同类缝但限定用途:只为可测性(`StubRunner`),不为"将来换 VM"(见 hld《沙箱》)
 - **沙箱 API 与 host 通信只暴露 intent 注入**:LLM 脚本看不到 Mongo、Redis、文件系统,任何状态改变必须经 `_addIntent`,引擎独占 `BulkOperation`——本项目也建议如此,杜绝脚本绕过引擎直接改真值
-- **JSONL 回放 + LLM 友好文本日志双格式**:机器用 JSONL,人/下一轮 LLM 用带 run-length 压缩的文本。我们 srs §3.2 提到"v0 只保证可渲染可叙事",可以参考这种文本日志风格
+- **JSONL 回放 + LLM 友好文本日志双格式**:机器用 JSONL,人/下一轮 LLM 用带 run-length 压缩的文本。model-war 的回放要求(可渲染 + 事件流可叙事)见 gdd《娱乐产出设计》,可以参考这种文本日志风格
 - **`prompts/` 与 `engine/` 解耦**:提示词不进引擎包,改动提示词不需重发引擎二进制。我们应把 OBJECTIVE 拆到独立目录
 - **ELO 与赛事编排解耦**:`rating/` 是纯函数,可被 CLI、网站、CI 共用。我们即使积分规则待定,也建议先把这个口子留出来
 - **bundled sandbox runtime**:`scripts/bundle-sandbox.ts` 把沙箱代码打成单一 IIFE,主进程拿字符串直接 `vm.Script()`——避免 spawn 子进程加载 ESM 的复杂依赖关系,适合 quickjs-wasi 的字符串执行模型
@@ -325,7 +325,7 @@ skirmish view [id]   # 在浏览器打开本地或云端回放(启动静态 serv
 - **沙箱安全性**:vm 不是安全边界,任何公网开放的对战(社区 ladder submit)都需要 isolated-vm 或更强的隔离;否则脚本可读宿主进程内存、发起网络请求
 - **诚实性问题**:HN 主帖自述"LLM 试图读对方脚本"——需要严格的文件/网络隔离。本项目若未来开放云端,同样要面对
 - **题目公开**:任何放在公开仓库 + 公开文档站的规则都是可被训练集收录的;他们的数据集已经公开(见 GitHub repo 现状)。这是他们模式的固有限制
-- **回放体积**:1 场 2000 tick × 几十个对象,JSONL 仍可达 MB 级;未来若要批量出内容,需要 tick 抽样或状态差分压缩(参考 [gdd.md §8.3](../gdd.md) 提到的"回放数据可渲染可叙事")
+- **回放体积**:1 场 2000 tick × 几十个对象,JSONL 仍可达 MB 级;未来若要批量出内容,需要 tick 抽样或状态差分压缩(参考 [gdd.md](../gdd.md)《娱乐产出设计》提到的"回放数据可渲染、事件流可叙事")
 
 ## 10. 参考链接
 

@@ -4,7 +4,7 @@
 - 官方网站:<https://screeps.com>(World / MMO);<https://docs.screeps.com>(官方文档)
 - 最新版本:umbrella `screeps@4.3.0`(npm,2026-04);`@screeps/engine@4.3.2`、`@screeps/launcher@4.2.0`、`@screeps/backend@3.3.0`、`@screeps/common@2.15.5`
 - 仓库星数:~3,330(umbrella);`screeps/engine` 独立仓库 ~140 星
-- 文档版本:v1.0(对齐 model-war docs/fsr.md v1.3)
+- 文档版本:v1.0(独立竞品分析:只描述 Screeps 自身实现,不随 model-war 文档版本走)
 - 状态:主动维护但节奏缓慢;官方仓库最后活跃 2024-2026,主要在补 bug 与对 PTR 同步。
 - 许可证:ISC
 - 创立时间:2016-11
@@ -418,7 +418,7 @@ spawn.spawnCreep(...)  ─────►     intents['spawnCreep'][spawn.id] = 
 | 维度 | Screeps | model-war(本项目) |
 |---|---|---|
 | 评测对象 | **真人 + community LLM** | **前沿 LLM** |
-| 评测形态 | **常驻 MMO**,24/7 跑 | **一次写出好策略**,离线脚本生成(见 hld §1) |
+| 评测形态 | **常驻 MMO**,24/7 跑 | **一次写出好策略**,离线脚本生成(见 hld §2.1) |
 | 玩家数 | **N 个玩家**共享一世界 | **1v1v1v1 四方**对称 |
 | 题目 | **开放世界**(claim room / 建 spawn / 挖矿 / 战斗 / 市场) | **封闭对称地图**(gdd.md) |
 | 胜负条件 | 无;以 GCL / leaderboard 排名 | **领土争夺**,四方按 schema 取分 |
@@ -435,8 +435,8 @@ spawn.spawnCreep(...)  ─────►     intents['spawnCreep'][spawn.id] = 
 | 规则面 | 大而全(几十种结构 + market + power) | **最小**(hld §1,4 兵种 + 规则数据文件) |
 | modding | ✅(`mods.json` + config EventEmitter) | ❌ v0 不计划 |
 | 客户端 | Steam 内嵌 Chrome + PixiJS | **CLI ASCII 回放**(v0);视频内容生产在 v0 外 |
-| 确定性 | 不需要(MMO 持久化,接受 drift) | **必须可复算**(fsr §2.3) |
-| 评分 | leaderboard / GCL | **待定**(srs §6) |
+| 确定性 | 不需要(MMO 持久化,接受 drift) | **必须可复算**(srs NFR-1;手段见 hld《确定性保障》) |
+| 评分 | leaderboard / GCL | **名次积分制为主**(srs FR-8;细则见 hld《排名》) |
 | 取分机制 | 玩家自治(没机制) | **领土/资源/经济复合**,四方对称 |
 
 > 关键启示:Screeps 证明了 **"JavaScript + intent 模式 + sandbox + 持久化世界"** 在工程上能撑住一个 9 年仍在运营的商业产品。但 Screeps 的工程重心在"**规模化分布式**"(40 台 dedicated server、Mongo sharding、cross-shard portal),这与 model-war v0 的"**离线评测工具**"形态完全不同。
@@ -449,13 +449,13 @@ spawn.spawnCreep(...)  ─────►     intents['spawnCreep'][spawn.id] = 
 - **沙箱与 host 通信只暴露 intent 注入**:LLM Skirmish 学的就是这套。本项目也建议如此 —— LLM 脚本看不到 Mongo / 文件系统,任何状态改变必须经 `_addIntent`,引擎独占 `BulkOperation`。
 - **`engine` / `driver` 解耦**:engine 是"环境无关的纯逻辑"(Screeps 同一份 engine 既能 Node 跑也能浏览器跑),driver 适配 I/O。我们可以把 driver 抽象当作未来"换 quickjs → 其他 VM"的缓冲层。
 - **`check()` / `run()` 分离**:intent 文件导出纯函数 check 用于双重校验(runner 端 + processor 端),保证双端答案一致。model-war 如果未来要做"LLM 写一次,沙箱与结算两次跑",这种分离能省下大量重复代码。
-- **`@screeps/common` 这种叶子包**:所有模块共享的常量、错误码、协议代码集中到一处。model-war 的 `packages/types` 就是这个位置(见 hld §3.2)。
+- **`@screeps/common` 这种叶子包**:所有模块共享的常量、错误码、协议代码集中到一处。model-war 的 `packages/schema` 就是这个位置(见 hld §3.1)。
 - **`config` EventEmitter** modding 模式:模块启动时把 config 当 EventEmitter 传给 mod,mod 可以监听 `tick / roomInit / ...` 并改写默认行为。如果未来要支持"自定义规则 mod",这是好范式。
 - **CPU 计量 + bucket + shardLimits**:`Game.cpu.bucket` 这种"溢出累积"设计比简单 tick 限额更平滑,可以作为 model-war 评分 NFR 的参考。
 
 ### 8.2 不应照搬
 
-- **持久化 + Mongo 集群**:model-war hld §1 已禁 DB,理由:benchmark 不需要持久化,JSONL 回放就是归档;Mongo sharding 这套分布式基础设施对 v0 完全过设计。
+- **持久化 + Mongo 集群**:model-war 明确不做多存储后端与持久化层(见 hld《明确不做》),理由:benchmark 不需要持久化,JSONL 回放就是归档;Mongo sharding 这套分布式基础设施对 v0 完全过设计。
 - **多进程 + Redis List 队列**:hld §2.3 已简化为"进程内 4 VM 串行"。LLM 评测不是 MMO,不需要 stage 1 / stage 2 分开,也不需要按房间横扩 worker。
 - **stage 1 / stage 2 / stage 3 三阶段**:model-war 单 tick 串行做完整结算,hld 不需要跨进程同步。
 - **不强制 vm**:Screeps 2016 选 vm 是因为没 isolated-vm;model-war 2026 选 quickjs-wasi(见 hld §5),是更现代的隔离方案。
