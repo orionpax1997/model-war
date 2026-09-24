@@ -71,7 +71,7 @@
 | 拓扑 | `apps/cli` + `packages/{schema,replay,engine,runner,gen}` | CLI 是 app 不是库;回放格式独立成包 |
 | 包间类型引用 | TypeScript project references(`tsc -b`)+ `paths`;**禁 `baseUrl`** | 增量编译;编译期强制依赖方向;`baseUrl` 已被 TypeScript 7 移除 |
 | 共享编译基座 | 根 `tsconfig.base.json` | 各包继承,不另设配置包 |
-| 构建(库包) | 纯 `tsc -b` 产物;唯一例外是 VM 内 runtime bundle(§4.5 的打包方式见 §12) | 库 + 子进程入口,无需打包器 |
+| 构建(库包) | 纯 `tsc -b` 产物;唯一例外是 VM 内 runtime bundle(打包方式属实现期选择,形态见 §4.5) | 库 + 子进程入口,无需打包器 |
 | 构建(CLI) | `apps/cli` 用 esbuild 打成单文件 | 唯一 bin;子命令 `await import()` 动态加载便于分包 |
 | 脚本预编译 | 冻结脚本由 gen 包用 `tsc` 编译为 script-mode JS;编译器版本锁定并写入存档 meta | 判据是"语义可预测 + 冻结后不再变",不是快 |
 | CLI 入口 | 唯一 bin 在 `apps/cli`;`node:util` `parseArgs` 解析子命令,零第三方依赖 | §9 的六个子命令 |
@@ -409,6 +409,7 @@ type Intent =
   1. 每 tick 只跨宿主边界两次——`__setSnapshot(snapshot)` 进、`__drainIntents()` 出;
   2. 查询函数(`getObjectsByType` / `getObjectById` / `getTick` / `getRange` / `findPath` / `getTerrainAt`)与 action 函数(`move` / `moveTo` / `attack` / `harvest` / `transfer` / `spawnUnit`)全部在 VM 内运行,跨边界调用数从 O(API 调用数) 降到 O(1)/tick;
   3. 脚本可见全局 = runtime 暴露的 API + `schema` 生成的常量表,不注入任何宿主能力。
+- **形态定案**:v0 保留 bundle 形态,不回退逐函数注入(§2.2.2 的回退路径仅留档)。
 - **宿主桥函数不可见**:runtime bundle 初始化时把 `__setSnapshot` / `__drainIntents` 捕获进闭包并**从 VM 全局删除**,任何以 `__` 开头的全局名同时进静态黑名单(§2.2.3)。越权调用按 §5.2 处理。
 - 运行时校验(FR-3 AC3):action 函数做"收集 + 界检查 + API 计数自增",不触碰引擎真实状态;查询函数在 VM 内快照副本上操作;intent 合法性由 `processor` 的 `check()` 统一裁决——**同一份 `check()` 也用于 VM 内的即时 `ERR_*` 反馈**(dual validation),杜绝"沙箱一份、宿主一份"的逻辑漂移。
 
@@ -422,7 +423,7 @@ type Intent =
 | 异步隔离 | 同进程串行执行;**`vm.executePendingJobs()` 每 tick 执行 `loop()` 后必须排空**,Promise 回调不得跨 tick 残留;管线内无异步 |
 | 移动裁决 | 占位基准 + 轮转优先(§4.4),全序、无平局、无链式依赖 |
 | 路径搜索 | A* 邻居展开顺序固定(八向按固定方向表),tie-break 按 id;启发式整数化(Chebyshev ×2) |
-| 预算裁决 | 指令计数 + API 调用计数为主判据;墙钟只观测;硬超时使该场无效化而非参与判罚(§5.3) |
+| 预算裁决 | 控制流事件计数 + API 调用计数为主判据;墙钟只观测;硬超时使该场无效化而非参与判罚(§5.3) |
 | 验证 | CI 重放一致性:抽样对局重新执行,与 JSONL 逐 tick stateHash 比对 |
 | 地图 | 地图 JSON 带内容 hash,回放头部记录;对称性由 map-lint 校验 |
 
@@ -442,19 +443,21 @@ type Intent =
 
 ### 5.0 选型结论
 
-v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT 协议,零第三方依赖;版本锁定到 `package.json`,升级需重跑重放一致性测试)。相对此前候选(QuickJS 嵌入 / WASM + fuel / isolated-vm):
+决策记录(候选取舍与后果):`docs/adr/0001-sandbox-quickjs-wasi.md`。
+
+v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT 协议,零第三方依赖;版本锁定到 `package.json`,**锁定 3.6.2**(基线 ≥3.5.0:3.3.x 的 `memoryLimit` 计账与 OOM 异常形态各有回归),升级需重跑重放一致性测试与沙箱行为复测)。相对此前候选(QuickJS 嵌入 / WASM + fuel / isolated-vm):
 
 - **隔离**:One VM = One WASM 实例,线性内存互不可见;包只做显式 I/O(wasm 字节由调用方提供),默认无 FS/网络——满足 FR-4 AC1,且比 worker_threads 的"去全局"做法审计面更小。
-- **预算可复现**:`interruptHandler` 按字节码指令触发,可做指令计数主判据;`memoryLimit` 超限表现为可捕获的 JS 异常——二者都不依赖墙钟。**触发粒度与回调开销需实测**(§12)。
-- **崩溃语义**:WASM 执行无进程崩溃概念;死循环/深递归表现为中断异常或 WASM trap,VM 可按 §5.2 计数后继续使用或重建——FR-4 AC3 的"一方崩溃不影响他方"降级为"一方失控只计异常分,不污染引擎与他方 VM"。
+- **预算可复现**:`interruptHandler` 每 5000 次控制流事件(循环回边/调用/返回)触发一次(回调内自乘计数),与 API 调用计数构成双主判据——实测口径是**控制流事件计数**而非指令计数(直线代码不计量,由 §6.2 脚本体积上限封盲区);`memoryLimit` 超限(≥3.5.0)表现为可捕获的 JS 异常,内存判据锚定 tick 末存活堆读数(§5.3)——均不依赖墙钟。回调开销与粒度已实测校对(拖慢 ≤3%)。
+- **崩溃语义**:WASM 执行无进程崩溃概念;死循环由中断计数截停;深递归栈溢出表现为 host 侧 `RangeError`(VM 可续用);WASM trap 仅剩引擎故障级可能——FR-4 AC3 的"一方崩溃不影响他方"降级为"一方失控只计异常分,不污染引擎与他方 VM"。
 - **记忆能力**:VM 常驻对局全程,模块级变量天然跨 tick 保留(FR-3);snapshot/restore 能力暂不用(状态以 GameState + JSONL 为准)。
 - **执行器缝**:host 侧 `Runner` 接口(`init/tick/dispose`)+ `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身:回放预置 intent、抛异常、触发 trap、超预算)。**在出现第二个真实 VM 实现之前不新增抽象层**——这条缝只让 §5.2 的四类裁决与结算管线可脱离 WASM 穷举测试。
-- **代价**:Node ≥ 22;`moduleLoader` 不配置(`import` 在静态校验期即拒绝);深递归无 `JS_SetMaxStackSize`,表现为 WASM trap 而非可捕获异常。
+- **代价**:Node ≥ 22;`moduleLoader` 不配置(`import` 在静态校验期即拒绝);quickjs-wasi 有 `maxStackSize` 选项(≤512KB),v0 不启用——启用会把栈溢出变成 guest 可捕获异常、可被脚本吞掉;不启用则溢出为 host `RangeError`,host 必见。
 
 ### 5.1 隔离与注入
 
 - 每方一个独立 `QuickJS.create({wasm, memoryLimit, interruptHandler, wasi})` 实例;四个 VM 同进程串行执行,不共享线性内存。`wasm` 字节由 runner 层读盘传入 engine(engine 不做磁盘 I/O)+ `WebAssembly.compile` 预编译,四 VM 复用同一 `WebAssembly.Module`。
-- **WASI 覆盖**:`clock_time_get` 覆盖为固定值(冻结 `Date.now()`/`new Date()`;QuickJS 内部 PRNG 以该值播种,同值即同 `Math.random()` 序列),`random_get` 覆盖为确定性填充,`timezoneOffset` 固定为 0。三者取值与 `quickjs-wasi` 版本号一并写入回放 meta 行(§7.5),可审计。
+- **WASI 覆盖**(三件套取值定为工程常量,非对局参数):`clock_time_get` 覆盖为 `1700000000000`(冻结 `Date.now()`/`new Date()`;QuickJS 内部 PRNG 以该值播种 xorshift64*,同值即同 `Math.random()` 序列),`random_get` 覆盖为固定字节填充,`timezoneOffset` 固定为 0。三件套取值与 `quickjs-wasi` 版本号一并写入回放 meta 行(§7.5),可审计。
 - 脚本可见全局 = runtime bundle 暴露的 API + `schema` 生成的常量表 + 纯函数子集;`fetch`/`fs`/`process` 等宿主能力一律不注入——隔离靠"不给"而非"拿掉"。**不加载任何 `.so` 扩展**(url/encoding/headers/crypto/structured-clone 均不启用)。
 - 载入次序:`evalCode(runtimeBundle)` 建 API 面 → `evalCode(script.js, {filename})` 载入选手脚本 → 每 tick `__setSnapshot(snapshot)` → `callFunction(loopFn)` → `__drainIntents()`。runtime bundle 与脚本同处一个全局环境,但 runtime 的内部计数器与宿主桥引用都在闭包内,且桥函数在初始化后被删除(§4.5)。
 - 定时器与异步调度源在 QuickJS 内默认即不存在;`vm.executePendingJobs()` 每 tick 排空。跨 tick 记忆只认模块级变量。
@@ -463,29 +466,30 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 | 情形 | 处理 | 确定性 |
 |---|---|---|
-| `loop()` 抛异常(含内存超限转成的 JS 异常) | 本 tick 该方 intents 置空(单位原地待命);`exceptionTicks++`;达 ruleset 的 exceptionTickLimit → 判负出局(点位回归中立) | ✅ 计数可复现 |
+| `loop()` 抛异常(host 侧异常同此行:含内存超限转成的 JS 异常、深递归栈溢出的 host `RangeError`) | 本 tick 该方 intents 置空(单位原地待命);`exceptionTicks++`;达 ruleset 的 exceptionTickLimit → 判负出局(点位回归中立)。**VM 续用、记忆保留** | ✅ 计数可复现 |
 | 中断超限(`interruptHandler` 返回 true) | 同上;VM 中断后仍可用,无需重建 | ✅ |
-| WASM trap(深递归栈溢出等,不可捕获) | 视同该 tick 异常计一次;重建该方 VM(重载脚本,模块级记忆清零),`exceptionTicks` 由 JSONL 持久化值续算 | ✅ |
-| 内存超限(`memoryLimit`) | 按第一行处理(可捕获,VM 继续可用);触发情况在报告中披露 | ✅ |
+| WASM trap(引擎故障级;**脚本栈溢出不属此类**,实测为 host `RangeError`) | 视同该 tick 异常计一次(同第一行)+ **防御性重建**该方 VM(重载脚本,模块级记忆清零);trap 事件写入回放 events 流与报告,夜间扫描复核——同一回放不复现则事后按 §8.4 `engine-crash` 同轨处理 | ✅ 判罚可复现;复核在扫描层 |
+| 内存判据超限(该 tick 末存活堆读数 ≥ `memoryTickCeiling`) | 视同第一行(intents 置空 + `exceptionTicks++`);判据于每 tick 末 `runGC()` 后取 `getMemoryUsage().mallocSize`(与分配上限同记账口径),纯记账、可复现;**guest 吞掉 OOM 不影响判据**——判据锚定读数,不依赖异常可见性。残余条款:tick 内瞬时触顶后自行释放的分配不触发判据(分配上限本身不可突破),已在规则文档披露。未被 guest 捕获的超限异常仍走第一行(host 可见) | ✅ |
 | 越权调用(未定义 action / 访问已删除的宿主桥 / 访问未暴露字段) | 视同 `loop()` 抛异常 | ✅ |
 
-`exceptionTicks` 是对局状态的一部分,随每 tick JSONL 持久化;VM 中断或重建后由持久化值续算,**不清零**(否则反复失控可逃逸淘汰)。
+注脚:异常/超预算不清记忆、不重建 VM;仅 WASM trap 的防御性重建会清记忆。`exceptionTicks` 是对局状态的一部分,随每 tick JSONL 持久化,VM 中断或重建后由持久化值续算,**不清零**(否则反复失控可逃逸淘汰)。**预算判据锚定 host 可直接测量的量,不依赖 guest 异常可见性**。OOM 异常身份不可靠(headroom 耗尽时 fallback 抛 `null`),引擎判定不得依赖 `e.name`。
 
 ### 5.3 计算预算(双计数主判据 + 墙钟只观测)
 
-**形态:指令计数 + API 调用计数为双主判据(均可复现);内存上限为独立硬上限;墙钟不参与判罚。**
+**形态:控制流事件计数 + API 调用计数为双主判据(均可复现);内存侧三层 = 分配上限(硬)+ 判罚线(硬)+ 软阈值(观测);墙钟不参与判罚。**
 
 | 机制 | 实现 | 判罚 | 是否影响确定性 |
 |---|---|---|---|
-| 指令计数 | QuickJS `interruptHandler` 回调计数(回调须保持轻量);到顶返回 true 中断本 tick | 本 tick 该方 **intents 全部丢弃** + `exceptionTicks++`(与异常同轨) | ✅ 纯计数 |
+| 控制流事件计数 | QuickJS `interruptHandler` 回调计数(每 5000 次控制流事件一格:循环回边/调用/返回;回调须保持轻量,计数自乘);到顶返回 true 中断本 tick。直线代码不计量,由 §6.2 脚本体积上限封盲区 | 本 tick 该方 **intents 全部丢弃** + `exceptionTicks++`(与异常同轨) | ✅ 纯计数 |
 | API 调用计数 | 宿主注入的 action/查询函数内自增计数器;到顶后**本 tick 内该方后续所有 intent 一并作废** | 同上。脚本 `try/catch` 捕获异常不能保留已提交的 intent——引擎按"该方本 tick 作废"处理 | ✅ 纯计数 |
-| 内存上限 | `memoryLimit`(VM 线性内存) | 超限转 JS 异常,按 §5.2 第一行处理 | ✅ |
+| 内存分配上限 | `memoryLimit`(VM 线性内存)——引擎分配上限,上限本身不可突破 | 超限转 JS 异常(未捕获按 §5.2 第一行处理) | ✅ |
+| 内存判据 | 软/硬双阈值;判据 = 每 tick 末 `runGC()` 后 `getMemoryUsage().mallocSize`(存活堆读数) | 硬线 `memoryTickCeiling`(ruleset 参数)超线 = 视同 §5.2 第一行;软阈值(0.8×硬,推导)仅写报告披露 `memory-pressure`。`runGC()` 固定扫描税 0.5–3.3ms/tick,入 NFR-3 标定考量 | ✅ 纯记账 |
 | 墙钟软限 | 单 tick `loop()` 执行时长 | 写入回放 events 流 `budget-soft-warning` + 报告披露;**只观测** | ✅ 不参与判罚 |
 | 墙钟硬超时 | 防宿主卡死的最后防线(如宿主回调卡死) | **不判负**:该场标记 `nondeterministic-timeout`,按 §8.4 与 `engine-crash` 同轨处理(重跑 / 剔除并披露) | 隔离出判罚路径,判罚仍可复现 |
 
-设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由指令计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只把该场对局作废,不改变对局内的胜负判定。
+设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只把该场对局作废,不改变对局内的胜负判定。
 
-**全部上限取值(指令上限、API 上限、内存上限、软限、硬超时、exceptionTickLimit)为 `rulesets/v1.json` 中的参数**,用 ≥2 个人类基准脚本标定(srs §4 第 2 条)。
+**全部上限取值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限)为 `rulesets/v1.json` 中的参数**,用 ≥2 个人类基准脚本标定(srs §4 第 2 条)。标定注脚:`memoryTickCeiling` 取值须 > 正常脚本 tick 末存活峰值 + 余量,且低于读数封顶(`memoryLimit − 最大单次分配`)。升级条款:若赛中"tick 内瞬时借满即还"型脚本普遍牟利,升级为 patch quickjs-wasi 加 sticky OOM 标志、判据回到确证事件(后备设计已评估,触发条件由运营定)。
 
 ## 6. 脚本契约与静态校验
 
@@ -498,10 +502,11 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 | 类别 | 规则 |
 |---|---|
 | 编译 | `tsc` 编译通过;顶层声明 `function loop(): void` 入口 |
-| 模块系统 | 禁 `export` / `import` / `require` / 动态 `eval`(单文件自包含) |
+| 模块系统 | 禁 `export` / `import` / 动态 `import()` / `require` / 动态 `eval`(单文件自包含) |
 | 全局白名单 | oxlint `no-restricted-globals`:除注入 API 与内置纯函数子集(`Math`、`JSON`、`Number`、`String`、`Array`、`Map`/`Set`、`Object` 等)外全禁;白名单符号表由 `schema` 生成,与沙箱 runtime 暴露的 API 面同源;`Date` 视为确定性污染源,不可用;`__*` 前缀全禁 |
-| 确定性污染源 | 禁 `Date`、`Math.random` 及其他非确定源(运行时 WASI 时钟已冻结,本行为纵深防御) |
+| 确定性污染源 | 禁 `Date`、`Math.random`、`performance`、`queueMicrotask` 及其他非确定源(运行时 WASI 时钟已冻结,本行为纵深防御) |
 | API 误用 | 类型层面由 `schema` 包的公开 `.d.ts` 约束(结构化 intent 类型) |
+| 脚本体积 | 顶层脚本体积上限(取值入 `rulesets/v1.json`)——封"直线代码不计量、大循环体放大每格工作量"的计数盲区 |
 
 校验失败 → 仅错误信息回喂模型(≤5 轮,FR-5 AC1);`gen` 代码中不存在对战结果回传路径。
 
@@ -638,11 +643,8 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 
 | # | 项 | 备注 |
 |---|---|---|
-| 1 | quickjs-wasi 实测:`interruptHandler` 触发粒度与回调开销、`memoryLimit` 语义、`executePendingJobs`、WASI 时钟覆盖 | 决定 §5.3 双计数是否成立、NFR-3 是否可达;不通过则重选沙箱 |
-| 2 | 预算参数终值(指令上限、API 上限、内存上限、软限、硬超时、exceptionTickLimit) | 用人类基准脚本标定(srs §4 第 2 条) |
+| 2 | 预算参数终值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限) | 用人类基准脚本标定(srs §4 第 2 条) |
 | 3 | 座位轮换的效果验证 | 用基准脚本对局统计各座位胜率,验证偏置被摊平(§8.1) |
-| 4 | runtime bundle 的打包方式与跨边界收益实测 | §2.2.2/§4.5:若不显著则回退为逐函数注入 |
 | 5 | 工具链可用性:**TypeScript 7.0 GA 时点**、oxlint-tsgolint 的性能(决定 `check:quick` < 5s 是否成立)、oxfmt 的 conformance | 任一不成立即退化为 oxlint 普通模式 + `tsc` + Prettier(§2.2.3) |
 | 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化 |
 | 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估 |
-| 8 | WASM trap 路径的滥用分析:反复触发 trap 可清零模块级记忆,只付 `exceptionTicks` | §5.2;需确认 exceptionTickLimit 足以约束,否则给重建加代价 |
