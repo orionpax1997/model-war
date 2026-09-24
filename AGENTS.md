@@ -8,6 +8,11 @@ This repository uses Matt Pocock's engineering skills (installed under `.pi/skil
 
 Local markdown: issues live as `.scratch/<feature>/spec.md` and `.scratch/<feature>/issues/<NN>-<slug>.md`. See `docs/agents/issue-tracker.md`.
 
+### Subagents
+
+- code-review skill:Standards 与 Spec 两个子代理都用 `review`(`.pi/agents/review.md`)派发。
+- research 任务:调研与探索派给 `explore` 子代理,主线程只聚合结论。
+
 ### Triage labels
 
 Five canonical triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
