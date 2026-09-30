@@ -1,0 +1,5 @@
+# 逐场原始 dump:每份 26–31 MB,两轮证据共 57 MB,且**可由桩在约 10 min 内确定性重算**
+# (命令见 ../README.md 与 ../../handoff.md §7)。
+# 入库的是可读证据与自动表:tables.md(结论所引的数字)、duels.json(C1~C7 + 速度消融)、
+# replays.json(10 场取证实例的逐 tick 事件流)、manifest.json(跑批口径 + 参数覆盖)。
+matches.json

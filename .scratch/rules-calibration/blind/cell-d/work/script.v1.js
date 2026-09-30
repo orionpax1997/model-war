@@ -1,0 +1,411 @@
+'use strict';
+
+/* ===========================================================================
+ * rules-v1 参赛脚本 · 策略取向 A：爆兵压制
+ * 入口：function loop(): void（api.md 记法）；本文件为 JS，落盘为 function loop() {}
+ *
+ * 硬约束遵守点：
+ *  - 单文件自包含、顶层 function loop()、无 export/import/require/eval；
+ *  - 全整数运算，无 Date / Math.random / performance / queueMicrotask / 定时器 / __*；
+ *  - 只调 api.md 的查询与 action：getObjectsByType / getTerrainAt / move / moveTo /
+ *    attack / harvest / transfer / spawnUnit / getTick（不调 findPath：省预算）；
+ *  - 跨 tick 只存数值 id（Map<number, number>）与整数变量，不缓存快照对象引用；
+ *  - 每 tick 对每单位只写一个最终 intent（统一在 act* 分支里 return/continue）。
+ *
+ * 两条必须记录的假设：
+ *  1) 自认候选：A（容器顺序 == players 下标），盲写取 MY_INDEX = 0；
+ *  2) 轮转方向：按“值大者胜”假设（rules.md §3，方向待终稿确认）。
+ * =========================================================================== */
+
+/* ---------- 常量（整数，取自 rules.md §10 / api.md §6） ---------- */
+var TICK_LIMIT = 600;
+var HARVEST_RATE = 1;
+var CARRY_LIMIT = 20;
+var RESOURCE_PER_SITE = 125;
+var CAPTURE_TICKS = 10;
+var INITIAL_RESOURCES = 16;
+
+var T_WORKER = 0;
+var T_MELEE = 1;
+var T_RANGED = 2;
+var T_CAVALRY = 3;
+var TYPE_NAME = ['worker', 'melee', 'ranged', 'cavalry'];
+var UNIT_COST = [4, 8, 12, 16];
+var UNIT_HP = [2, 12, 4, 6];
+var UNIT_DMG = [0, 3, 2, 2];
+var UNIT_RANGE = [1, 1, 2, 1];
+var UNIT_SPEED = [1, 1, 1, 2];
+var SPAWN_TICKS = [2, 4, 6, 8];
+
+/* 轮转优先方向假设（rules.md §3）：值大者胜。 */
+var ROT_HIGHER_WINS = true;
+
+/* 自认候选 A：容器顺序 == players 下标，盲写先取 0。 */
+var MY_INDEX = 0;
+
+/* ---------- 策略参数（整数） ---------- */
+var DEFEND_RANGE = 3;      /* 敌人逼近己方基地的防守半径（Chebyshev） */
+var INTERCEPT_RANGE = 4;   /* 途经敌人时的拦截半径 */
+var MIN_WORKERS = 2;       /* 保命经济下限：低于此数优先补农民 */
+var RANGED_RATIO = 3;      /* ranged*3 < melee 才补远程 */
+var CAV_RATIO = 5;         /* cavalry*5 < melee 才补骑兵 */
+var CAV_RES = 24;          /* 骑兵门槛：资源宽裕才出骑兵 */
+var RANGED_RES = 16;
+
+/* ---------- 跨 tick 记忆：只有数值 id 与整数 ---------- */
+var resEst = INITIAL_RESOURCES; /* 资源自账：players 快照无查询 API，故自记 */
+var wSite = new Map();  /* unitId -> resourceSiteId */
+var qType = new Map();  /* baseId  -> 在产兵种码 */
+var qTick = new Map();  /* baseId  -> 下单 tick */
+var qUnits = new Map(); /* baseId  -> 下单时我方单位数 */
+
+/* ---------- 小工具（纯整数） ---------- */
+function cellKey(x, y) {
+  return x + ',' + y;
+}
+
+function cheb(ax, ay, bx, by) {
+  var dx = ax - bx;
+  var dy = ay - by;
+  if (dx < 0) dx = -dx;
+  if (dy < 0) dy = -dy;
+  return dx > dy ? dx : dy;
+}
+
+function typeCode(t) {
+  var k = TYPE_NAME.indexOf(t);
+  return k < 0 ? T_WORKER : k;
+}
+
+function byId(a, b) {
+  return a.id - b.id;
+}
+
+function walkable(x, y) {
+  return getTerrainAt(x, y) === 'plain';
+}
+
+function isFree(x, y, occ) {
+  return !occ.has(cellKey(x, y));
+}
+
+/* 朝 (tx,ty) 走一步：先对角后单轴，绕开墙/出界/有单位的格。 */
+function stepToward(ux, uy, tx, ty, occ) {
+  var dx = tx - ux;
+  var dy = ty - uy;
+  if (dx === 0 && dy === 0) return null;
+  var sx = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+  var sy = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+  var cx, cy;
+  if (sx !== 0 && sy !== 0) {
+    cx = ux + sx; cy = uy + sy;
+    if (walkable(cx, cy) && isFree(cx, cy, occ)) return [cx, cy];
+  }
+  if (sx !== 0) {
+    cx = ux + sx; cy = uy;
+    if (walkable(cx, cy) && isFree(cx, cy, occ)) return [cx, cy];
+  }
+  if (sy !== 0) {
+    cx = ux; cy = uy + sy;
+    if (walkable(cx, cy) && isFree(cx, cy, occ)) return [cx, cy];
+  }
+  return null;
+}
+
+var NB = [[0, 1], [1, 0], [0, -1], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+/* 点位旁一个可站格（采集/交付用）。 */
+function freeNeighbor(sx, sy, occ) {
+  for (var i = 0; i < 8; i++) {
+    var x = sx + NB[i][0];
+    var y = sy + NB[i][1];
+    if (walkable(x, y) && isFree(x, y, occ)) return [x, y];
+  }
+  return null;
+}
+
+/* 最近敌方单位距离（无敌人返回 99）。 */
+function nearestEnemyDist(px, py, enemies) {
+  var best = 99;
+  for (var i = 0; i < enemies.length; i++) {
+    var d = cheb(px, py, enemies[i].x, enemies[i].y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/* 最近敌方基地；无则最近中立基地。中立加权 3（略远但仍算目标）。 */
+function pickBaseTarget(bases, myIdx) {
+  var best = null;
+  var bestScore = 9999;
+  for (var i = 0; i < bases.length; i++) {
+    var b = bases[i];
+    if (b.owner === myIdx) continue;
+    var score = b.owner === -1 ? 3 : 0;
+    if (score < bestScore) { bestScore = score; best = b; }
+  }
+  if (best === null) return null;
+  /* 同权重内取最近 */
+  var out = best;
+  var outD = cheb(out.x, out.y, 0, 0);
+  for (var j = 0; j < bases.length; j++) {
+    var c = bases[j];
+    if (c.owner === myIdx) continue;
+    var sc = c.owner === -1 ? 3 : 0;
+    if (sc < (out.owner === -1 ? 3 : 0)) { out = c; continue; }
+    if (sc === (out.owner === -1 ? 3 : 0)) {
+      /* 距离由调用方按单位比较更省；这里只保证稳定取第一个 */
+      if (c.id < out.id && sc === (out.owner === -1 ? 3 : 0)) { /* 同类保持首个 */ }
+    }
+  }
+  return out;
+}
+
+/* 生产决策：爆兵为主，稀疏混入远程/骑兵；低于 MIN_WORKERS 先补农民。 */
+function pickType(cnt, res) {
+  var w = cnt[T_WORKER];
+  var m = cnt[T_MELEE];
+  var r = cnt[T_RANGED];
+  var c = cnt[T_CAVALRY];
+  if (w < MIN_WORKERS) return res >= UNIT_COST[T_WORKER] ? T_WORKER : -1;
+  if (res >= UNIT_COST[T_MELEE]) {
+    if (res >= CAV_RES && c * CAV_RATIO < m && r * CAV_RATIO < m) return T_CAVALRY;
+    if (res >= RANGED_RES && r * RANGED_RATIO < m) return T_RANGED;
+    return T_MELEE;
+  }
+  if (res >= UNIT_COST[T_RANGED] && r < m) return T_RANGED;
+  return -1;
+}
+
+/* ---------- 每 tick 主逻辑 ---------- */
+function runTick() {
+  var tick = getTick();
+
+  var myUnits = getObjectsByType('unit', { owner: MY_INDEX });
+  var allUnits = getObjectsByType('unit');
+  var baseSites = getObjectsByType('site', { kind: 'base' });
+  var resSites = getObjectsByType('site', { kind: 'resource' });
+
+  var i, j, u, s;
+
+  /* 本 tick 内的索引（快照引用不跨 tick） */
+  var occ = new Map();
+  var siteById = new Map();
+  var myBases = [];
+  var enemies = [];
+  var cnt = [0, 0, 0, 0];
+  var workers = [];
+  var mil = [];
+  var myUnitCount = 0;
+
+  for (i = 0; i < allUnits.length; i++) {
+    u = allUnits[i];
+    occ.set(cellKey(u.x, u.y), u.id);
+    if (u.owner === MY_INDEX) {
+      myUnitCount++;
+      var tc = typeCode(u.type);
+      cnt[tc]++;
+      if (tc === T_WORKER) workers.push(u); else mil.push(u);
+    } else {
+      enemies.push(u);
+    }
+  }
+  for (i = 0; i < baseSites.length; i++) {
+    s = baseSites[i];
+    siteById.set(s.id, s);
+    if (s.owner === MY_INDEX) myBases.push(s);
+  }
+  for (i = 0; i < resSites.length; i++) {
+    s = resSites[i];
+    siteById.set(s.id, s);
+  }
+  workers.sort(byId);
+  mil.sort(byId);
+  myBases.sort(byId);
+
+  /* ---------- 生产：清理队列 + 每 tick 至多一单 ---------- */
+  var qKeys = [];
+  qType.forEach(function (v, k) { qKeys.push(k); });
+  for (i = 0; i < qKeys.length; i++) {
+    var bid = qKeys[i];
+    var qt = qType.get(bid);
+    var q0 = qTick.get(bid);
+    if (tick - q0 >= SPAWN_TICKS[qt]) {
+      if (myUnitCount > qUnits.get(bid)) {
+        qType.delete(bid); qTick.delete(bid); qUnits.delete(bid);
+      } else {
+        qTick.set(bid, tick); /* 出兵格被占，挂起等待 */
+      }
+    }
+  }
+
+  var freeBase = -1;
+  for (i = 0; i < myBases.length; i++) {
+    if (!qType.has(myBases[i].id)) { freeBase = myBases[i].id; break; }
+  }
+  if (freeBase >= 0) {
+    var want = pickType(cnt, resEst);
+    if (want >= 0) {
+      var r = spawnUnit(freeBase, TYPE_NAME[want]);
+      if (!r) {
+        resEst -= UNIT_COST[want];
+        qType.set(freeBase, want);
+        qTick.set(freeBase, tick);
+        qUnits.set(freeBase, myUnitCount);
+      } else if (r === 'ERR_NOT_ENOUGH_RESOURCES') {
+        resEst = 0; /* 自账高估，归零重来 */
+      }
+    }
+  }
+
+  /* ---------- 目标点 ---------- */
+  var defendSite = null;
+  var bestDef = DEFEND_RANGE + 1;
+  for (i = 0; i < myBases.length; i++) {
+    var db = myBases[i];
+    var de = nearestEnemyDist(db.x, db.y, enemies);
+    if (de < bestDef) { bestDef = de; defendSite = db; }
+  }
+
+  var atkBase = pickBaseTarget(baseSites, MY_INDEX);
+  var atkX = atkBase ? atkBase.x : 0;
+  var atkY = atkBase ? atkBase.y : 0;
+  var hasAtk = atkBase !== null;
+  if (!hasAtk && enemies.length > 0) {
+    var e0 = enemies[0];
+    atkX = e0.x; atkY = e0.y; hasAtk = true;
+  }
+
+  /* ---------- 农民：采集 → 满载交付；无己方矿则站上去占点 ---------- */
+  for (i = 0; i < workers.length; i++) {
+    var w = workers[i];
+    var carry = w.carrying | 0;
+    var sid = wSite.get(w.id);
+    var site = sid === undefined ? null : siteById.get(sid);
+    var ok = site !== null && site !== undefined && site.kind === 'resource' &&
+      (site.remaining === undefined || site.remaining > 0);
+    if (!ok || (site.owner !== MY_INDEX && carry >= CARRY_LIMIT)) {
+      site = pickSiteFor(w.x, w.y, resSites);
+      if (site === null) continue;
+      sid = site.id;
+      wSite.set(w.id, sid);
+    }
+
+    if (site.owner === MY_INDEX) {
+      if (carry >= CARRY_LIMIT) {
+        if (myBases.length === 0) continue;
+        var dbase = nearestBase(w.x, w.y, myBases);
+        if (cheb(w.x, w.y, dbase.x, dbase.y) <= 1) {
+          var rt = transfer(w.id);
+          if (!rt) resEst += carry;
+        } else {
+          var ncell = freeNeighbor(dbase.x, dbase.y, occ);
+          var ntx = ncell ? ncell[0] : dbase.x;
+          var nty = ncell ? ncell[1] : dbase.y;
+          var st = stepToward(w.x, w.y, ntx, nty, occ);
+          if (st) move(w.id, st[0] - w.x, st[1] - w.y);
+        }
+      } else if (cheb(w.x, w.y, site.x, site.y) === 1) {
+        var rh = harvest(w.id, site.id);
+        if (!rh) resEst += HARVEST_RATE;
+      } else {
+        var anchor = cheb(w.x, w.y, site.x, site.y) === 0 ? null : freeNeighbor(site.x, site.y, occ);
+        var wx = anchor ? anchor[0] : site.x;
+        var wy = anchor ? anchor[1] : site.y;
+        var ws = stepToward(w.x, w.y, wx, wy, occ);
+        if (ws) move(w.id, ws[0] - w.x, ws[1] - w.y);
+      }
+    } else {
+      /* 未归属/敌占矿：站上点位格驱动占领（captureTicks=10） */
+      if (cheb(w.x, w.y, site.x, site.y) === 0) continue;
+      var cs = stepToward(w.x, w.y, site.x, site.y, occ);
+      if (cs) move(w.id, cs[0] - w.x, cs[1] - w.y);
+    }
+  }
+
+  /* ---------- 战斗单位：接敌即打（低血优先），否则压向目标 ---------- */
+  for (i = 0; i < mil.length; i++) {
+    var m = mil[i];
+    var mt = typeCode(m.type);
+    var mr = UNIT_RANGE[mt];
+
+    var tgt = null;
+    var tgtHp = 99999;
+    for (j = 0; j < enemies.length; j++) {
+      var e = enemies[j];
+      if (cheb(m.x, m.y, e.x, e.y) > mr) continue;
+      if (e.hp < tgtHp || (e.hp === tgtHp && tgt !== null && e.id < tgt.id)) {
+        tgtHp = e.hp; tgt = e;
+      }
+    }
+    if (tgt !== null) {
+      attack(m.id, tgt.id);
+      continue;
+    }
+
+    var tx;
+    var ty;
+    if (defendSite !== null) { tx = defendSite.x; ty = defendSite.y; }
+    else if (hasAtk) { tx = atkX; ty = atkY; }
+    else continue;
+    if (cheb(m.x, m.y, tx, ty) === 0) continue; /* 站桩：占领/堵点 */
+
+    var stp = stepToward(m.x, m.y, tx, ty, occ);
+    if (!stp && INTERCEPT_RANGE > 0) {
+      var ie = nearestEnemy(m.x, m.y, enemies, INTERCEPT_RANGE);
+      if (ie !== null) stp = stepToward(m.x, m.y, ie.x, ie.y, occ);
+    }
+    if (stp) move(m.id, stp[0] - m.x, stp[1] - m.y);
+  }
+}
+
+/* 农民选点：优先最近的己方矿，否则最近的非己方矿（去占点）。 */
+function pickSiteFor(x, y, resSites) {
+  var bestOwn = null;
+  var bestOwnD = 9999;
+  var bestAny = null;
+  var bestAnyD = 9999;
+  for (var i = 0; i < resSites.length; i++) {
+    var s = resSites[i];
+    if (s.remaining !== undefined && s.remaining <= 0) continue;
+    var d = cheb(x, y, s.x, s.y);
+    if (s.owner === MY_INDEX) {
+      if (d < bestOwnD) { bestOwnD = d; bestOwn = s; }
+    } else {
+      var w = s.owner === -1 ? d : d + 3; /* 中立略优先于敌占 */
+      if (w < bestAnyD) { bestAnyD = w; bestAny = s; }
+    }
+  }
+  return bestOwn !== null ? bestOwn : bestAny;
+}
+
+function nearestBase(x, y, myBases) {
+  var best = myBases[0];
+  var bd = cheb(x, y, best.x, best.y);
+  for (var i = 1; i < myBases.length; i++) {
+    var d = cheb(x, y, myBases[i].x, myBases[i].y);
+    if (d < bd || (d === bd && myBases[i].id < best.id)) { bd = d; best = myBases[i]; }
+  }
+  return best;
+}
+
+function nearestEnemy(x, y, enemies, range) {
+  var best = null;
+  var bd = range + 1;
+  for (var i = 0; i < enemies.length; i++) {
+    var d = cheb(x, y, enemies[i].x, enemies[i].y);
+    if (d <= range && (d < bd || (d === bd && best !== null && enemies[i].id < best.id))) {
+      bd = d; best = enemies[i];
+    }
+  }
+  return best;
+}
+
+/* ---------- 入口：整 tick 包在 try 里，写崩不连坐整场 ---------- */
+function loop() {
+  try {
+    runTick();
+  } catch (e) {
+    /* 保底：本 tick 不写任何 intent（静默待命），记忆保留 */
+  }
+}
