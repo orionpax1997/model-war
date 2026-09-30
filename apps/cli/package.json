@@ -1,0 +1,20 @@
+{
+  "name": "@model-war/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "唯一用户面与唯一 bin(modelwar,hld §9)",
+  "bin": {
+    "modelwar": "./dist/modelwar.mjs"
+  },
+  "scripts": {
+    "build": "tsc -b && esbuild dist/index.js --bundle --platform=node --format=esm --target=node24 --outfile=dist/modelwar.mjs && chmod +x dist/modelwar.mjs"
+  },
+  "dependencies": {
+    "@model-war/engine": "workspace:*",
+    "@model-war/gen": "workspace:*",
+    "@model-war/replay": "workspace:*",
+    "@model-war/runner": "workspace:*",
+    "@model-war/schema": "workspace:*"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "//": "solution 形态:files 置空,只做项目引用清单。根 project 若带上 include,会把全仓源码吞进一个巨型 program,增量编译与类型感知 lint 同时退化。",
+  "files": [],
+  "references": [
+    { "path": "./packages/schema" },
+    { "path": "./packages/replay" },
+    { "path": "./packages/engine" },
+    { "path": "./packages/runner" },
+    { "path": "./packages/gen" },
+    { "path": "./packages/tools" },
+    { "path": "./apps/cli" }
+  ]
+}

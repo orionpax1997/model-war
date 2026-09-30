@@ -1,0 +1,18 @@
+{
+  "name": "@model-war/runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "赛季调度、进程池、排名与种子纯函数、报告、叙事战报(不得 import engine,hld §3.2)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@model-war/schema": "workspace:*"
+  }
+}
