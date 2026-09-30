@@ -1,0 +1,18 @@
+M1.1.rawCalls: {"light200k":41,"light1200k":241,"heavy200k":41,"heavy1200k":241,"nested1200k":277,"unrolled50kStmts":1,"tree2pow18":105,"tree2pow22":1678}
+M1.1.light.itersPerCb: 5000.00
+M1.1.heavy.itersPerCb: 5000.00
+M1.1.nested.backedgesPerCb: 4765.34
+M1.1.tree.callsPerCb.n18: 2496.61
+M1.1.tree.callsPerCb.n22: 2499.59
+M1.1.unrolled.callbacksPer150kOpcodes: 1
+M1.2.perRunUs: {"dense.none":"4143863.258µs","dense.empty":"4241874.910µs","dense.count":"4041230.831µs","dense.wallclock":"4135540.558µs","sparse.none":"1662497.297µs","sparse.empty":"1667602.915µs"}
+M1.2.rawUs: {"dense.none":[3836712.803,3884342.734,5344358.677,4143863.258],"dense.empty":[3618416.406,3984773.799,4241874.91,4314384.17],"dense.count":[3934336.552,3875826.921,4041230.831,4369612.606],"dense.wallclock":[3694214.475,5778778.953,4135540.558,3703919.984],"sparse.none":[1641880.379,1661873.884,1662497.297,1686399.181],"sparse.empty":[1643323.533,1658687.953,1667602.915,1693045.244]}
+M1.2.callbacksPerRun.dense: 10003.25
+M1.2.callbacksPerRun.sparse: 10.25
+M1.2.slowdownVsNone: {"empty":"1.024x","count":"0.975x","wallclock":"0.998x","sparseEmpty":"1.003x"}
+M1.2.decomposed: {"perBackedgeUs":"0.0001µs","perCallbackUs":"-0.501µs","wallclockBodyExtraUs":"0.009µs"}
+M1.3.hostErrOnInterrupt: {"ctor":"JSException","name":"InternalError","message":"interrupted","isJSException":true}
+M1.3.guestMarkers: {"beforeLoop":1,"catchRan":"NO (吞不掉)","afterLoop":"NO"}
+M1.3.vmUsableAfterInterrupt: true
+M1.3.latchedHandler: {"hostErr":{"ctor":"JSException","name":"InternalError","message":"interrupted","isJSException":true},"beforeLoop":1,"catchRan":"NO (吞不掉)","afterLoop":"NO"}
+M1.3.vmUsableAfterLatchedInterrupt: true

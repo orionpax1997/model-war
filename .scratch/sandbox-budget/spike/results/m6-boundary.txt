@@ -1,0 +1,16 @@
+M6.1.emptyTickTrampoline: 0.662µs
+M6.2.A.tickUs.snap1KB.drain0: 15.695µs
+M6.2.A.tickUs.snap1KB.drain10: 11.126µs
+M6.2.A.tickUs.snap1KB.drain100: 24.688µs
+M6.2.A.tickUs.snap16KB.drain0: 53.972µs
+M6.2.A.tickUs.snap16KB.drain10: 58.369µs
+M6.2.A.tickUs.snap16KB.drain100: 67.203µs
+M6.2.A.tickUs.snap64KB.drain0: 173.440µs
+M6.2.A.tickUs.snap64KB.drain10: 176.223µs
+M6.2.A.tickUs.snap64KB.drain100: 185.742µs
+M6.2.A.stringArgReturnRoundtrip16KBArg: 4.117µs
+M6.3.B.k1: {"tickUs":"1.948µs","guestFnTickUs":"0.717µs","perHostCallUs":"1.231µs"}
+M6.3.B.k10: {"tickUs":"11.620µs","guestFnTickUs":"2.653µs","perHostCallUs":"0.897µs"}
+M6.3.B.k100: {"tickUs":"108.727µs","guestFnTickUs":"22.149µs","perHostCallUs":"0.866µs"}
+M6.3.B.k1000: {"tickUs":"1085.436µs","guestFnTickUs":"221.206µs","perHostCallUs":"0.864µs"}
+M6.3.B.k10000: {"tickUs":"10701.137µs","guestFnTickUs":"2178.102µs","perHostCallUs":"0.852µs"}

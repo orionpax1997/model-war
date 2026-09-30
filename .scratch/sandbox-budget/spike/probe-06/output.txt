@@ -1,0 +1,109 @@
+=== quickjs-wasi 3.6.2 read-based criterion probe ===
+memoryLimit:  8388608  (8.000MB)
+soft_limit:   8323072  (99.22%)  ← user's expected OOM cap (limit - 64KB)
+  Note: OOM check in QuickJS-NG v0.9.0 is 'malloc_size + size > malloc_limit - 1',
+  not 'limit - 64KB'; the 64KB margin is the user's mental model. Actual cap is
+  'limit - next_alloc_size' (= next_alloc_size headroom).
+
+getMemoryUsage() returns both:
+  mallocSize      = total bytes currently held by QuickJS's malloc pool
+  memoryUsedSize  = bytes used by live JS objects (excludes free pool)
+OOM fires when mallocSize + size > memoryLimit - 1.
+
+===== Section 1: 2x2 cross (PLAIN array anchor — refcount-friendly) =====
+plain anchor — refcount-freeable on null
+  cell | thresh    | drop  | r1.memoryUsed     | r1.mallocSize     | r2.memoryUsed     | r2.mallocSize
+  -----|-----------|-------|-------------------|-------------------|-------------------|-------------------
+  A   | default   | false |  7685413 (91.62%) |  8231068 (98.12%) |  7685413 (91.62%) |  8231068 (98.12%)
+  B   | default   | true  |   144913 ( 1.73%) |   161696 ( 1.93%) |   144913 ( 1.73%) |   161696 (1.93%)
+  C   | infinity  | false |  7685413 (91.62%) |  8231068 (98.12%) |  7685413 (91.62%) |  8231068 (98.12%)
+  D   | infinity  | true  |   144913 ( 1.73%) |   161696 ( 1.93%) |   144913 ( 1.73%) |   161696 (1.93%)
+
+===== Section 1b: 2x2 cross (CYCLIC anchor — refcount CANNOT free) =====
+cyclic anchor — a<->b mutual ref + grow via __anchor.push
+  cell | thresh    | drop  | r1.memoryUsed     | r1.mallocSize     | r2.memoryUsed     | r2.mallocSize
+  -----|-----------|-------|-------------------|-------------------|-------------------|-------------------
+  A   | default   | false |  6051469 (72.14%) |  8232324 (98.14%) |  6051469 (72.14%) |  8232324 (98.14%)
+  B   | default   | true  |  6051469 (72.14%) |  8232324 (98.14%) |   451077 ( 5.38%) |   489400 (5.83%)
+  C   | infinity  | false |  6051469 (72.14%) |  8232324 (98.14%) |  6051469 (72.14%) |  8232324 (98.14%)
+  D   | infinity  | true  |  6051469 (72.14%) |  8232324 (98.14%) |   451077 ( 5.38%) |   489400 (5.83%)
+
+
+===== Section 2: runGC() overhead =====
+  2a. small heap (~2MB, no garbage for GC to reclaim)
+    before runGC: mallocSize=2230924 (26.59%), memoryUsedSize=2078292
+    after  runGC: mallocSize=2230924 (26.59%), memoryUsedSize=2078292
+    runGC Δ: mallocSize=0, memoryUsedSize=0
+    runGC time: median 1191.79µs, min 1113.36µs
+    [breakdown] atomCount=589 objCount=440 arrayCount=252 fastArrayElements=250250 mallocCount=1835
+
+  2b. near-limit heap (~7MB, no garbage for GC to reclaim)
+    before runGC: mallocSize=7619424 (90.83%), memoryUsedSize=7113292
+    after  runGC: mallocSize=7619424 (90.83%), memoryUsedSize=7113292
+    runGC Δ: mallocSize=0, memoryUsedSize=0
+    runGC time: median 3258.15µs, min 2801.80µs
+    [breakdown] atomCount=589 objCount=1065 arrayCount=877 fastArrayElements=875875 mallocCount=3710
+
+  2c. heap with unreachable cycle (runGC reclaims)
+    before runGC: mallocSize=2287584 (27.27%), memoryUsedSize=1664356
+    after  runGC: mallocSize=75320 (0.90%), memoryUsedSize=64244
+    runGC Δ: mallocSize=2212264, memoryUsedSize=1600112
+    runGC time: median 47.35µs, min 45.75µs
+    [breakdown] atomCount=589 objCount=191 arrayCount=3 fastArrayElements=200002 mallocCount=1088
+
+  2d. after a tick of short-lived allocs (already freed by refcount)
+    before runGC: mallocSize=2230924 (26.59%), memoryUsedSize=2078292
+    after  runGC: mallocSize=2230924 (26.59%), memoryUsedSize=2078292
+    runGC Δ: mallocSize=0, memoryUsedSize=0
+    runGC time: median 665.32µs, min 632.56µs
+    [breakdown] atomCount=589 objCount=440 arrayCount=252 fastArrayElements=250250 mallocCount=1835
+
+
+===== Section 3: reading upper bound (gcThreshold = Infinity) =====
+  baseline: mallocSize=75128, memoryUsedSize=64098
+  gcThreshold-get: 0
+  946 total array pushes; OOM at push #946: JSException: out of memory
+  last successful reading (push #946): memoryUsedSize=7516089 (89.60%), mallocSize=8050016 (95.96%)
+  reading after OOM (no GC, no further alloc): memoryUsedSize=7685475 (91.62%), mallocSize=8231164 (98.12%)
+  → max memoryUsedSize observed:  7516089  (788.1KB below SOFT_LIMIT, 852.1KB below memoryLimit)
+  → max mallocSize observed:      8050016  (266.7KB below SOFT_LIMIT, 330.7KB below memoryLimit)
+  → soft_limit threshold (user's): 8323072
+  → effective cap (mallocSize at OOM, after partial push): ~8231164
+
+  readings near peak (last 8):
+    push#750: used=6106289 (72.79%), malloc=6542916 (78.00%), dSoftU=-2216783, dSoftM=-1780156
+    push#775: used=6307689 (75.19%), malloc=6758216 (80.56%), dSoftU=-2015383, dSoftM=-1564856
+    push#800: used=6509089 (77.59%), malloc=6973516 (83.13%), dSoftU=-1813983, dSoftM=-1349556
+    push#825: used=6710489 (80.00%), malloc=7188816 (85.70%), dSoftU=-1612583, dSoftM=-1134256
+    push#850: used=6911889 (82.40%), malloc=7404116 (88.26%), dSoftU=-1411183, dSoftM=-918956
+    push#875: used=7113289 (84.80%), malloc=7619416 (90.83%), dSoftU=-1209783, dSoftM=-703656
+    push#900: used=7314689 (87.20%), malloc=7834716 (93.40%), dSoftU=-1008383, dSoftM=-488356
+    push#925: used=7516089 (89.60%), malloc=8050016 (95.96%), dSoftU=-806983, dSoftM=-273056
+
+===== Section 4: gcThreshold semantics =====
+  4a. gcThreshold-get on fresh VM (no setter): 262144  (256KB)
+  4b. set Infinity → get: 0 (is Infinity? false)  — note: WASM truncates Infinity to 0
+  4c. set 0 → get: 0  (docs say 0 disables auto-GC)
+  4d. set 1<<30 (1GB) → get: 1073741824
+  4e. threshold progression on a fresh 8MB-limit VM:
+      fresh:                       gcThreshold=262144 (256KB)
+      after ~2MB alloc:            gcThreshold=3128088 (3055KB), memoryUsedSize=2078289
+      after manual runGC():        gcThreshold=3128088 (3055KB), memoryUsedSize=2078289
+      → threshold advanced during alloc (auto-GC fired). After manual runGC, threshold unchanged.
+      → manually setting gcThreshold does not 'stick' across auto-GC cycles; the runtime
+        rewrites it to (typically) 1.5× of post-GC mallocSize. To truly disable auto-GC,
+        set gcThreshold = 0 (per docs) — set Infinity truncates to 0 anyway (4b).
+  4f. under gcThreshold=Infinity, drop two large refs (plain, no cycles):
+      before: mallocSize=75128, memoryUsedSize=64098
+      after:  mallocSize=75200, memoryUsedSize=64154
+      Δ      : mallocSize=72, memoryUsedSize=56
+      → refcount-based free fires regardless of threshold; ~4.8MB freed,
+        leaving only the script overhead (~5KB).
+  4g. under gcThreshold=Infinity, allocate 500 * 8KB = 4MB anchored arrays:
+      baseline:       mallocSize=75128, memoryUsedSize=64098
+      after alloc:    mallocSize=4387084, memoryUsedSize=4092288
+      Δ (raw allocs): mallocSize=4311956, memoryUsedSize=4028190
+      → no auto-GC fired (would have shown as mallocSize dip mid-loop);
+        malloc_size grew monotonically by exactly the alloc cost.
+
+=== probe done ===

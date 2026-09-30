@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · 跨边界调用形态对比:runtime bundle vs 逐函数注入</title>
+<style>
+  :root {
+    --accent: #2563eb;
+    --ink: #1a1a1a;
+    --dim: #6b7280;
+    --line: #e5e7eb;
+    --bg: #fafafa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.65;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 40px 28px 80px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 0 0 14px; letter-spacing: .02em; }
+  .lede { font-size: 1.02rem; margin: 8px 0 14px; }
+  .meta { color: var(--dim); font-size: .85rem; margin: 0 0 6px; }
+  section {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin-top: 22px;
+  }
+  .badge {
+    display: inline-block; font-size: .75rem; font-weight: 600; letter-spacing: .06em;
+    color: var(--accent); border: 1px solid var(--accent); border-radius: 4px;
+    padding: 1px 7px; vertical-align: 2px; margin-right: 8px;
+  }
+  /* 状态面板 */
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 32px; }
+  @media (max-width: 640px) { .fields { grid-template-columns: 1fr; } }
+  .field { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dotted var(--line); }
+  .field .k { color: var(--dim); }
+  .field .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .field.emph .v { color: var(--accent); }
+  .field.head { border-bottom: 1px solid var(--line); margin-top: 10px; }
+  .field.head .k { font-weight: 700; color: var(--ink); }
+  .note { margin-top: 12px; font-size: .9rem; color: var(--dim); }
+  .note b { color: var(--ink); }
+  /* 自由调节 */
+  .ctlrow { display: flex; align-items: center; gap: 14px; margin: 10px 0; flex-wrap: wrap; }
+  .ctlrow label { width: 130px; color: var(--dim); font-size: .9rem; flex-shrink: 0; }
+  .ctlrow input[type=range] { flex: 1; min-width: 180px; accent-color: var(--accent); }
+  .ctlrow .val { width: 92px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px; }
+  button {
+    font: inherit; font-size: .88rem;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
+    padding: 5px 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .groupname { width: 130px; color: var(--dim); font-size: .9rem; flex-shrink: 0; }
+  /* 图 */
+  svg { width: 100%; height: auto; display: block; }
+  .caption { color: var(--dim); font-size: .85rem; margin-top: 8px; }
+  /* 走查 */
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .desc { background: var(--bg); border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; font-size: .93rem; }
+  .step { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px dotted var(--line); }
+  .step:last-child { border-bottom: none; }
+  .step button { flex-shrink: 0; min-width: 230px; text-align: left; }
+  .step .watch { font-size: .88rem; color: var(--dim); }
+  .step .watch b { color: var(--ink); }
+  /* 结论 */
+  .verdict-live { font-size: 1rem; font-weight: 600; color: var(--accent); margin-bottom: 14px; }
+  .rec { border-left: 3px solid var(--accent); padding: 4px 0 4px 16px; margin: 14px 0; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  details { margin-top: 14px; font-size: .88rem; }
+  summary { cursor: pointer; color: var(--dim); }
+  table { border-collapse: collapse; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  th, td { border: 1px solid var(--line); padding: 4px 10px; text-align: right; font-size: .85rem; }
+  th { background: var(--bg); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1><span class="badge">PROTOTYPE</span>跨边界调用形态对比:runtime bundle vs 逐函数注入</h1>
+  <p class="lede">这个演示让你亲手推演一个问题:<b>hld §4.5 的 runtime bundle(每 tick 只跨宿主边界两次)是否真比逐函数注入(每次 API 调用跨边界)显著省时?</b>调节左边的战场快照行为(快照多大、脚本每 tick 打多少查询/行动/寻路调用),看两形态每 tick 的跨边界耗时曲线在哪里交叉、差多少倍。</p>
+  <p class="meta">throwaway 原型,不进 <code>packages/</code>;结论只回答"哪个形态进 v0",bundle 打包方式细节留给实现期。</p>
+  <p class="meta">分支假设:本问题(成本/设计取舍)在 prototype skill 的两分支中更贴近 backend 逻辑问题,故按 <b>LOGIC 分支</b>构建——单文件、可分享、按键推演;核心是页面内一个可整体搬出的纯函数成本模型。</p>
+  <p class="meta">数据来源:票「沙箱行为实测 harness」FINDINGS §6 的实测单次开销(Node v24.15.0 + quickjs-wasi@3.6.2)。本页把实测单价按工作负载组合成每 tick 成本,属线性外推,未重新实测;实测点见文末校准表。</p>
+</header>
+
+<section id="state">
+  <h2>当前状态</h2>
+  <div class="fields" id="fields"></div>
+  <p class="note" id="changeNote"></p>
+</section>
+
+<section id="play">
+  <h2>自由调节</h2>
+  <div class="ctlrow">
+    <span class="groupname">快照粒度</span>
+    <div class="btns" id="snapBtns"></div>
+  </div>
+  <div class="ctlrow">
+    <label for="q">查询调用 / tick</label>
+    <input type="range" id="q" min="0" max="2000" step="5">
+    <span class="val" id="qVal"></span>
+  </div>
+  <div class="ctlrow">
+    <label for="a">行动调用 / tick</label>
+    <input type="range" id="a" min="0" max="200" step="1">
+    <span class="val" id="aVal"></span>
+  </div>
+  <div class="ctlrow">
+    <label for="p">寻路调用 / tick</label>
+    <input type="range" id="p" min="0" max="10000" step="50">
+    <span class="val" id="pVal"></span>
+  </div>
+  <div class="ctlrow">
+    <span class="groupname">负载预设</span>
+    <div class="btns" id="presetBtns"></div>
+  </div>
+</section>
+
+<section id="chart">
+  <h2>耗时曲线(每 tick 跨边界耗时 × API 调用密度)</h2>
+  <div id="chartSvg"></div>
+  <p class="caption">横轴 = 每 tick API 调用总数(对数),纵轴 = 每 tick 跨边界耗时(对数)。注入形态(蓝)随调用数线性上涨;bundle 形态(黑实线)与调用数无关、只随快照粒度移动(灰虚线 = 2KB 与 64KB 参照)。十字点 = 当前配置,空心点 = 交叉点(超过它 bundle 更省)。口径:只算跨边界开销,不含 VM 内执行成本——见"盲区"。</p>
+</section>
+
+<section id="tours">
+  <h2>引导走查</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="desc" id="tourDesc"></div>
+  <div id="tourSteps"></div>
+</section>
+
+<section id="verdict">
+  <h2>结论与建议</h2>
+  <div class="verdict-live" id="verdictLive"></div>
+
+  <div class="rec">
+    <p><b>建议:保留 hld §4.5 的 runtime bundle 设计,不回退逐函数注入。</b>(§2.2.2 的回退路径照旧留档,本原型不要求删除。)</p>
+    <ul>
+      <li><b>交叉点 ≈24–210 次调用/tick</b>(随快照粒度 2KB→64KB 上移),而中局脚本遍历对象/逐单位调度的现实密度是数百次/tick——bundle 省 1.25–6 倍;病态负载(寻路轰炸)下省 45–230 倍。</li>
+      <li><b>注入形态的成本随玩家野心线性无界</b>:实测 1 万次调用 = 10.7ms/tick(单方!),对 NFR-3 是结构性风险;bundle 形态边界成本固定、只由快照粒度决定,性能面与 §5.3 的 API 计数判罚面解耦。</li>
+      <li><b>优劣不对称:输的小、赢的大</b>。注入只在交叉点以下的稀疏区更省,那里差额是几 µs~几十 µs/tick(四方合计 ≲0.25ms),对 NFR-3 无感;而稠密区/滥用区注入的劣势上不封顶(单方每 tick 毫秒级)。不值得为小赢换形态、把大输请进门。</li>
+      <li>实测单价是<b>"数字返回"的最便宜注入调用</b>(0.85µs/次);真实查询返回对象/数组更贵,注入形态的实际曲线只会更差。</li>
+    </ul>
+  </div>
+
+  <p><b>盲区(不在本对比口径,标定 NFR-3 时须补)</b>:</p>
+  <ul>
+    <li><b>host 侧快照序列化/深拷贝</b>:bundle 形态每 tick 每方要做一次(回放路径本来也序列化状态,粗判不翻转结论,但单场墙钟预算里是真实成本)。</li>
+    <li><b>VM 内执行成本差</b>:bundle 形态的查询与 <code>findPath</code>(A*)在 VM 内用 QuickJS 解释执行,比宿主 V8 慢——寻路轰炸下成本从"边界"转移到"VM 计算",由指令计数 + API 计数裁决(hld §4.7/§5.3 的既定设计),不属于形态对比。</li>
+    <li>模型是 9+2 个 µs 级实测点的线性外推,噪声 ±3–4%(1KB 档实测点本身离散 11.1–24.7µs)。</li>
+  </ul>
+
+  <details>
+    <summary>校准表:票「沙箱行为实测 harness」FINDINGS §6 实测点与本模型拟合</summary>
+    <table>
+      <tr><th>形态 A:tick µs</th><th>drain 0 条</th><th>10 条</th><th>100 条</th></tr>
+      <tr><td>快照 1KB</td><td>15.7</td><td>11.1</td><td>24.7</td></tr>
+      <tr><td>快照 16KB</td><td>54.0</td><td>58.4</td><td>67.2</td></tr>
+      <tr><td>快照 64KB</td><td>173.4</td><td>176.2</td><td>185.7</td></tr>
+    </table>
+    <table>
+      <tr><th>形态 B</th><th>实测</th></tr>
+      <tr><td>单次注入调用(数字返回,密度 10–10000)</td><td>0.85–0.90 µs</td></tr>
+      <tr><td>单次(仅 1 次)</td><td>1.23 µs</td></tr>
+      <tr><td>空 tick callFunction 蹦床</td><td>0.66–0.88 µs</td></tr>
+    </table>
+    <p>本模型拟合:A = 15µs(双桥+蹦床+host 取数) + 2.55µs/KB × 快照 + 0.12µs × intents 行动数;B = 0.7µs + 0.85µs × 调用数。行动调用即 intents 条数(每行动一条);查询/寻路不产生 intents。</p>
+  </details>
+</section>
+
+</main>
+
+<script>
+"use strict";
+/* ═══════════════════════════════════════════════════════════════
+   CostModel —— 纯函数成本模型(无 DOM、无副作用,可整体搬出)
+   标定自票「沙箱行为实测 harness」FINDINGS §6 的实测单次开销。
+   ═══════════════════════════════════════════════════════════════ */
+const CostModel = (() => {
+  const CALIB = {
+    bundleFixedUs: 15,       // 每 tick 固定:__setSnapshot + __drainIntents 双桥 + 蹦床 + host toString 取数(9 点拟合截距 14–19µs)
+    bundlePerKbUs: 2.55,     // 快照 + intents 字符串,每 KB
+    bundlePerIntentUs: 0.12, // 每条 intent
+    injectFixedUs: 0.7,      // callFunction 蹦床
+    injectPerCallUs: 0.85,   // 单次注入调用(数字返回口径)
+  };
+  const intentsOf = (cfg) => cfg.actions;
+  const callsOf   = (cfg) => cfg.queries + cfg.actions + cfg.pathfinds;
+  // 形态 A:runtime bundle——每 tick 两次跨边界,成本 ∝ 快照粒度 + intents 数,与调用数无关
+  const bundleTickUs   = (cfg) => CALIB.bundleFixedUs + CALIB.bundlePerKbUs * cfg.snapshotKb + CALIB.bundlePerIntentUs * intentsOf(cfg);
+  // 形态 B:逐函数注入——每次 API 调用一次跨边界,成本 ∝ 调用数
+  const injectedTickUs = (cfg) => CALIB.injectFixedUs + CALIB.injectPerCallUs * callsOf(cfg);
+  // 交叉点:B 追平 A 所需的调用数/tick
+  const crossoverCalls = (cfg) => Math.max(0, (bundleTickUs(cfg) - CALIB.injectFixedUs) / CALIB.injectPerCallUs);
+  const compare = (cfg) => {
+    const a = bundleTickUs(cfg), b = injectedTickUs(cfg);
+    return { a, b, ratio: b / a, winner: b > a ? "bundle" : "inject", crossover: crossoverCalls(cfg), calls: callsOf(cfg) };
+  };
+  return { CALIB, intentsOf, callsOf, bundleTickUs, injectedTickUs, crossoverCalls, compare };
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   页面状态与动作(每次动作后整体重渲染,状态全部可见)
+   ═══════════════════════════════════════════════════════════════ */
+const state = { snapshotKb: 16, queries: 100, actions: 20, pathfinds: 20, note: "初始配置:中局常规负载" };
+let tour = 0, tourStep = -1;
+
+function apply(patch, note) {
+  Object.assign(state, patch);
+  state.note = note;
+  render();
+}
+
+const SNAP_PRESETS = [2, 8, 16, 32, 64];
+const LOAD_PRESETS = [
+  { name: "稀疏(开局)",    patch: { snapshotKb: 2,  queries: 15,  actions: 3,  pathfinds: 5 } },
+  { name: "常规(中局)",    patch: { snapshotKb: 16, queries: 100, actions: 20, pathfinds: 20 } },
+  { name: "密集(满编调度)", patch: { snapshotKb: 32, queries: 400, actions: 50, pathfinds: 50 } },
+  { name: "轰炸(滥用)",    patch: { snapshotKb: 8,  queries: 50,  actions: 10, pathfinds: 2000 } },
+];
+
+const SCENARIOS = [
+  {
+    key: "query", name: "查询为主:遍历战场",
+    desc: "中局脚本每 tick 遍历全场对象,对每个单位做查询,再下达少量行动——最常见的脚本形态。看两形态的差距有多大、交叉点在哪。",
+    steps: [
+      { label: "1. 开局几次查询(16KB 快照)",
+        set: { snapshotKb: 16, queries: 4, actions: 0, pathfinds: 0 },
+        watch: "调用只有 4 次,远在交叉点(≈66 次)之下:注入 ≈<b>4µs</b> vs bundle ≈<b>56µs</b>,<b>注入省 ~13 倍</b>——调用越稀疏,bundle 的固定快照成本摊得越亏。这格是注入的地盘,看下一步它守不守得住。" },
+      { label: "2. 遍历 200 个对象(+396 查询,5 行动)",
+        set: { snapshotKb: 16, queries: 400, actions: 5, pathfinds: 0 },
+        watch: "调用冲到 405 次/tick,远超交叉点 ≈66 次:bundle ≈<b>56µs</b> vs 注入 ≈<b>345µs</b>,bundle 省 ~6 倍。" },
+      { label: "3. 换大地图(快照 64KB)",
+        set: { snapshotKb: 64, queries: 400, actions: 5, pathfinds: 0 },
+        watch: "bundle 随快照线性涨到 ≈<b>179µs</b>,交叉点抬到 ≈210 次——但 405 次依旧超,bundle 仍省 ~2 倍。" },
+    ],
+  },
+  {
+    key: "action", name: "action 为主:军团调度",
+    desc: "每 tick 给每个单位下移动/攻击指令,行动调用(intents)占比高、快照偏大(32KB)。这是 bundle 优势最小的形态——看它在最坏情况下还剩多少。",
+    steps: [
+      { label: "1. 先头 10 个单位动起来",
+        set: { snapshotKb: 32, queries: 20, actions: 10, pathfinds: 0 },
+        watch: "30 次调用、交叉点 ≈115 次——还在下面:<b>注入省 ~3.7 倍</b>。大快照让 bundle 起步就 ~98µs,这是注入的甜区。" },
+      { label: "2. 满编 50 单位调度",
+        set: { snapshotKb: 32, queries: 100, actions: 50, pathfinds: 0 },
+        watch: "150 次调用刚过交叉点 ≈120 次:bundle ≈<b>103µs</b> vs 注入 ≈<b>128µs</b>——bundle 只省 1.25 倍,<b>全图最贴近的一格</b>。" },
+      { label: "3. 骑兵二次移动(§4.4 重复结算,行动翻倍)",
+        set: { snapshotKb: 32, queries: 150, actions: 100, pathfinds: 0 },
+        watch: "250 次调用:bundle ≈<b>109µs</b> vs 注入 ≈<b>213µs</b>,差距随密度继续拉开——bundle 平坦,注入线性。" },
+    ],
+  },
+  {
+    key: "path", name: "寻路轰炸:A* 压制",
+    desc: "脚本用 findPath 做算力攻击(hld §4.7 明确要求计入 API 预算)。看滥用者能把注入形态拖多慢,bundle 的边界成本是否纹丝不动。",
+    steps: [
+      { label: "1. 正常寻路(20 次 findPath)",
+        set: { snapshotKb: 8, queries: 30, actions: 10, pathfinds: 20 },
+        watch: "60 次调用、交叉点 ≈43 次:bundle ≈<b>37µs</b> vs 注入 ≈<b>52µs</b>,刚过线。" },
+      { label: "2. 每 tick 2000 次 findPath 轰炸",
+        set: { snapshotKb: 8, queries: 30, actions: 10, pathfinds: 2000 },
+        watch: "注入飙到 ≈<b>1735µs</b>(1.7ms/tick/方),bundle 恒定 ≈<b>37µs</b>——省 <b>~47 倍</b>。" },
+      { label: "3. 顶到 1 万次(实测口径)",
+        set: { snapshotKb: 8, queries: 30, actions: 10, pathfinds: 10000 },
+        watch: "注入 ≈<b>8.5ms/tick/方</b>(M6 实测同口径 10.7ms),四方串行 = 单 tick 十几毫秒起步——<b>NFR-3 直接被滥用者杀死</b>;bundle 仍是 ~37µs(成本转移到 VM 内 A*,由预算裁决)。" },
+    ],
+  },
+  {
+    key: "edge", name: "边缘:开局小图侦察",
+    desc: "反方最有利的用例:小快照、极稀疏调用。看注入形态赢多少、赢多久——如果结论在这里反转,才需要回退。",
+    steps: [
+      { label: "1. 小地图开局(2KB,23 次调用)",
+        set: { snapshotKb: 2, queries: 15, actions: 3, pathfinds: 5 },
+        watch: "交叉点 ≈24 次,当前 23 次正好压线:bundle ≈<b>20.5µs</b> vs 注入 ≈<b>20.3µs</b>——<b>打平</b>。" },
+      { label: "2. 侦察展开(48 次调用)",
+        set: { snapshotKb: 2, queries: 40, actions: 3, pathfinds: 5 },
+        watch: "越线只要 ~24 次调用:bundle 反超到省 2 倍。开局窗口里两形态都是 ~20µs 量级,<b>对 NFR-3 无感</b>——这是「注入赢、但赢得不重要」的全部地盘。" },
+    ],
+  },
+];
+
+/* ═══════════════════════════════════════════════════════════════
+   渲染
+   ═══════════════════════════════════════════════════════════════ */
+const $ = (id) => document.getElementById(id);
+const fmt = (us) => us >= 1000 ? (us / 1000).toFixed(2) + " ms" : us.toFixed(1) + " µs";
+
+function render() {
+  const r = CostModel.compare(state);
+  const better = r.winner === "bundle" ? "bundle" : "注入";
+  const ratio  = r.ratio >= 1 ? r.ratio : 1 / r.ratio;
+
+  $("fields").innerHTML = [
+    field("快照粒度", state.snapshotKb + " KB"),
+    field("API 调用合计", r.calls + " 次/tick"),
+    field("— 查询调用", state.queries + " 次/tick"),
+    field("— 行动调用(= intents)", state.actions + " 次/tick"),
+    field("— 寻路调用", state.pathfinds + " 次/tick"),
+    field("每 tick intents 条数", CostModel.intentsOf(state) + " 条"),
+    fieldHead("每 tick 跨边界耗时"),
+    field("runtime bundle(每 tick 2 次跨边界)", fmt(r.a), true),
+    field("逐函数注入(每调用 1 次跨边界)", fmt(r.b), true),
+    field("谁更省", better + " 省 " + ratio.toFixed(1) + " 倍"),
+    field("当前交叉点", "≈ " + Math.ceil(r.crossover) + " 次调用/tick"),
+    field("距交叉点", r.calls > r.crossover ? "已超 " + (r.calls - Math.ceil(r.crossover)) + " 次 → bundle 更省" : "还差 " + (Math.ceil(r.crossover) - r.calls) + " 次 → 注入更省"),
+  ].join("");
+  $("changeNote").innerHTML = "<b>本轮变化:</b>" + state.note;
+
+  $("qVal").textContent = state.queries + " 次";
+  $("aVal").textContent = state.actions + " 次";
+  $("pVal").textContent = state.pathfinds + " 次";
+  $("q").value = state.queries;
+  $("a").value = state.actions;
+  $("p").value = state.pathfinds;
+  for (const b of document.querySelectorAll("#snapBtns button"))
+    b.classList.toggle("on", Number(b.dataset.kb) === state.snapshotKb);
+
+  renderChart(r);
+  $("verdictLive").textContent =
+    "当前配置:bundle " + fmt(r.a) + "/tick,注入 " + fmt(r.b) + "/tick → " + better + " 省 " + ratio.toFixed(1) +
+    " 倍(交叉点 ≈" + Math.ceil(r.crossover) + " 次调用/tick,当前 " + r.calls + " 次)。";
+}
+
+function field(k, v, emph) {
+  return '<div class="field' + (emph ? " emph" : "") + '"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>';
+}
+function fieldHead(k) {
+  return '<div class="field head"><span class="k">' + k + '</span><span class="v"></span></div>';
+}
+
+function renderChart(r) {
+  const W = 860, H = 400, m = { l: 64, r: 130, t: 18, b: 44 };
+  const XMIN = 1, XMAX = 20000, YMIN = 1, YMAX = 30000;
+  const lx = (v) => m.l + (Math.log10(v) - Math.log10(XMIN)) / (Math.log10(XMAX) - Math.log10(XMIN)) * (W - m.l - m.r);
+  const ly = (v) => H - m.b - (Math.log10(v) - Math.log10(YMIN)) / (Math.log10(YMAX) - Math.log10(YMIN)) * (H - m.t - m.b);
+
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+  // 网格与坐标标注
+  for (const xt of [1, 10, 100, 1000, 10000]) {
+    s += '<line x1="' + lx(xt) + '" y1="' + m.t + '" x2="' + lx(xt) + '" y2="' + (H - m.b) + '" stroke="#e5e7eb"/>';
+    s += '<text x="' + lx(xt) + '" y="' + (H - m.b + 18) + '" text-anchor="middle" font-size="12" fill="#6b7280">' + xt + '</text>';
+  }
+  for (const yt of [1, 10, 100, 1000, 10000]) {
+    s += '<line x1="' + m.l + '" y1="' + ly(yt) + '" x2="' + (W - m.r) + '" y2="' + ly(yt) + '" stroke="#e5e7eb"/>';
+    s += '<text x="' + (m.l - 8) + '" y="' + (ly(yt) + 4) + '" text-anchor="end" font-size="12" fill="#6b7280">' + (yt >= 1000 ? yt / 1000 + "ms" : yt + "µs") + '</text>';
+  }
+  s += '<text x="' + (W - m.r) + '" y="' + (H - 8) + '" text-anchor="end" font-size="12" fill="#6b7280">API 调用数 / tick →</text>';
+  s += '<text x="' + m.l + '" y="' + (m.t - 4) + '" font-size="12" fill="#6b7280">↑ 每 tick 跨边界耗时</text>';
+
+  // 注入形态:对角线
+  let pts = [];
+  for (let i = 0; i <= 80; i++) {
+    const x = Math.pow(10, Math.log10(XMIN) + (Math.log10(XMAX) - Math.log10(XMIN)) * i / 80);
+    pts.push(lx(x).toFixed(1) + "," + ly(Math.min(YMAX, CostModel.injectedTickUs({ queries: x }))).toFixed(1));
+  }
+  s += '<polyline points="' + pts.join(" ") + '" fill="none" stroke="#2563eb" stroke-width="2"/>';
+  s += '<text x="' + (W - m.r + 8) + '" y="' + ly(Math.min(YMAX, CostModel.injectedTickUs({ queries: XMAX }))) + '" font-size="12" fill="#2563eb">逐函数注入</text>';
+  s += '<text x="' + (W - m.r + 8) + '" y="' + (ly(Math.min(YMAX, CostModel.injectedTickUs({ queries: XMAX }))) + 15) + '" font-size="11" fill="#2563eb">0.85µs/次</text>';
+
+  // bundle 形态:2KB 与 64KB 参照(虚线)+ 当前快照粒度(黑实线)
+  for (const kb of [2, 64]) {
+    const y = ly(CostModel.bundleTickUs({ snapshotKb: kb, actions: 0 }));
+    s += '<line x1="' + m.l + '" y1="' + y + '" x2="' + (W - m.r) + '" y2="' + y + '" stroke="#9ca3af" stroke-width="1" stroke-dasharray="5 4"/>';
+    s += '<text x="' + (W - m.r + 8) + '" y="' + (y + 4) + '" font-size="11" fill="#9ca3af">bundle ' + kb + 'KB</text>';
+  }
+  const ya = ly(r.a);
+  s += '<line x1="' + m.l + '" y1="' + ya + '" x2="' + (W - m.r) + '" y2="' + ya + '" stroke="#1a1a1a" stroke-width="2"/>';
+  s += '<text x="' + (W - m.r + 8) + '" y="' + (ya - 8) + '" font-size="12" fill="#1a1a1a">bundle 当前 ' + fmt(r.a) + '</text>';
+
+  // 交叉点
+  const cx = Math.min(Math.max(r.crossover, XMIN), XMAX);
+  s += '<line x1="' + lx(cx) + '" y1="' + ya + '" x2="' + lx(cx) + '" y2="' + (H - m.b) + '" stroke="#6b7280" stroke-width="1" stroke-dasharray="3 3"/>';
+  s += '<circle cx="' + lx(cx) + '" cy="' + ya + '" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="2"/>';
+  s += '<text x="' + (lx(cx) + 10) + '" y="' + (ya - 10) + '" font-size="12" fill="#6b7280">交叉点 ≈' + Math.ceil(r.crossover) + ' 次</text>';
+
+  // 当前配置点(两条线上各一个十字)
+  const xc = Math.min(Math.max(r.calls, XMIN), XMAX);
+  s += cross(lx(xc), ya, "#1a1a1a");
+  s += cross(lx(xc), ly(Math.min(YMAX, r.b)), "#2563eb");
+  s += "</svg>";
+  $("chartSvg").innerHTML = s;
+
+  function cross(x, y, color) {
+    return '<line x1="' + (x - 6) + '" y1="' + y + '" x2="' + (x + 6) + '" y2="' + y + '" stroke="' + color + '" stroke-width="2"/>' +
+           '<line x1="' + x + '" y1="' + (y - 6) + '" x2="' + x + '" y2="' + (y + 6) + '" stroke="' + color + '" stroke-width="2"/>';
+  }
+}
+
+function renderTour() {
+  const sc = SCENARIOS[tour];
+  $("tabs").innerHTML = SCENARIOS.map((s2, i) =>
+    '<button data-i="' + i + '"' + (i === tour ? ' class="on"' : "") + ">" + s2.name + "</button>").join("");
+  $("tourDesc").textContent = sc.desc;
+  $("tourSteps").innerHTML = sc.steps.map((st, i) => {
+    const done = i <= tourStep;
+    return '<div class="step"><button data-step="' + i + '"' + (done ? ' class="on"' : "") + ">" +
+      (done ? "✓ " : "") + st.label + "</button><div class=\"watch\">" + st.watch + "</div></div>";
+  }).join("");
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   事件:每个动作都经 apply() → 全量重渲染
+   ═══════════════════════════════════════════════════════════════ */
+$("snapBtns").innerHTML = SNAP_PRESETS.map((kb) => '<button data-kb="' + kb + '">' + kb + " KB</button>").join("");
+$("snapBtns").addEventListener("click", (e) => {
+  const kb = e.target.dataset && e.target.dataset.kb;
+  if (kb) apply({ snapshotKb: Number(kb) }, "快照粒度 → " + kb + " KB(bundle 形态成本随 KB 线性移动,注入形态不动)");
+});
+$("presetBtns").innerHTML = LOAD_PRESETS.map((p, i) => '<button data-p="' + i + '">' + p.name + "</button>").join("");
+$("presetBtns").addEventListener("click", (e) => {
+  const i = e.target.dataset && e.target.dataset.p;
+  if (i !== undefined && i !== "") apply(LOAD_PRESETS[i].patch, "载入负载预设「" + LOAD_PRESETS[i].name + "」");
+});
+for (const [id, key, label] of [["q", "queries", "查询调用"], ["a", "actions", "行动调用"], ["p", "pathfinds", "寻路调用"]]) {
+  $(id).addEventListener("input", (e) => {
+    const patch = {}; patch[key] = Number(e.target.value);
+    apply(patch, label + " → " + e.target.value + " 次/tick(" + (key === "actions" ? "行动同时是 intents 条数" : "注入形态每 次跨边界,bundle 形态零成本") + ")");
+  });
+}
+$("tabs").addEventListener("click", (e) => {
+  const i = e.target.dataset && e.target.dataset.i;
+  if (i === undefined || i === "") return;
+  tour = Number(i); tourStep = -1;
+  apply(SCENARIOS[tour].steps[0].set, "进入走查「" + SCENARIOS[tour].name + "」,已重置到已知初始状态");
+  renderTour();
+});
+$("tourSteps").addEventListener("click", (e) => {
+  const i = e.target.dataset && e.target.dataset.step;
+  if (i === undefined || i === "") return;
+  const st = SCENARIOS[tour].steps[Number(i)];
+  tourStep = Math.max(tourStep, Number(i));
+  apply(st.set, "走查「" + SCENARIOS[tour].name + "」第 " + (Number(i) + 1) + " 步:" + st.label);
+  renderTour();
+});
+
+renderTour();
+render();
+</script>
+</body>
+</html>

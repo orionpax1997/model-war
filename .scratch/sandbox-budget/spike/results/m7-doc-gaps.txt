@@ -1,0 +1,9 @@
+M7.1.globals: {"URL":"undefined","URLSearchParams":"undefined","TextEncoder":"undefined","TextDecoder":"undefined","Headers":"undefined","Request":"undefined","Response":"undefined","crypto":"undefined","structuredClone":"undefined","fetch":"undefined","require":"undefined","process":"undefined","console":"undefined","setTimeout":"undefined","setInterval":"undefined","queueMicrotask":"function","eval":"function","Date":"function","Math":"object","Promise":"function","Proxy":"function","WeakRef":"function","Atomics":"undefined","SharedArrayBuffer":"function","WebAssembly":"undefined","Intl":"undefined","performance":"object"}
+M7.1.dateTzDefault: -480
+M7.1.evalWorks: 2
+M7.2.staticImport: ERR {"ctor":"JSException","name":"SyntaxError","message":"Unexpected identifier 'x'","isJSException":true}
+M7.2.dynamicImport: {}
+M7.2.importMeta: ERR {"ctor":"JSException","name":"SyntaxError","message":"import.meta only valid in module code","isJSException":true}
+M7.2.moduleModeNoLoader: returned promise handle: object
+M7.3.syntaxError: {"ctor":"JSException","name":"SyntaxError","message":"function name expected","isJSException":true}
+M7.3.vmUsableAfterSyntaxError: true

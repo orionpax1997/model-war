@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | v2.0 |
+| 版本 | v2.1 |
 | 状态 | 待评审 |
 | 上游文档 | [fsr.md](./fsr.md)(定位与风险)、[srs.md](./srs.md)(需求,FR/NFR 编号来源)、[gdd.md](./gdd.md)(规则机制与设计约束) |
 | 覆盖范围 | srs §1.1 的五个 v0 交付物 |
@@ -108,7 +108,7 @@
 | 属性测试 | **fast-check** | 把 srs 的 AC 写成可执行命题,见下表 |
 | 确定性回放 | 固定种子 + 固定脚本 → 逐 tick `stateHash` 断言;`modelwar verify` 重算比对 | FR-2 AC1、NFR-1 AC |
 | 地图校验 | map-lint 对 `maps/` 全量断言四重旋转对称 | FR-1 AC2 |
-| 规则文档验收 | `benchmarks/` 下人类手写 ≥2 个基准脚本,仅凭 `docs/rules-v1` 编写 | FR-10 AC1、srs §4 第 2 条(人工流程,测试仅保证可运行) |
+| 规则文档验收 | `benchmarks/` 下模型生成 ≥2 个基准脚本,仅凭 `docs/rules-v1` 编写 | FR-10 AC1、srs §4 第 2 条(模型 dry-run 流程,测试仅保证可运行) |
 | 变异测试 | StrykerJS(`@stryker-mutator/core` + Vitest runner),夜跑 | 度量测试有效性 |
 
 属性测试(收益最高的一层),把 AC 直接写成命题:
@@ -175,7 +175,7 @@
 | 2. 静态 | oxlint(`--type-aware`,含 `no-float-literal`)、`oxfmt --check`、dependency-cruiser、生成物漂移检查 `git diff --exit-code` | FR-2 AC3、FR-10 AC2、NFR-4 AC2 |
 | 3. 单测+属性 | Vitest 全量(结算、属性、沙箱裁决、地图校验) | FR-1/3/4 |
 | 4. 集成 | 样例对局端到端 + `modelwar verify` 重放一致性 + 重跑 10 次 hash 断言 | FR-2、NFR-1 |
-| 5. 基准 | `benchmarks/` 双人类基准脚本对打一场,断言正常终局(不判策略胜负) | srs §4 第 2 条的回归防线 |
+| 5. 基准 | `benchmarks/` 双模型基准脚本对打一场,断言正常终局(不判策略胜负) | srs §4 第 2 条的回归防线 |
 
 **夜间流水线**(定时或手动,不阻塞 PR):StrykerJS 变异测试(engine 优先);对 CI 可取到的对局样本批量 `modelwar verify`,守护"历史结果永远可复算"(NFR-2)。
 
@@ -249,7 +249,7 @@ model-war/
 │  ├─ engine/                 # 确定性内核 + 沙箱(driver/processor/world/snapshot/runner/sandbox-runtime/replay-writer/ruleset-loader)
 │  ├─ runner/                 # 赛季调度、进程池、排名与种子纯函数、报告、叙事战报
 │  └─ gen/                    # 脚本生成管线(离线,永不进对局进程)
-├─ benchmarks/                # 人类基准脚本(≥2)
+├─ benchmarks/                # 模型基准脚本(≥2)
 ├─ prompts/                   # gen 的 prompt 模板(数据文件)
 ├─ rulesets/v1.json           # 规则数值数据文件(取值真源)
 ├─ maps/                      # 地图 JSON
@@ -489,7 +489,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只把该场对局作废,不改变对局内的胜负判定。
 
-**全部上限取值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限)为 `rulesets/v1.json` 中的参数**,用 ≥2 个人类基准脚本标定(srs §4 第 2 条)。标定注脚:`memoryTickCeiling` 取值须 > 正常脚本 tick 末存活峰值 + 余量,且低于读数封顶(`memoryLimit − 最大单次分配`)。升级条款:若赛中"tick 内瞬时借满即还"型脚本普遍牟利,升级为 patch quickjs-wasi 加 sticky OOM 标志、判据回到确证事件(后备设计已评估,触发条件由运营定)。
+**全部上限取值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限)为 `rulesets/v1.json` 中的参数**,用 ≥2 个模型基准脚本标定(srs §4 第 2 条)。标定注脚:`memoryTickCeiling` 取值须 > 正常脚本 tick 末存活峰值 + 余量,且低于读数封顶(`memoryLimit − 最大单次分配`)。升级条款:若赛中"tick 内瞬时借满即还"型脚本普遍牟利,升级为 patch quickjs-wasi 加 sticky OOM 标志、判据回到确证事件(后备设计已评估,触发条件由运营定)。
 
 ## 6. 脚本契约与静态校验
 
@@ -643,7 +643,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 
 | # | 项 | 备注 |
 |---|---|---|
-| 2 | 预算参数终值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限) | 用人类基准脚本标定(srs §4 第 2 条) |
+| 2 | 预算参数终值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限) | 用模型基准脚本标定(srs §4 第 2 条) |
 | 3 | 座位轮换的效果验证 | 用基准脚本对局统计各座位胜率,验证偏置被摊平(§8.1) |
 | 5 | 工具链可用性:**TypeScript 7.0 GA 时点**、oxlint-tsgolint 的性能(决定 `check:quick` < 5s 是否成立)、oxfmt 的 conformance | 任一不成立即退化为 oxlint 普通模式 + `tsc` + Prettier(§2.2.3) |
 | 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化 |
