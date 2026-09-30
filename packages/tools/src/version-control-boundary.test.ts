@@ -12,7 +12,9 @@ const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
  * 退出码 0 = 命中,1 = 未命中;其它退出码一律当作错误抛出,不静默折算成"未命中"。
  */
 const isIgnored = (path: string): boolean => {
-  const result = spawnSync("git", ["check-ignore", "--no-index", "-q", "--", path], { cwd: repoRoot });
+  const result = spawnSync("git", ["check-ignore", "--no-index", "-q", "--", path], {
+    cwd: repoRoot,
+  });
   if (result.error !== undefined) {
     throw result.error;
   }

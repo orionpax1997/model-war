@@ -31,7 +31,7 @@ it("报错位置指向出错的那一行", () => {
 });
 
 it("非 ASCII 源码的行号列号仍指向出错处", () => {
-  const outcome = parseSource('// 中文注释占用多字节\nlet a = 1;\nlet b = ;\n', "script");
+  const outcome = parseSource("// 中文注释占用多字节\nlet a = 1;\nlet b = ;\n", "script");
   expect(outcome.ok).toBe(false);
   if (outcome.ok) {
     return;

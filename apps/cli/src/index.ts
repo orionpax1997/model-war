@@ -41,7 +41,9 @@ const commandHelpText = (command: CommandSpec): string =>
 /** 在第一个非选项 token 处切开:其后(含它自己)属子命令。 */
 const splitAtCommand = (argv: readonly string[]): { head: string[]; tail: string[] } => {
   const at = argv.findIndex((token) => !token.startsWith("-"));
-  return at === -1 ? { head: [...argv], tail: [] } : { head: argv.slice(0, at), tail: argv.slice(at) };
+  return at === -1
+    ? { head: [...argv], tail: [] }
+    : { head: argv.slice(0, at), tail: argv.slice(at) };
 };
 
 const main = async (argv: readonly string[]): Promise<number> => {

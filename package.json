@@ -12,7 +12,17 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "typecheck": "tsc -b --pretty false",
-    "test": "pnpm run typecheck && vitest run"
+    "test": "pnpm run typecheck && vitest run",
+    "test:props": "vitest run --project property",
+    "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.json vitest.config.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
+    "lint": "oxlint apps packages",
+    "lint:types": "tsc -b --pretty false && oxlint --type-aware apps packages",
+    "coupling": "node packages/tools/src/toolchain-coupling.ts",
+    "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling",
+    "check:types": "pnpm run check:quick && pnpm run lint:types",
+    "check:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
+    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps",
+    "test:gates": "vitest run --project gates"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
