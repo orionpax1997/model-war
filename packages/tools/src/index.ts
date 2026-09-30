@@ -48,9 +48,16 @@ export const parseSource = (source: string, kind: SourceKind = "module"): ParseO
   };
 };
 
-/** 字符偏移 → 1 起的行列。 */
+/**
+ * 字符偏移 → 1 起的行列。
+ *
+ * oxc-parser 0.152.0 的 `start`/`end` 是**字符偏移**(JS 字符串下标,UTF-16 code unit),
+ * 不是 UTF-8 字节偏移——实测:`const s = "中";\nconst n = 1.5;` 里字面量 `start` 为 25,
+ * 与字符下标一致,而同一位置的字节偏移是 27。`parse-source.test.ts` 里的非 ASCII 用例
+ * 把这条钉住,改坏了会红。
+ */
 const positionAt = (source: string, offset: number): { line: number; column: number } => {
-  const head = source.slice(0, offset);
+  const head = source.slice(0, Math.max(0, Math.min(offset, source.length)));
   const lines = head.split("\n");
   return { line: lines.length, column: (lines[lines.length - 1]?.length ?? 0) + 1 };
 };
