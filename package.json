@@ -12,7 +12,9 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "typecheck": "tsc -b --pretty false",
-    "test": "pnpm run typecheck && vitest run"
+    "test": "pnpm run typecheck && vitest run",
+    "check:no-float": "node packages/tools/src/gate/run-no-float-gate.ts",
+    "check:quick": "pnpm run check:no-float"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
