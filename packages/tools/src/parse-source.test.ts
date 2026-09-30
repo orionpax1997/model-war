@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { parseSource } from "./index.js";
+import { parseSource } from "./index.ts";
 
 it("合法的 module 源码通过", () => {
   expect(parseSource("export const answer = 42;\n")).toEqual({ ok: true });
@@ -42,4 +42,20 @@ it("非 ASCII 源码的行号列号仍指向出错处", () => {
 
 it("同一段源码的判定稳定可复现", () => {
   expect(parseSource("export const x = 1;\n")).toEqual(parseSource("export const x = 1;\n"));
+});
+
+/**
+ * 上面那条非 ASCII 用例**钉不住**偏移口径:出错处另起一行,行号与列号都与偏移口径无关。
+ * 这条才钉得住——非 ASCII 与出错处在**同一行**,列号在「字符偏移」与「UTF-8 字节偏移」两种
+ * 解释下差 5(24 vs 29)。把 `positionAt` 改成按 `Buffer.byteLength` 算列,本条会红;
+ * 只看行号的那条不会变。
+ */
+it("同一行内非 ASCII 之后的列号按字符偏移计(而非字节)", () => {
+  const outcome = parseSource('const 名 = "中"; let b = ;\n');
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) {
+    return;
+  }
+  expect(outcome.errors[0]?.line).toBe(1);
+  expect(outcome.errors[0]?.column).toBe(24);
 });
