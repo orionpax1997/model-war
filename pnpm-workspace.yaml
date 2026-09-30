@@ -1,6 +1,6 @@
 packages:
-  - 'apps/*'
-  - 'packages/*'
+  - "apps/*"
+  - "packages/*"
 
 # 依赖构建脚本白名单:pnpm 12 把这条策略放在 pnpm-workspace.yaml 顶层(`allowBuilds` 布尔映射)。
 # package.json#pnpm.onlyBuiltDependencies 自 pnpm v11 起不再被读取,写在那里只会得到一条 WARN。
@@ -13,6 +13,6 @@ allowBuilds:
 # 这三条由 pnpm 自己写入(按版本号限定,是最窄的豁免)。
 # 可整段删除的时点:2026-09-30T11:30Z 之后——删掉本段再跑一次 `corepack pnpm install` 能过即可删。
 minimumReleaseAgeExclude:
-  - '@vitest/mocker@5.0.3'
-  - '@vitest/spy@5.0.3'
+  - "@vitest/mocker@5.0.3"
+  - "@vitest/spy@5.0.3"
   - vitest@5.0.3

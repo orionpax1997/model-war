@@ -19,7 +19,9 @@ it("每个组合是四个互不相同的座位", () => {
 });
 
 it("结果只依赖名册内容,不依赖入参顺序", () => {
-  expect(enumerateMatchUps(["e", "b", "d", "a", "c"])).toEqual(enumerateMatchUps(["a", "b", "c", "d", "e"]));
+  expect(enumerateMatchUps(["e", "b", "d", "a", "c"])).toEqual(
+    enumerateMatchUps(["a", "b", "c", "d", "e"]),
+  );
 });
 
 it("名册去重后重复名不再参与组合", () => {
