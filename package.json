@@ -1,0 +1,31 @@
+{
+  "name": "model-war",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "四人对称 RTS 对战平台:规则、引擎与复算工具链",
+  "packageManager": "pnpm@12.8.1",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b --pretty false",
+    "test": "pnpm run typecheck && vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "ajv": "^8.20.0",
+    "dependency-cruiser": "^18.4.0",
+    "esbuild": "^0.28.2",
+    "fast-check": "^4.10.2",
+    "oxc-parser": "^0.152.0",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "quickjs-wasi": "3.6.2",
+    "typescript": "7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

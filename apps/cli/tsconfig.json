@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/schema" },
+    { "path": "../../packages/replay" },
+    { "path": "../../packages/engine" },
+    { "path": "../../packages/runner" },
+    { "path": "../../packages/gen" }
+  ]
+}
