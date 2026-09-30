@@ -10,7 +10,9 @@ const jsonValue: fc.Arbitrary<JsonValue> = fc.oneof(
   fc.boolean(),
   fc.constant(null),
   fc.array(fc.integer(), { maxLength: 6 }),
-  fc.array(fc.dictionary(fc.string({ minLength: 1 }), fc.integer(), { maxKeys: 4 }), { maxLength: 3 }),
+  fc.array(fc.dictionary(fc.string({ minLength: 1 }), fc.integer(), { maxKeys: 4 }), {
+    maxLength: 3,
+  }),
   fc.dictionary(fc.string({ minLength: 1 }), fc.integer(), { maxKeys: 6 }),
 );
 
@@ -24,12 +26,15 @@ it("任意 JSON 值都得到 64 位小写十六进制", () => {
 
 it("键序无关:同一个映射不论按什么顺序写出,哈希相同", () => {
   fc.assert(
-    fc.property(fc.dictionary(fc.string({ minLength: 1 }), fc.integer(), { maxKeys: 8 }), (record) => {
-      const entries = Object.entries(record);
-      const forward = Object.fromEntries(entries);
-      const reversed = Object.fromEntries([...entries].reverse());
-      expect(stateHashOf(forward)).toBe(stateHashOf(reversed));
-    }),
+    fc.property(
+      fc.dictionary(fc.string({ minLength: 1 }), fc.integer(), { maxKeys: 8 }),
+      (record) => {
+        const entries = Object.entries(record);
+        const forward = Object.fromEntries(entries);
+        const reversed = Object.fromEntries([...entries].reverse());
+        expect(stateHashOf(forward)).toBe(stateHashOf(reversed));
+      },
+    ),
   );
 });
 

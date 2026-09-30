@@ -27,14 +27,26 @@ beforeAll(async () => {
   // 各包的 exports 指向 dist/,先让类型闸门把 dist 备齐。增量构建是空操作(实测 ~0.1s)。
   const typecheck = spawnSync(
     process.execPath,
-    [fileURLToPath(new URL("../../../node_modules/typescript/bin/tsc", import.meta.url)), "-b", "--pretty", "false"],
+    [
+      fileURLToPath(new URL("../../../node_modules/typescript/bin/tsc", import.meta.url)),
+      "-b",
+      "--pretty",
+      "false",
+    ],
     { cwd: repoRoot, encoding: "utf8" },
   );
   expect(typecheck.status, `tsc -b 失败:\n${typecheck.stdout}${typecheck.stderr}`).toBe(0);
 
   scratch = mkdtempSync(`${tmpdir()}/modelwar-cli-`);
   bundle = `${scratch}/modelwar.mjs`;
-  await build({ entryPoints: [entry], bundle: true, platform: "node", format: "esm", target: "node24", outfile: bundle });
+  await build({
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    outfile: bundle,
+  });
 });
 
 afterAll(() => {

@@ -25,7 +25,11 @@ it("行里的 stateHash 等于该 tick 规范化状态的哈希", () => {
 });
 
 it("nextId 与 outcome 不进 tick 行(它们是状态机与末行 result 的事)", () => {
-  const line: string = replayTickLine({ ...emptyState, nextId: 42, outcome: { rankings: [1, 2, 3, 4], reason: "timeout", territoryScores: [0, 0, 0, 0] } });
+  const line: string = replayTickLine({
+    ...emptyState,
+    nextId: 42,
+    outcome: { rankings: [1, 2, 3, 4], reason: "timeout", territoryScores: [0, 0, 0, 0] },
+  });
   expect(line).not.toContain("nextId");
   expect(line).not.toContain("rankings");
 });
