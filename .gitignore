@@ -1,2 +1,15 @@
 # Installed dependencies
 node_modules/
+
+# 构建产物(dist/ 与 tsbuildinfo 都不入库;各包 outDir 保持在包内)
+dist/
+*.tsbuildinfo
+
+# 工具临时目录
+.oxlint-cache/
+.vitest/
+
+# 对局运行产物:体量随 tick 数线性增长,且可由冻结脚本 + 规则集重生成(hld §3.1)。
+# 冻结脚本本身在 archive/ 下,必须入库,否则新克隆永远无法复算历史对局。
+runs/**
+!runs/.gitkeep
