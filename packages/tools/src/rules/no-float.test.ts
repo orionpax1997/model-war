@@ -136,6 +136,19 @@ it("非 ASCII 源码的行列仍指向出错处", () => {
   expect(violations[0]?.column).toBe(11);
 });
 
+/**
+ * 上一条**钉不住**偏移口径:出错处另起一行,两种口径下行列都一样。这条才钉得住——
+ * 非 ASCII 与违规处在**同一行**,列号在「字符偏移」与「UTF-8 字节偏移」下差 8(26 vs 34)。
+ * oxc-parser 的 `start`/`end` 是字符偏移,把 `positionAt` 改成按 `Buffer.byteLength`
+ * 算列,本条会红;上一条不会变。
+ */
+it("同一行内非 ASCII 之后的列号按字符偏移计(而非字节)", () => {
+  const violations = noFloatViolations('const 名 = "中"; const a = 1.5;\n');
+  expect(violations).toHaveLength(1);
+  expect(violations[0]?.line).toBe(1);
+  expect(violations[0]?.column).toBe(26);
+});
+
 it("语法错误被拒绝,报成违规而不是干净", () => {
   const violations = noFloatViolations("const = ;\n");
   expect(violations).toHaveLength(1);

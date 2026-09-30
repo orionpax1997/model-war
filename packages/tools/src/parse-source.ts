@@ -65,9 +65,11 @@ export const parseToAst = (source: string, kind: SourceKind = "module"): ParsedS
  * 字符偏移 → 1 起的行列。
  *
  * oxc-parser 0.152.0 的 `start`/`end` 是**字符偏移**(JS 字符串下标,UTF-16 code unit),
- * 不是 UTF-8 字节偏移——实测:`const s = "中";\nconst n = 1.5;` 里字面量 `start` 为 25,
- * 与字符下标一致,而同一位置的字节偏移是 27。`parse-source.test.ts` 里的非 ASCII 用例
- * 把这条钉住,改坏了会红。
+ * 不是 UTF-8 字节偏移——实测 `const 名 = "中"; let b = ;` 的错误偏移为 23,等于该行前缀
+ * `const 名 = "中"; let b = ` 的 UTF-16 长度,而它的 UTF-8 字节长度是 27。
+ * 这一点由两个「非 ASCII 与出错处同行」的用例钉住(`parse-source.test.ts` 与
+ * `rules/no-float.test.ts` 各一条):字节口径下它们的列号会各差 5 与 8,改坏了会红。
+ * 反过来,只断言行号、或让出错处另起一行的用例钉不住——那两种口径下结果完全一样。
  */
 export const positionAt = (source: string, offset: number): { line: number; column: number } => {
   const head = source.slice(0, Math.max(0, Math.min(offset, source.length)));
