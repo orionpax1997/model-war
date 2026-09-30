@@ -1,0 +1,18 @@
+{
+  "name": "@model-war/replay",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "回放格式 + 解析/序列化 + stateHash 原语(只依赖 schema,hld §3.1)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@model-war/schema": "workspace:*"
+  }
+}

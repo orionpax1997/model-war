@@ -1,0 +1,13 @@
+{
+  "name": "@model-war/tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "仓库自用的静态校验器:以源码形式由 Node 类型擦除直接执行,不进 dist、不设 bin(hld §3.2 唯一 bin 在 apps/cli)",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  }
+}

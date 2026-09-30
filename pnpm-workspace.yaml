@@ -1,0 +1,18 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# 依赖构建脚本白名单:pnpm 12 把这条策略放在 pnpm-workspace.yaml 顶层(`allowBuilds` 布尔映射)。
+# package.json#pnpm.onlyBuiltDependencies 自 pnpm v11 起不再被读取,写在那里只会得到一条 WARN。
+# 依赖的 install/postinstall 默认一律不跑(strictDepBuilds),未列入者会让安装以非零码退出。
+allowBuilds:
+  esbuild: true
+
+# pnpm 12 内置 minimumReleaseAge=1440(24h),并对 lockfile 做一次重新校验。
+# vitest@5.0.3 发布于 2026-09-30T11:30Z,未满 24h,不加豁免会 ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION。
+# 这三条由 pnpm 自己写入(按版本号限定,是最窄的豁免)。
+# 可整段删除的时点:2026-09-30T11:30Z 之后——删掉本段再跑一次 `corepack pnpm install` 能过即可删。
+minimumReleaseAgeExclude:
+  - '@vitest/mocker@5.0.3'
+  - '@vitest/spy@5.0.3'
+  - vitest@5.0.3
