@@ -536,7 +536,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 | 墙钟软限 | 单 tick `loop()` 执行时长 | 写入回放 events 流 `budget-soft-warning` + 报告披露;**只观测** | ✅ 不参与判罚 |
 | 墙钟硬超时 | 防宿主卡死的最后防线(如宿主回调卡死) | **不判负**:标记 `nondeterministic-timeout`,按 §8.4 与 `engine-crash` 同轨处理(重跑 / 剔除并披露) | 隔离出判罚路径,判罚仍可复现 |
 
-设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只作废该场对局,不改变对局内的胜负判定。
+设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只作废当前对局,不改变对局内的胜负判定。
 
 **全部上限取值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限)为 `rulesets/v1.json` 中的参数**,用 ≥2 个模型基准脚本标定(srs §4 第 2 条)。标定注脚:`memoryTickCeiling` 取值须 > 正常脚本 tick 末存活峰值 + 余量,且低于读数封顶(`memoryLimit − 最大单次分配`)。升级条款:若赛中"tick 内瞬时借满即还"型脚本普遍牟利,升级为 patch quickjs-wasi 加 sticky OOM 标志、判据回到确证事件(后备设计已评估,触发条件由运营定)。
 
