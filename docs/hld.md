@@ -222,6 +222,7 @@ CI 环境无网络、无模型 API、无凭证——保证 CI 上跑的永远是
 |---|---|
 | 可视化 | `depcruise --output-type dot` 生成模块依赖图,产物入 `docs/diagrams/` |
 | 规则强制 | 根目录 `.dependency-cruiser.js` 把 §3.2 全部规则写成可执行断言,违规非零退出,挂在全量门禁 `check` 上(经 `check:deps`) |
+| 基线卫生三则 | 除 §3.2 的架构规则外,配置里另有 `no-circular` / `not-to-unresolvable` / `not-to-deprecated` 三条**基线**。它们不是额外的架构主张,是让那批方向规则**真的会触发**的前提:图里有环、有解析不了的 import 时,「谁不得 import 谁」的断言会静默失去意义 |
 | 价值 | 包边界(尤其"gen 永不进对局进程"与"engine 纯函数")从口头约定变为机器门禁 |
 
 > 依赖规则与 TS project references 双保险:前者管运行时 import,后者管编译期类型引用。
@@ -316,7 +317,7 @@ packages/tools ──→ (oxc-parser 等根 devDependency;不 import 任何 @mod
 
 - `schema` 只含类型、常量与 JSON Schema,**无运行时代码**;各包共享数据格式定义不违反 NFR-4 AC2(该条款约束的是运行时进程隔离,与测试代码无关)。
 - `replay` 只依赖 `schema`;**库包一律不得含 `bin`**,唯一 bin 在 `apps/cli`。
-- `runner` 与报告/叙事代码**不得 import `engine`**:只以子进程 + 文件消费。`apps/cli` 通过 engine 公共 API 调用(match / verify / map-lint)。
+- `runner` 与报告/叙事代码**不得 import `engine`**:只以子进程 + 文件消费。`apps/cli` 通过 engine 公共 API 调用 match / verify,而 map-lint 是 CLI 自己的模块(§3.1、§9)。
 - `engine` 不 import `runner`/`gen`;`gen ⇎ engine`,且 `gen` 禁 import 任何 result 类型(FR-5 AC1)。
 - `engine` 内除 `node:crypto` 外禁一切 `node:*`。
 - `engine` 内部单向:`world → driver → processor → replay-writer`;`world → snapshot → runner(Runner 缝 → sandbox-runtime)`。`sandbox-runtime` 不 import 宿主代码,只消费 `schema` 生成的常量/API 名表。
@@ -575,7 +576,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
   "terrain": ["...", ...],          // 行字符串,'.'=平原,'#'=墙
   "sites": [ { "id": 1, "kind": "base", "x": 10, "y": 10, "initialOwner": 0 }, ... ],
   "spawnUnits": [ { "owner": 0, "type": "worker", "offset": [0,0] }, ... ],
-  "variantSlots": [ ... ]           // 变体槽位,机制见 gdd《种子变体》
+  "variantSlots": [ ... ]           // 变体槽位,机制见 gdd《地图变体》
 }
 ```
 
@@ -585,7 +586,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 ### 7.3 种子的用途
 
-规则集本身无对局内随机过程,故种子驱动**地图变体**:按地图 `variantSlots` 声明的成组四重对称墙体槽位,以种子做确定性填充(整数 LCG),保持对称性与点位布局不变。变体只做装饰性微扰,不计入风格多样性(gdd《种子变体》)。地图坐标与槽位设计是规则侧开放项(gdd《开放项》);**变体是否参与策略决策(决定 K 的边际价值)同样是规则侧开放项**。
+规则集本身无对局内随机过程,故种子驱动**地图变体**:按地图 `variantSlots` 声明的成组四重对称墙体槽位,以种子做确定性填充(整数 LCG),保持对称性与点位布局不变。变体只做装饰性微扰,不计入风格多样性(gdd《地图变体》)。地图坐标与槽位设计是规则侧开放项(gdd《开放项》);**变体是否参与策略决策(决定 K 的边际价值)同样是规则侧开放项**。
 
 ### 7.4 冻结脚本存档(`archive/<modelSlug>/<runId>/`)
 
@@ -695,7 +696,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 2 | 预算参数终值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限) | 用模型基准脚本标定(srs §4 第 2 条) |
 | 3 | 座位轮换的效果验证 | 用基准脚本对局统计各座位胜率,验证偏置被摊平(§8.1) |
 | 5a | TypeScript 7.0 GA 时点 | **已收口**:7.0.2(2026-07-08 GA,Go 实现,`tsgo` 名已取消)为精确锁版,见 ADR-0002 锁定版本表。本项关闭。 |
-| 5b | 类型感知 lint 的可用性与耗时 | **已收口**:oxlint-tsgolint 已 stable(oxlint 1.86.0 `--help` 无 experimental 标记),进 `check:types` 不再并行试跑;版本耦合形状 `7.0.<tsPatch><golintPatch>` 由 `coupling` 断言脚本强制(§2.2.3)。耗时见 §2.2.7 实测表(`check:types` 中位数 1.96s,骨架规模)。本项关闭,后续只剩随仓库规模重测。 |
+| 5b | 类型感知 lint 的可用性与耗时 | **已收口**:oxlint-tsgolint 已 stable(oxlint 1.86.0 `--help` 无 experimental 标记),进 `check:types` 不再并行试跑;版本耦合形状 `7.0.<tsPatch><golintPatch>` 由 `coupling` 断言脚本强制(§2.2.3)。耗时见 §2.2.7 实测表(只此一处,不在此复述)。本项关闭,后续只剩随仓库规模重测。 |
 | 5c | oxfmt 0.x 风险 | **已收口为接受风险**:官方称 JS/TS 已 100% 通过 Prettier conformance,未兑现的只是 1.0 发布;由 caret + lockfile + `oxfmt --check` 门禁兜住(ADR-0002)。**不设降级到 Prettier 的退路**。本项关闭。 |
 | 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化 |
 | 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估 |

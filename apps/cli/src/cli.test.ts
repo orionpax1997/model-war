@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -80,4 +80,13 @@ it.each(COMMANDS)("未实现的 %s 显式失败,不静默返回成功", (command
   expect(result.status).not.toBe(0);
   // 退出码非零还不够:必须是"未实现"这条路径,而不是别处的崩溃。
   expect(result.stderr).toContain("未实现");
+});
+
+it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
+  // index.ts 里的 CLI_VERSION 是写死的(打包后不读盘),而"与 package.json 同步"这句
+  // 光写在注释里没有任何东西在盯。这里把它变成断言:改了一边不改另一边,这条会红。
+  const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const result = run(["--version"]);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain(`modelwar ${manifest.version} `);
 });

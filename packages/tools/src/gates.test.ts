@@ -57,6 +57,7 @@ const PROBES = [
   "packages/schema/src/__fmt-probe.js",
   "packages/schema/src/__lint-probe.js",
   "packages/schema/src/__lint-probe.ts",
+  "packages/engine/src/__nofloat-probe.ts",
   "packages/runner/dist/__gate-probe.js",
   "packages/engine/dist/__gate-probe.js",
 ] as const;
@@ -135,7 +136,57 @@ it("工具版本耦合断言:配套为 0,错位为 1", () => {
   expect(ranged.output, ranged.output).toContain("精确锁版");
 });
 
+// ── 禁浮点门禁反例 ───────────────────────────────────────────────────────────
+
+it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", () => {
+  const clean = script("check:no-float");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 探针落在 engine 的运行时代码里,而且是 .ts 而非 .js:这道门禁读的是**源码**
+  // (自建校验器建在 oxc-parser 上,不经 tsc 产物),所以在 dist 里丢文件它根本看不见。
+  // 位置与扩展名合起来才是「它真的在读该读的那片源码」的证据。
+  const violated = withProbeFile(
+    "packages/engine/src/__nofloat-probe.ts",
+    "export const speed = 1.5;\n",
+    () => script("check:no-float"),
+  );
+  expect(violated.status, "浮点字面量必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("__nofloat-probe.ts");
+
+  // 同一路径换成整数:判决跟着内容走,不是跟着文件名走。
+  const fixed = withProbeFile(
+    "packages/engine/src/__nofloat-probe.ts",
+    "export const speed = 3;\n",
+    () => script("check:no-float"),
+  );
+  expect(fixed.status, `整数仍被拦下:\n${fixed.output}`).toBe(0);
+
+  expect(script("check:no-float").status).toBe(0);
+});
+
 // ── 依赖门禁反例:注入违规,确认规则真的挂在图上 ────────────────────────────────
+
+it("依赖门禁:engine 一旦 import runner 或 gen 就红,撤掉即绿", () => {
+  const clean = script("check:deps");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 一条规则、两个禁止目标(runner / gen)写成 `(?:specifier|resolved)` 交替式。
+  // 两侧必须各测一次:交替式写漏一半时,另一侧照样绿——只测一侧的话,
+  // “gen 那半边静默失效”不会被任何东西发现。
+  for (const target of ["runner", "gen"] as const) {
+    const violated = withProbeFile(
+      "packages/engine/dist/__gate-probe.js",
+      `import "@model-war/${target}";\n`,
+      () => script("check:deps"),
+    );
+    expect(violated.status, `engine import ${target} 必须非零退出`).not.toBe(0);
+    expect(violated.output, violated.output).toContain("engine-must-not-depend-on-runner-or-gen");
+    expect(violated.output, violated.output).toContain(`@model-war/${target}`);
+  }
+
+  const restored = script("check:deps");
+  expect(restored.status, restored.output).toBe(0);
+});
 
 it("依赖门禁:runner 一旦 import engine 就红,撤掉即绿", () => {
   const clean = script("check:deps");
