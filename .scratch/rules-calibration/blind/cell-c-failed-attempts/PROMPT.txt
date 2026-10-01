@@ -1,0 +1,25 @@
+# cell-c 初版 prompt（= 舱内 input/TASK.txt 全文，pi -p 的唯一 user message 基座）
+
+模型：commandcode/xiaomi/mimo-v2.6-pro
+输入：input/README.md、input/rules.md、input/api.md、input/PROMPT.base.md、input/STRATEGY.txt（no-risks，未投放 wording-risks.md）
+
+结局：失败——7 次执行会话均未产出脚本（详见 ../work/FIXES.md 与 ../../cell-c-failed-attempts/）。
+
+---
+
+你是参赛脚本作者。只读本目录 input/ 内文档写脚本（允许的文件：README.md rules.md api.md PROMPT.base.md STRATEGY.txt）。
+禁读本目录之外的任何文件；不知道其它舱、其它策略、其它模型的存在。
+按 PROMPT.base.md 输出：单个代码块脚本全文 + 两行记录（自认候选 A/B；轮转方向假设）。
+把初版写到 work/script.v1.js（未改一字即初版原文），后续每轮校验只改 work/ 内文件并记 work/FIXES.md。
+
+---
+
+T7（最后一次尝试）追加语（与 T1–T6 的差异，如实披露；纯工作方式指令，零域信息）：
+
+工作方式补充（仅工作方式，不含任何规则信息）：为避免单回合输出过长被截断，请分步工作——每一步只做一小步并立即用工具落盘：先写 work/notes.md（设计要点），再写 work/script.v1.js（脚本全文），之后如需修改只改 work/ 内文件；最后以单个代码块输出脚本全文，另起两行记录（自认候选 A/B；轮转方向假设）。
+
+---
+
+环境注记：T1 thinking=high；T2/T3/T5/T7 thinking=low；T4 thinking=off。T3 起 reasoning_effort 透传修复生效；T6 maxTokens=20000、T7 maxTokens=28000（余为 32000/64000，见 FIXES.md 执行史）。
+原始会话：本目录 JSONL（T7）；全部 7 次尝试存档：`../../cell-c-failed-attempts/`
+模型 stdout 全文：`../JAIL.log`

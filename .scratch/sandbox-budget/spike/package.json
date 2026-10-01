@@ -1,0 +1,9 @@
+{
+  "name": "sandbox-budget-spike",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway spike harness for hld §5 sandbox assertions. Not production code.",
+  "dependencies": {
+    "quickjs-wasi": "3.6.2"
+  }
+}

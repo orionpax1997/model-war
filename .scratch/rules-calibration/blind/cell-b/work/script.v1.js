@@ -1,0 +1,263 @@
+// 盲写策略 B: 扩张运营 - 优先占领资源点与扩张经济, 再转军事
+// 自认候选: A (容器顺序 = 玩家数组顺序, MY_INDEX = 0)
+// 轮转方向假设: (tick + playerIndex) mod 4, 值大者胜 (草案假设, 待终稿确认)
+
+const MY_INDEX: 0|1|2|3 = 0;
+
+// 模块级变量: 仅存数值 id 与数字, 不缓存对象引用
+let myUnitIds: number[] = [];
+let myBaseId: number = -1;
+let myResourceSiteIds: number[] = [];
+let freeResourceSiteIds: number[] = [];
+
+function loop(): void {
+  const tick: number = getTick();
+
+  // === 1. 读快照, 重置模块状态 ===
+  myUnitIds = [];
+  myBaseId = -1;
+  myResourceSiteIds = [];
+  freeResourceSiteIds = [];
+
+  const sites = getObjectsByType('site');
+  for (let i = 0; i < sites.length; i++) {
+    const site = sites[i];
+    if (site.kind === 'base' && site.owner === MY_INDEX) {
+      myBaseId = site.id;
+    }
+    if (site.kind === 'resource' && site.owner === MY_INDEX) {
+      myResourceSiteIds.push(site.id);
+    }
+    if (site.kind === 'resource' && site.owner === -1) {
+      freeResourceSiteIds.push(site.id);
+    }
+  }
+
+  const allUnits = getObjectsByType('unit');
+  const enemyUnitIds: number[] = [];
+  for (let i = 0; i < allUnits.length; i++) {
+    const u = allUnits[i];
+    if (u.owner === MY_INDEX) {
+      myUnitIds.push(u.id);
+    } else {
+      enemyUnitIds.push(u.id);
+    }
+  }
+
+  // === 2. 分类自己单位 ===
+  const workerIds: number[] = [];
+  const militaryIds: number[] = [];
+  for (let i = 0; i < myUnitIds.length; i++) {
+    const id = myUnitIds[i];
+    const u = getObjectById(id);
+    if (!u) continue;
+    if (u.type === 'worker') {
+      workerIds.push(id);
+    } else {
+      militaryIds.push(id);
+    }
+  }
+
+  const myBase = myBaseId >= 0 ? getObjectById(myBaseId) : null;
+
+  // === 3. 阶段判定 (按 rules.md §1 时间轴, 边界浮动 20%) ===
+  let phase: number = 0;
+  if (tick >= 40) phase = 1;
+  if (tick >= 160) phase = 2;
+  if (tick >= 400) phase = 3;
+
+  // === 4. 生产决策 (玩家级, 每 tick 至多一次) ===
+  if (myBase && myBaseId >= 0) {
+    if (phase === 0) {
+      // 0-40 开矿出兵: 全力出工人, 末期补 1 护卫
+      if (workerIds.length < 6) {
+        spawnUnit(myBaseId, 'worker');
+      } else if (militaryIds.length < 1) {
+        spawnUnit(myBaseId, 'melee');
+      }
+    } else if (phase === 1) {
+      // 40-160 首次扩张接触: 继续扩工, 补少量近战
+      if (workerIds.length < 8) {
+        spawnUnit(myBaseId, 'worker');
+      } else if (militaryIds.length < 3) {
+        spawnUnit(myBaseId, 'melee');
+      }
+    } else if (phase === 2) {
+      // 160-400 中后期争夺: 保工人下限, 持续补近战
+      if (workerIds.length < 6) {
+        spawnUnit(myBaseId, 'worker');
+      } else if (militaryIds.length < 5) {
+        spawnUnit(myBaseId, 'melee');
+      }
+    } else {
+      // 400-600 终局压力: 全力军事, 保工人底线
+      if (militaryIds.length < 12) {
+        spawnUnit(myBaseId, 'melee');
+      } else if (workerIds.length < 3) {
+        spawnUnit(myBaseId, 'worker');
+      }
+    }
+  }
+
+  // === 5. 工人行为 (同单位一 tick 仅一个 intent, 后写覆盖) ===
+  for (let i = 0; i < workerIds.length; i++) {
+    const wid = workerIds[i];
+    const w = getObjectById(wid);
+    if (!w) continue;
+
+    // 5.0 满载: 必须回基地 (优先于一切)
+    if (w.carrying >= 20) {
+      if (myBase) {
+        const d = getRange(w.x, w.y, myBase.x, myBase.y);
+        if (d <= 1) {
+          transfer(wid);
+        } else {
+          stepTo(wid, myBase.x, myBase.y);
+        }
+      }
+      continue;
+    }
+
+    let acted: boolean = false;
+
+    // 5.1 相邻己方资源点 (射程 1): 采集
+    for (let j = 0; j < myResourceSiteIds.length; j++) {
+      const sid = myResourceSiteIds[j];
+      const s = getObjectById(sid);
+      if (!s) continue;
+      if (getRange(w.x, w.y, s.x, s.y) === 1) {
+        harvest(wid, sid);
+        acted = true;
+        break;
+      }
+    }
+    if (acted) continue;
+
+    // 5.2 站在己方资源点格上 (d=0): 移到相邻格以便采集
+    for (let j = 0; j < myResourceSiteIds.length; j++) {
+      const sid = myResourceSiteIds[j];
+      const s = getObjectById(sid);
+      if (!s) continue;
+      if (getRange(w.x, w.y, s.x, s.y) === 0) {
+        stepTo(wid, s.x + 1, s.y);
+        acted = true;
+        break;
+      }
+    }
+    if (acted) continue;
+
+    // 5.3 站在中立资源点格上 (d=0): 不动即触发占领累积
+    for (let j = 0; j < freeResourceSiteIds.length; j++) {
+      const sid = freeResourceSiteIds[j];
+      const s = getObjectById(sid);
+      if (!s) continue;
+      if (getRange(w.x, w.y, s.x, s.y) === 0) {
+        move(wid, 0, 0);
+        acted = true;
+        break;
+      }
+    }
+    if (acted) continue;
+
+    // 5.4 走向最近的资源点 (己方优先, 距离 tie 时己方胜)
+    let bestId: number = -1;
+    let bestX: number = 0;
+    let bestY: number = 0;
+    let bestDist: number = 999;
+    for (let j = 0; j < myResourceSiteIds.length; j++) {
+      const sid = myResourceSiteIds[j];
+      const s = getObjectById(sid);
+      if (!s) continue;
+      const d = getRange(w.x, w.y, s.x, s.y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestId = sid;
+        bestX = s.x;
+        bestY = s.y;
+      }
+    }
+    for (let j = 0; j < freeResourceSiteIds.length; j++) {
+      const sid = freeResourceSiteIds[j];
+      const s = getObjectById(sid);
+      if (!s) continue;
+      const d = getRange(w.x, w.y, s.x, s.y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestId = sid;
+        bestX = s.x;
+        bestY = s.y;
+      }
+    }
+
+    if (bestId >= 0) {
+      stepTo(wid, bestX, bestY);
+    } else if (myBase) {
+      // 兜底: 回到基地附近待机
+      const d = getRange(w.x, w.y, myBase.x, myBase.y);
+      if (d > 2) {
+        stepTo(wid, myBase.x, myBase.y);
+      } else {
+        move(wid, 0, 0);
+      }
+    }
+  }
+
+  // === 6. 军事行为: 防守 + 反击近敌 ===
+  for (let i = 0; i < militaryIds.length; i++) {
+    const mid = militaryIds[i];
+    const m = getObjectById(mid);
+    if (!m) continue;
+
+    // 找最近敌人 (Chebyshev)
+    let bestEnemy: number = -1;
+    let bestEx: number = 0;
+    let bestEy: number = 0;
+    let bestDist: number = 999;
+    for (let j = 0; j < enemyUnitIds.length; j++) {
+      const eid = enemyUnitIds[j];
+      const e = getObjectById(eid);
+      if (!e) continue;
+      const d = getRange(m.x, m.y, e.x, e.y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestEnemy = eid;
+        bestEx = e.x;
+        bestEy = e.y;
+      }
+    }
+
+    const attackRange: number = m.type === 'ranged' ? 2 : 1;
+
+    // 中前期近战视野约 8-10, 终局放宽以利压制
+    const vision: number = phase >= 2 ? 15 : 10;
+
+    if (bestEnemy >= 0 && bestDist <= vision) {
+      if (bestDist <= attackRange) {
+        attack(mid, bestEnemy);
+      } else {
+        stepTo(mid, bestEx, bestEy);
+      }
+    } else if (myBase) {
+      // 无近敌: 收缩至基地附近 (口径 d<=4 即视为守家)
+      const d = getRange(m.x, m.y, myBase.x, myBase.y);
+      if (d > 4) {
+        stepTo(mid, myBase.x, myBase.y);
+      } else {
+        move(mid, 0, 0);
+      }
+    }
+  }
+}
+
+// 一步贪心朝目标推进 (Chebyshev 8 向, 不调 findPath 省预算; 遇墙/占位由引擎静默丢弃)
+function stepTo(unitId: number, tx: number, ty: number): void {
+  const u = getObjectById(unitId);
+  if (!u) return;
+  let dx: number = 0;
+  let dy: number = 0;
+  if (tx > u.x) dx = 1;
+  else if (tx < u.x) dx = -1;
+  if (ty > u.y) dy = 1;
+  else if (ty < u.y) dy = -1;
+  move(unitId, dx, dy);
+}

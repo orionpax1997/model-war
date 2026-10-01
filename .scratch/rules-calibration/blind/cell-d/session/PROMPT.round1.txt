@@ -1,0 +1,17 @@
+你是参赛脚本作者。只读本目录 input/ 内文档写脚本（允许的文件：README.md rules.md api.md PROMPT.base.md STRATEGY.txt）。
+禁读本目录之外的任何文件；不知道其它舱、其它策略、其它模型的存在。
+按 PROMPT.base.md 输出：单个代码块脚本全文 + 两行记录（自认候选 A/B；轮转方向假设）。
+把初版写到 work/script.v1.js（未改一字即初版原文），后续每轮校验只改 work/ 内文件并记 work/FIXES.md。
+
+
+—— 静态校验回喂 第 1 轮（只给静态校验错误，无对战反馈）——
+
+驾驶员已独立复核 work/script.v1.js，以下 2 项不通过：
+
+1) 入口签名不匹配硬约束字面。PROMPT.base.md 硬约束第一条要求顶层入口为 `function loop(): void`（api.md §5 骨架记法），实际落盘为 `function loop() {}`。请按字面写出 `function loop(): void`。
+
+2) `MY_INDEX` 写死违反硬约束。api.md §5 骨架注释写明「占位：实写时从快照认出自己，禁止写死」，实际为模块级常量 `var MY_INDEX = 0;`。硬约束要求"每 tick 只读快照、不另行告知你的 index、从快照认出自己"，不得写死数字。请给出从快照认出自身 index 的实现（并说明你选的是候选 A 还是候选 B）；若契约确实无法闭环，把不可读的字段/缺失的入口逐条列出来写进 FIXES.md。
+
+以下静态项已通过，无需改动：违禁 API（Date/Math.random/performance/queueMicrotask/定时器/eval/require/export/import/__*）0 命中、无浮点字面量、只调 api.md 白名单函数、跨 tick 只存数值 id 与整数、每单位一 tick 只写一个最终 intent。
+
+改动纪律：script.v1.js 保持初版原文、一个字节都不动；修订版写到 work/script.v2.js；本轮调错清单追加到 work/FIXES.md。

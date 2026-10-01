@@ -1,0 +1,16 @@
+# cell-a 初版 prompt（= 舱内 input/TASK.txt 全文，pi -p 的唯一 user message）
+
+模型：commandcode/deepseek/deepseek-v4.1-flash（thinking=high）
+输入：input/README.md、input/rules.md、input/api.md、input/PROMPT.base.md、input/STRATEGY.txt（no-risks，未投放 wording-risks.md）
+
+---
+
+你是参赛脚本作者。只读本目录 input/ 内文档写脚本（允许的文件：README.md rules.md api.md PROMPT.base.md STRATEGY.txt）。
+禁读本目录之外的任何文件；不知道其它舱、其它策略、其它模型的存在。
+按 PROMPT.base.md 输出：单个代码块脚本全文 + 两行记录（自认候选 A/B；轮转方向假设）。
+把初版写到 work/script.v1.js（未改一字即初版原文），后续每轮校验只改 work/ 内文件并记 work/FIXES.md。
+
+---
+
+原始会话：`2026-09-29T06-28-00-206Z_01a0ebd9-464d-70e3-8345-35296906f451.jsonl`
+模型 stdout 全文：`../JAIL.log`
