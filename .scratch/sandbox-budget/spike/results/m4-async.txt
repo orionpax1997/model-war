@@ -1,0 +1,7 @@
+M4.1.afterEval: {"n":0,"jobsExecuted":2,"nAfterDrain":2,"secondDrain":0}
+M4.2.noDrain3Ticks: {"m":0,"note":"callFunction/evalCode 不隐式推进 job"}
+M4.2.afterExtraEval: {"m":0,"jobsExecuted":1,"mAfterDrain":1}
+M4.3.cascade: {"drain1Jobs":2,"aAfterDrain1":1,"bAfterDrain1":1,"drain2Jobs":0,"bAfterDrain2":1}
+M4.4.crossTickResidue: {"intentsBeforeDrain":["sync-1","sync-2","sync-3"],"intentsAfterDrain":["sync-1","sync-2","sync-3","late-from-tick0","late-late"],"drainJobs":3,"drainJobs2":0}
+M4.5.pendingForever: {"jobs":0,"note":"未配置 onUnhandledRejection 时拒绝不炸宿主"}
+M4.5.withRejectionHandler: {"events":[{"isHandled":false}]}

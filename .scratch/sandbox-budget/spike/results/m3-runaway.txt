@@ -1,0 +1,9 @@
+M3.deep-default.status: exit=0
+M3.deep-default.data: {"recursionMs":"15","hostErr":{"ctor":"RangeError","name":"RangeError","message":"Maximum call stack size exceeded","isJSException":false},"guestCaught":"NO (吞不掉)","guestContinued":"NO","reuse":{"eval":3,"pendingJobs":0,"mem":true}}
+M3.deep-guard-off.status: exit=0
+M3.deep-guard-off.data: {"recursionMs":"15","hostErr":{"ctor":"RangeError","name":"RangeError","message":"Maximum call stack size exceeded","isJSException":false},"guestCaught":"NO (吞不掉)","guestContinued":"NO","reuse":{"eval":3,"pendingJobs":0,"mem":true}}
+M3.deep-max-stack.status: exit=0
+M3.deep-max-stack.data: {"recursionMs":"13","hostErr":null,"guestCaught":"RangeError|Maximum call stack size exceeded","guestContinued":1,"reuse":{"eval":3,"pendingJobs":0,"mem":true}}
+M3.loop-nointerrupt.status: TIMEOUT(killed after 3000ms)
+M3.rebuild.status: exit=0
+M3.rebuild.data: {"medianUs":{"create":"2.14ms","evalRt":"7.49ms","evalScript":"0.50ms","firstCall":"0.01ms","bytecodeVariant":"2.01ms"},"totalSourceVariant":"10.15ms","totalBytecodeVariant":"2.01ms","runtimeKb":19,"scriptKb":2}

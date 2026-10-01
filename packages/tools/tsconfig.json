@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "emitDeclarationOnly": true,
+    "sourceMap": false,
+    // 本包以源码形式由 Node 的类型擦除执行,内部 import 一律写 `.ts` 扩展名:类型擦除
+    // 不做 `.js` → `.ts` 的改写,写成 `.js` 的话 `node …/run-no-float-gate.ts` 会以
+    // ERR_MODULE_NOT_FOUND 起手。`allowImportingTsExtensions` 要求 noEmit 或
+    // emitDeclarationOnly,本包正是后者。声明文件里会保留 `.ts` 扩展名(实测 TS 只在
+    // JS 产物里改写它),但 `exports.types` 指向 `./src/index.ts`,dist 下的 d.ts 没有消费者。
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts"]
+}
