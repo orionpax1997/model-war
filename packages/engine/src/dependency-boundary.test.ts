@@ -24,20 +24,27 @@ const repoRoot = here("../../../");
 const engineDist = here("../dist/");
 
 /**
- * 巡航入口与 `check:deps` 完全一致(取自根 package.json 的那条脚本),
- * 这里重述一遍是为了让「本测试跑的到底是哪片图」写在文件里而不是靠记忆。
+ * 巡航入口与 `check:deps` 的命令行参数同一范围(`packages` 与 `apps` 下各包的 `dist` 目录),但这里由目录列举得出。
+ * 不把它抄成一份字面量清单:那种写法要求每加一个包就回来改一次,漏改时测试还是绿的——
+ * 而它绿的恰好是「巡航到的图少了这个包」这件事,不是真绿。
+ * 判据是同一个:包的 `dist` 里有 `.js`(只产 `.d.ts` 的 `tools` 因此自然不在图里)。
+ *
+ * 写成函数而不是顶层常量:`dist` 可能还没 build,而 tsc -b 的兜底在用例里发生。
  */
-const cruiseEntries = [
-  "packages/schema/dist",
-  "packages/replay/dist",
-  "packages/engine/dist",
-  "packages/runner/dist",
-  "packages/gen/dist",
-  "apps/cli/dist",
-];
+const cruiseEntries = (): string[] =>
+  ["packages", "apps"].flatMap((root) =>
+    readdirSync(here(`../../../${root}/`), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => `${root}/${entry.name}/dist`)
+      .filter(
+        (dir) =>
+          existsSync(here(`../../../${dir}/`)) &&
+          readdirSync(here(`../../../${dir}/`)).some((name) => name.endsWith(".js")),
+      ),
+  );
 
 const runDepcruise = (): { status: number; output: string } => {
-  const result = spawnSync(here("../../../node_modules/.bin/depcruise"), cruiseEntries, {
+  const result = spawnSync(here("../../../node_modules/.bin/depcruise"), cruiseEntries(), {
     cwd: repoRoot,
     encoding: "utf8",
   });
