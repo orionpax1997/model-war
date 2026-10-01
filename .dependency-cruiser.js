@@ -116,13 +116,7 @@ export default {
       severity: "error",
       comment: "hld §3.2:engine 不 import runner/gen;gen 永不进对局进程(NFR-4 AC2)",
       from: { path: filesOf("packages/engine"), pathNot: TEST_FILE },
-      to: { path: toPackage("runner") },
-    },
-    {
-      name: "engine-must-not-depend-on-runner-or-gen#gen",
-      severity: "error",
-      from: { path: filesOf("packages/engine"), pathNot: TEST_FILE },
-      to: { path: toPackage("gen") },
+      to: { path: `${toPackage("runner")}|${toPackage("gen")}` },
     },
 
     // ── hld §3.2:runner 与 gen 只以子进程 + 文件消费对局产物,不得 import engine ──

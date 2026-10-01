@@ -1,9 +1,12 @@
 /**
  * 子命令登记表(hld §9)。
  *
- * 每条命令登记三件事:命令名与用法、承载它的包(hld §9 的"模块"列)、以及**该包必须导出的符号名**。
+ * 每条命令登记三件事:命令名与用法、**将来导出该处理器的包**、以及该包必须导出的符号名。
  * 登记与实际导出是两回事:符号还没落地时,CLI 显式失败而不是静默返回成功——
  * 自动化流程不得把"没实现"读成"跑通了"。
+ *
+ * `provider` 是「处理器从哪个包来」,不是 hld §9 的「模块」列:后者写的是组装路径
+ * (`apps/cli → replay`),而 `renderReplay` 这种处理器真正住在 `replay` 包里。两者含义不同,不互为校验。
  *
  * `load` 用字面量动态 import:TS 在编译期就按 workspace `exports` 解析出目标包的类型
  * (包间类型引用经 exports + project references 解析,不用 paths),esbuild 在打包期把它们内联进单文件。
@@ -18,7 +21,7 @@ export type CommandSpec = {
   readonly name: CommandName;
   readonly usage: string;
   readonly summary: string;
-  /** 承载该命令的包 */
+  /** 将来导出该处理器的包(见文件头:`provider` 与 hld §9 的模块列含义不同) */
   readonly provider: string;
   /** 该包需要提供的导出名 */
   readonly handler: string;
@@ -45,7 +48,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   {
     name: "match",
     usage: "modelwar match <input.json>",
-    summary: "单场对局(runner 与调试都走这条路径)",
+    summary: "执行一个对局(runner 与调试都走这条路径)",
     provider: "@model-war/engine",
     handler: "runMatch",
     load: () => import("@model-war/engine"),
@@ -70,9 +73,12 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: "map-lint",
     usage: "modelwar map-lint <maps/>",
     summary: "地图对称性与合法性校验",
-    provider: "@model-war/schema",
+    // map-lint 是 CLI 自己的模块(hld §3.1 的 `cli:… / map-lint`、§9 的模块列),不挂在 schema 上——
+    // schema 只含类型、常量与 JSON Schema,无运行时代码(hld §3.2)。
+    // 处理器尚未落地,故此刻没有可 import 的模块:返回空命名空间,让 handlerOf 走「未实现」那条路径。
+    provider: "@model-war/cli",
     handler: "lintMaps",
-    load: () => import("@model-war/schema"),
+    load: async () => ({}),
   },
 ];
 
