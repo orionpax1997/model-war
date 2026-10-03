@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import type { MapDefinition } from "@model-war/schema";
 
 /**
  * 命令行的外部可观察行为只有两件:帮助信息列出哪几条子命令,以及未实现的子命令怎么退。
@@ -26,6 +28,7 @@ const UNIMPLEMENTED = ["gen", "run", "match", "replay", "verify"] as const;
 
 let bundle = "";
 let scratch = "";
+let poolSeq = 0;
 
 const run = (args: readonly string[]) =>
   spawnSync(process.execPath, [bundle, ...args], { cwd: repoRoot, encoding: "utf8" });
@@ -60,6 +63,40 @@ afterAll(() => {
   rmSync(scratch, { force: true, recursive: true });
 });
 
+/**
+ * 在临时目录里造一个地图池并返回它的路径。
+ *
+ * `map-lint` 现在收的是**目录**,而 `maps/` 里只有一张图(池级判据要求至少 3 张,三张真图是
+ * 票 05 的活),所以进程级断言得自己造池。造法与 `pool-lint.test.ts` 同源:沿用落库那张图的点位,
+ * 墙从它的候选变体轨道里取——那 8 条轨道实测一格不压点位、天生四重对称。
+ */
+const writePool = (maps: readonly { name: string; terrain?: string[] }[]): string => {
+  // 目录名带序号:同一个临时根下造两个池时不会互相覆盖(否则断言顺序一变就读到别人的文件)。
+  poolSeq += 1;
+  const dir = join(scratch, `pool-${poolSeq}`);
+  mkdirSync(dir, { recursive: true });
+  const source = openMap();
+  for (const map of maps) {
+    writeFileSync(join(dir, `${map.name}.json`), JSON.stringify({ ...source, ...map }));
+  }
+  return dir;
+};
+
+/** 落库那张开阔对攻图(进程级断言的原料;它本身是合规的)。 */
+const openMap = (): MapDefinition => JSON.parse(readFileSync(mapPath, "utf8"));
+
+/** 把候选变体轨道填进地形:第 `indexes` 几条。先清空原有墙,免得两图共享墙格。 */
+const terrainWithOrbits = (source: MapDefinition, indexes: readonly number[]): string[] => {
+  const rows = source.terrain.map((row) => row.replaceAll("#", ".").split(""));
+  for (const index of indexes) {
+    for (const [x, y] of source.variantSlots[index] ?? []) {
+      const row = rows[y];
+      if (row !== undefined) row[x] = "#";
+    }
+  }
+  return rows.map((row) => row.join(""));
+};
+
 it("帮助信息列出全部六条子命令", () => {
   const result = run(["--help"]);
   expect(result.status).toBe(0);
@@ -90,24 +127,49 @@ it.each(UNIMPLEMENTED)("未实现的 %s 显式失败,不静默返回成功", (co
 });
 
 it("`map-lint` 不再走「未实现」那条路径", () => {
-  const result = run(["map-lint", "maps/open-clash.json"]);
+  const source = openMap();
+  const dir = writePool([
+    { name: "pool-a", terrain: terrainWithOrbits(source, [0]) },
+    { name: "pool-b", terrain: terrainWithOrbits(source, [1, 2]) },
+    { name: "pool-c", terrain: terrainWithOrbits(source, [3]) },
+  ]);
+  const result = run(["map-lint", dir]);
   expect(result.stderr).not.toContain("未实现");
-  // 落库的地图是合规的,所以这一跑必须放行。
-  expect(result.status).toBe(0);
+  // 三张图合规(三张真图是票 05 的活,这里造的是同一套点位下的最小合规池),所以这一跑必须放行。
   expect(result.stdout).toContain("通过");
+  expect(result.status).toBe(0);
 });
 
-it("`map-lint` 对不合法的地图非零退出(退出码由处理器自设,不是 index.ts 给的)", () => {
+it("`map-lint` 对不合法的地图池非零退出(退出码由处理器返回,不是 index.ts 给的)", () => {
   // 断言对象是退出码本身:`index.ts` 调完处理器无条件 `return 0`,处理器没有返回值通道,
-  // 所以「非零退出」这条只能靠处理器自己设 `process.exitCode`。这里用一张改坏的图钉住它。
-  const bad = `${scratch}/broken-map.json`;
-  const source = JSON.parse(readFileSync(mapPath, "utf8"));
-  source.terrain[0] = `${".".repeat(3)}#${".".repeat(source.size - 4)}`;
-  writeFileSync(bad, JSON.stringify(source));
-
-  const result = run(["map-lint", bad]);
+  // 所以「非零退出」这条只能靠处理器把退出码一路返回到顶层。这里用一张改坏的图钉住它。
+  const source = openMap();
+  const rows = terrainWithOrbits(source, [0]);
+  rows[0] = `${".".repeat(3)}#${".".repeat((rows[0]?.length ?? 0) - 4)}`;
+  const dir = writePool([
+    { name: "pool-a", terrain: rows },
+    { name: "pool-b", terrain: terrainWithOrbits(source, [1, 2]) },
+    { name: "pool-c", terrain: terrainWithOrbits(source, [3]) },
+  ]);
+  const result = run(["map-lint", dir]);
   expect(result.status).not.toBe(0);
   expect(result.stdout).toContain("地形未四重旋转对称");
+});
+
+it("`map-lint` 拿到一个不存在的目录时非零退出", () => {
+  // 「目录不存在」这一格:不给它一句明确的失败,调用方会把「没查」读成「通过」。
+  const result = run(["map-lint", join(scratch, "no-such-pool")]);
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain("读不到目录");
+});
+
+it("`map-lint` 拿到一个空目录时判失败(而不是静默通过)", () => {
+  const dir = join(scratch, "pool-empty");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, ".gitkeep"), "");
+  const result = run(["map-lint", dir]);
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).toContain("地图池里没有地图");
 });
 
 it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
