@@ -56,17 +56,31 @@ export const MAX_MINE_ROUTE_CHEBYSHEV = 10;
 export const MAX_WALL_JACCARD = 0.15;
 
 /**
- * 一个目录里哪些文件名算地图。
+ * 一个目录里哪些文件名算地图,**按文件名升序**。
  *
  * **只按后缀认,不猜内容**:`*.json` 是地图的落库形状,其余一律跳过(`.gitkeep`、`README.md`、
  * 编辑器留下的 `.DS_Store` 都不该让一次 lint 失败)。而「这个 `.json` 是不是一张形状合规的地图」
  * 不在本层——它归 `validateMap`,那一件事已经有一个家了。
  *
+ * ── 为什么在这里排升序(而不是在入口) ────────────────────────────────────────
+ * 入口喂进来的是 `readdirSync` 的结果,而**文件系统不承诺目录项的枚举顺序**(同一份
+ * `maps/` 在 ext4 / APFS / NTFS 上顺序可以不同)。池层判据认它:
+ * `poolCompositionViolations` 拿池内**第一张**当 `size` 比对的基准,
+ * `wallJaccardViolations` 按下标成对遍历并把两图名字写进诊断文案。
+ * 不排序的话,「基准是谁」「A ↔ B 还是 B ↔ A」就随建目录的文件系统而变——
+ * 同一份代码在两台机器上对同一组图给出不同的诊断文本,而违规序列的「可 diff」承诺就废了。
+ * 末尾那道 `sort(compareViolations)` 救不了:它只排**行**,排不掉**行里的名字**。
+ *
+ * 排序放在本层而不是入口,是因为「哪些文件、按什么顺序进池」本身就是池的读法,
+ * 它得在纯函数里(测试直接构造 `fileNames` 数组就能钉住),而入口只负责 `readdirSync`。
+ *
  * 跳过之后池里一张都没有,交给 `poolViolations([])` 判失败(而不是静默通过):
  * 「没找到地图」与「地图都合规」在退出码上必须分得开。
  */
 export const poolMapFileNames = (fileNames: readonly string[]): readonly string[] =>
-  fileNames.filter((name) => name.endsWith(".json"));
+  fileNames
+    .filter((name) => name.endsWith(".json"))
+    .sort((left, right) => left.localeCompare(right));
 
 /** Chebyshev 距离(理论距离:直接算坐标差,与墙无关)。 */
 const chebyshev = (ax: number, ay: number, bx: number, by: number): number =>
@@ -119,7 +133,7 @@ const poolCompositionViolations = (maps: readonly MapDefinition[]): readonly Map
       },
     ];
   }
-  // 与第一张比:遍历顺序跟着给定顺序走,所以「基准是谁」是确定的,两轮结果能 diff。
+  // 与第一张比:文件名已由 `poolMapFileNames` 排过序,所以「基准是谁」与遍历顺序无关(可 diff)。
   const reference = maps[0];
   const found: MapLintViolation[] = [];
   for (const map of maps.slice(1)) {
