@@ -23,6 +23,7 @@ import { Buffer } from "node:buffer";
 
 import { parseToAst } from "../parse-source.ts";
 import { forbiddenGlobalStage } from "../rules/forbidden-globals.ts";
+import { hostBridgeStage } from "../rules/host-bridge.ts";
 import {
   compareViolations,
   type ScriptLintContext,
@@ -39,8 +40,8 @@ import {
  */
 export const SCRIPT_LINT_STAGES: readonly ScriptLintStage[] = [
   forbiddenGlobalStage,
-  // ── 下面三级的槽位:票 02/03/04 各自取消对应那行的注释,插在自己的位置上 ──
-  // hostBridgeStage,     // 桥前缀:任何标识符链的根带宿主桥前缀(票 03)
+  hostBridgeStage, // 桥前缀:任何标识符链的根带宿主桥前缀(票 03)
+  // ── 下面两级的槽位:票 02/04 各自取消对应那行的注释,插在自己的位置上 ──
   // moduleSystemStage,   // 模块系统:export / import / import() / require / 动态 eval(票 02)
   // scriptSizeStage,     // 体积:字节数超过 maxBytes,iteration 只提示、freeze 拦(票 04)
 ];

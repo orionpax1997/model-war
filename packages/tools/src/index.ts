@@ -72,6 +72,9 @@ export type {
 } from "./rules/script-lint.ts";
 export { compareViolations } from "./rules/script-lint.ts";
 export { forbiddenGlobalStage, forbiddenGlobalViolations } from "./rules/forbidden-globals.ts";
+export { hostBridgeStage, hostBridgeViolations } from "./rules/host-bridge.ts";
+export type { ChainReference, ChainSegment } from "./rules/identifier-chain.ts";
+export { referenceChainsOf } from "./rules/identifier-chain.ts";
 export type { ValidateScriptOptions } from "./validate/pipeline.ts";
 export { SCRIPT_LINT_STAGES, validateScriptSource } from "./validate/pipeline.ts";
 export { renderViolations } from "./validate/render-violations.ts";
