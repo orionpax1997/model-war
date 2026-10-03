@@ -131,6 +131,14 @@ const checkNumericLiteral = (node: AstNode, source: string): PendingViolation | 
 /* ── 规则二:`Math` 成员按允许名单区分 ──────────────────────────── */
 
 const MATH_GLOBAL = "Math";
+
+/**
+ * 全局对象本身。它是「等价写法」而不是「某个对象的属性」(同一条纪律在
+ * `rules/identifier-chain.ts` 的 `withoutGlobalThis` 侧也有一份)。**这里刻意不共用那份**:
+ * 那份公共件是参赛脚本静态校验三条规则的遍历层公共件,本文件是本 feature 之前的仓库门禁,
+ * 让一条零构建的快门禁依赖本 feature 的新文件会把两个消费者的变更面绑在一起。
+ * 代价记在这里:同一条等价规则有两份,改一处必须记得改另一处。
+ */
 const GLOBAL_THIS = "globalThis";
 
 /**
@@ -139,6 +147,14 @@ const GLOBAL_THIS = "globalThis";
  *
  * 裸的 `Math`(不经成员访问,如 `const m = Math;` 后再 `m.random()`)不在本规则范围内:
  * 那是「全局引用」一类规则的事,hld §6.2 由白名单/黑名单式的全局检查承担,归属另一个消费者。
+ *
+ * ── 一处判不到的地方(有记录的缺口,不是遗漏) ──────────────────────────────────
+ * 本规则**不剥括号**:`(globalThis.Math).random()` 与 `(globalThis).Math.random()` 都不判
+ * (实测 2026-10-03,`oxc-parser` 0.152.0)。参赛脚本那条规则链已经剥了,理由与做法见
+ * `rules/identifier-chain.ts` 的头注。
+ * **这里不跟**:门禁扫的是本仓库自己的引擎源码(我们自己写的,不存在绕过动机),
+ * 而本规则按它自己的定位是**字面量层面**的一道纵深防御,真正的兜底是 hld §2.2.4 那条属性测试。
+ * 若将来本门禁的输入变成**不受信任的源码**,这一处必须先补上——那时它就是一条绕开路径了。
  */
 const isMathObject = (object: unknown): boolean => {
   if (identifierName(object) === MATH_GLOBAL) {
