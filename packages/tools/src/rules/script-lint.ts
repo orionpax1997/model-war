@@ -1,11 +1,25 @@
 /**
- * 参赛脚本静态校验的**违规形状**:纯规则层、判定链与面向模型层的渲染共用的那一个定义。
+ * 参赛脚本静态校验的**词汇表**:违规形状、全序比较、一级判定的形状与上下文。
+ * 纯规则层、判定链(`validate/pipeline.ts`)与面向模型层的渲染(`validate/render-violations.ts`)
+ * 三处共用这一份定义。
  *
- * 为什么把它单列一份而不是各规则各带一个类型(禁浮点与声明即依赖各带各的):
+ * ── 它为什么在 `rules/` 下(层次方向,改之前先读这一段) ────────────────────────
+ * 依赖箭头只能是 **`validate/` → `rules/`** 一条,不许反向。反过来写会同时坏掉两件事:
+ * - `validate/pipeline.ts` 本来就要 import `rules/` 里的各级 stage(`forbiddenGlobalStage` 等),
+ *   规则层再 import 回 pipeline 就成了**环**。类型级的 import 擦得掉,环还在图上,
+ *   而「哪个方向是对的」这件事会在后三张票(桥前缀 / 模块系统 / 体积)的文件里各猜一次。
+ * - 更根本的一条:阶段接口(`ScriptLintStage`)与它的上下文是**规则要满足的约束**,
+ *   不是判定链施加给规则的。约束的家在被约束的那一侧(依赖倒置),所以家定在 `rules/`。
+ * 顺带一个具体好处:桥前缀、模块系统、体积三张票要落的文件本来就在 `rules/` 下,
+ *   它们 import 这个词汇表是同目录往上一层,不必跨到 `validate/`。
+ * 判定链的**顺序**仍然归 `validate/pipeline.ts`——那是裁决,不在这里。
+ *
+ * ── 为什么违规形状单列一份而不是各规则各带一个类型(禁浮点与声明即依赖各带各的) ──
  * 判定链要按**类别名**排序,面向模型层要按**类别**把同类错误并成一行,而类别名同时是
  * 机器层 diff 的兜底键——三处共用一个判据,一旦分家就会出现「机器层叫 A、渲染层叫 B」
  * 或者「排序按 A、归并按 B」这种没人当场看得见的分叉。所以类别是**唯一**的一处定义,
- * 新规则加类别时必须同时在这里留一个名字(否则 `tsc` 会因 `RULE_LABELS` 不全而报错)。
+ * 新规则加类别时必须同时在 `render-violations.ts` 的 `RULE_LABELS` 里留一个名字
+ * (那张表是穷尽 `Record`,忘了会让 `tsc -b` 当场报错)。
  *
  * 形状与 `rules/no-float.ts` 的 `NoFloatViolation` 同形(规则类别 / 面向模型的文本 / 行列),
  * 两处不同,各有各的理由:
@@ -15,6 +29,8 @@
  * - 行列允许为 `null`。体积级不是 AST 规则,它没有位置可言;硬给它一个 `1:1` 只会让
  *   「这个位置是猜的」这件事消失在数据里。
  */
+
+import type { ParsedSource } from "../parse-source.ts";
 
 /** 违规类别。`syntax-error` 不是一条规则,而是「无法判定」的确定结论。 */
 export type ScriptLintRule =
@@ -70,3 +86,32 @@ export const compareViolations = (left: ScriptViolation, right: ScriptViolation)
   }
   return left.message.localeCompare(right.message);
 };
+
+/** 校验时机。`iteration` = 每轮迭代都跑(体积只提示),`freeze` = 冻结前最后一道(体积也拦)。 */
+export type ScriptLintPhase = "iteration" | "freeze";
+
+export type ScriptLintContext = {
+  /** 编译后产物的源码文本。 */
+  readonly source: string;
+  /** 产物的**字节数**(不是字符串长度)。 */
+  readonly byteLength: number;
+  /**
+   * 体积上限,字节。**由调用方传入,判定链不给默认值**——取值在规则集文件里,那是 E 的交付物。
+   *
+   * 它在**共享上下文**里而不是各条规则的第二个参数:后者会让三条 AST 规则各多带一个
+   * 自己根本不看的参数,而它们拿不到别的补偿。共享上下文是纯数据(调用方给的常量 +
+   * 一次解析结果),不违反「纯函数不碰文件系统、不读时钟、不读环境」。
+   */
+  readonly maxBytes: number;
+  readonly phase: ScriptLintPhase;
+  /** 解析结果,由判定链解析一次后放进来;语法失败时为 undefined。 */
+  readonly parsed: ParsedSource | undefined;
+};
+
+/**
+ * 一级判定:吃上下文,吐违规。空数组 = 这一级没问题。
+ *
+ * 五级判定链按裁决排定,顺序在 `validate/pipeline.ts`,不在这里:本形状只说「一级长什么样」,
+ * 不说「哪一级在前」——把它写进接口会让顺序看起来是可插拔的,而它不是。
+ */
+export type ScriptLintStage = (context: ScriptLintContext) => readonly ScriptViolation[];

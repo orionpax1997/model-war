@@ -19,7 +19,7 @@
  * `tsc -b` 会当场报错,而不是让一句英文内部记号悄悄漏给模型。
  */
 
-import type { ScriptLintRule, ScriptViolation } from "../rules/script-violation.ts";
+import type { ScriptLintRule, ScriptViolation } from "../rules/script-lint.ts";
 
 const RULE_LABELS: Record<ScriptLintRule, string> = {
   "syntax-error": "语法错误",
