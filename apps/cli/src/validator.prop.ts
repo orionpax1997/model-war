@@ -5,16 +5,19 @@
  * 这条性质是手写用例覆盖不到的:一份畸形文件(键叫 `__proto__`、数组套对象套 null、
  * 天文数字、深度嵌套)不该让进程带着栈回退码崩掉——而「手写 schema + 手写 ajv 关键字」
  * 恰恰是最容易在某一种怪输入上炸掉的组合。
+ *
+ * 两条属性各跑一遍(地图 / 规则集):两者是**同一个校验器**的两种形状,而「同一个」正是
+ * spec 的要求,所以让同一条性质在两种入口上都成立,比只在一种上验过更接近那句话的意思。
  */
 
 import fc from "fast-check";
 // fast-check 自己也叫 `JsonValue`（且它的数组不带索引签名，与本仓那个不是一个类型），
 // 所以这里改名导入：两个同名不同形的 JsonValue 混用，编译期会报一个与性质无关的错。
-import type { JsonValue } from "@model-war/schema";
+import { RULESET_VERSION, type JsonValue } from "@model-war/schema";
 import { expect, it } from "vitest";
 
-import type { MapValidation } from "./validator.js";
-import { validateMap } from "./validator.js";
+import type { MapValidation, RulesetValidation } from "./validator.js";
+import { validateMap, validateRuleset } from "./validator.js";
 
 /**
  * 任意 JSON 值。fast-check 自带 `fc.jsonValue()`,但它导出的 `JsonValue` 与本仓那个
@@ -24,17 +27,50 @@ import { validateMap } from "./validator.js";
 const anyJson = (): fc.Arbitrary<JsonValue> => fc.jsonValue() as fc.Arbitrary<JsonValue>;
 
 /** `result` 恒在（抛了就是 undefined），这样调用方不必先缩窄才能读它。 */
-type Attempt = { readonly thrown: string | undefined; readonly result: MapValidation | undefined };
+type Attempt<T> = { readonly thrown: string | undefined; readonly result: T | undefined };
 
 /**
  * 把抛出的理由收进返回值里,而不是让断言本身先崩掉:
  * 属性要断言的正是「不抛」,断言动作必须先活着。
  */
-const attempt = (value: JsonValue): Attempt => {
-  try {
-    return { thrown: undefined, result: validateMap(value) };
-  } catch (cause) {
-    return { thrown: cause instanceof Error ? cause.message : String(cause), result: undefined };
+const attemptOf =
+  <T>(run: (value: JsonValue) => T) =>
+  (value: JsonValue): Attempt<T> => {
+    try {
+      return { thrown: undefined, result: run(value) };
+    } catch (cause) {
+      return { thrown: cause instanceof Error ? cause.message : String(cause), result: undefined };
+    }
+  };
+
+const attempt = attemptOf(validateMap);
+
+// 规则集那一侧多一个装载期参数(provenance):版本号不在值里(它由文件名与规则文档目录名承担),
+// 所以这里固定给一组**与版本常量一致**的名字,让这条性质只探「值 → 判决」这一件事。
+const GOOD_PROVENANCE = {
+  rulesetFileName: `${RULESET_VERSION}.json`,
+  rulesDocDirName: `rules-${RULESET_VERSION}`,
+} as const;
+
+const attemptRuleset = attemptOf((value) => validateRuleset(value, GOOD_PROVENANCE));
+
+/** 「拒绝」必须给得出两样东西:机器层的原始条目,以及面向模型的合并短句。 */
+const expectStructured = (result: MapValidation | RulesetValidation, shown: string): void => {
+  if (result.ok) {
+    return;
+  }
+  // 拒绝时两层诊断都要有内容,否则「拒绝了」等于没告诉任何人哪儿不对。
+  expect(result.machineDiagnostics.length, `拒绝 ${shown} 时机器层是空的`).toBeGreaterThan(0);
+  expect(result.modelDiagnostics.length, `拒绝 ${shown} 时面向模型层是空的`).toBeGreaterThan(0);
+  for (const diagnostic of result.machineDiagnostics) {
+    expect(diagnostic.pointer.startsWith("/")).toBe(true);
+    expect(diagnostic.keyword).not.toBe("");
+    expect(diagnostic.message).not.toBe("");
+  }
+  // 面向模型层的行数不会多于机器层的条数(合并只会变少),且每行都带 JSON 指针。
+  expect(result.modelDiagnostics.length).toBeLessThanOrEqual(result.machineDiagnostics.length);
+  for (const line of result.modelDiagnostics) {
+    expect(line).toContain("/");
   }
 };
 
@@ -56,19 +92,26 @@ it("任意 JSON 值:接受,或给出结构化诊断——永不抛未捕获异�
         expect(result.map).toBe(value);
         return;
       }
-      // 拒绝时两层诊断都要有内容,否则「拒绝了」等于没告诉任何人哪儿不对。
-      expect(result.machineDiagnostics.length).toBeGreaterThan(0);
-      expect(result.modelDiagnostics.length).toBeGreaterThan(0);
-      for (const diagnostic of result.machineDiagnostics) {
-        expect(diagnostic.pointer.startsWith("/")).toBe(true);
-        expect(diagnostic.keyword).not.toBe("");
-        expect(diagnostic.message).not.toBe("");
+      expectStructured(result, JSON.stringify(value));
+    }),
+  );
+});
+
+it("规则集同样如此:任意 JSON 值进去,接受或给出结构化诊断,不抛", () => {
+  fc.assert(
+    fc.property(anyJson(), (value) => {
+      const tried = attemptRuleset(value);
+      expect(tried.thrown, `规则集校验器对 ${JSON.stringify(value)} 抛了异常`).toBeUndefined();
+      const result = tried.result;
+      if (result === undefined) {
+        return;
       }
-      // 面向模型层的行数不会多于机器层的条数(合并只会变少),且每行都带 JSON 指针。
-      expect(result.modelDiagnostics.length).toBeLessThanOrEqual(result.machineDiagnostics.length);
-      for (const line of result.modelDiagnostics) {
-        expect(line).toContain("/");
+      if (result.ok) {
+        expect(typeof result.ruleset).toBe("object");
+        expect(result.ruleset).toBe(value);
+        return;
       }
+      expectStructured(result, JSON.stringify(value));
     }),
   );
 });
@@ -77,6 +120,7 @@ it("判定只取决于值本身:同一份输入两次校验给出同一个结果
   fc.assert(
     fc.property(anyJson(), (value) => {
       expect(attempt(value)).toEqual(attempt(value));
+      expect(attemptRuleset(value)).toEqual(attemptRuleset(value));
     }),
   );
 });
@@ -86,6 +130,7 @@ it("JSON 往返不改变判定(校验器不得依赖对象原型或引用身份)
     fc.property(anyJson(), (value) => {
       const parsed = JSON.parse(JSON.stringify(value ?? null)) as JsonValue;
       expect(attempt(parsed)).toEqual(attempt(value));
+      expect(attemptRuleset(parsed)).toEqual(attemptRuleset(value));
     }),
   );
 });

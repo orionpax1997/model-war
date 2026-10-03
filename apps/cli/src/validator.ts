@@ -15,6 +15,10 @@
  * 3. **诊断分两层**:机器层是 ajv 的原始诊断(路径 + 关键字 + 消息),原样透出;
  *    面向模型层是渲染后的短句,含 JSON 指针,并**对同类错误合并成一行**
  *    (生成管线的五轮迭代预算撑不撑得住,取决于这个合并)。
+ *
+ * 本文件已有两份形状(地图 / 规则集),走的是**同一个 Ajv 实例、同一套投影与合并渲染**。
+ * 新增一种数据形状是「再加一个 `validateXxx` + 它的装载期断言」,不是新写一份校验器:
+ * 真正的风险不是校验点少,而是日后有人为了让别的包也能校验而手写一份形状 if —— 那才是第二真源。
  */
 
 // 取具名导出而不是默认导出:ajv 是 CJS 包且 `module.exports` 就是 Ajv 类本身,
@@ -24,9 +28,14 @@ import { Ajv } from "ajv";
 import type { ErrorObject, SchemaObject } from "ajv";
 import {
   MAP_JSON_SCHEMA,
+  RULESET_JSON_SCHEMA,
+  RULESET_UNIT_KEYS,
   RULESET_VERSION,
+  SPAWN_TICKS_COEFFICIENT,
   type JsonValue,
   type MapDefinition,
+  type Ruleset,
+  type UnitStats,
 } from "@model-war/schema";
 
 /** 机器层的一条诊断:ajv 原始的路径 / 关键字 / 消息,或装载期断言自己产出的同形条目。 */
@@ -47,15 +56,33 @@ export type Diagnostic = {
 export const RULESET_TOO_NEW_KEYWORD = "ruleset-min-too-new";
 export const UNKNOWN_RULESET_VERSION_KEYWORD = "unknown-ruleset-version";
 
+/**
+ * 规则集版本三处不一致:`rulesets/vN.json` 的文件名 / `docs/rules-vN/` 的目录名 /
+ * 真源包的 `RULESET_VERSION` 常量。**只报一个关键字**,因为三处里错几处是同一件事:
+ * 「这份数据与本仓的规则版本不是同一个版本」,对模型的建议也是同一条(别拿它跑)。
+ */
+export const RULESET_VERSION_MISMATCH_KEYWORD = "ruleset-version-mismatch";
+
+/**
+ * 派生量与取值不自洽:取值文件里写的 `spawnTicks` ≠ `⌈cost × SPAWN_TICKS_COEFFICIENT⌉`。
+ *
+ * 它不是 ajv 的关键字,而是装载期断言——派生式是**跨字段**的(一条兵种线的 `cost` 与
+ * `spawnTicks` 之间的关系),draft-07 表达不了。这类断言与版本断言同轨,同形同措辞表。
+ */
+export const DERIVED_SPAWN_TICKS_KEYWORD = "derived-spawn-ticks";
+
+/** 拒绝时的那一半结果。两类数据的形状相同,所以共用这一个类型而不是各写一遍。 */
+export type ValidationRejection = {
+  readonly ok: false;
+  /** 机器层:逐条原始诊断,供门禁排障与自动化分流。 */
+  readonly machineDiagnostics: readonly Diagnostic[];
+  /** 面向模型层:含 JSON 指针的短句,**同类合并成一行**,可直接回喂模型。 */
+  readonly modelDiagnostics: readonly string[];
+};
+
 export type MapValidation =
   | { readonly ok: true; readonly map: MapDefinition }
-  | {
-      readonly ok: false;
-      /** 机器层:逐条原始诊断,供门禁排障与自动化分流。 */
-      readonly machineDiagnostics: readonly Diagnostic[];
-      /** 面向模型层:含 JSON 指针的短句,**同类合并成一行**,可直接回喂模型。 */
-      readonly modelDiagnostics: readonly string[];
-    };
+  | ValidationRejection;
 
 // `allErrors: true` 是合并的前提:默认的 fail-fast 只报第一条错,
 // 面向模型层就退化成「每次回喂只修一个错」,五轮预算必被吃光。
@@ -65,6 +92,7 @@ const ajv = new Ajv({ allErrors: true });
 // 唯一的适配就是这一次断言。schema 自身写错形状不会在这里被拦住——
 // 拦住它的是 `validator.test.ts` 里那组双过的 fixture 与键集合的类型级断言。
 const checkMapShape = ajv.compile(MAP_JSON_SCHEMA as SchemaObject);
+const checkRulesetShape = ajv.compile(RULESET_JSON_SCHEMA as SchemaObject);
 
 const MAJOR_OF_VERSION = /^v([0-9]+)$/;
 
@@ -142,6 +170,9 @@ const MODEL_PHRASE: Readonly<Record<string, string>> = {
   items: "数组元素的形状不对",
   [RULESET_TOO_NEW_KEYWORD]: "声明的规则集版本高于本仓规则集版本",
   [UNKNOWN_RULESET_VERSION_KEYWORD]: "声明的规则集版本不存在",
+  [RULESET_VERSION_MISMATCH_KEYWORD]:
+    "规则集版本三处不一致(取值文件名 / 规则文档目录名 / 版本常量)",
+  [DERIVED_SPAWN_TICKS_KEYWORD]: "生产耗时与派生式不一致",
 };
 
 const phraseOf = (keyword: string): string => MODEL_PHRASE[keyword] ?? `不满足 ${keyword} 约束`;
@@ -172,6 +203,13 @@ const renderModelDiagnostics = (diagnostics: readonly Diagnostic[]): readonly st
   return [...byKeyword].map(([keyword, pointers]) => `${phraseOf(keyword)}:${pointers.join("、")}`);
 };
 
+/** 拒绝结果的唯一构造处:机器层原样透出,面向模型层在这里渲染(合并只发生一次)。 */
+const rejectionOf = (machineDiagnostics: readonly Diagnostic[]): ValidationRejection => ({
+  ok: false,
+  machineDiagnostics,
+  modelDiagnostics: renderModelDiagnostics(machineDiagnostics),
+});
+
 /**
  * 校验一段地图 JSON。**纯函数**:不读盘、不写文件、不设退出码、不打日志。
  *
@@ -180,12 +218,7 @@ const renderModelDiagnostics = (diagnostics: readonly Diagnostic[]): readonly st
  */
 export const validateMap = (value: JsonValue): MapValidation => {
   if (!checkMapShape(value)) {
-    const machineDiagnostics = (checkMapShape.errors ?? []).map(toMachineDiagnostic);
-    return {
-      ok: false,
-      machineDiagnostics,
-      modelDiagnostics: renderModelDiagnostics(machineDiagnostics),
-    };
+    return rejectionOf((checkMapShape.errors ?? []).map(toMachineDiagnostic));
   }
 
   // 到这里 `rulesetMin` 必已通过 `^v[0-9]+$`,所以这层判据只比大小,不再判形状。
@@ -194,12 +227,118 @@ export const validateMap = (value: JsonValue): MapValidation => {
   const declared = (value as { rulesetMin: string }).rulesetMin;
   const bound = rulesetBoundDiagnostic(declared);
   if (bound !== undefined) {
-    return {
-      ok: false,
-      machineDiagnostics: [bound],
-      modelDiagnostics: renderModelDiagnostics([bound]),
-    };
+    return rejectionOf([bound]);
   }
 
   return { ok: true, map: value as MapDefinition };
+};
+
+// ── 规则集(hld §7.1)──────────────────────────────────────────────────────────
+
+/**
+ * 一份规则集是**从哪些名字装载上来的**。
+ *
+ * 规则版本号不在取值文件里(它由三处名字承担:文件名、规则文档目录名、版本常量),
+ * 于是「这三处是不是同一个版本」这件事**不在值里**,只能由装载方把它知道的两处名字交进来。
+ * 纯函数不读盘,所以读文件名与读目录名是调用方的活,判一致性是本函数的活——
+ * 分界与 `map-lint` 那条一样:本文件只判,不取。
+ *
+ * 因此这个参数**必填**:让它可选等于留一个「跳过版本检查」的静默后门,而版本错配
+ * 拒跑(hld §7.1)是这类数据唯一的软肋。
+ */
+export type RulesetProvenance = {
+  /** 取值文件名,例如 `v1.json`。 */
+  readonly rulesetFileName: string;
+  /** 规则文档目录名,例如 `rules-v1`。 */
+  readonly rulesDocDirName: string;
+};
+
+export type RulesetValidation =
+  | { readonly ok: true; readonly ruleset: Ruleset }
+  | ValidationRejection;
+
+/** 装载期判据:文件名与目录名都必须由 `RULESET_VERSION` 推出来。 */
+const expectedRulesetFileName = `${RULESET_VERSION}.json`;
+const expectedRulesDocDirName = `rules-${RULESET_VERSION}`;
+
+/**
+ * 版本三处一致性的判据。指针写根 `/`:这条诊断说的不是文件里哪个键不对,而是
+ * **这份文件整个不属于本仓的这个版本**(它没有 JSON 指针可指)。
+ */
+const rulesetProvenanceDiagnostic = (provenance: RulesetProvenance): Diagnostic | undefined => {
+  if (
+    provenance.rulesetFileName === expectedRulesetFileName &&
+    provenance.rulesDocDirName === expectedRulesDocDirName
+  ) {
+    return undefined;
+  }
+  return {
+    pointer: "/",
+    keyword: RULESET_VERSION_MISMATCH_KEYWORD,
+    message:
+      `规则集版本三处不一致:版本常量 ${RULESET_VERSION}、取值文件名 ` +
+      `${provenance.rulesetFileName}、规则文档目录名 ${provenance.rulesDocDirName};` +
+      `应当是 ${expectedRulesetFileName} 与 ${expectedRulesDocDirName}`,
+  };
+};
+
+/**
+ * 派生量断言:每条兵种线写下的 `spawnTicks` 必须等于 `⌈cost × SPAWN_TICKS_COEFFICIENT⌉`。
+ *
+ * **四条的诊断一次收齐**,而不是发现第一条就返回:「四条线里错了两条」与「错了四条」
+ * 对模型是两件难度完全不同的事,逐条早退会把一次回喂变成四次。
+ *
+ * 算术在这里是**精确**的:系数是 0.5(2 的负幂),`cost` 是 ajv 已约束过的整数,
+ * 于是 `cost × α` 在 IEEE-754 下无误差,`Math.ceil` 只是取整。真源包那侧写了同一条理由。
+ */
+const derivedSpawnTicksDiagnostics = (ruleset: Ruleset): readonly Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  for (const key of RULESET_UNIT_KEYS) {
+    const stats = ruleset[key as keyof Ruleset] as UnitStats;
+    const expected = Math.ceil(stats.cost * SPAWN_TICKS_COEFFICIENT);
+    if (stats.spawnTicks === expected) {
+      continue;
+    }
+    diagnostics.push({
+      pointer: `/${key}/spawnTicks`,
+      keyword: DERIVED_SPAWN_TICKS_KEYWORD,
+      message:
+        `${key}.spawnTicks 写了 ${stats.spawnTicks},而派生式 ` +
+        `⌈cost ${stats.cost} × ${SPAWN_TICKS_COEFFICIENT}⌉ = ${expected}`,
+    });
+  }
+  return diagnostics;
+};
+
+/**
+ * 校验一份规则集。**纯函数**,与 `validateMap` 同一条缝:不读盘、不碰 CLI 退出码。
+ *
+ * 三道判据按这个顺序,理由是「先说最可操作的那条」:
+ * 1. **形状**(ajv):缺键 / 错型 / 额外属性都在这里。缺预算键在这里是 `required` 缺失,
+ *    与「键存在但取未定值」是**两种不同的错误**——后者是合法的取值,压根不在这里被拒。
+ * 2. **版本三处一致**:形状不对时先修形状;形状对了才谈它属不属于本仓的版本。
+ * 3. **派生量自洽**:形状与版本都过了,兵种表才可能被读出数值——此时不一致是**数据自相矛盾**,
+ *    不拒就会带着一张互相打架的兵种表走进对局。
+ */
+export const validateRuleset = (
+  value: JsonValue,
+  provenance: RulesetProvenance,
+): RulesetValidation => {
+  if (!checkRulesetShape(value)) {
+    return rejectionOf((checkRulesetShape.errors ?? []).map(toMachineDiagnostic));
+  }
+
+  const version = rulesetProvenanceDiagnostic(provenance);
+  if (version !== undefined) {
+    return rejectionOf([version]);
+  }
+
+  // ajv 已经保证每条兵种线的六个字段都是整数,故下面这次认作 `Ruleset` 的断言是安全的。
+  const ruleset = value as Ruleset;
+  const derived = derivedSpawnTicksDiagnostics(ruleset);
+  if (derived.length > 0) {
+    return rejectionOf(derived);
+  }
+
+  return { ok: true, ruleset };
 };
