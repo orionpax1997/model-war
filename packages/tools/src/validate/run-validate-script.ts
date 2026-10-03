@@ -27,8 +27,9 @@
 
 import { readFileSync } from "node:fs";
 
-import { validateScriptSource, type ScriptLintPhase } from "./pipeline.ts";
+import { validateScriptSource } from "./pipeline.ts";
 import { renderViolations } from "./render-violations.ts";
+import type { ScriptLintPhase } from "../rules/script-lint.ts";
 
 const USAGE =
   "用法:node packages/tools/src/validate/run-validate-script.ts <产物文件> --max-bytes <N> --phase <iteration|freeze>";

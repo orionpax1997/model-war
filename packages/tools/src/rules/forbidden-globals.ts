@@ -38,8 +38,7 @@
 import { identifierName, isAstNode, startOf, walk, type AstNode } from "../ast.ts";
 import { parseToAst, positionAt, type ParsedSource } from "../parse-source.ts";
 import { isForbiddenGlobalName } from "../script-surface.ts";
-import type { ScriptLintContext, ScriptLintStage } from "../validate/pipeline.ts";
-import type { ScriptViolation } from "./script-violation.ts";
+import type { ScriptLintContext, ScriptLintStage, ScriptViolation } from "./script-lint.ts";
 
 /** 全局对象本身。它是「等价写法」而不是「某个对象的属性」,所以比较之前先剥掉。 */
 const GLOBAL_THIS = "globalThis";
