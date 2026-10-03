@@ -5,12 +5,14 @@ import { SCRIPT_LINT_STAGES, forbiddenGlobalStage, validateScriptSource } from "
  * 断言对象只有一件事:一段源码进,一组**有序**的违规出(空数组 = 放行)。
  *
  * 这一层测的是判定链自己的三条性质——顺序固定、解析失败独占、全序稳定——
- * 规则本身的判据在 `rules/forbidden-globals.test.ts` 里。
+ * 规则本身的判据在 `rules/forbidden-globals.test.ts` 与 `rules/script-size.test.ts` 里。
  */
 
 /**
- * 体积上限随便给一个大数:体积级还没有落地(票 04),这里不让一个未定值参与判定。
- * `maxBytes` / `phase` / `byteLength` 三个旋钮要到票 04 才有可观察的后果,那时才断言它们。
+ * 体积上限给一个足够大的数,让这些用例断言的仍然只是顺序、独占与全序这三条判定链性质。
+ * 体积级**是真的参与判定的**(上限就是它唯一的判据),只是这里的源码都远小于这个数,
+ * 于是它一条都不报——「没报」不等于「没判」。体积级自己的判据与两档时机在
+ * `rules/script-size.test.ts` 里,不在这里重复。
  */
 const OPTS = { maxBytes: 1_000_000, phase: "freeze" } as const;
 
@@ -36,6 +38,16 @@ it("解析失败时连同名的禁列违规一起报不出来", () => {
     "function loop() { const a = Date; const b = ; }\n",
     OPTS,
   );
+  expect(violations.map((v) => v.rule)).toEqual(["syntax-error"]);
+});
+
+it("解析失败时体积级也不参与判定,上限给再小也一样", () => {
+  // 体积是**字节数**的事实,与语法能不能解析无关——它不必等解析结果,所以它最容易被
+  // 提到解析之前那一支。而解析失败独占结果是裁决(spec《违规输出》):这份源码此刻根本无法判定,
+  // 顺手补一句「顺便你也超了体积」只会让模型在修好语法之后,又收到一条对着上一版源码的诊断。
+  // 这里给的上限远低于这份源码的字节数:体积级若被提前,输出就是两条而不是一条。
+  const source = "function loop() { const a = Date; const b = ; }\n";
+  const violations = validateScriptSource(source, { maxBytes: 1, phase: "freeze" });
   expect(violations.map((v) => v.rule)).toEqual(["syntax-error"]);
 });
 
