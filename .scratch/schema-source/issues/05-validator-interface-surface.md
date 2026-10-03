@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 生成器与允许名单退役
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 宿主桥前缀(`__`)作为真源包的名单类数据交付,不散落在别处
 - [ ] 禁列全局名(`Date` / `Math.random` / `performance` / `queueMicrotask`)作为名单类数据交付
