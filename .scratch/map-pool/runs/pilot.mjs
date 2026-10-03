@@ -45,7 +45,10 @@ const MAP_NAMES = ['open-clash', 'corridor-split', 'fortress-core'];
 const PROBES = ['farmer6', 'farmer8'];
 const SEEDS = [11, 23, 41, 71];
 const FIXTURE_BASELINE = { variant: 'center-fortress', size: 64 };   // 无墙对照，点位布局与三图逐格相同
-const OUT = HERE;
+// 产物目录：默认写在 runs/，PILOT_OUT 可以写到别处。存在的理由是「基线不能被重跑覆盖」——
+// 诊断文档（docs/diagnostics/06-confound.md）逐行引用的是第一段试点的那张表，
+// 修完探针再跑一遍要能同时看到修前与修后两个口径。
+const OUT = process.env.PILOT_OUT ? path.resolve(process.env.PILOT_OUT) : HERE;
 
 // ---------------------------------------------------------------- 形状体检
 
