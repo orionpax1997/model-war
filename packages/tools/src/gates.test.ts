@@ -15,6 +15,9 @@
  *     于是不会把 `tsc -b` 一起弄红,反例只证明它该证明的那一件事。
  *     唯一的例外是 `typescript/*` 那批规则(oxlint 不把它们施加到 .js 上),它们用 .ts 探针;
  *     反正 lint 用例里不跑 tsc,编译被染红也轮不到它说话。
+ *   - **落进工具包源码树的 .ts 探针**(`__declared-deps-probe.ts`):给「声明即依赖」门禁用。
+ *     它读的是 `packages/tools/src` 的源码,所以探针必须是 .ts;而它读不到 dist 里的任何东西,
+ *     与禁浮点门禁同形态。
  *   - **落进产物树**(各包 dist 目录下的 `__gate-probe.js`):给 dependency-cruiser 用。
  *     它巡航的是 dist(见 .dependency-cruiser.js 顶部:本仓库的 TypeScript 7 没有 JS 编程 API,
  *     depcruise 认不了 `.ts`),而 dist 不入库,所以这个反例既走真实配置与真实规则,
@@ -74,6 +77,7 @@ const PROBES = [
   "packages/schema/src/__lint-probe.js",
   "packages/schema/src/__lint-probe.ts",
   "packages/engine/src/__nofloat-probe.ts",
+  "packages/tools/src/__declared-deps-probe.ts",
   "packages/runner/dist/__gate-probe.js",
   "packages/engine/dist/__gate-probe.js",
   EXTRA_ARTIFACT_PATH,
@@ -504,6 +508,39 @@ it("依赖门禁:engine 运行时一旦 import 第二个内建模块就红,撤�
 
   const restored = script("check:deps");
   expect(restored.status, restored.output).toBe(0);
+});
+
+// ── 「声明即依赖」门禁反例:在工具包里 import 未声明的包 ────────────────────────────
+
+it("声明即依赖门禁:工具包 import 未声明的包就红,撤掉即绿", () => {
+  const clean = script("check:declared-deps");
+  expect(clean.status, clean.output).toBe(0);
+  // 反面证据:必须真的检查到了文件。「一个文件都没读到」是门禁目标失效的形态,
+  // 那种情况入口会报 stderr 并按失败处理,但一条只会安静地扫零文件的规则更危险。
+  expect(clean.output, `门禁没有报告检查规模,疑似空跑:\n${clean.output}`).toContain("检查");
+
+  // 探针落在工具包的**运行时源码**里,引一个根上装着、而 packages/tools/package.json 没声明的包
+  // (vitest 在根 devDependencies 里)。这正是仓库此前真实吃着的那条偷跑形态:tsc -b 退出 0,
+  // 因为模块解析一路向上找到了根的 node_modules——只有这道门禁会红。
+  const violated = withProbeFile(
+    "packages/tools/src/__declared-deps-probe.ts",
+    'import { expect, it } from "vitest";\nexport const probe = [expect, it];\n',
+    () => script("check:declared-deps"),
+  );
+  expect(violated.status, "未声明的依赖必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("undeclared-dependency");
+  expect(violated.output, violated.output).toContain("vitest");
+  expect(violated.output, violated.output).toContain("__declared-deps-probe.ts");
+
+  // 同一个探针换成已声明的依赖:判决跟着声明走,不是跟着文件名走。
+  const declared = withProbeFile(
+    "packages/tools/src/__declared-deps-probe.ts",
+    'import { parseSync } from "oxc-parser";\nexport const probe = parseSync;\n',
+    () => script("check:declared-deps"),
+  );
+  expect(declared.status, `已声明的依赖仍被拦下:\n${declared.output}`).toBe(0);
+
+  expect(script("check:declared-deps").status, "撤掉探针后门禁没有回到绿").toBe(0);
 });
 
 // ── 格式门禁反例 ─────────────────────────────────────────────────────────────

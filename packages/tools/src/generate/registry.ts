@@ -3,8 +3,11 @@
  * 不是改这个文件之外的任何东西——漂移检查(挂在全量门禁末尾的那道)按这张表逐件检查,
  * E 接入文档生成(规则文档的数值表、API 表)时同样只需注册,骨架不动。
  *
- * 本表**不为「将来会有第二件」预留分支**:逐件遍历已经覆盖多件的情形,
- * 而预留出来的开关在真需要之前只会变成没人走过的死代码。
+ * 「加一行」这条纪律不是口号,本文件在两件生成物之后仍然是这三十来行:第二件
+ * (参赛脚本可见面的三张名单)只新增了一份生产函数与下面这一行,骨架一行没改。
+ *
+ * 本表**不为「第几件」预留分支**:逐件遍历覆盖任意件,而预留出来的开关在真需要之前
+ * 只会变成没人走过的死代码(第二件真到时,遍历那一行没动)。
  *
  * ── 混合传输:分界线是「能不能 afford 构建」 ──
  *
@@ -15,7 +18,8 @@
  *   根包,谁都不依赖它。相对路径 import 真源包已被排除:工具包 tsconfig 的 `rootDir` 写死,
  *   引进来会 TS6059 越界(ADR-0002 已实测记录)。
  *
- * - **规则层读生成出来的源文件**:`rules/no-float.ts` → `allowlist.ts` → `src/generated/`。
+ * - **规则层读生成出来的源文件**:`rules/no-float.ts` → `allowlist.ts` / `script-surface.ts`
+ *   → `src/generated/`。
  *   工具包以源码形态由 Node 的类型擦除执行、不产 JS,而快门禁今天是**零构建**。
  *   让规则层 import 真源包等于给 `check:quick` 挂上一个 `tsc -b` 前置(实测 +31%),
  *   更关键的是让新克隆在第一次跑门禁时可能失败——而门禁的第一印象必须是「clone 完直接能跑」。
@@ -26,6 +30,14 @@
 
 import { builtinGlobalsAllowlist } from "./builtin-globals.ts";
 import type { GeneratedArtifact } from "./artifact.ts";
+import { scriptSurfaceNames } from "./script-surface.ts";
 
-/** 注册表。**本票只注册一件**:内置全局白名单 → 工具包内的生成源文件。 */
-export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [builtinGlobalsAllowlist];
+/**
+ * 注册表。**新增生成物是往这个数组里加一行**,外加一份生产函数——骨架(本文件 + `artifact.ts`
+ * + `run-generate.ts`)不用动。表里已有两件,分属两个域:内置全局白名单(禁浮点规则那一半)
+ * 与参赛脚本可见面的三张名单(静态校验器那一半)。漂移检查逐件覆盖,报告按 `id` 指认。
+ */
+export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [
+  builtinGlobalsAllowlist,
+  scriptSurfaceNames,
+];
