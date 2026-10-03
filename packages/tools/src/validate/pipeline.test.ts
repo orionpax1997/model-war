@@ -2,7 +2,9 @@ import { expect, it } from "vitest";
 import {
   SCRIPT_LINT_STAGES,
   forbiddenGlobalStage,
+  hostBridgeStage,
   moduleSystemStage,
+  scriptSizeStage,
   validateScriptSource,
 } from "../index.ts";
 
@@ -10,7 +12,11 @@ import {
  * 断言对象只有一件事:一段源码进,一组**有序**的违规出(空数组 = 放行)。
  *
  * 这一层测的是判定链自己的三条性质——顺序固定、解析失败独占、全序稳定——
- * 规则本身的判据在 `rules/forbidden-globals.test.ts` 与 `rules/script-size.test.ts` 里。
+ * 规则本身的判据在 `rules/forbidden-globals.test.ts`、`rules/host-bridge.test.ts`、
+ * `rules/script-size.test.ts` 与 `rules/module-system.test.ts` 里。
+ *
+ * 槽位断言(禁列 / 桥前缀 / 模块系统各一条)钉的是**判定链里哪一格归谁**:
+ * 五级顺序是裁决,插错一格没有任何外部可观察的等价物,所以只能白盒钉。
  */
 
 /**
@@ -106,11 +112,15 @@ it("禁列是判定链的第一级", () => {
   expect(SCRIPT_LINT_STAGES[0]).toBe(forbiddenGlobalStage);
 });
 
-it("模块系统落在第三级:禁列在前、桥前缀在前、体积在后", () => {
+it("模块系统落在第三格:禁列 → 桥前缀 → 模块系统 → 体积", () => {
   // 同样是一条白盒断言,理由同上:模块系统这一格在五级顺序里的位置是裁决。
-  // 桥前缀(票 03)此刻仍是注释占位,所以这里钉的是**索引**而不是那几个槽位的内容;
-  // 桥前缀落地后它会把自己的那格插进来,本条随之改钉它在合并后的那一格。
-  expect(SCRIPT_LINT_STAGES[1]).toBe(moduleSystemStage);
+  // **钉的是第三格(索引 2),不是「前面那几格」**——桥前缀(票 03)落地后它把自己的那格插到了
+  // 本级前面,于是索引从 1 挪到 2。与其钉一个会随邻居落地而漂的索引,不如把两侧的邻居
+  // 一起写出来:索引 + 三条相对顺序,任何一次插错槽位都会让本条红。
+  expect(SCRIPT_LINT_STAGES[2]).toBe(moduleSystemStage);
+  expect(SCRIPT_LINT_STAGES.indexOf(forbiddenGlobalStage)).toBeLessThan(2);
+  expect(SCRIPT_LINT_STAGES.indexOf(hostBridgeStage)).toBeLessThan(2);
+  expect(SCRIPT_LINT_STAGES.indexOf(scriptSizeStage)).toBeGreaterThan(2);
 });
 
 it("违规都是拦截项,退出码那一侧因此只有一个 0/1", () => {
