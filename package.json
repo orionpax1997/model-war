@@ -21,10 +21,11 @@
     "lint:types": "tsc -b --pretty false && oxlint --type-aware apps packages",
     "coupling": "node packages/tools/src/toolchain-coupling.ts",
     "check:no-float": "node packages/tools/src/gate/run-no-float-gate.ts",
+    "check:drift": "node packages/tools/src/generate/run-drift-gate.ts",
     "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run check:no-float",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
     "check:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
-    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps"
+    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:drift"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
