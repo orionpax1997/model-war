@@ -313,7 +313,7 @@ model-war/
 | runner:scheduler | 组合 × 地图 × 种子 × 座位的对局枚举与并发调度 | FR-7 |
 | runner:ranker | 名次积分、并列处理、可选 Elo(**纯函数**) | FR-8 |
 | runner:reporter | Markdown 报告 + JSON 原始数据 + 叙事战报 | FR-8 AC2 |
-| gen:pipeline / validator / archiver | prompt 组装 → 模型 API → 校验迭代 → 冻结脚本;API 误用静态检查(白名单由 `schema` 生成);元数据强制存档 | FR-5、FR-6 |
+| gen:pipeline / validator / archiver | prompt 组装 → 模型 API → 校验迭代 → 冻结脚本;API 误用静态检查挂真源包的类型面而非符号表(名单由 `schema` 生成,§6.2),白名单反转在编译步骤而不在本包;元数据强制存档 | FR-5、FR-6 |
 | replay | 回放的解析/序列化、stateHash 原语、回放**文件格式**版本常量;**不再声明行的类型**(归 `schema`,§2.2.5) | FR-2 AC2、NFR-1 |
 | tools:rules / gate | 禁浮点纯规则(源码 → 带行列的违规)+ 目录薄壳与退出码;工具版本耦合断言;声明即依赖门禁。**名单类数据一个名字都不在这里存**——真源在 `schema` 一侧,本包经生成器读生成物(§3.2) | FR-2 AC3、NFR-1 |
 | tools:generate | 生成器:真源 → 生成物,持有一张**生成物注册表**(每件 = id、产出路径、生产函数);**新增生成物是加一行注册**。漂移检查按注册表逐件判定(§2.2.5、§2.2.7) | FR-10 AC2 |
