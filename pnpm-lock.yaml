@@ -252,6 +252,9 @@ importers:
       '@model-war/schema':
         specifier: workspace:*
         version: link:../schema
+      oxc-parser:
+        specifier: ^0.152.0
+        version: 0.152.0
 
 packages:
 
