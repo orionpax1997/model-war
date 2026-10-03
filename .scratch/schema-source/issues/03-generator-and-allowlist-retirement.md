@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 工具包**正式声明**真源包为依赖并加 project reference,生成器直接 import 它(它指向依赖图的根,方向合法)
 - [ ] 生成器持有一张**生成物注册表**:每件 = 标识、产出位置、生产函数;新增生成物是往表里加一行,不是改骨架

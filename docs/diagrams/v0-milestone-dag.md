@@ -136,9 +136,9 @@ flowchart TB
 
 | 节点 | 状态 | 交付物 | 硬依赖 | 里程碑 | 该走的额外 skill |
 |---|---|---|---|---|---|
-| **C schema 真源与生成物** | `ready-for-agent`([spec](../../.scratch/schema-source/spec.md) · 6 票) | `packages/schema` 的类型 / `JsonValue` / 常量表 / 参数 key 清单 / JSON Schema + ajv 读入端校验;ruleset 与 map 两类数据的形状;文档生成器骨架 + 漂移检查 | D1、D3 | — | 入口 `grill-with-docs` 要裁两件事:①`tools` 怎么拿 API 符号表(hld §3.2 说它不 import 任何 `@model-war/*`,§2.2.3 说白名单由 schema 生成 → 只能走**生成文件**,不能走 import);②`packages/tools` 的依赖门禁缺口(hld §3.2 自述它不在 depcruise 巡航范围,反向边只被 `tsc` 拦)**是这格顺手补掉还是留给出手 D 的人**,建议留给 D。`codebase-design` 用于「类型 / 常量 / schema」三层的缝 |
+| **C schema 真源与生成物** | `已完成`([spec](../../.scratch/schema-source/spec.md) · 6 票,**全部 resolved**) | `packages/schema` 的类型 / `JsonValue` / 常量表 / 参数 key 清单(21 键 = 13 定稿 + 8 预算)/ JSON Schema + apps/cli 的 ajv 读入端校验;ruleset 与 map 两类数据的形状;生成器 + 生成物注册表 + 漂移检查 + 声明即依赖门禁 | D1、D3 | — | 已收口。三处当时未决的裁法,落点见 `docs/adr/0003`:①`tools` 走**混合传输**——生成器 import 真源包(低频入口可 afford 构建),规则层读**生成物**(保住快门禁零构建);②`tools` 的依赖门禁缺口**在本节点补掉**了(`check:declared-deps`,不走 depcruise,理由见其规则头注);③键数是 **21 不是 22**:spec 原文把「内存软阈」当预算键数了一遍,而它按 spec 自己的规则**不入键清单**(纯推导展示项)——见 hld §7.1 |
 | **D 参赛脚本静态校验器** | 未开 | `tools` 的第二消费者:tsc 编译、禁 `export`/`import`、全局白名单、`__*` 前缀禁令、`Date`/`Math.random` 禁列、脚本体积上限;`gen:validator` 的调用面 | C | — | `codebase-design` 定「纯规则(源码→违规) / 目录薄壳 / 退出码」这三层——骨架里已有这个形状,D 是往里加第二组规则,不是新造。**同时补上 tools 的依赖门禁缺口**(C 或 D 决定) |
-| **E 规则集与契约落库** | 未开 | `rulesets/v1.json` 13 键(9 个预算键先占位)+ `docs/rules-v1/{rules.md,api.md}`(散文按 handoff §4 的 21 条裁决改草案,数值表与 API 表由 C 生成)+ 用**终稿**契约重跑盲写 + `benchmarks/` 落库 | C、D、D1 | **M1★** | 盲写复跑直接复用 `blind/blind-run.sh` 的隔离舱方案(已 smoke test 过),不改。21 条裁决已裁完,**不需要再 grill**——`grill-with-docs` 只确认「终稿 API 面与 D、E6 的实现形状同源」这一条 |
+| **E 规则集与契约落库** | 未开 | `rulesets/v1.json` 21 键(13 定稿 + 8 预算,预算键先取未定值 0)+ `docs/rules-v1/{rules.md,api.md}`(散文按 handoff §4 的 21 条裁决改草案,数值表与 API 表由 C 生成)+ 用**终稿**契约重跑盲写 + `benchmarks/` 落库 | C、D、D1 | **M1★** | 盲写复跑直接复用 `blind/blind-run.sh` 的隔离舱方案(已 smoke test 过),不改。21 条裁决已裁完,**不需要再 grill**——`grill-with-docs` 只确认「终稿 API 面与 D、E6 的实现形状同源」这一条 |
 | **F 对局内核** | 未开 | `world` + `driver`(状态模型、id 升序不变量、整数 LCG + `IdGen`、`apply()` 唯一写入口)、`processor` 七步结算管线 + `intents/*.ts` 的 `check()`/`run()`、`snapshot`(深拷贝 + 只读封存)、`Runner` 缝 + `StubRunner`、`replay` 包全行格式与解析、`replay-writer`;`modelwar replay` 的 ASCII 查看器 | C、E(机制)、A(端到端验收要真地图) | **M2★**(与 G 合) | `codebase-design` 定 `processor` 与 `intents` 的缝、host 侧 `check()` 与 VM 内 dual validation 的共享方式。**用 StubRunner 先打通,让 E9 那条「跑一个完整对局」的闸门提前开**;G 落地后换 QuickJsRunner,结算管线一行不改 |
 | **G 沙箱执行器与预算裁决** | 未开 | `QuickJsRunner` + `engine/sandbox-runtime`(TS→IIFE bundle)+ WASI 三件套常量 + 桥函数删除 + 四类异常轨 + 双计数 + 内存三层 + `exceptionTicks` 续算;`modelwar match` / `verify` 子进程 | D2、C、F | **M2★** | **本节点第一条验收就是 hld #5 五条复验写回文档并关掉 hld #8**(升级条款在 G 落地前是空头承诺)。`prototype` 只用在一处:hld §2.2.2 把 runtime bundle 的**打包方式**留给实现期,选之前先跑一下 |
 | **H 生成管线** | 未开 | `prompts/` 模板数据文件、模型 API 客户端 + 厂商适配 + 退避限流、`models.yaml`、≤5 轮只回喂校验错误、tsc 预编译为 script-mode JS、`archive/<model>/<runId>/` 三件套、meta 完整性校验与缺档拒跑 | E(文档即 prompt 输入)、D(校验器)、**J(凭证)** | **M3★** | **与 F/G 零依赖,可完全并行**。凭证由 `wizard` 提前办 |
@@ -154,7 +154,7 @@ flowchart TB
 
 | 节点 | 状态 | 交付物 | 硬依赖 | 归属 |
 |---|---|---|---|---|
-| **K 预算参数终值标定** | 未开 | 9 个预算键的终值:事件计数上限、API 调用上限、内存分配上限、`memoryTickCeiling`、软阈、墙钟硬超时、`exceptionTickLimit`、脚本体积上限 | E(基准脚本实测峰值)、A(资源点数量)、G(真沙箱实测) | hld #2。验收命题已在 handoff §2.1,**不是迷雾,不需要 wayfinder**。但要**先造两个仓库里不存在的对抗探针**(纯计算死循环 / API 轰炸),否则命题②无从验;命题①明写 1168 场实测异常 0 次、零证据。**必须在 I 之前**——赛季要用定值 |
+| **K 预算参数终值标定** | 未开 | 8 个预算键的终值:事件计数上限、API 调用上限、内存分配上限、`memoryTickCeiling`、墙钟软限、墙钟硬超时、`exceptionTickLimit`、脚本体积上限(**内存软阈不在其中**——它是 `0.8 × memoryTickCeiling` 的推导项,按 spec 不入键清单)墙钟硬超时、`exceptionTickLimit`、脚本体积上限 | E(基准脚本实测峰值)、A(资源点数量)、G(真沙箱实测) | hld #2。验收命题已在 handoff §2.1,**不是迷雾,不需要 wayfinder**。但要**先造两个仓库里不存在的对抗探针**(纯计算死循环 / API 轰炸),否则命题②无从验;命题①明写 1168 场实测异常 0 次、零证据。**必须在 I 之前**——赛季要用定值 |
 | **L 门禁、流水线与性能与存储** | 未开 | 集成门禁(端到端 + `verify` + 重跑 10 次 hash)、基准门禁(双脚本对打)、生成物漂移检查接入主流水线、Stryker 变异测试配置、快照拷贝粒度(hld #6)、回放体量与夜间扫描的存储/IO(hld #7)、NFR-3 单场墙钟 X、主/夜间流水线建成 | G、K、I | 入口 `grill-with-docs` 要裁「hld #6 / #7 测什么、优化到什么程度算完」——这两条现在是「先测后优化」,没有停止条件 |
 
 ## 5. 关键路径与并行度
@@ -172,14 +172,14 @@ C schema 真源 → D 校验器 → E 规则落库(M1★) → F 对局内核 →
 3. **A 与 C/D/E 并行**。地图图不等引擎:gdd §8 #8 的两条等效命题用 D1 的桩就能跑,桩的改动在交接单 §7 里被明写为「本图的可复现资产」。但 A 阻塞 F 的端到端验收与 I。
 4. **K 卡在 G 与 I 之间**,是唯一被硬阻塞的收尾项。G 排得越晚,赛季越晚。
 
-**当前 frontier**:`C` 节点内的 01(地图形状 + 校验器通路)与 03(生成器 + 允许名单退役)——两条链零依赖,可并行开工;02 / 04 / 05 / 06 各自被它们挡着。
+**当前 frontier**:**无**——C 已收口(六张票全部 resolved)。下一个入口是 **D**(硬依赖 C,现已解除)与 **A / J**(迷雾开图与人工前置,本就不依赖 C)。
 
 **可并行批次**:
 
 | 波 | 节点 | 说明 |
 |---|---|---|
 | 0 | D1 D2 D3 | 已完成 |
-| 1 | **C** | 唯一的根,无前置。**grill → spec → 六张票已就绪**,其中 01 与 03 是当前 frontier,可并行开工 |
+| 1 | **C** | **已完成**(6 票全收口)。唯一的根,无前置 |
 | 2 | J D A(迷雾开图) F 的非端到端部分 | A 与 J 都不依赖 C 的产出 |
 | 3 | D E H(等 J) | E 完成后 M1★ 即可关 |
 | 4 | F(等 A 的地图) | |
