@@ -15,6 +15,7 @@
     "@model-war/gen": "workspace:*",
     "@model-war/replay": "workspace:*",
     "@model-war/runner": "workspace:*",
-    "@model-war/schema": "workspace:*"
+    "@model-war/schema": "workspace:*",
+    "ajv": "^8.20.0"
   }
 }

@@ -142,7 +142,7 @@
 | 项 | 选择 | 依据 |
 |---|---|---|
 | 真源 | **`schema` 包 = 类型 + 常量表 + 参数 key 清单 + JSON Schema;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移 |
-| 文档生成 | 由 `schema` 生成 `docs/rules-v1/api.md` 的 API/常量表,由 `rulesets/v1.json` 生成 `rules.md` 的数值表;**散文部分人工编写** | 生成物进版本库,CI 跑 `git diff --exit-code`,未重新提交即报错(FR-10 AC2) |
+| 文档生成 | 由 `schema` 生成 `docs/rules-v1/api.md` 的 API/常量表,由 `rulesets/v1.json` 生成 `rules.md` 的数值表;**散文部分人工编写** | 生成物进版本库,漂移检查(`check:drift`,§2.2.7)逐件判定「重生成后无差异 + 生成物在版本库里」,未重新生成或未提交即报错(FR-10 AC2) |
 | 数据格式校验 | JSON Schema(schema 包内定义,运行时用 `ajv`) | ruleset / 地图 / 存档 meta / result / 回放行的读入端强制校验;版本错配在装载期报错(FR-10 AC2) |
 | hash | `node:crypto` SHA-256(标准库) | stateHash、地图 hash、存档完整性校验,零第三方依赖 |
 | 随机数与 ID | **归 `driver` 所有**:整数 LCG + `IdGen`;RNG 消费顺序写入 rules-vN | 确定性原语不散落;消费顺序是回放断裂的经典成因(§4.6) |
@@ -163,9 +163,11 @@
 | 脚本 | 实际内容 | 用途 |
 |---|---|---|
 | `check:quick` | `oxfmt --check` + `oxlint` + 工具版本耦合断言 + 禁浮点门禁 | agent 每轮编辑循环 |
+| `check:no-float` | `node packages/tools/src/gate/run-no-float-gate.ts`(禁浮点门禁) | 仓库源码禁浮点字面量 |
+| `check:drift` | `node packages/tools/src/generate/run-drift-gate.ts`(生成物漂移检查) | 挂在 `check` 末尾,**不进 `check:quick`**:它需要一次 `tsc -b`(生产函数 import 真源包),而 `check:types` 里已经有,快门禁的零构建性质因此不受影响 |
 | `check:types` | `check:quick` + `tsc -b` + `oxlint --type-aware` | 改完一个 issue 跑一次 |
 | `check:deps` | `tsc -b` + dependency-cruiser(巡航 `dist` 而非 `src`,§2.2.10) | 依赖方向 |
-| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` | 全量 |
+| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:drift` | 全量 |
 | `test:props` | `vitest run --project property` | 长时属性测试,单独跑 |
 | `test:gates` | `vitest run --project gates`(门禁自测:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
 | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 | — |
@@ -189,7 +191,7 @@
 | 阶段 | 内容 | 对应需求 |
 |---|---|---|
 | 1. 编译 | `tsc -b`(必须先于类型感知 lint) | — |
-| 2. 静态 | `oxfmt --check`、`oxlint --type-aware`、禁浮点门禁、工具版本耦合断言、dependency-cruiser;生成物漂移检查 `git diff --exit-code` **待 `schema` 落地后才有内容**(生成器尚不存在) | FR-2 AC3、FR-10 AC2、NFR-4 AC2 |
+| 2. 静态 | `oxfmt --check`、`oxlint --type-aware`、禁浮点门禁、工具版本耦合断言、dependency-cruiser、生成物漂移检查 `check:drift`(末尾一道,§2.2.7) | FR-2 AC3、FR-10 AC2、NFR-4 AC2 |
 | 3. 单测+属性 | Vitest 全量(结算、属性、沙箱裁决、地图校验) | FR-1/3/4 |
 | 4. 集成 | 样例对局端到端 + `modelwar verify` 重放一致性 + 重跑 10 次 hash 断言 | FR-2、NFR-1 |
 | 5. 基准 | `benchmarks/` 双模型基准脚本对打一个对局,断言正常终局(不判策略胜负) | srs §4 第 2 条的回归防线 |

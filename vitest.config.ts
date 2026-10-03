@@ -17,6 +17,10 @@ const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
 
 export default defineConfig({
   test: {
+    // 任何测试模块被加载**之前**先补一次 `tsc -b`(理由与代价见 vitest.global-setup.ts 的头注)。
+    // 这一条是 `test:props` 这类独立入口能自己站住的前提:工作区包的 exports 指向 dist/,
+    // 而门禁是按命名脚本手工触发的,不能假定「前面恰好跑过 check:types」。
+    globalSetup: ["./vitest.global-setup.ts"],
     // 两个 project 的 include 都限定在源码目录:`tsc -b` 会把测试一并编译进各包的 dist,
     // 编译产物绝不能被二次拾取(hld §2.2.4 的禁令同样适用于测试范围)。
     projects: [
@@ -30,7 +34,9 @@ export default defineConfig({
       {
         test: {
           name: "property",
-          include: ["packages/*/src/**/*.prop.ts"],
+          // 属性测试不限于包内:`apps/cli` 的校验器有一条「任意 JSON 值都不抛未捕获异常」
+          // 的属性(手写 schema 最容易漏的那类崩),它按同样的纪律归到这里。
+          include: ["packages/*/src/**/*.prop.ts", "apps/*/src/**/*.prop.ts"],
           exclude: NEVER_TEST,
           testTimeout: 30_000,
         },

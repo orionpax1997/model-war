@@ -26,29 +26,28 @@
  * ── 规则的作用域:只管运行时代码,测试代码豁免 ──
  * 依据是 hld §3.2 已有的那条:门禁约束的是运行时行为,而测试代码不进对局进程。
  * 测试与属性测试文件必然要读盘、spawn 进程、依赖 vitest。
+ * (`node:*` 那条禁令本身只作用于 engine,对 tools 谈「禁令生效与否」没有意义。)
  *
- * ── 已知缺口(且比先前记的更宽) ──
- * `packages/tools` 以源码形态执行(`emitDeclarationOnly`,dist 里没有 .js),因此它**不在本图的
- * 巡航范围内**——实测巡航出的 21 个模块里一个 tools 的都没有。它缺掉的覆盖面分两块,一块有人
- * 兜底、一块没人兜底:
+ * ── `packages/tools` **有意**在本图的巡航范围之外 ──
+ * 该包以源码形态执行(`emitDeclarationOnly`,dist 里没有 .js),因此它不在本图的巡航范围内
+ * (实测巡航出的模块里一个 tools 的都没有)。这是取舍不是疏漏:让该包产 `.js` 就要让快门禁
+ * 付一次构建,而快门禁必须零构建(hld §2.2.1 的 Node 下限成因之一,ADR-0003 有实测数字)。
+ * 缺掉的覆盖面分两块,一块已补、一块仍开着:
  *
- *   - **包图方向:有人兜底。** tools 的 tsconfig 没有 references、package.json 没有 dependencies,
- *     所以 pnpm 不会把任何 `@model-war/*` 软链进 `packages/tools/node_modules`(该目录压根不存在)。
- *     实测:`packages/tools/src` 里 import `@model-war/engine` ⇒ **TS2307**,`tsc -b` 非零退出。
- *     也就是说 tools → 其它包的反向边会被编译器拦住,只是拦它的是 tsc 而不是本门禁。
- *   - **第三方依赖面:没人兜底。** 先前这里写的是「pnpm 隔离 node_modules + TS2307 兜住,
- *     引用未声明的包必然编译失败」——**这句是错的**,已按实测更正。Node 与 TypeScript 的模块解析
- *     一路向上找 `node_modules`,而 workspace 根把所有 devDependency 都摆平了,于是
- *     `packages/tools/src` 可以 import `ajv` / `fast-check` / `esbuild` / `vitest` / `oxc-parser`
- *     而 `tsc -b` 退出 0,尽管 `packages/tools/package.json` 一个都没声明。
- *     TS2307 只对「整条祖先链上都没装」的包触发(实测 `lodash` ⇒ TS2307)。
- *     仓库此刻正吃这条:packages/tools/src/index.ts import `oxc-parser` 就是未声明的。
- *     所以**「声明即依赖」这条纪律在 tools 包里目前只靠自觉,没有机器门禁**。
- *
- * 另:`node:*` 那条禁令本身只作用于 engine,对 tools 谈「禁令生效与否」没有意义。
- *
- * 补上这一块有两条路,留给出下一个碰 tools 包的人(都不在本 ticket 的范围内):
- * 给 tools 装上 `tsc --noResolve` 之类的自举检查,或把它也纳入某个会产出 .js 的编译路径。
+ *   - **第三方依赖面:已由 `check:declared-deps` 兜住。** `packages/tools/src/gate/declared-deps-gate.ts`
+ *     读 `packages/tools/package.json` 的 `dependencies` 与该包运行时源码里的每一个 import 说明符,
+ *     两者对不上即非零退出(根脚本 `check:declared-deps`,挂在 `check` 末尾;零构建,与 `check:deps`
+ *     读 dist 的形态互补)。门禁规则本身在 `packages/tools/src/rules/declared-deps.ts`。
+ *     此前这里记的是「没人兜底」,并点名仓库正吃着这条:`src/parse-source.ts` import `oxc-parser`
+ *     (经 `src/index.ts` 再导出)而 package.json 一个都没声明。那处偷跑已改成正式声明
+ *     (现在 `oxc-parser` 在 tools 的 `dependencies` 里)。
+ *     为什么不能用本文件顺手管掉:本文件巡航的是 `.js`,而 `allowImportingTsExtensions` 下编译出的
+ *     说明符仍写 `.ts`(本包 import 一律带 `.ts` 扩展名,见它的 tsconfig),depcruise 解析不动。
+ *   - **包图方向:只由 tsc 兜,本门禁看不到。** tools 正式声明了 `@model-war/schema` 为依赖并加了
+ *     project reference(hld §3.2:工具包只允许 import 真源包这一个根包,这条边指向依赖图的根)。
+ *     pnpm 只软链已声明的包,于是 `packages/tools/src` 里 import `@model-war/engine` ⇒ **TS2307**,
+ *     `tsc -b` 非零退出。注意这条边是新的(混合传输的生成器一侧,ADR-0003),而**编译器只拦「没声明」,
+ *     拦不住「声明了但方向反了」**——真源包不得反向 import tools 这条,仍靠规范而非门禁。
  *
  * @type {import('dependency-cruiser').IConfiguration}
  */

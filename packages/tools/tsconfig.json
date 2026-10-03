@@ -12,5 +12,8 @@
     // JS 产物里改写它),但 `exports.types` 指向 `./src/index.ts`,dist 下的 d.ts 没有消费者。
     "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  // 唯一一条 project reference,且只有生成器(低频入口)真的走它:规则层读的是生成物,
+  // 所以快门禁的零构建性质不受影响(ADR-0003 的混合传输)。
+  "references": [{ "path": "../schema" }]
 }
