@@ -38,6 +38,24 @@ it.each([
   ["裸引用也算", "let t = 0;\nt = t + 1;\nDate;\n", "forbidden-global @ 3:1"],
   ["声明处就判,不问之后怎么用", "const r = Math.random;\n", "forbidden-global @ 1:11"],
   ["链指向禁列里的成员路径", "const a = Math.random();\n", "forbidden-global @ 1:11"],
+  [
+    "括号是纯分组:对象带一层括号照样判整条链",
+    "const a = (Math).random();\n",
+    "forbidden-global @ 1:12",
+  ],
+  ["多层括号同样判", "const a = ((Math)).random();\n", "forbidden-global @ 1:13"],
+  [
+    "写成成员再括号包住,仍然**只报一条**",
+    "const a = (Math.random)();\n",
+    "forbidden-global @ 1:12",
+  ],
+  [
+    "括号包住 globalThis 那一层,位置落在真正要改的名字上",
+    "const a = (globalThis).Math.random();\n",
+    "forbidden-global @ 1:24",
+  ],
+  ["括号里的下游段照样判", "const a = (Math).random().toFixed(2);\n", "forbidden-global @ 1:12"],
+  ["括号包住实参:仍是一次引用,不多报一条", "f((Math.random));\n", "forbidden-global @ 1:4"],
   ["计算属性里的成员名照样判", 'const a = Math["random"]();\n', "forbidden-global @ 1:11"],
   [
     "globalThis 等价写法,位置落在真正要改的那个名字上",
@@ -61,6 +79,8 @@ it.each([
   ["光秃秃的 Math 放行", "const a = Math;\n"],
   ["带桥前缀的名字不归本规则判", "const a = __host.eval('1');\n"],
   ["动态下标取不到成员名,按不在禁列内处理", "const a = Math[k]();\n"],
+  ["括号只做分组:括起来的同名属性读取不是全局", "const a = (o.Date);\n"],
+  ["括号里的字符串不是标识符", 'f(("Math.random"));\n'],
   ["解构把链拆成两条独立的名字", "const { random } = Math;\n"],
 ])("合规写法放行:%s", (_case, source) => {
   expect(forbiddenGlobalViolations(source)).toEqual([]);
