@@ -29,9 +29,10 @@
  * 兜住**第三方依赖面**,「声明即依赖」在本包里从此有机器保证。另一半(包图方向)仍由 tsc 的 TS2307
  * 兜,「声明了但方向反了」仍靠规范。完整的缺口分析与实测记在 `.dependency-cruiser.js` 的头注里。
  *
- * 消费者有两个(仓库自身的确定性门禁、将来的参赛脚本校验),两者对本包的用法不同:
+ * 消费者有两个(仓库自身的确定性门禁、参赛脚本校验 `validate/`),两者对本包的用法不同:
  * 仓库源码是 ESM module,参赛脚本是单文件 script-mode TS(hld §2.2.2 的入口契约)——
- * 所以每个入口都接受 `SourceKind`,不替调用方猜。
+ * 所以每个入口都接受 `SourceKind`,不替调用方猜。第二个消费者已经落地,见上面「分层」那一节
+ * 与本文件末尾的导出面。
  */
 
 export type { ParseOutcome, ParsedSource, SourceDiagnostic, SourceKind } from "./parse-source.ts";

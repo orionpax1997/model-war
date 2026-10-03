@@ -43,6 +43,19 @@ loop(8);
 it.each([
   ["裸引用", "const a = __host;\n", ["host-bridge @ 1:11"]],
   ["带调用的链", "const a = __setSnapshot(1);\n", ["host-bridge @ 1:11"]],
+  [
+    // 这两条在引入括号剥离之前就已经绿(内层标识符本身会被访问到),它们锁的不是
+    // 「括号原本漏了」,而是剥完之后位置仍落在这个名字上——括号不是那个名字,不是它的一部分。
+    "剥掉一层括号:位置仍落在那个名字上,不是括号",
+    "const a = (__setSnapshot)(1);\n",
+    ["host-bridge @ 1:12"],
+  ],
+  ["多层括号剥到内层:位置落进一层", "const a = ((__setSnapshot))(1);\n", ["host-bridge @ 1:13"]],
+  [
+    "括号包住 globalThis 那一层",
+    "const a = (globalThis).__setSnapshot(1);\n",
+    ["host-bridge @ 1:24"],
+  ],
   ["写也是一次按名字找符号,同样拒", "__host.x = 1;\n", ["host-bridge @ 1:1"]],
   ["只判根:后续段带不带前缀都一样", "__host.eval('1').length;\n", ["host-bridge @ 1:1"]],
   ["脚本自己声明一个带前缀的名字也判", "const __thing = 1;\n", ["host-bridge @ 1:7"]],
@@ -71,6 +84,8 @@ it.each([
   ["同名对象字面量的键", "const o = { __foo: 1 };\n"],
   ["同名类方法", "class A { __foo() { return 0; } }\n"],
   ["成员名走字符串下标", 'const a = obj["__foo"];\n'],
+  ["括号只做分组:括起来的同名成员读取不是桥", "const a = (obj.__foo);\n"],
+  ["括号里的字符串不是标识符", 'const a = ("__foo");\n'],
   ["字符串里出现那个名字不是标识符", 'const a = "__foo";\n'],
   ["单下划线不是桥", "const _foo = 1;\nconst a = _foo;\n"],
   ["前缀出现在中途的段上,根不带前缀", "const a = obj.__foo.__bar;\n"],

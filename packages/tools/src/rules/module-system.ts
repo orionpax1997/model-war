@@ -63,6 +63,7 @@
 
 import { identifierName, isAstNode, startOf, walk, type AstNode } from "../ast.ts";
 import { parseToAst, positionAt } from "../parse-source.ts";
+import { isGlobalThisNode, withoutParentheses } from "./identifier-chain.ts";
 import type { ScriptLintContext, ScriptLintStage, ScriptViolation } from "./script-lint.ts";
 
 /** 收集阶段先记偏移,最后统一换算行列——避免每个节点都重算一次行号(与 `rules/no-float.ts` 同做法)。 */
@@ -126,15 +127,18 @@ const MODULE_FORMS: Readonly<Record<string, string>> = {
 /**
  * 被调用者是哪个名字。取不到就返回 undefined——本规则**不猜**。
  *
- * 取得到的三种写法:裸标识符(`eval(s)`)、`globalThis` 的等价写法(`globalThis.eval(s)`)。
+ * 取得到的三种写法:裸标识符(`eval(s)`)、带括号的同一写法(`(eval)(s)`——括号在 JS 里是纯分组,
+ * 剥掉它就是上面那一种,判据与遍历层共用同一句,理由见 `identifier-chain.ts` 的头注)、
+ * `globalThis` 的等价写法(`globalThis.eval(s)`)。
  * `a.eval(s)` 取不到:那是一次对象上的方法调用,不是全局 `eval`。`globalThis` 那一支与
- * `forbidden-globals.ts` 的处理同一条纪律(它是全局对象本身,不是某个对象的属性)。
+ * `forbidden-globals.ts` 的处理同一条纪律(它是全局对象本身,不是某个对象的属性),判据取自
+ * 那份公共件而不是在这里再写一遍字面量。
  */
 const calleeNameOf = (
   node: AstNode,
 ): { readonly name: string; readonly start: number } | undefined => {
-  const { callee } = node;
-  if (!isAstNode(callee)) {
+  const callee = withoutParentheses(node.callee);
+  if (callee === undefined) {
     return undefined;
   }
   const direct = identifierName(callee);
@@ -143,8 +147,7 @@ const calleeNameOf = (
   }
   if (callee.type === "MemberExpression" && callee.computed !== true) {
     const member = identifierName(callee.property);
-    const object = identifierName(callee.object);
-    return member !== undefined && object === "globalThis"
+    return member !== undefined && isGlobalThisNode(callee.object)
       ? { name: member, start: startOf(callee) }
       : undefined;
   }
@@ -199,14 +202,8 @@ export const moduleSystemStage: ScriptLintStage = (context: ScriptLintContext) =
 };
 
 /**
- * 规则层的对外缝:一段源码 → 一组带行列的违规。形状与 `forbiddenGlobalViolations` 同形,
- * 判据与上面那条完全同一份扫描,所以两个入口永远给出一致的结论。
- *
- * 解析不过时返回空数组:「解析失败」是判定链独占的那一条结论,它产自 `validate/pipeline.ts`。
- * 规则层在这里再产一份就等于同一件事有两个家,而调用方拿到的会是两条互相矛盾的违规。
- *
- * 源形态是 script-mode 的单文件(hld §2.2.2 的入口契约),规则跑在**编译后的产物**上,
- * 不在原始 TS 上跑(spec《规则跑在编译产物上》)。
+ * 规则层的对外缝:一段源码 → 一组带行列的违规(形状与 `forbiddenGlobalViolations` 同形)。
+ * 判据与上面那条完全同一份扫描,所以两个入口永远给出一致的结论;共同纪律见 `script-lint.ts`。
  */
 export const moduleSystemViolations = (source: string): readonly ScriptViolation[] => {
   const parsed = parseToAst(source, "script");
