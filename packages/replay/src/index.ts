@@ -1,7 +1,12 @@
 /**
- * replay 包:回放行格式、解析/序列化与 stateHash 原语(hld §3.1)。
+ * replay 包:回放的解析/序列化(stateHash 原语)+ 回放**文件格式版本**常量(hld §3.1)。
  * 依赖方向单向:replay → schema,不得反向(hld §3.2)。
- * 空壳阶段只落 stateHash 原语本身;行格式与解析随回放写出路径落地。
+ *
+ * 行的**形状**归真源包 `packages/schema` 所有(hld §7.5,ADR-0003):meta / tick / result
+ * 三行的类型与 JSON Schema 在那里,本包只做编解码、不再声明行的类型,故这里不复述字段。
+ * 唯一留在本包的是 `CURRENT_SCHEMA_VERSION`——它是回放**文件格式的版本**,不是行的形状。
+ *
+ * 空壳阶段只落 stateHash 原语本身;行格式的编解码随回放写出路径落地。
  */
 
 import { createHash } from "node:crypto";

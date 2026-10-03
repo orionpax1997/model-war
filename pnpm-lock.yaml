@@ -169,9 +169,6 @@ importers:
       '@types/node':
         specifier: ^24.19.0
         version: 24.19.0
-      ajv:
-        specifier: ^8.20.0
-        version: 8.20.0
       dependency-cruiser:
         specifier: ^18.4.0
         version: 18.4.0
@@ -220,6 +217,9 @@ importers:
       '@model-war/schema':
         specifier: workspace:*
         version: link:../../packages/schema
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
 
   packages/engine:
     dependencies:
@@ -247,7 +247,14 @@ importers:
 
   packages/schema: {}
 
-  packages/tools: {}
+  packages/tools:
+    dependencies:
+      '@model-war/schema':
+        specifier: workspace:*
+        version: link:../schema
+      oxc-parser:
+        specifier: ^0.152.0
+        version: 0.152.0
 
 packages:
 
