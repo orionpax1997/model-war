@@ -14,6 +14,7 @@
  * 同理这里 spawn 的是 `node`,不是 `pnpm run …`,不存在 check → 测试 → check 的套娃。
  */
 
+import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -139,4 +140,40 @@ it("读不到产物文件:退出码 1,不是假绿", () => {
   const outcome = run(resolve(workDir, "not-there.js"));
   expect(outcome.status).toBe(1);
   expect(outcome.stdout).not.toContain("脚本静态校验通过");
+});
+
+/** 按契约的方式调入口,但让调用方自己给上限与时机——体积级的两档要在入口这一侧钉一遍。 */
+const runWith = (file: string, maxBytes: number, phase: "iteration" | "freeze"): Outcome => {
+  const result = spawnSync(
+    process.execPath,
+    [entry, file, "--max-bytes", String(maxBytes), "--phase", phase],
+    { encoding: "utf8" },
+  );
+  if (result.error !== undefined) {
+    throw result.error;
+  }
+  return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+};
+
+it("体积超上限、iteration:退出码 0,提示里带「改算法,不要拆直线代码」", () => {
+  // 迭代期只提示不拦:提前把模型拦下会逼它去压体积,而最自然的压法(拆直线代码)恰好是
+  // 这条规则要封的盲区的另一面。所以提示路径上必须同样带那句话,而不只是拦的时候才说。
+  const outcome = runWith(artifact(CLEAN), 10, "iteration");
+  expect(outcome.status).toBe(0);
+  expect(outcome.stdout).toContain("脚本体积");
+  expect(outcome.stdout).toContain("改算法,不要拆直线代码");
+  expect(outcome.stdout).toContain("提示");
+});
+
+it("体积超上限、freeze:退出码 1,拦截里带同一句并说清超出多少字节", () => {
+  const outcome = runWith(artifact(CLEAN), 10, "freeze");
+  expect(outcome.status).toBe(1);
+  expect(outcome.stdout).toContain("改算法,不要拆直线代码");
+  expect(outcome.stdout).toContain("多出");
+});
+
+it("上限是入参:等于字节数放行,减一就拦", () => {
+  const size = Buffer.byteLength(CLEAN, "utf8");
+  expect(runWith(artifact(CLEAN), size, "freeze").status).toBe(0);
+  expect(runWith(artifact(CLEAN), size - 1, "freeze").status).toBe(1);
 });

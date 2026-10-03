@@ -32,66 +32,21 @@
  *
  * ── 为什么它在判定链的第一级 ──────────────────────────────────────────────────
  * 禁列必须先判。具体的漏洞是:禁列表里有 `Math.random`,而 `Math` 在内置全局白名单里;
- * 按白名单先判就会把 `Math.random` 放行(顺序见 `validate/pipeline.ts`)。
+ * 按白名单先判就会把 `Math.random` 放行(顺序见 `validate/pipeline.ts`)。同处在桥前缀那一格
+ * 与本规则的裁决是:一个既命中禁列又带桥前缀的构造按本级判,理由见 `host-bridge.ts` 的头注。
+ *
+ * ── 「哪些位置上算一次引用」的判据归 `identifier-chain.ts` ──────────────────────
+ * 本文件只写「什么样的链算违规」,链怎么取、键位上的名字为什么不算,都在那份公共件里
+ * (宿主桥前缀规则共用同一份,理由见那个文件的头注)。
  */
 
-import { identifierName, isAstNode, startOf, walk, type AstNode } from "../ast.ts";
 import { parseToAst, positionAt, type ParsedSource } from "../parse-source.ts";
 import { isForbiddenGlobalName } from "../script-surface.ts";
+import { referenceChainsOf, type ChainSegment } from "./identifier-chain.ts";
 import type { ScriptLintContext, ScriptLintStage, ScriptViolation } from "./script-lint.ts";
 
 /** 全局对象本身。它是「等价写法」而不是「某个对象的属性」,所以比较之前先剥掉。 */
 const GLOBAL_THIS = "globalThis";
-
-/** 标识符链的一段:名字 + 该段的起始偏移(违规的位置指到链的**头**一段)。 */
-type ChainSegment = {
-  readonly name: string;
-  readonly start: number;
-};
-
-/**
- * 取一个节点上的标识符链;取不到就返回 undefined。
- *
- * 取不到的三种情况:不是标识符也不是成员表达式(字面量、调用表达式……)、成员名是动态下标、
- * 链的中途断了(对象不是标识符也不是成员表达式,例如 `foo().bar`)。**一律返回 undefined,
- * 不做「猜它是全局的」那种判断**——本规则要的恰恰是猜都不猜。
- */
-const chainOf = (node: AstNode | undefined): readonly ChainSegment[] | undefined => {
-  if (node === undefined) {
-    return undefined;
-  }
-  if (node.type === "Identifier") {
-    const name = identifierName(node);
-    return name === undefined ? undefined : [{ name, start: startOf(node) }];
-  }
-  if (node.type !== "MemberExpression") {
-    return undefined;
-  }
-  const { property } = node;
-  const member = memberNameOf(node);
-  if (member === undefined) {
-    return undefined;
-  }
-  const object = chainOf(isAstNode(node.object) ? node.object : undefined);
-  if (object === undefined) {
-    return undefined;
-  }
-  // 成员那一段的偏移指向 `property`(`.random` 里那个 `random`),它与节点不同源时退回整个成员表达式。
-  const memberStart = isAstNode(property) ? startOf(property) : startOf(node);
-  return [...object, { name: member, start: memberStart }];
-};
-
-/** 成员名:非计算属性取 `property.name`;计算属性取字符串字面量的值;动态下标取不到。 */
-const memberNameOf = (node: AstNode): string | undefined => {
-  const { property } = node;
-  if (node.computed !== true) {
-    return identifierName(property);
-  }
-  if (isAstNode(property) && property.type === "Literal" && typeof property.value === "string") {
-    return property.value;
-  }
-  return undefined;
-};
 
 /**
  * 剥掉开头的 `globalThis` 后,整条链是否落在禁列表里。命中时返回剥完的链,好让违规的位置
@@ -111,66 +66,19 @@ const forbiddenMessage = (chain: string): string =>
   `禁列全局名 \`${chain}\`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;` +
   `请改用脚本自己算得出来的量(格数、步数、累计计数)。`;
 
-/**
- * 非计算的「键」不是一次名字查找,把这样的节点登记下来,遍历到它们时直接跳过:
- * `obj.Date`、`{ Date: 1 }`、`class A { Date() {} }` 里的 `Date` 都不是全局引用。
- *
- * 解构简写 `{ performance }` 里的那个标识符是**被绑定的名字**,同样不是引用,一并登记。
- * 要判出来需要知道父节点是不是解构模式——本规则不查作用域,拿不到父节点,于是走 `walk`
- * 的「先访问父后访问子」这条性质(见 `../ast.ts` 的头注):访问到 `ObjectPattern` 时就把它的
- * 简写属性登记掉,轮到那些属性被访问时登记已经生效。
- * 这也是 key 与 value 要**按对象身份**而不是按名字登记的原因:实测解构简写的 key 与 value
- * 是两个独立节点(不是同一个对象),而对象字面量的简写 `{ performance }` 里 value 是真的引用
- * ——按名字登记会把那个漏掉。
- */
-const markNonReferences = (node: AstNode, keys: Set<AstNode>): void => {
-  if (node.type === "ObjectPattern" && Array.isArray(node.properties)) {
-    for (const property of node.properties) {
-      if (isAstNode(property) && property.shorthand === true) {
-        if (isAstNode(property.key)) {
-          keys.add(property.key);
-        }
-        if (isAstNode(property.value)) {
-          keys.add(property.value);
-        }
-      }
-    }
-    return;
-  }
-  if (node.computed === true) {
-    return;
-  }
-  if (isAstNode(node.key)) {
-    keys.add(node.key);
-  }
-  if (node.type === "MemberExpression" && isAstNode(node.property)) {
-    keys.add(node.property);
-  }
-};
-
 /** 遍历一棵已解析成功的树,收出本级的违规。规则层与判定链两个入口共用这一份扫描。 */
 const scanParsed = (program: unknown, source: string): readonly ScriptViolation[] => {
-  const keyNodes = new Set<AstNode>();
   const found: { readonly start: number; readonly chain: string }[] = [];
-  walk(program, (node) => {
-    markNonReferences(node, keyNodes);
-    if (keyNodes.has(node)) {
-      return;
-    }
-    // 标识符节点也进来查:裸的 `Date` 是一个 Identifier,不是 MemberExpression,漏掉它整条规则就废了。
-    const chain = chainOf(node);
-    if (chain === undefined) {
-      return;
-    }
+  for (const { chain } of referenceChainsOf(program)) {
     const hit = forbiddenChainOf(chain);
     if (hit !== undefined) {
       found.push({
-        // 非空链的首段一定在;取不到时退回节点自身的位置,不为它单开一条分支。
-        start: hit[0]?.start ?? startOf(node),
+        // 非空链的首段一定在;取不到时退回 0,不为它单开一条分支。
+        start: hit[0]?.start ?? 0,
         chain: hit.map((s) => s.name).join("."),
       });
     }
-  });
+  }
 
   return found.map(({ start, chain }) => {
     const { line, column } = positionAt(source, start);
