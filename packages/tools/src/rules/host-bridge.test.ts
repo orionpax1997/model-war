@@ -44,11 +44,13 @@ it.each([
   ["裸引用", "const a = __host;\n", ["host-bridge @ 1:11"]],
   ["带调用的链", "const a = __setSnapshot(1);\n", ["host-bridge @ 1:11"]],
   [
-    "括号是纯分组:一层括号同样判,位置落在那个名字上",
+    // 这两条在引入括号剥离之前就已经绿(内层标识符本身会被访问到),它们锁的不是
+    // 「括号原本漏了」,而是剥完之后位置仍落在这个名字上——括号不是那个名字,不是它的一部分。
+    "剥掉一层括号:位置仍落在那个名字上,不是括号",
     "const a = (__setSnapshot)(1);\n",
     ["host-bridge @ 1:12"],
   ],
-  ["多层括号同样判", "const a = ((__setSnapshot))(1);\n", ["host-bridge @ 1:13"]],
+  ["多层括号剥到内层:位置落进一层", "const a = ((__setSnapshot))(1);\n", ["host-bridge @ 1:13"]],
   [
     "括号包住 globalThis 那一层",
     "const a = (globalThis).__setSnapshot(1);\n",
