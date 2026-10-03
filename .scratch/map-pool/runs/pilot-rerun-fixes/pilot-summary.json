@@ -1,0 +1,650 @@
+{
+ "manifest": {
+  "generatedAt": "2026-10-03T20:26:42.881Z",
+  "node": "v24.15.0",
+  "setOverrides": {
+   "resourcePerSite": 200
+  },
+  "rulesetVersion": "stub-v1 (from draft rules.md §10) + override {\"resourcePerSite\":200}",
+  "probes": [
+   "farmer6",
+   "farmer8"
+  ],
+  "seeds": [
+   11,
+   23,
+   41,
+   71
+  ],
+  "fixtureBaseline": {
+   "variant": "center-fortress",
+   "size": 64
+  },
+  "maps": [
+   {
+    "name": "open-clash",
+    "file": "maps/open-clash.json",
+    "sha256": "b72bf179af6cd014b7ee2403554c91e554b42eb2078dbb4718c031bb0e7ac94c",
+    "size": 64,
+    "wallsInJson": 132,
+    "wallsAfterVariantFill": 140,
+    "variantSlotsInJson": 8,
+    "sites": {
+     "bases": 12,
+     "neutralBases": 8,
+     "mines": 16,
+     "sites": 28,
+     "ownedMines": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1
+     }
+    },
+    "fourFold": "ok",
+    "reachableCells": 3956
+   },
+   {
+    "name": "corridor-split",
+    "file": "maps/corridor-split.json",
+    "sha256": "fc17279cf3c2242326c03a515f5ed49866a0ccb2b337de283987633f26e2b612",
+    "size": 64,
+    "wallsInJson": 200,
+    "wallsAfterVariantFill": 208,
+    "variantSlotsInJson": 8,
+    "sites": {
+     "bases": 12,
+     "neutralBases": 8,
+     "mines": 16,
+     "sites": 28,
+     "ownedMines": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1
+     }
+    },
+    "fourFold": "ok",
+    "reachableCells": 3888
+   },
+   {
+    "name": "fortress-core",
+    "file": "maps/fortress-core.json",
+    "sha256": "e12356065ff5eccfaf1a2da16b2cedfaf3d598aadc7e1da614db44c11d3b1b16",
+    "size": 64,
+    "wallsInJson": 72,
+    "wallsAfterVariantFill": 80,
+    "variantSlotsInJson": 8,
+    "sites": {
+     "bases": 12,
+     "neutralBases": 8,
+     "mines": 16,
+     "sites": 28,
+     "ownedMines": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1
+     }
+    },
+    "fourFold": "ok",
+    "reachableCells": 4016
+   }
+  ],
+  "note": "带 resourcePerSite=200 才能与标定环的 479 基线比；口径分歧见 findings.md"
+ },
+ "rows": [
+  {
+   "group": "P0/fixture/farmer6-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 110,
+    "p25": 110,
+    "median": 110,
+    "p75": 110,
+    "max": 110
+   },
+   "depletionP50": {
+    "n": 4,
+    "min": 230,
+    "p25": 230,
+    "median": 230,
+    "p75": 230,
+    "max": 230
+   },
+   "depletionP75": {
+    "n": 4,
+    "min": 346,
+    "p25": 346,
+    "median": 346,
+    "p75": 346,
+    "max": 346
+   },
+   "depletionP100": {
+    "n": 4,
+    "min": 479,
+    "p25": 479,
+    "median": 479,
+    "p75": 479,
+    "max": 479
+   },
+   "firstContact": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 0,
+    "p25": 0,
+    "median": 0,
+    "p75": 0,
+    "max": 0
+   },
+   "deliveredMean": 3080,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    6,
+    6,
+    6,
+    6
+   ]
+  },
+  {
+   "group": "P0/fixture/farmer8-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 82,
+    "p25": 82,
+    "median": 82,
+    "p75": 82,
+    "max": 82
+   },
+   "depletionP50": {
+    "n": 4,
+    "min": 153,
+    "p25": 153,
+    "median": 153,
+    "p75": 153,
+    "max": 153
+   },
+   "depletionP75": {
+    "n": 4,
+    "min": 231,
+    "p25": 231,
+    "median": 231,
+    "p75": 231,
+    "max": 231
+   },
+   "depletionP100": {
+    "n": 4,
+    "min": 316,
+    "p25": 316,
+    "median": 316,
+    "p75": 316,
+    "max": 316
+   },
+   "firstContact": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 0,
+    "p25": 0,
+    "median": 0,
+    "p75": 0,
+    "max": 0
+   },
+   "deliveredMean": 3080,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    8,
+    8,
+    8,
+    8
+   ]
+  },
+  {
+   "group": "P1/corridor-split/farmer6-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 109,
+    "p25": 109,
+    "median": 109,
+    "p75": 109,
+    "max": 109
+   },
+   "depletionP50": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "depletionP75": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "depletionP100": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "firstContact": {
+    "n": 4,
+    "min": 112,
+    "p25": 112,
+    "median": 112,
+    "p75": 112,
+    "max": 112
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 56.3,
+    "p25": 56.3,
+    "median": 56.3,
+    "p75": 56.3,
+    "max": 56.3
+   },
+   "deliveredMean": 1300,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    6,
+    6,
+    6,
+    6
+   ]
+  },
+  {
+   "group": "P1/corridor-split/farmer8-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 83,
+    "p25": 83,
+    "median": 83,
+    "p75": 83,
+    "max": 83
+   },
+   "depletionP50": {
+    "n": 4,
+    "min": 176,
+    "p25": 176,
+    "median": 176,
+    "p75": 176,
+    "max": 176
+   },
+   "depletionP75": {
+    "n": 4,
+    "min": 271,
+    "p25": 271,
+    "median": 271,
+    "p75": 271,
+    "max": 271
+   },
+   "depletionP100": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "firstContact": {
+    "n": 4,
+    "min": 265,
+    "p25": 265,
+    "median": 265,
+    "p75": 265,
+    "max": 265
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 4.4,
+    "p25": 4.4,
+    "median": 4.4,
+    "p75": 4.4,
+    "max": 4.4
+   },
+   "deliveredMean": 2980,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    8,
+    8,
+    8,
+    8
+   ]
+  },
+  {
+   "group": "P1/fortress-core/farmer6-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 109,
+    "p25": 109,
+    "median": 109,
+    "p75": 109,
+    "max": 109
+   },
+   "depletionP50": {
+    "n": 4,
+    "min": 240,
+    "p25": 240,
+    "median": 240,
+    "p75": 240,
+    "max": 240
+   },
+   "depletionP75": {
+    "n": 4,
+    "min": 381,
+    "p25": 381,
+    "median": 381,
+    "p75": 381,
+    "max": 381
+   },
+   "depletionP100": {
+    "n": 4,
+    "min": 523,
+    "p25": 523,
+    "median": 523,
+    "p75": 523,
+    "max": 523
+   },
+   "firstContact": {
+    "n": 4,
+    "min": 277,
+    "p25": 277,
+    "median": 277,
+    "p75": 277,
+    "max": 277
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 0,
+    "p25": 0,
+    "median": 0,
+    "p75": 0,
+    "max": 0
+   },
+   "deliveredMean": 3120,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    6,
+    6,
+    6,
+    6
+   ]
+  },
+  {
+   "group": "P1/fortress-core/farmer8-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 84,
+    "p25": 84,
+    "median": 84,
+    "p75": 84,
+    "max": 84
+   },
+   "depletionP50": {
+    "n": 4,
+    "min": 161,
+    "p25": 161,
+    "median": 161,
+    "p75": 161,
+    "max": 161
+   },
+   "depletionP75": {
+    "n": 4,
+    "min": 249,
+    "p25": 249,
+    "median": 249,
+    "p75": 249,
+    "max": 249
+   },
+   "depletionP100": {
+    "n": 4,
+    "min": 332,
+    "p25": 332,
+    "median": 332,
+    "p75": 332,
+    "max": 332
+   },
+   "firstContact": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 0,
+    "p25": 0,
+    "median": 0,
+    "p75": 0,
+    "max": 0
+   },
+   "deliveredMean": 3080,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    8,
+    8,
+    8,
+    8
+   ]
+  },
+  {
+   "group": "P1/open-clash/farmer6-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 109,
+    "p25": 109,
+    "median": 109,
+    "p75": 109,
+    "max": 109
+   },
+   "depletionP50": {
+    "n": 4,
+    "min": 238,
+    "p25": 238,
+    "median": 238,
+    "p75": 238,
+    "max": 238
+   },
+   "depletionP75": {
+    "n": 4,
+    "min": 370,
+    "p25": 370,
+    "median": 370,
+    "p75": 370,
+    "max": 370
+   },
+   "depletionP100": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "firstContact": {
+    "n": 4,
+    "min": 135,
+    "p25": 135,
+    "median": 135,
+    "p75": 135,
+    "max": 135
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 4.2,
+    "p25": 4.2,
+    "median": 4.2,
+    "p75": 4.2,
+    "max": 4.2
+   },
+   "deliveredMean": 2980,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    6,
+    6,
+    6,
+    6
+   ]
+  },
+  {
+   "group": "P1/open-clash/farmer8-mines1",
+   "matches": 4,
+   "depletionP25": {
+    "n": 4,
+    "min": 81,
+    "p25": 81,
+    "median": 81,
+    "p75": 81,
+    "max": 81
+   },
+   "depletionP50": {
+    "n": 4,
+    "min": 155,
+    "p25": 155,
+    "median": 155,
+    "p75": 155,
+    "max": 155
+   },
+   "depletionP75": {
+    "n": 4,
+    "min": 234,
+    "p25": 234,
+    "median": 234,
+    "p75": 234,
+    "max": 234
+   },
+   "depletionP100": {
+    "n": 4,
+    "min": 319,
+    "p25": 319,
+    "median": 319,
+    "p75": 319,
+    "max": 319
+   },
+   "firstContact": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null
+   },
+   "remainingEndPct": {
+    "n": 4,
+    "min": 0,
+    "p25": 0,
+    "median": 0,
+    "p75": 0,
+    "max": 0
+   },
+   "deliveredMean": 3100,
+   "outcomeTicks": [
+    600,
+    600,
+    600,
+    600
+   ],
+   "outcomeReasons": [
+    "timeout"
+   ],
+   "totalResources": 3200,
+   "workersEnd": [
+    8,
+    8,
+    8,
+    8
+   ]
+  }
+ ]
+}
