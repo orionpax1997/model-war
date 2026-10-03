@@ -42,18 +42,15 @@
 
 import { parseToAst, positionAt, type ParsedSource } from "../parse-source.ts";
 import { isForbiddenGlobalName } from "../script-surface.ts";
-import { referenceChainsOf, type ChainSegment } from "./identifier-chain.ts";
+import { referenceChainsOf, withoutGlobalThis, type ChainSegment } from "./identifier-chain.ts";
 import type { ScriptLintContext, ScriptLintStage, ScriptViolation } from "./script-lint.ts";
-
-/** 全局对象本身。它是「等价写法」而不是「某个对象的属性」,所以比较之前先剥掉。 */
-const GLOBAL_THIS = "globalThis";
 
 /**
  * 剥掉开头的 `globalThis` 后,整条链是否落在禁列表里。命中时返回剥完的链,好让违规的位置
  * 落在真正要改的那个名字上(`globalThis.Math.random` 指的是 `Math.random`,不是那个等价前缀)。
  */
 const forbiddenChainOf = (chain: readonly ChainSegment[]): readonly ChainSegment[] | undefined => {
-  const effective = chain[0]?.name === GLOBAL_THIS ? chain.slice(1) : chain;
+  const effective = withoutGlobalThis(chain);
   if (effective.length === 0) {
     return undefined;
   }
@@ -103,14 +100,8 @@ export const forbiddenGlobalStage: ScriptLintStage = (context: ScriptLintContext
 };
 
 /**
- * 规则层的对外缝:一段源码 → 一组带行列的违规。形状与 `noFloatViolations` 同形,
- * 判据与上面那条完全同一份扫描,所以两个入口永远给出一致的结论。
- *
- * 解析不过时返回空数组:「解析失败」是判定链独占的那一条结论,它产自 `validate/pipeline.ts`。
- * 规则层在这里再产一份就等于同一件事有两个家,而调用方拿到的会是两条互相矛盾的违规。
- *
- * 源形态是 script-mode 的单文件(hld §2.2.2 的入口契约),规则跑在**编译后的产物**上,
- * 不在原始 TS 上跑(spec《规则跑在编译产物上》)。
+ * 规则层的对外缝:一段源码 → 一组带行列的违规(形状与 `noFloatViolations` 同形)。
+ * 判据与上面那条完全同一份扫描,所以两个入口永远给出一致的结论;共同纪律见 `script-lint.ts`。
  */
 export const forbiddenGlobalViolations = (source: string): readonly ScriptViolation[] => {
   const parsed: ParsedSource = parseToAst(source, "script");

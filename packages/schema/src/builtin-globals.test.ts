@@ -12,12 +12,12 @@ import { expect, it } from "vitest";
 import { BUILTIN_GLOBAL_NAMES, FORBIDDEN_GLOBAL_NAMES, HOST_BRIDGE_PREFIX } from "./index.js";
 
 /**
- * 判据的「收」这一侧:一组现有的内建全局必须都在表里。
+ * 判据的「收」这一侧:一组现有的内置全局必须都在表里。
  *
  * 反例:从真源里摘掉 `JSON` 这一行,第一条立刻红。它防的是「判据定了,表没跟上」——
  * 也就是先前那个「判据未裁决故空着」的状态换个名字回来。
  */
-it("判据的收这一侧:一组现有的内建全局都在表里", () => {
+it("判据的收这一侧:一组现有的内置全局都在表里", () => {
   for (const name of ["JSON", "Object", "Array", "Map", "Set", "Number", "String", "Math"]) {
     expect(BUILTIN_GLOBAL_NAMES, `${name} 满足判据,必须在白名单里`).toContain(name);
   }
