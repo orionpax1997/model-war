@@ -13,6 +13,7 @@
  */
 
 import { isAllowedMathMember } from "../allowlist.ts";
+import { identifierName, isAstNode, startOf, endOf, walk, type AstNode } from "../ast.ts";
 import { parseToAst, positionAt, type SourceKind } from "../parse-source.ts";
 
 /** 违规类别。`syntax-error` 不是一条规则,而是「无法判定」的确定结论:解析不过就没有干净可言。 */
@@ -184,53 +185,6 @@ const checkMathMember = (node: AstNode, source: string): PendingViolation | unde
 /* ── AST 遍历 ──────────────────────────────────────────────────── */
 
 /**
- * 遍历用的最小节点形状。只取 `type` 与起止偏移,规则判断所需的 `raw`/`value`/`object`/
- * `property` 在各自那条检查里按 `Record` 取——oxc 的节点类型联合里 `Literal` 有六个变体,
- * 逐个 narrow 只会把类型体操搬进本文件,而这层形状已经够定位与分派。
+ * 节点形状、`walk` 与取名字的小工具都搬到了 `../ast.ts`:遍历器是规则层共享的那一件,
+ * 各规则自带一份就等于各有一处「漏一个键 ⇒ 静默跳过整棵子树」的可能,理由见那个文件的头注。
  */
-type AstNode = { readonly type: string } & Record<string, unknown>;
-
-const isAstNode = (value: unknown): value is AstNode =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  typeof (value as { type?: unknown }).type === "string";
-
-const identifierName = (value: unknown): string | undefined => {
-  if (isAstNode(value) && value.type === "Identifier" && typeof value.name === "string") {
-    return value.name;
-  }
-  return undefined;
-};
-
-const startOf = (node: AstNode): number => (typeof node.start === "number" ? node.start : 0);
-const endOf = (node: AstNode): number => (typeof node.end === "number" ? node.end : 0);
-
-/**
- * 深度优先遍历整棵 AST。
- *
- * 刻意**不用** oxc 导出的 `visitorKeys`:它按节点类型给出子节点键名,漏一个键就静默跳过
- * 整棵子树——而这是一条一票否决的门禁,宁可遍历得宽一点。代价是同一份 `Object.entries`
- * 会碰到非节点的属性值(正文的 `value`、正则的 `value` 等),`isAstNode` 会把它们挡掉。
- *
- * `parent` 与 `range` 两个键显式跳过:oxc 0.152.0 返回的 AST 不带 `parent` 回指(实测),
- * 跳过是为了将来上游若改为带回指时不会无限递归;`range` 是 `start`/`end` 的重复。
- */
-const walk = (value: unknown, visit: (node: AstNode) => void): void => {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      walk(item, visit);
-    }
-    return;
-  }
-  if (!isAstNode(value)) {
-    return;
-  }
-  visit(value);
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "parent" || key === "range") {
-      continue;
-    }
-    walk(child, visit);
-  }
-};
