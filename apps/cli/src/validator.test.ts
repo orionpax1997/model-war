@@ -20,7 +20,13 @@ import {
   RULESET_KEYS,
   RULESET_VERSION,
 } from "@model-war/schema";
-import type { JsonValue, MapDefinition, Ruleset, UnitStats } from "@model-war/schema";
+import type {
+  JsonValue,
+  MapDefinition,
+  MapVariantSlot,
+  Ruleset,
+  UnitStats,
+} from "@model-war/schema";
 import { expect, it } from "vitest";
 
 import {
@@ -51,6 +57,29 @@ export type MapSchemaRequiredKeysMatchType = Assert<
   Equals<SchemaRequiredKeys, RequiredKeysOf<MapDefinition>>
 >;
 
+/**
+ * 同源断言(收紧后的那一半):`MapVariantSlot` 的**定长**与 JSON Schema 侧那条轨道的
+ * `minItems` / `maxItems` 写的是同一个数。
+ *
+ * **为什么这条断言对定长形状尤其要紧**:上面那条(必填键集合)抓的是「加了一个键」,
+ * 而收紧变体槽位这类改动是**改一个数字**——类型改成 3 元组而 schema 仍写 4,或反过来,
+ * 两侧都不会自己报错,只有运行时拿着一份 3 格轨道去撞 `minItems` 才炸。数字漂移必须由类型级断言兜住,
+ * 因为它是这条「类型是上游、schema 手工对齐」路线上唯一能提前抓到它的东西。
+ */
+type And<A extends boolean, B extends boolean> = A extends true
+  ? B extends true
+    ? true
+    : false
+  : false;
+type SlotSchemaMin = (typeof MAP_JSON_SCHEMA)["properties"]["variantSlots"]["items"]["minItems"];
+type SlotSchemaMax = (typeof MAP_JSON_SCHEMA)["properties"]["variantSlots"]["items"]["maxItems"];
+export type MapVariantSlotArityMatchesSchema = Assert<
+  And<
+    Equals<MapVariantSlot["length"], SlotSchemaMin>,
+    Equals<MapVariantSlot["length"], SlotSchemaMax>
+  >
+>;
+
 /** 规则集那一份:同一个断言,另一组键。规则集的 `required` 由键清单投影而来,不是手写数组。 */
 type RulesetSchemaRequiredKeys = (typeof RULESET_JSON_SCHEMA)["required"][number];
 export type RulesetSchemaRequiredKeysMatchType = Assert<
@@ -74,13 +103,26 @@ const MINIMAL: MapDefinition = {
 };
 
 /**
- * 变体槽位取**最松形态**:元素刻意不被约束(待地图图回填),所以这里把各种形态都塞进去。
- * 一旦有人给槽位写窄了约束,这条 fixture 当场红。
+ * 变体槽位取**定稿形态**:一个元素就是一条完整四重轨道的 4 个坐标对。
+ * 这条 fixture 是「收紧生效」的正面样本——改松它(元素不足 4、不是坐标对、坐标为负)当场红。
  */
-const LOOSE_SLOTS: MapDefinition = {
+const TIGHT_SLOTS: MapDefinition = {
   ...MINIMAL,
-  name: "loose-slots",
-  variantSlots: [{}, [], "任意字符串", 42, null, [1, 2, 3], { axis: { kind: "wall" } }],
+  name: "tight-slots",
+  variantSlots: [
+    [
+      [1, 0],
+      [0, 1],
+      [3, 3],
+      [2, 0],
+    ],
+    [
+      [0, 0],
+      [3, 0],
+      [3, 3],
+      [0, 3],
+    ],
+  ],
 };
 
 /** 四方对称的地图,用来证明「对称」不是形状问题(那条归 map-lint)。 */
@@ -99,10 +141,17 @@ const SYMMETRIC: MapDefinition = {
     { owner: 0, type: "worker", offset: [0, 0] },
     { owner: 1, type: "worker", offset: [1, 0] },
   ],
-  variantSlots: [{ kind: "wall", offsets: [[0, 0]] }],
+  variantSlots: [
+    [
+      [0, 0],
+      [3, 0],
+      [3, 3],
+      [0, 3],
+    ],
+  ],
 };
 
-const FIXTURES: readonly MapDefinition[] = [MINIMAL, LOOSE_SLOTS, SYMMETRIC];
+const FIXTURES: readonly MapDefinition[] = [MINIMAL, TIGHT_SLOTS, SYMMETRIC];
 
 /**
  * 坏数据一律由合法 fixture 改出来,不另立一套看不懂的样本。
@@ -165,8 +214,95 @@ it("合法地图被接受,并把原值交出来(不重写、不裁剪)", () => {
   }
 });
 
-it("变体槽位取最松形态时通过(元素形状尚未定稿,等 A 节点回填)", () => {
-  expect(validateMap(LOOSE_SLOTS).ok).toBe(true);
+it("变体槽位取定稿形态时通过(一个元素 = 一条完整四重轨道的 4 个坐标对)", () => {
+  expect(validateMap(TIGHT_SLOTS).ok).toBe(true);
+});
+
+it("变体槽位的定长在 schema 与类型之间是同一个数(同源断言的运行期那一半)", () => {
+  // 编译期那半是上面的 `MapVariantSlotArityMatchesSchema`;这里把两处都落到运行期,
+  // 免得「类型说 4、schema 说别的」这种事要靠人去读两侧。
+  const slot = MAP_JSON_SCHEMA.properties.variantSlots.items;
+  expect(slot.minItems).toBe(4);
+  expect(slot.maxItems).toBe(4);
+  // 坐标对那一层也是定长 2:「一个坐标」不是本 schema 认识的东西。
+  const coord = slot.items;
+  expect(coord.type).toBe("array");
+  if (coord.type === "array") {
+    expect(coord.minItems).toBe(2);
+    expect(coord.maxItems).toBe(2);
+  }
+});
+
+it("变体槽位被收紧后,松形态逐条被拒(收紧生效的直接证据)", () => {
+  // 手法:把 MINIMAL 的 variantSlots 换成一条由坏元素构成的清单,一层层往里坏:
+  // 元素不是数组 → 轨道长度不对 → 坐标对长度不对 → 坐标本身不对。
+  const one = (slot: JsonValue): readonly [JsonValue] => [slot];
+  const keywordsOfSlot = (slot: JsonValue): readonly string[] =>
+    keywordsOf(reject(bad(MINIMAL, { variantSlots: one(slot) })));
+
+  // 元素不是一个数组——这正是收紧前被放行的形态(对象 / 字符串 / 数字 / null)。
+  for (const loose of [{}, "任意字符串", 42, null] as const) {
+    expect(keywordsOfSlot(loose)).toContain("type");
+  }
+
+  // 轨道不足 4 格 / 超过 4 格:定长 4 元组在 JSON Schema 侧就是 minItems + maxItems。
+  expect(keywordsOfSlot([])).toContain("minItems");
+  expect(
+    keywordsOfSlot([
+      [1, 0],
+      [0, 1],
+      [3, 3],
+    ]),
+  ).toContain("minItems");
+  expect(
+    keywordsOfSlot([
+      [1, 0],
+      [0, 1],
+      [3, 3],
+      [2, 0],
+      [1, 1],
+    ]),
+  ).toContain("maxItems");
+  // 曾经被放行的「8 个数字摊平」形态:长度超了,而且每一项都不是坐标对。
+  expect(keywordsOfSlot([1, 0, 0, 1, 3, 3, 2, 0])).toContain("maxItems");
+
+  // 坐标对长度不对:轨道仍是 4 格,但其中一格不是坐标对(缺项 → minItems、多项 → maxItems)。
+  expect(keywordsOfSlot([[1, 0], [0, 1], [3, 3], [2]])).toContain("minItems");
+  expect(
+    keywordsOfSlot([
+      [1, 0],
+      [0, 1],
+      [3, 3],
+      [2, 0, 9],
+    ]),
+  ).toContain("maxItems");
+
+  // 坐标本身不对:负坐标越出网格下界(`>= size` 归 map-lint,`>= 0` 归本 schema);
+  // 非整数坐标不是网格格。
+  expect(
+    keywordsOfSlot([
+      [1, 0],
+      [0, 1],
+      [3, 3],
+      [-2, 0],
+    ]),
+  ).toContain("minimum");
+  expect(
+    keywordsOfSlot([
+      [1, 0],
+      [0, 1],
+      [3, 3],
+      [2.5, 0],
+    ]),
+  ).toContain("type");
+  expect(
+    keywordsOfSlot([
+      [1, 0],
+      [0, 1],
+      [3, 3],
+      ["2", 0],
+    ]),
+  ).toContain("type");
 });
 
 // ── 拒绝:每一类坏数据各一条,每条都从合法数据改出来 ───────────────────────────
