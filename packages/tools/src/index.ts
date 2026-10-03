@@ -72,6 +72,7 @@ export type {
 } from "./rules/script-lint.ts";
 export { compareViolations } from "./rules/script-lint.ts";
 export { forbiddenGlobalStage, forbiddenGlobalViolations } from "./rules/forbidden-globals.ts";
+export { moduleSystemStage, moduleSystemViolations } from "./rules/module-system.ts";
 export type { ValidateScriptOptions } from "./validate/pipeline.ts";
 export { SCRIPT_LINT_STAGES, validateScriptSource } from "./validate/pipeline.ts";
 export { renderViolations } from "./validate/render-violations.ts";
