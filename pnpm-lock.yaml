@@ -247,7 +247,11 @@ importers:
 
   packages/schema: {}
 
-  packages/tools: {}
+  packages/tools:
+    dependencies:
+      '@model-war/schema':
+        specifier: workspace:*
+        version: link:../schema
 
 packages:
 

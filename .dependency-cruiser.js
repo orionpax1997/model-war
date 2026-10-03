@@ -32,10 +32,14 @@
  * 巡航范围内**——实测巡航出的 21 个模块里一个 tools 的都没有。它缺掉的覆盖面分两块,一块有人
  * 兜底、一块没人兜底:
  *
- *   - **包图方向:有人兜底。** tools 的 tsconfig 没有 references、package.json 没有 dependencies,
- *     所以 pnpm 不会把任何 `@model-war/*` 软链进 `packages/tools/node_modules`(该目录压根不存在)。
+ *   - **包图方向:有人兜底。** tools 现在正式声明了 `@model-war/schema` 为依赖并加了 project
+ *     reference(hld §3.2:工具包只允许 import 真源包这一个根包,这条边指向依赖图的根)。
+ *     所以兜底不再靠「压根没软链」这条副作用,而是靠 TypeScript 自己:package.json 里
+ *     `dependencies` 只列了 schema,pnpm 只软链它一个,于是
  *     实测:`packages/tools/src` 里 import `@model-war/engine` ⇒ **TS2307**,`tsc -b` 非零退出。
  *     也就是说 tools → 其它包的反向边会被编译器拦住,只是拦它的是 tsc 而不是本门禁。
+ *     代价记在这里:那条边是新的(混合传输的生成器一侧,ADR-0003),而**编译器只拦「没声明」,
+ *     拦不住「声明了但方向反了」**——真源包不得反向 import tools 这条,仍靠规范而非门禁。
  *   - **第三方依赖面:没人兜底。** 先前这里写的是「pnpm 隔离 node_modules + TS2307 兜住,
  *     引用未声明的包必然编译失败」——**这句是错的**,已按实测更正。Node 与 TypeScript 的模块解析
  *     一路向上找 `node_modules`,而 workspace 根把所有 devDependency 都摆平了,于是
