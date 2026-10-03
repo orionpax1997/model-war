@@ -2,7 +2,14 @@
  * schema 包:类型、常量、参数 key 清单与 JSON Schema 的唯一真源(hld §2.2.5)。
  * 约束:本包无运行时代码(hld §3.2),不依赖任何包。
  * 空壳阶段只落两件真源性的东西——规则集版本与 JSON 值形状;其余随各自的使用者落地。
+ *
+ * 对外**单一入口**:包内按域分文件,统一从这里再导出。包级公共面一旦做成多入口就等于对外承诺,
+ * 将来想收窄就晚了(ADR-0003)。
  */
+
+// 名单类数据(hld §6.2:静态校验器与沙箱 runtime 消费同一份)。经生成器分发到工具包,
+// 规则层读的是生成物而不是本包——分界线是「能不能 afford 构建」,见 ADR-0003。
+export { ALLOWED_MATH_MEMBERS, BUILTIN_GLOBAL_NAMES } from "./builtin-globals.js";
 
 /**
  * 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,

@@ -12,6 +12,7 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "typecheck": "tsc -b --pretty false",
+    "generate": "tsc -b packages/schema && node packages/tools/src/generate/run-generate.ts && tsc -b",
     "test": "pnpm run typecheck && vitest run",
     "test:props": "vitest run --project property",
     "test:gates": "vitest run --project gates",
