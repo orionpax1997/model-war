@@ -1,8 +1,23 @@
 /**
  * schema 包:类型、常量、参数 key 清单与 JSON Schema 的唯一真源(hld §2.2.5)。
  * 约束:本包无运行时代码(hld §3.2),不依赖任何包。
- * 空壳阶段只落两件真源性的东西——规则集版本与 JSON 值形状;其余随各自的使用者落地。
+ *
+ * **本文件是对外唯一入口**(spec《真源包的导出面》):包里按域分文件,
+ * 公共面一律从这里再导出。做成多入口等于对外承诺,将来想收窄就晚了(ADR-0003)。
+ * 因此域文件之间也只经本文件互相看见(仅类型 import,编译后不留痕)。
  */
+
+// 名单类数据(hld §6.2:静态校验器与沙箱 runtime 消费同一份)。经生成器分发到工具包,
+// 规则层读的是生成物而不是本包——分界线是「能不能 afford 构建」,见 ADR-0003。
+export { ALLOWED_MATH_MEMBERS, BUILTIN_GLOBAL_NAMES } from "./builtin-globals.js";
+
+// 参赛脚本可见面的名单:宿主桥前缀 / 禁列全局名 / 沙箱注入 API 符号表(hld §6.2)。
+// 同样经生成器分发到工具包,静态校验器(D)与沙箱执行器(G)读的是同一份。
+export {
+  FORBIDDEN_GLOBAL_NAMES,
+  HOST_BRIDGE_PREFIX,
+  SANDBOX_INJECTED_API_SYMBOLS,
+} from "./script-surface.js";
 
 /**
  * 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
@@ -28,3 +43,9 @@ export type JsonValue =
   | null
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
+
+// 各域文件(形状 / 参数清单 / 常量表)一律从这里再导出。
+export * from "./map.js";
+export * from "./pending.js";
+export * from "./ruleset.js";
+export * from "./ruleset-keys.js";
