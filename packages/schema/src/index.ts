@@ -47,3 +47,5 @@ export type JsonValue =
 // 各域文件(形状 / 参数清单 / 常量表)一律从这里再导出。
 export * from "./map.js";
 export * from "./pending.js";
+export * from "./ruleset.js";
+export * from "./ruleset-keys.js";
