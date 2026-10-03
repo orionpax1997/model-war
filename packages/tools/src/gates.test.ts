@@ -19,6 +19,9 @@
  *     它巡航的是 dist(见 .dependency-cruiser.js 顶部:本仓库的 TypeScript 7 没有 JS 编程 API,
  *     depcruise 认不了 `.ts`),而 dist 不入库,所以这个反例既走真实配置与真实规则,
  *     又不会在失败时脏工作区。
+ *   - **落进真源与生成物**(生成器那一节):先改真源、不重跑生成器,规则层读到的还是上一版——
+ *     这本身是漂移检查(票 04)要抓的形态,但在本票里它有个更直接的后果可测:
+ *     真源改了 + 重跑生成器,门禁判决必须跟着变。
  *
  * `withProbeFile` 的 `finally` 保证成败都撤掉探针;`afterAll` 再兜一次底,
  * 覆盖进程被硬杀、`finally` 根本没机会跑的那种情况。
@@ -29,7 +32,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
@@ -162,6 +165,85 @@ it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", (
   expect(fixed.status, `整数仍被拦下:\n${fixed.output}`).toBe(0);
 
   expect(script("check:no-float").status).toBe(0);
+});
+
+// ── 生成器:改真源 → 重跑 → 门禁的判决跟着变 ───────────────────────────────────
+
+/** 白名单的真源与它的生成物。规则层读的是后者,所以只改前者不会有任何效果——必须重跑。 */
+const SCHEMA_ALLOWLIST = "packages/schema/src/builtin-globals.ts";
+const GENERATED_ALLOWLIST = "packages/tools/src/generated/builtin-globals.ts";
+
+/** 探针:一条用到 `Math.abs` 的运行时代码。 */
+const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
+
+/**
+ * 改真源 → 跑根脚本 `generate` → 跑 `body`,无论成败都把真源与生成物**按字节**还原。
+ *
+ * 还原走字节而不是「再跑一次生成器」,是为了让「本用例有没有留下副作用」与生成器是否正确无关:
+ * 生成器坏了也不该由还原路径顺手把它修好,那样这条用例的判决就永远绿。
+ */
+const withRegeneratedAllowlist = (
+  patch: (source: string) => string,
+  body: () => Outcome,
+): Outcome => {
+  const truth = `${repoRoot}${SCHEMA_ALLOWLIST}`;
+  const generated = `${repoRoot}${GENERATED_ALLOWLIST}`;
+  const originalTruth = readFileSync(truth, "utf8");
+  const originalGenerated = readFileSync(generated, "utf8");
+
+  const patched = patch(originalTruth);
+  // 补丁没打上 = 判据随真源改了形状,这条用例会安静地测一个不存在的东西。必须当场红。
+  expect(patched, "补丁没有改动真源,这条反例不成立").not.toBe(originalTruth);
+  writeFileSync(truth, patched, "utf8");
+
+  try {
+    const generatedRun = script("generate");
+    expect(generatedRun.status, `生成器自身非零退出:\n${generatedRun.output}`).toBe(0);
+    return body();
+  } finally {
+    writeFileSync(truth, originalTruth, "utf8");
+    writeFileSync(generated, originalGenerated, "utf8");
+    // 真源还原之后,`packages/schema/dist` 可能停在被改过的源码上。补一次构建,
+    // 让后续用例(尤其依赖已就位产物的 check:deps)看到一致状态;结果不额外断言,
+    // 断言留给那些真正依赖构建产物的用例,免得它盖掉 body 原本的失败信息。
+    script("build");
+  }
+};
+
+it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变", () => {
+  // 基线:`abs` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
+  const allowed = withProbeFile("packages/engine/src/__nofloat-probe.ts", MATH_ABS_PROBE, () =>
+    script("check:no-float"),
+  );
+  expect(allowed.status, `名单内的成员被拦下:\n${allowed.output}`).toBe(0);
+
+  // 从真源里摘掉 `abs` 并重跑生成器:同一条探针,从通过变拒绝。这就是「改真源 → 门禁行为改变」
+  // 这条链的正面证据,断言落在门禁的退出码与报告文本上,不碰任何内部函数。
+  const removed = withRegeneratedAllowlist(
+    (source) => source.replace('  "abs",\n', ""),
+    () =>
+      withProbeFile("packages/engine/src/__nofloat-probe.ts", MATH_ABS_PROBE, () =>
+        script("check:no-float"),
+      ),
+  );
+  expect(removed.status, "真源摘掉成员后,用到它的脚本必须被拒绝").toBe(1);
+  expect(removed.output, removed.output).toContain("Math.abs");
+
+  // 同一时刻仍在名单里的成员照旧放行:变红的是「白名单」,不是整道门禁——
+  // 少了这一条,「生成器把规则层弄坏了」也会被算作通过。
+  const stillAllowed = withRegeneratedAllowlist(
+    (source) => source.replace('  "abs",\n', ""),
+    () =>
+      withProbeFile(
+        "packages/engine/src/__nofloat-probe.ts",
+        "export const probe = Math.sign(-1);\n",
+        () => script("check:no-float"),
+      ),
+  );
+  expect(stillAllowed.status, `名单内的其他成员被连坐:\n${stillAllowed.output}`).toBe(0);
+
+  // 链路的另一头:还原后门禁回到绿。少了它,一条「红到底」的假实现也能满足上面三条。
+  expect(script("check:no-float").status, "还原后禁浮点门禁没有回到绿").toBe(0);
 });
 
 // ── 依赖门禁反例:注入违规,确认规则真的挂在图上 ────────────────────────────────
