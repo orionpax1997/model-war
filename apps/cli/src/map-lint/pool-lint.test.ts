@@ -165,6 +165,20 @@ it("目录里混进非地图文件不算地图,也不让一次 lint 失败", () 
   ]);
 });
 
+it("进池顺序按文件名升序,与调用方给的顺序无关", () => {
+  // 入口喂的是 `readdirSync` 的结果,而文件系统不承诺枚举顺序。池层拿池内第一张当
+  // `size` 比对的基准、并把两图名字写进 Jaccard 诊断,所以顺序不定会让同一份代码
+  // 在两台机器上对同一组图给出不同文本——那条「违规序列可 diff」的承诺就废了。
+  // 末尾 `sort(compareViolations)` 救不了:它排的是行,排不掉行里的名字。
+  const scrambled = ["open-clash.json", ".gitkeep", "corridor-split.json", "fortress-core.json"];
+  expect(poolMapFileNames(scrambled)).toEqual([
+    "corridor-split.json",
+    "fortress-core.json",
+    "open-clash.json",
+  ]);
+  expect(poolMapFileNames([...scrambled].reverse())).toEqual(poolMapFileNames(scrambled));
+});
+
 // ── 最近一圈归属 ──────────────────────────────────────────────────────────────
 
 it("把某家的最近矿判给别家被拒", () => {
