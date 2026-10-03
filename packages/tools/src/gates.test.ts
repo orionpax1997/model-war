@@ -357,26 +357,38 @@ it("生成物漂移检查:生成物被手改 → 变红,按字节还原 → 变�
 it("生成物漂移检查:新增一件生成物但没进版本库 → 变红", () => {
   const registry = `${repoRoot}packages/tools/src/generate/registry.ts`;
   const original = readFileSync(registry, "utf8");
-  const anchor =
-    "export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [builtinGlobalsAllowlist];";
-  expect(original, "注册表的锚点变了,这条反例不成立").toContain(anchor);
 
   /**
-   * 把第二件生成物登记进注册表(内容与生产函数逐字节一致,所以一致性那一段是绿的),
+   * 注册表数组字面量的首行与末行——**结构性锚点**,不写死整条声明。
+   *
+   * 写死 `= [builtinGlobalsAllowlist];` 这种整条文本是脆的:第二件生成物(参赛脚本可见面的
+   * 三张名单)一注册进来,锚点就不存在了,这条反例会以「注册表的锚点变了」红掉——
+   * 而注册表按设计就是**加一行**的事(E 接入文档生成时还会再加两行),拿它当锚点等于
+   * 把「加一行」的纪律钉死成「注册表永远只有一件」。所以只认首行(`= [`)与末行(`];`),
+   * 件数与内容都不参与匹配。
+   */
+  const arrayOpen = "export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [";
+  const closeAt = original.lastIndexOf("\n];");
+  expect(original, "注册表的形状变了(找不到数组字面量的开头)").toContain(arrayOpen);
+  expect(closeAt, "注册表的形状变了(找不到数组字面量的结尾)").toBeGreaterThan(0);
+  const arrayEnd = original.slice(closeAt, closeAt + 3);
+
+  /**
+   * 把一件新生成物登记进注册表(内容与生产函数逐字节一致,所以一致性那一段是绿的),
    * 按 `path` 写出它的文件,跑 `body`,无论成败都把注册表与文件按字节还原。
    *
-   * 切掉的是锚点末尾的 `];` 两个字符,不是最后一个——只切一个会把数组提前闭合,
-   * 而一个漏掉的逗号会让它变成语法错误:两份错法都会被门禁报成「注册表坏了」,
-   * 不是「生成物没入库」,于是这条反例测的根本不是它要测的那件事。
+   * 插在末尾的 `];` 之前,而不是切字符:切一个字符会把数组提前闭合,一个漏掉的逗号会让它
+   * 变成语法错误——两份错法都会被门禁报成「注册表坏了」,不是「生成物没入库」,
+   * 于是这条反例测的根本不是它要测的那件事。
    */
   const withRegisteredArtifact = (path: string, body: () => Outcome): Outcome => {
     writeFileSync(
       registry,
-      original.replace(
-        anchor,
-        `${anchor.slice(0, -2)},\n  {\n    id: "drift-probe",\n    path: "${path}",\n` +
-          `    produce: () => "export const driftProbe: readonly string[] = [];\\n",\n  },\n];`,
-      ),
+      original.slice(0, closeAt) +
+        `  {\n    id: "drift-probe",\n    path: "${path}",\n` +
+        `    produce: () => "export const driftProbe: readonly string[] = [];\\n",\n  },\n` +
+        arrayEnd +
+        original.slice(closeAt + 3),
       "utf8",
     );
     mkdirSync(dirname(`${repoRoot}${path}`), { recursive: true });
