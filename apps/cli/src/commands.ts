@@ -14,8 +14,23 @@
 
 export type CommandName = "gen" | "run" | "match" | "replay" | "verify" | "map-lint";
 
-/** 子命令处理器:拿到的参数是该命令名之后的一切(子命令自带参数解析)。 */
-export type CommandHandler = (args: readonly string[]) => Promise<void>;
+/**
+ * 子命令处理器:拿到的参数是该命令名之后的一切(子命令自带参数解析),**返回进程退出码**。
+ *
+ * ── 为什么是返回值而不是 `process.exitCode` ─────────────────────────────────
+ * 处理器确实可以写 `process.exitCode = 1`,而且那样写也能过测试——**在 `index.ts` 的
+ * 顶层 `process.exitCode = await main(...)` 之前跑完时不会丢**。它丢在下一句:顶层无条件把
+ * `main` 的返回值赋给 `process.exitCode`,于是处理器设的 1 被 `main` 的 `return 0` 覆盖。
+ * (`map-lint` 落地时正是这样:违规文本照打,退出码却是 0,cli.test.ts 的 e2e 断言当场变红。)
+ *
+ * 所以**退出码走返回值**,不走全局副作用:
+ * - 全局通道在类型里**看不见**。`(args) => Promise<void>` 无法表达“我失败了”,于是
+ *   `return 1` 被静默编译成 `return undefined` 而不是编译失败;
+ * - 顶层那句无条件赋值让全局通道**必然**被覆盖,没有一条不依赖“执行顺序”的写法。
+ *
+ * 代价是退出码要显式穿过 `main` 一路回到顶层,这条链现在是类型检查盯着的。
+ */
+export type CommandHandler = (args: readonly string[]) => Promise<number>;
 
 export type CommandSpec = {
   readonly name: CommandName;
@@ -75,10 +90,9 @@ export const COMMANDS: readonly CommandSpec[] = [
     summary: "地图对称性与合法性校验",
     // map-lint 是 CLI 自己的模块(hld §3.1 的 `cli:… / map-lint`、§9 的模块列),不挂在 schema 上——
     // schema 只含类型、常量与 JSON Schema,无运行时代码(hld §3.2)。
-    // 处理器尚未落地,故此刻没有可 import 的模块:返回空命名空间,让 handlerOf 走「未实现」那条路径。
     provider: "@model-war/cli",
     handler: "lintMaps",
-    load: async () => ({}),
+    load: () => import("./map-lint/index.js"),
   },
 ];
 

@@ -30,12 +30,20 @@ const helpText = (): string =>
     "  -v, --version  打印版本与规则集版本",
   ].join("\n");
 
+/**
+ * 一条子命令的 `--help`。
+ *
+ * `承载模块` 那行**刻意不写「待导出」**:登记表里的 `handler` 是「该包应当导出的符号名」,
+ * 而「登记」与「实际导出」是两回事——那个「尚未导出」的判据由 `handlerOf` 在**调用时**给出,
+ * 并以「未实现 + 非零退出」呈现(自动化流程不得把「没实现」读成「跑通了」)。
+ * 在帮助文本里写死「待导出」的话,处理器落地后这句就变成一句自己打自己脸的假话。
+ */
 const commandHelpText = (command: CommandSpec): string =>
   [
     `用法:${command.usage}`,
     "",
     command.summary,
-    `承载模块:${command.provider}(待导出 ${command.handler})`,
+    `承载模块:${command.provider}(处理器 ${command.handler})`,
   ].join("\n");
 
 /** 在第一个非选项 token 处切开:其后(含它自己)属子命令。 */
@@ -110,8 +118,9 @@ const main = async (argv: readonly string[]): Promise<number> => {
     );
     return 1;
   }
-  await handler(args);
-  return 0;
+  // 退出码由处理器返回,不走 `process.exitCode`:顶层那句无条件赋值会把它覆盖成这里的
+  // `return 0`,理由与 `CommandHandler` 上那段注释同源。
+  return handler(args);
 };
 
 const unknownCommand = (name: string): number => {
