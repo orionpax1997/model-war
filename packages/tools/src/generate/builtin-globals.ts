@@ -33,7 +33,7 @@ export const builtinGlobalsAllowlist: GeneratedArtifact = {
         ALLOWED_MATH_MEMBERS,
       ),
       documentedArray(
-        "非 `Math` 的内置全局名白名单。真源:`BUILTIN_GLOBAL_NAMES`,当前为空(理由见真源侧注释)。",
+        "内置全局名白名单(不越界判据)。真源:`BUILTIN_GLOBAL_NAMES`;收录判据不在此复述。",
         "BUILTIN_GLOBAL_NAMES",
         BUILTIN_GLOBAL_NAMES,
       ),
