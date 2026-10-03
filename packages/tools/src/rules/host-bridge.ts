@@ -49,16 +49,13 @@
  * 两种状态下都有裁决兜着。裁决因此落在两个可观察的断言上(全序比较的兜底顺序、每条禁列名
  * 只报一条),用例与理由见 `host-bridge.test.ts`。顺序在本规则上没有别的漏洞:
  * 本规则不查内置全局名:白名单反转那一层是编译器的名字解析(hld §6.2),而 `__*` 带前缀的名字
- * 同样不在内建全局名里,于是那一层并不覆盖它们——宿主桥前缀由本规则唯一承载。
+ * 同样不在内置全局名里,于是那一层并不覆盖它们——宿主桥前缀由本规则唯一承载。
  */
 
 import { parseToAst, positionAt } from "../parse-source.ts";
 import { isHostBridgeSymbol, HOST_BRIDGE_PREFIX } from "../script-surface.ts";
-import { referenceChainsOf, type ChainSegment } from "./identifier-chain.ts";
+import { referenceChainsOf, withoutGlobalThis, type ChainSegment } from "./identifier-chain.ts";
 import type { ScriptLintContext, ScriptLintStage, ScriptViolation } from "./script-lint.ts";
-
-/** 全局对象本身。它是「等价写法」而不是「某个对象的属性」:比较之前先把它剥掉。 */
-const GLOBAL_THIS = "globalThis";
 
 /**
  * 剥掉开头的 `globalThis` 后,这条链的根是否带桥前缀。命中时返回剥完的链,
@@ -66,7 +63,7 @@ const GLOBAL_THIS = "globalThis";
  * 不是那个等价前缀)。
  */
 const bridgeChainOf = (chain: readonly ChainSegment[]): readonly ChainSegment[] | undefined => {
-  const effective = chain[0]?.name === GLOBAL_THIS ? chain.slice(1) : chain;
+  const effective = withoutGlobalThis(chain);
   const root = effective[0];
   return root !== undefined && isHostBridgeSymbol(root.name) ? effective : undefined;
 };
@@ -114,14 +111,8 @@ export const hostBridgeStage: ScriptLintStage = (context: ScriptLintContext) => 
 };
 
 /**
- * 规则层的对外缝:一段源码 → 一组带行列的违规。形状与 `forbiddenGlobalViolations` 同形,
- * 判据与上面那条完全同一份扫描,所以两个入口永远给出一致的结论。
- *
- * 解析不过时返回空数组:「解析失败」是判定链独占的那一条结论,它产自 `validate/pipeline.ts`。
- * 规则层在这里再产一份就等于同一件事有两个家,而调用方拿到的会是两条互相矛盾的违规。
- *
- * 源形态是 script-mode 的单文件(hld §2.2.2 的入口契约),规则跑在**编译后的产物**上,
- * 不在原始 TS 上跑(spec《规则跑在编译产物上》)。
+ * 规则层的对外缝:一段源码 → 一组带行列的违规(形状与 `forbiddenGlobalViolations` 同形)。
+ * 判据与上面那条完全同一份扫描,所以两个入口永远给出一致的结论;共同纪律见 `script-lint.ts`。
  */
 export const hostBridgeViolations = (source: string): readonly ScriptViolation[] => {
   const parsed = parseToAst(source, "script");

@@ -36,17 +36,35 @@
  * 少登记一次会让它按引用去判(这正是要的)。同理计算属性里的成员名(`Math["random"]`)取得到,
  * 它进链,而取不到名字的动态下标整条链取不到。
  *
- * ── 模块系统那一票为什么**没有**消费本文件(已落地的事实,不是预测) ───────────
- * `rules/module-system.ts` 与桥前缀一样判 `require` / `eval` 这两个名字,却仍自己走 `walk`,
- * 没有来这里取链。原因是它的判据是**「这是什么语法形态」**:它要看的是 `CallExpression` 的
- * 被调用者与实参形状,而本文件的输出一条链里不带这两样——一份链说不了「这是不是一个调用」。
- * 换句话说:两条规则共用的是「哪些位置上的标识符是一次按名字找符号」这一个**遍历层判据**,
- * 不共用「怎么从链上判违规」。要为了模块系统把调用信息塞进本文件,反而会让这份公共件
- * 承担一条它不该承担的语义(那个语义属于模块系统规则自己)。
- * 若将来还有第三条「只判某个名字、不关心形态」的规则,那时本文件就是它该来的地方。
+ * ── 括号:纯分组,不是一层「看不见的东西」 ────────────────────────────────────
+ * oxc 为 `(Math)` / `((Math))` 产出独立的 `ParenthesizedExpression` 节点,而括号在 JS 里
+ * **不改变被引用的是谁**:`(Math).random()` 与 `Math.random()` 指的是同一个 `Math.random`。
+ * 所以取链的第一步是把括号剥掉,一层括号不该成为绕开判定链的路——`Math.random` 正是 spec
+ * 用来锁判定链顺序的那个名字,放过它等于让确定性污染源可以靠一层括号绕过。
+ *
+ * 剥括号**只发生在「这个节点表示一个被引用的名字或链」的那两个位置**:取链的入口
+ * (`chainOf`)与模块系统取被调用者(`calleeNameOf`)。不是把树上的括号节点统统换成内层节点——
+ * 那会顺手改掉别的判据看得见的形状(模块系统判静态 `eval` 看的正是**实参**的形状,
+ * 那个形状是它自己的一条裁决),等于把一条规则的判据悄悄挪了家。
+ *
+ * 剥完之后仍然**只登记一次**:遍历既访问括号节点,也访问它内层的那个表达式,两个节点会给出
+ * 同一条链。按 `walk` 的「先访问父后访问子」把内层节点登记掉(与键位登记同一个机制),
+ * 否则 `(Math.random)()` 会把同一条链报成两条违规,而模型只看得见一个名字。
+ *
+ * ── 模块系统消费本文件的哪一部分、为什么不消费其余部分(已落地的事实,不是预测) ──
+ * `rules/module-system.ts` 与桥前缀一样判 `require` / `eval` 这两个名字,它来这里取的
+ * 是**剥括号**(`withoutParentheses`)这一条遍历层判据,却仍自己走 `walk`、不来这里取链。
+ * 原因是它的判据是**「这是什么语法形态」**:它要看的是 `CallExpression` 的被调用者与实参形状,
+ * 而本文件的输出一条链里不带这两样——一份链说不了「这是不是一个调用」。换句话说:
+ * 三条规则共用的是「哪些位置上的标识符是一次按名字找符号、括号算不算一层东西」这几个
+ * **遍历层判据**,不共用「怎么从链上判违规」。要为了模块系统把调用信息塞进本文件,
+ * 反而会让这份公共件承担一条它不该承担的语义(那个语义属于模块系统规则自己)。
  */
 
 import { identifierName, isAstNode, startOf, walk, type AstNode } from "../ast.ts";
+
+/** 全局对象本身。它是「等价写法」而不是「某个对象的属性」(理由见 `withoutGlobalThis`)。 */
+const GLOBAL_THIS = "globalThis";
 
 /** 标识符链的一段:名字 + 该段的起始偏移。违规的位置指到链的**头**一段。 */
 export type ChainSegment = {
@@ -60,10 +78,44 @@ export type ChainReference = {
 };
 
 /**
+ * 剥掉外面套着的括号,给出真正被引用的那个节点;不是节点就返回 undefined。
+ *
+ * 括号可以套多层(`((Date)).now()`),所以这里剥到不再带括号为止;每剥一层都重新要求
+ * `expression` 是一个节点,所以缺了内层的括号形状(解析器换了、或节点形状变了)取到的是
+ * undefined 而不是一条空链——**取不到就不出现**,与本文件其余判据同一条纪律。
+ */
+export const withoutParentheses = (value: unknown): AstNode | undefined => {
+  let node = isAstNode(value) ? value : undefined;
+  while (node?.type === "ParenthesizedExpression") {
+    node = isAstNode(node.expression) ? node.expression : undefined;
+  }
+  return node;
+};
+
+/**
+ * 这个节点是不是全局对象本身(`globalThis` / `(globalThis)`)。它供「等价写法」那一支用:
+ * 两条规则判名字时都要先把这一层剥掉,理由是它是全局环境本身而不是某个对象的属性。
+ */
+export const isGlobalThisNode = (value: unknown): boolean =>
+  identifierName(withoutParentheses(value)) === GLOBAL_THIS;
+
+/**
+ * 剥掉链开头的 `globalThis`,好让判据落在真正要改的那个名字上
+ * (`globalThis.Math.random` 指的是 `Math.random`,不是那个等价前缀;带不带它不该改变判定)。
+ *
+ * 家在这份公共件而不是各规则自带:同一条等价规则被两条规则各写一次,迟早有一份漏掉剥,
+ * 而漏掉的那一份不会让任何东西当场变红——它只是让 `globalThis.` 成了一个绕过判定链的前缀。
+ */
+export const withoutGlobalThis = (chain: readonly ChainSegment[]): readonly ChainSegment[] =>
+  chain[0]?.name === GLOBAL_THIS ? chain.slice(1) : chain;
+
+/**
  * 取一个节点上的标识符链;取不到就返回 undefined(理由见头注)。
  * 成员名:非计算属性取 `property.name`;计算属性取字符串字面量的值;动态下标取不到。
+ * 括号不是一层东西(理由见头注):`(Math).random()` 与 `Math.random()` 取到同一条链。
  */
-const chainOf = (node: AstNode | undefined): readonly ChainSegment[] | undefined => {
+const chainOf = (raw: unknown): readonly ChainSegment[] | undefined => {
+  const node = withoutParentheses(raw);
   if (node === undefined) {
     return undefined;
   }
@@ -79,7 +131,7 @@ const chainOf = (node: AstNode | undefined): readonly ChainSegment[] | undefined
   if (member === undefined) {
     return undefined;
   }
-  const object = chainOf(isAstNode(node.object) ? node.object : undefined);
+  const object = chainOf(node.object);
   if (object === undefined) {
     return undefined;
   }
@@ -130,6 +182,19 @@ const markNonReferences = (node: AstNode, names: Set<AstNode>): void => {
 };
 
 /**
+ * 把括号节点的内层表达式登记下来,遍历到它时直接跳过:那条链由括号节点自己给出。
+ *
+ * 与键位登记同一个机制、同一理由:两处都是「同一个位置上的名字只该给出一条链」。
+ * 多层括号一次登记就够——外层括号的 `expression` 是里层那个括号节点,它同样被登记,
+ * 于是 `((Math)).random()` 也只给出一次出现。
+ */
+const markParenthesized = (node: AstNode, names: Set<AstNode>): void => {
+  if (node.type === "ParenthesizedExpression" && isAstNode(node.expression)) {
+    names.add(node.expression);
+  }
+};
+
+/**
  * 遍历一棵已解析成功的树,收出其中每一处标识符链的引用。
  *
  * 规则层与判定链两个入口共用这一份扫描(各自只写「什么样的链算违规」),所以两个入口
@@ -137,11 +202,15 @@ const markNonReferences = (node: AstNode, names: Set<AstNode>): void => {
  * 而遍历只需要能按键宽地走下去(见 `../ast.ts` 的头注)。
  */
 export const referenceChainsOf = (program: unknown): readonly ChainReference[] => {
-  const nonReferences = new Set<AstNode>();
+  // 两类登记共用一个集合:键位上的名字与括号的内层节点都不是一次独立的出现。
+  const alreadyReported = new Set<AstNode>();
   const found: ChainReference[] = [];
   walk(program, (node) => {
-    markNonReferences(node, nonReferences);
-    if (nonReferences.has(node)) {
+    // 顺序要紧:`walk` 先访问父后访问子(见 `../ast.ts` 的头注),所以括号/解构在这里登记,
+    // 轮到那些被登记的节点被访问时登记已经生效。
+    markNonReferences(node, alreadyReported);
+    markParenthesized(node, alreadyReported);
+    if (alreadyReported.has(node)) {
       return;
     }
     // 标识符节点也进来查:裸的 `Date` 是一个 Identifier,不是 MemberExpression,漏掉它整条规则就废了。
