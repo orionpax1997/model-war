@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -14,8 +14,15 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const entry = fileURLToPath(new URL("./index.ts", import.meta.url));
+const mapPath = fileURLToPath(new URL("../../../maps/open-clash.json", import.meta.url));
 
 const COMMANDS = ["gen", "run", "match", "replay", "verify", "map-lint"] as const;
+
+/**
+ * 尚未落地的子命令。`map-lint` 不在其中:它已实现,被下面那组自己的断言盯着。
+ * 这张名单会随实现推进缩短——把一条命令搬出这张名单是“它有断言了”的信号。
+ */
+const UNIMPLEMENTED = ["gen", "run", "match", "replay", "verify"] as const;
 
 let bundle = "";
 let scratch = "";
@@ -75,11 +82,32 @@ it("六条子命令都登记在册(帮助之外的入口也存在)", () => {
   }
 });
 
-it.each(COMMANDS)("未实现的 %s 显式失败,不静默返回成功", (command) => {
+it.each(UNIMPLEMENTED)("未实现的 %s 显式失败,不静默返回成功", (command) => {
   const result = run([command]);
   expect(result.status).not.toBe(0);
   // 退出码非零还不够:必须是"未实现"这条路径,而不是别处的崩溃。
   expect(result.stderr).toContain("未实现");
+});
+
+it("`map-lint` 不再走「未实现」那条路径", () => {
+  const result = run(["map-lint", "maps/open-clash.json"]);
+  expect(result.stderr).not.toContain("未实现");
+  // 落库的地图是合规的,所以这一跑必须放行。
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("通过");
+});
+
+it("`map-lint` 对不合法的地图非零退出(退出码由处理器自设,不是 index.ts 给的)", () => {
+  // 断言对象是退出码本身:`index.ts` 调完处理器无条件 `return 0`,处理器没有返回值通道,
+  // 所以「非零退出」这条只能靠处理器自己设 `process.exitCode`。这里用一张改坏的图钉住它。
+  const bad = `${scratch}/broken-map.json`;
+  const source = JSON.parse(readFileSync(mapPath, "utf8"));
+  source.terrain[0] = `${".".repeat(3)}#${".".repeat(source.size - 4)}`;
+  writeFileSync(bad, JSON.stringify(source));
+
+  const result = run(["map-lint", bad]);
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).toContain("地形未四重旋转对称");
 });
 
 it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
