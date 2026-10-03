@@ -22,14 +22,14 @@ import { expect, it } from "vitest";
 
 import { validateMap } from "../validator.js";
 import {
-  MAX_MINE_ROUTE_CHEBYSHEV,
+  MAX_MINE_ROUTE,
   MAX_WALL_JACCARD,
   POOL_MIN_MAP_COUNT,
   poolMapFileNames,
   poolViolations,
 } from "./pool.js";
 import { renderPoolViolations } from "./render.js";
-import type { MapLintRule, MapLintViolation } from "./rules.js";
+import { mapViolations, orbitOf, type MapLintRule, type MapLintViolation } from "./rules.js";
 
 /** 仓库里落库的合规地图(开阔对攻图)。读它而不是重抄一份:重抄的那份迟早与 `maps/` 漂移。 */
 const OPEN: MapDefinition = JSON.parse(
@@ -82,6 +82,29 @@ const withRawWalls = (
   return { ...OPEN, name, terrain: rows } as MapDefinition;
 };
 
+/**
+ * 造一张图:把给定的一批格子各自展开成完整四重轨道当墙。
+ *
+ * **给矿路红线的反例用**:那张反例要的形状是「家与自家矿坐标上很近、中间隔一道墙」,
+ * 而这个形状没法从 `variantSlots` 的候选轨道里凑出来(那 8 条实测离点位八邻域都远)。
+ * 展开成轨道是为了保持地形四重对称——否则反例就同时坏了单图层,作者分不清自己踩的是哪一条。
+ * 用例里都断言 `mapViolations(fixture)` 为空,所以这个承诺是被检查的,不是口头说说。
+ */
+const withWallOrbits = (
+  name: string,
+  cells: readonly (readonly [number, number])[],
+  size: number = OPEN.size,
+): MapDefinition => {
+  const rows = blankGrid(size);
+  for (const [x, y] of cells) {
+    for (const [ox, oy] of orbitOf(x, y, size)) {
+      const row = rows[oy] ?? "";
+      rows[oy] = `${row.slice(0, ox)}#${row.slice(ox + 1)}`;
+    }
+  }
+  return { ...OPEN, name, size, terrain: rows } as MapDefinition;
+};
+
 /** 把某个点位的坐标搬走(反例的通用手法),`null` owner 也要能搬。 */
 const moveSite = (
   map: MapDefinition,
@@ -94,6 +117,26 @@ const moveSite = (
     ...map,
     sites: map.sites.map((site) => (site.id === id ? { ...site, x, y, ...patch } : site)),
     ...patch,
+  }) as MapDefinition;
+
+/** 落库那张图里四方开局归属的那四个矿(#12–#15)。它们合起来恰好是**一条**完整四重轨道。 */
+const OWNED_MINE_IDS: readonly number[] = [12, 13, 14, 15];
+
+/**
+ * 把那四个矿按给定顺序挪到另一组坐标上。**必须四个一起挪**:归属判据要求四方最近一圈的并集
+ * 由完整轨道构成,只挪一个会把那条轨道拆散(`nearest-ring-not-orbit` 会报),反例就不干净了。
+ */
+const repointMines = (
+  map: MapDefinition,
+  cells: readonly (readonly [number, number])[],
+): MapDefinition =>
+  ({
+    ...map,
+    sites: map.sites.map((site) => {
+      const index = OWNED_MINE_IDS.indexOf(site.id);
+      const target = index < 0 ? undefined : cells[index];
+      return target === undefined ? site : { ...site, x: target[0], y: target[1] };
+    }),
   }) as MapDefinition;
 
 /** 合规池:三张图、size 一致、墙两两不重叠(两两 Jaccard 0)、点位沿用真布局。 */
@@ -218,17 +261,79 @@ it("归属集合不是完整四重轨道被拒(四方对等那条不变量)", ()
 });
 
 // ── 矿路红线 ──────────────────────────────────────────────────────────────────
+//
+// 这里的 d 一律指**八向最短路**(墙不可通行)。边界那两条的矿路上恰好没有墙,所以路长 = 坐标差,
+// 它们仍钉在同一条线上;真正区分「理论距离」与「路长」的是下面两张反例。
 
-it(`矿路 d = ${MAX_MINE_ROUTE_CHEBYSHEV} 必过`, () => {
-  // 把 #12 挪到家下方 MAX 格:这是边界内侧,依据是枯竭 599 仍在 400–600 窗口内。
-  const stretched = moveSite(withWalls("pool-a", [0]), 12, 10, 10 + MAX_MINE_ROUTE_CHEBYSHEV);
+it(`矿路 d = ${MAX_MINE_ROUTE} 必过`, () => {
+  // 把 #12 挪到家正下方 MAX 格:这是边界内侧,依据是枯竭 599 仍在 400–600 窗口内。
+  const stretched = moveSite(withWalls("pool-a", [0]), 12, 10, 10 + MAX_MINE_ROUTE);
   expect(rulesOf([stretched, ...POOL.slice(1)])).not.toContain("mine-route-too-long");
 });
 
-it(`矿路 d = ${MAX_MINE_ROUTE_CHEBYSHEV + 1} 必被拒`, () => {
+it(`矿路 d = ${MAX_MINE_ROUTE + 1} 必被拒`, () => {
   // 再往下挪一格就是 629,顶破 600 的窗口上界。
-  const stretched = moveSite(withWalls("pool-a", [0]), 12, 10, 11 + MAX_MINE_ROUTE_CHEBYSHEV);
-  expect(rulesOf([stretched, ...POOL.slice(1)])).toContain("mine-route-too-long");
+  const stretched = moveSite(withWalls("pool-a", [0]), 12, 10, 11 + MAX_MINE_ROUTE);
+  const found = violationsOf([stretched, ...POOL.slice(1)]);
+  expect(found.map((violation) => violation.rule)).toContain("mine-route-too-long");
+  // 这一张的矿路上没有墙,所以路长 = 坐标差;文案不得反过来声称“是墙把路拉长的”——
+  // 那是作者照着改图时会跟着跑偏的一句话。
+  expect(found.find((violation) => violation.rule === "mine-route-too-long")?.message).toContain(
+    "两点之间没有墙挡路",
+  );
+});
+
+it("反例:坐标上很近、但被墙隔开绕路超红线,必被拒(这条判据存在的理由)", () => {
+  // 形状:x=7 上一道从 y=6 拉到 y=20 的墙(连同它的旋转伙伴),把家 (10,10) 与自家矿 #12 (6,16)
+  // 隔在两侧。直线距离只有 6 格,红线以下的旧判据(理论距离)会**放行**这张图;而家必须绕过墙头
+  // (或墙尾)才走得到矿,八向最短路是 MAX+6 格。
+  const barrier: readonly (readonly [number, number])[] = Array.from(
+    { length: 15 },
+    (_, index) => [7, 6 + index] as const,
+  );
+  const walled = withWallOrbits("pool-a", barrier);
+  // 反例本身得是一张**合法的图**:它只坏了池层那条红线,不能顺手坏了单图层。
+  expect(mapViolations(walled)).toEqual([]);
+
+  const found = violationsOf([walled, ...POOL.slice(1)]);
+  expect([...new Set(found.map((violation) => violation.rule))]).toEqual(["mine-route-too-long"]);
+  const message =
+    found.find((violation) => violation.rule === "mine-route-too-long")?.message ?? "";
+  // 文案里两个数都在:量的是路长(16 格),理由写明坐标差只有 6 格。
+  // 6 < 红线 10,所以旧判据(理论距离)会放行这张图——这条用例钉住的就是那个差别。
+  expect(message).toContain("要走 16 格");
+  expect(message).toContain("两点只隔 6 格");
+  // 四方对称,所以这张图上四方的矿路都被拉长;一张图坏在同一个地方,诊断文本也就一样。
+  expect(found).toHaveLength(4);
+});
+
+it("反例:坐标差按曼哈顿算是 12(已越过红线)、但一条直路就走得到,不被这条红线误伤", () => {
+  // 把四方归属的四个矿整体挪到对角线那条轨道上:(16,16)/(47,16)/(47,47)/(16,47)。
+  // 每方到自家矿的 Chebyshev 与八向路长都是 6(红线以内),而按曼哈顿算是 12 —— 已经越过红线 10。
+  // 红线量的是**走过去要走多少格**,不是两点离多远;把它读成曼哈顿/欧氏距离就会误伤这张图。
+  const diagonal = repointMines(withWalls("pool-a", [0]), orbitOf(16, 16, OPEN.size));
+  expect(mapViolations(diagonal)).toEqual([]);
+  expect(violationsOf([diagonal, ...POOL.slice(1)])).toEqual([]);
+});
+
+it("反例:墙把自家矿围死(走不到),报「没有可走的路」而不是当成路长", () => {
+  // 在 #12 (6,16) 四周套一整圈墙:理论距离仍是 6,但八向 BFS 到不了。
+  // 走不通比走太远更糟,所以它归同一条判据,文案必须与「太长」那个读法分得开。
+  const ring: readonly (readonly [number, number])[] = [
+    [5, 15],
+    [7, 15],
+    [5, 16],
+    [7, 16],
+    [5, 17],
+    [7, 17],
+    [6, 15],
+    [6, 17],
+  ];
+  const sealed = withWallOrbits("pool-a", ring);
+  expect(mapViolations(sealed)).toEqual([]);
+  const found = violationsOf([sealed, ...POOL.slice(1)]);
+  expect([...new Set(found.map((violation) => violation.rule))]).toEqual(["mine-route-too-long"]);
+  expect(found[0]?.message).toContain("没有可走的路");
 });
 
 // ── 风格判据:两两 Jaccard ─────────────────────────────────────────────────────

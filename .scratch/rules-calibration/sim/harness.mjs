@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildMap } from './map.mjs';
+import { buildMap, makeLcg } from './map.mjs';
 import { createGame, runTick, finishByTimeout, exportTerritoryScores } from './engine.mjs';
 import { RULESET, chebyshev, APPLIED_OVERRIDES } from './ruleset.mjs';
 import { createPlayerRuntime, createIdleRuntime } from './runtime.mjs';
@@ -559,9 +559,97 @@ export function buildMatrices({ variants = VARIANTS } = {}) {
   return jobs;
 }
 
+// --- 真图装载（票 06）：把 maps/*.json 转成桩内形状 -----------------------------
+//
+// 为什么转换放在 harness 而不是新开模块：matchArgsOf 是跑批与重放共用的**唯一**入口，
+// 「地图 + 种子 → 对局条件」必须是同一个纯函数，否则重放就会与跑批分叉。改动只有
+// 「job 带 mapFile 时走读真图」这一条分支，buildMap 的既有行为一字未动。
+//
+// 四处形状差异（真图 JSON ↔ 桩内）：
+//   1. 地形字符 `.`/`#` ↔ `'plain'`/`wall`；
+//   2. 点位属主 `initialOwner`（中立 = null）↔ `owner`（中立 = -1）；
+//   3. 桩内点位多两个占领进度字段 `progressOwner: -1` / `progress: 0`（JSON 侧没有 = 未被占领）；
+//   4. 桩内资源点带 `remaining`，取值走 `RULESET.resourcePerSite`（**不写死**：map.mjs 里
+//      曾经写死 125，导致 `--set resourcePerSite=200` 时地图与 harness 的分母不一致、枯竭全线失真）。
+// 另有一处**形状不同但不需要转换**：真图的 `spawnUnits` 是 `{owner, type, offset:[dx,dy]}`（相对自家
+// 主基地），桩内是绝对坐标 `{owner, type, x, y}`，所以这里要把 offset 加上该方主基地坐标展开。
+
+const TERRAIN_CHARS = { '.': 'plain', '#': 'wall' };
+const VARIANT_FILL_PERCENT = 50;   // 与 map.mjs 的常量同值（桩内那份没导出，只能各写一份并在此注明）
+
+export function mapFromJson(json, seed = 1) {
+  const { size } = json;
+  if (json.terrain.length !== size) throw new Error(`terrain has ${json.terrain.length} rows, size=${size}`);
+  const terrain = json.terrain.map((row) => {
+    if (row.length !== size) throw new Error(`terrain row length ${row.length} != size ${size}`);
+    return [...row].map((ch) => {
+      const t = TERRAIN_CHARS[ch];
+      if (!t) throw new Error(`unknown terrain char ${JSON.stringify(ch)}`);
+      return t;
+    });
+  });
+
+  const sites = json.sites.map((s) => ({
+    id: s.id,
+    kind: s.kind,
+    x: s.x,
+    y: s.y,
+    owner: s.initialOwner === null ? -1 : s.initialOwner,
+    progressOwner: -1,
+    progress: 0,
+    ...(s.kind === 'resource' ? { remaining: RULESET.resourcePerSite } : {}),
+  }));
+
+  // 起始单位：offset 相对该方主基地 → 绝对坐标
+  const homes = new Map();
+  for (const s of sites) if (s.kind === 'base' && s.owner >= 0) homes.set(s.owner, s);
+  const spawnUnits = json.spawnUnits.map((u) => {
+    const home = homes.get(u.owner);
+    if (!home) throw new Error(`spawnUnit owner ${u.owner} has no home base`);
+    const x = home.x + u.offset[0];
+    const y = home.y + u.offset[1];
+    if (x < 0 || y < 0 || x >= size || y >= size) throw new Error(`spawnUnit out of bounds at ${x},${y}`);
+    return { owner: u.owner, type: u.type, x, y };
+  });
+
+  // 种子变体：与 map.mjs 同一套机制 —— 真图 JSON 给的是**静态候选轨道清单**，
+  // 种子逐槽位独立判定 50% 是否填上（整条轨道填或不填，四重对称才成立）。
+  // 输出 `variantSlots` 记的是**本次种子实际填了哪些**，与 buildMap 的输出语义一致。
+  const rand = makeLcg(seed);
+  const forbidden = new Set();
+  for (const key of [...sites.map((s) => `${s.x},${s.y}`), ...spawnUnits.map((u) => `${u.x},${u.y}`)]) {
+    const [sx, sy] = key.split(',').map(Number);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) forbidden.add(`${sx + dx},${sy + dy}`);
+    }
+  }
+  const variantSlots = [];
+  for (const slot of json.variantSlots) {
+    const cells = slot.filter(([x, y]) => !forbidden.has(`${x},${y}`));
+    if (rand() % 100 < VARIANT_FILL_PERCENT) {
+      for (const [x, y] of cells) terrain[y][x] = 'wall';
+      if (cells.length > 0) variantSlots.push(cells);
+    }
+  }
+
+  return {
+    name: `realmap/${json.name}/${size}`,
+    variant: json.name,     // meta.variant 拼成 `<name>@<size>`，跑批产物里据此分辨三张真图
+    size,
+    seed,
+    terrain,
+    sites,
+    spawnUnits,
+    variantSlots,
+  };
+}
+
 // job → playMatch 入参（runMatrix 与 replay.mjs 共用，保证重放与跑批同源）
+// job.mapFile（票 06 新增，可选）：给了就读那张真图 JSON 并转桩内形状；没给走夹具 buildMap。
 export function matchArgsOf(job) {
-  const map = buildMap(job.seed, { variant: job.variant, size: job.size, ...(job.mapOpts ?? {}) });
+  const map = job.mapFile
+    ? mapFromJson(JSON.parse(fs.readFileSync(job.mapFile, 'utf8')), job.seed)
+    : buildMap(job.seed, { variant: job.variant, size: job.size, ...(job.mapOpts ?? {}) });
   return { seatScripts: job.seatScripts, seed: job.seed, map, mirror: job.mirror };
 }
 

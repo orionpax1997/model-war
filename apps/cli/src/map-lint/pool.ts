@@ -11,15 +11,32 @@
  * 字段有没有、类型对不对、坐标是不是非负整数——那些归 `MAP_JSON_SCHEMA`,本层假定调用方
  * 已经过了 `validateMap`。本层只判 JSON Schema 表达不了的跨图语义:距离比较、集合相等、相似度。
  *
- * ── 距离:两处都用 Chebyshev 理论距离,一个「绕墙」的字都没有 ──────────────────
- * gdd §4 已经把 Chebyshev 定为移动度量(八向移动,对角与直行等价),所以「最近」是同一件事的
- * 同一把尺。**理论距离 = 直接算坐标差,不是网格最短路**:一条矿路绕不绕墙在这里根本不是问题。
+ * ── 距离:两把尺,量的是两件事 ──────────────────────────────────────────────────
+ * 本文件有两条判据要量距离,而它们**量的根本不是同一件事**,所以刻意用两把不同的尺:
  *
- * 为什么对点位不变量尤其不能改成路径距离:改一堵墙就可能改掉某家的开局矿归属,于是
- * 「迭代这张图」变成「每加一堵墙重验四条归属」的排雷。理论距离下点位与墙是两个正交的设计维度。
- * 代价记在这里,让日后想换度量的人先看见当初量到了什么:原型阶段三张真图的矿路拉伸比是
- * 1.000(路径距离 = 理论距离 = 6),所以**真图上两种读法结论完全一致**,分歧只在
- * 「刻意把矿路绕远」的图上才出现。
+ * | 判据 | 尺 | 它回答的问题 |
+ * |---|---|---|
+ * | 最近一圈归属(`nearestRingViolations`) | Chebyshev 理论距离(直接算坐标差) | **归属声明**与「最近」是否一致 |
+ * | 矿路红线(`mineRouteViolations`) | 八向 BFS 最短路(墙不可通行) | 那个矿**走过去要多少格** |
+ *
+ * **别把它们「顺手统一」**——统一到哪一把都会坏掉一条判据,理由各不同:
+ * - 归一把红线也改成理论距离:理论距离**量不到墙**。它判的是「点位布局有没有摆得太远」,
+ *   判不了「墙把矿路拉长了」——而后者才是这条红线存在的理由(采集往返 `2d+20`,墙只加长往返)。
+ *   一张矿就摆在隔壁、中间隔一道墙绕路 20 格的图会被放行(漏放),一张矿摆到对角但一路没墙的图
+ *   却被挡下(误伤)。这条红线对它自己声称要防的失效模式**曾经是无效的**。
+ * - 归一把归属也改成路径距离:改一堵墙就可能改掉某家的开局矿归属,于是「迭代这张图」变成
+ *   「每加一堵墙重验四条归属」的排雷。点位归属是**与墙正交**的设计维度,理论距离下它才是。
+ *
+ * 两条判据用不同的尺是**有意的设计**,不是过渡状态:一把量「声明与最近是否一致」,一把量
+ * 「经济上这条路有多长」,它们本就该在墙面前给出不同的答案(矿摆得远不一定是错的,矿走不到才一定是)。
+ *
+ * 两条尺在真图上不打架:原型度量(`proto/metrics.mjs` §2)量到三张真图家↔自家矿的八向 BFS 距离
+ * 全是 6,与无墙夹具相同,拉伸比 1.000——所以**当前三张图两种读法结论完全一致,这次改动零成本**,
+ * 差别只在「刻意把矿路绕远」的图上才显形。真图仍全过的原因记在这里:别把它读成「改动没意义」。
+ *
+ * 顺带一条当初就该发现的账实不符:红线那个 10 的依据(枯竭 599/629)在原型里是以
+ * **`d = 家到最近自家矿的 BFS 路径`** 估出来的(见 `proto/metrics.mjs` 头注与 `metrics.txt` §4),
+ * 也就是说**依据量的是路长,判据却一度量的是坐标差**——两者只在真图上碰巧相等。
  *
  * ── 三个阈值都是具名常量,依据写在这里 ─────────────────────────────────────────
  * 它们是**校验器这一侧的判据**,不是地图数据、也不是规则集的键(hld §7.2 的七字段契约不动)。
@@ -38,12 +55,17 @@ import { compareViolations, orbitOf, type MapLintViolation } from "./rules.js";
 export const POOL_MIN_MAP_COUNT = 3;
 
 /**
- * 矿路红线的上界(格)。依据是采集往返 `2d + 20` 的线性放大实测:
+ * 矿路红线的上界(格)。**值是 10,依据是采集往返 `2d + 20` 的线性放大实测**:
  * `d=6` → 枯竭 479、`d=8` → 539、`d=10` → 599、**`d=11` → 629 顶破 600**
  * (400–600 是规则给枯竭时点定的窗口,原型基线 479 落在窗口内)。
  * 所以「家门到自家矿那一小片不许被墙拉过 10 格」是命题① 的真正设计约束,不是风格偏好。
+ *
+ * **`d` 的定义在这一条里定死:八向最短路(墙不可通行)的长度**,也就是原型那份估算里实际代入
+ * `2d+20` 的那个 `d`。改尺不改值——值是当初量出来的,尺是当初就该量的那一把。
+ * 常量名里原来带 `CHEBYSHEV`,是它一度用错尺时留下的;名字去掉 `CHEBYSHEV` 之后,它就与
+ * 「最近一圈归属」那条理论距离判据在名字上分得开了,不会被人当成同一条尺的另一个名字。
  */
-export const MAX_MINE_ROUTE_CHEBYSHEV = 10;
+export const MAX_MINE_ROUTE = 10;
 
 /**
  * 两图墙格集合的 Jaccard 相似度上限。判据是 `|A∩B| / |A∪B|`,A、B 是两张图的墙格集合。
@@ -82,11 +104,48 @@ export const poolMapFileNames = (fileNames: readonly string[]): readonly string[
     .filter((name) => name.endsWith(".json"))
     .sort((left, right) => left.localeCompare(right));
 
-/** Chebyshev 距离(理论距离:直接算坐标差,与墙无关)。 */
+/** Chebyshev 距离(理论距离:直接算坐标差,与墙无关)。只服务「最近一圈归属」那条判据。 */
 const chebyshev = (ax: number, ay: number, bx: number, by: number): number =>
   Math.max(Math.abs(ax - bx), Math.abs(ay - by));
 
 const cellKey = (x: number, y: number): string => `${x},${y}`;
+
+/**
+ * 墙格集合。地形怎么表示(`'#'` 是墙)已经由 `MAP_JSON_SCHEMA` 定死,本函数只把同一份约定
+ * 读成本文件内好用的集合——**BFS 与 Jaccard 读的是同一个 `wallCellsOf`**,不是各读一遍地形。
+ */
+const wallCellsOf = (map: MapDefinition): ReadonlySet<string> => {
+  const cells = new Set<string>();
+  map.terrain.forEach((row, y) => {
+    for (let x = 0; x < row.length; x += 1) {
+      if (row[x] === "#") cells.add(cellKey(x, y));
+    }
+  });
+  return cells;
+};
+
+/**
+ * 八向移动的方向表。**每一步步长都是 1**:gdd §4 已经把 Chebyshev 定为移动度量
+ * (八向移动,对角与直行等价),所以对角一步与直行一步等价——这正是 Chebyshev 当启发式、
+ * 当红线尺子的根据,也是本文件两条判据共用同一个度量的地方。
+ *
+ * **不另立一套移动规则**:表与原型度量 `.scratch/map-pool/proto/metrics.mjs` 的 `DIRS` 同一条,
+ * 墙不可通行、其余等价同 hld §4.7 CostMatrix(v1)。表序固定是为了让实现与原型同形;距离本身
+ * 与访问顺序无关(BFS 的最短距离唯一),所以固定它不是为了结果,是为了可 diff。
+ */
+const OCTILE_DIRECTIONS: readonly (readonly [number, number])[] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+];
+
+/** 墙把矿整个围死时的距离:走不到。**比任何长的路都更该被红线挡住**,故不是一个豁免值。 */
+const ROUTE_UNREACHABLE = -1;
 
 const isInside = (x: number, y: number, size: number): boolean =>
   x >= 0 && y >= 0 && x < size && y < size;
@@ -281,12 +340,53 @@ const nearestRingViolations = (map: MapDefinition): readonly MapLintViolation[] 
 // ── 矿路红线 ──────────────────────────────────────────────────────────────────
 
 /**
- * 家 → 最近**自家**资源点的距离不得超过红线。判据是 Chebyshev 理论距离(与最近一圈同一把尺)。
+ * 两点之间的**八向最短路**长度(墙不可通行);走不到返回 `ROUTE_UNREACHABLE`。
+ *
+ * 与 `chebyshev` 的关系是 `route ≥ chebyshev` 恒成立(理论距离是下界),所以换成路之后红线
+ * **只会多拦、不会少拦**:一张图在旧判据下过关的,在新判据下必然还过关(除非它压根走不到)。
+ * 反过来不成立——这正是这次改动要买的东西:墙能把路拉长的那部分,旧判据看不见。
+ *
+ * 斜向一步**只判落点格**,不额外判两个正交邻格:原型度量那条 BFS 就是这么量的,而枯竭估算表
+ * (d=10 → 599)又是从它估出来的——换一条读法就得重估那个表,而表没有第二份。hld §4.7 只说
+ * 「八向按固定方向表」,没说斜穿墙角,这条**照抄原型**而不是在这里发明。
+ */
+const routeDistance = (
+  map: MapDefinition,
+  from: readonly [number, number],
+  to: readonly [number, number],
+): number => {
+  const size = map.size;
+  const walls = wallCellsOf(map);
+  const seen = new Map<string, number>();
+  const queue: [number, number][] = [[from[0], from[1]]];
+  seen.set(cellKey(from[0], from[1]), 0);
+  for (let head = 0; head < queue.length; head += 1) {
+    const [x, y] = queue[head] as [number, number];
+    const distance = seen.get(cellKey(x, y)) ?? 0;
+    if (x === to[0] && y === to[1]) return distance;
+    for (const [dx, dy] of OCTILE_DIRECTIONS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!isInside(nx, ny, size)) continue;
+      const cell = cellKey(nx, ny);
+      if (walls.has(cell) || seen.has(cell)) continue;
+      seen.set(cell, distance + 1);
+      queue.push([nx, ny]);
+    }
+  }
+  return ROUTE_UNREACHABLE;
+};
+
+/**
+ * 家 → 最近**自家**资源点的**八向最短路**不得超过红线。
  *
  * 为什么与「最近一圈」看起来重复却仍要单列一条:最近一圈判的是**声明**与**最近**是否一致,
- * 红线判的是**一致之后那个数本身有多大**。一张归属写错(把自家矿判给别家)的图,最近一圈那条
- * 会先报它;而一条只写「d ≤ 10」的红线永远看得见经济后果。两者的差别在反例里才显形:
+ * 红线判的是**走过去要多少格**。一张归属写错(把自家矿判给别家)的图,最近一圈那条会先报它;
+ * 而一条只写「d ≤ 10」的红线永远看得见经济后果(采集往返 `2d+20`)。两者的差别在反例里才显形:
  * 把某家的最近矿判给别家,归属那家的矿路立刻变成半张地图那么长。
+ *
+ * 「最近自家矿」那一步**仍按 Chebyshev 挑**(理论距离与墙无关),量出的那一步的距离才走 BFS:
+ * 否则归属一旦合规、路径判据就永远等于最近一圈判据,这条线会变成一句重复的话。
  */
 const mineRouteViolations = (map: MapDefinition): readonly MapLintViolation[] => {
   const found: MapLintViolation[] = [];
@@ -301,15 +401,28 @@ const mineRouteViolations = (map: MapDefinition): readonly MapLintViolation[] =>
     // 一条自家矿都没有的图由 `nearest-ring-mismatch` 报(归属集合空 ≠ 最近一圈非空),
     // 这里不重复报一条「矿路无穷远」:那不是作者能照着改的建议。
     if (owned.length === 0) continue;
-    const [mx, my, d] = nearestTo(owned, home);
-    if (d <= MAX_MINE_ROUTE_CHEBYSHEV) continue;
+    const [mx, my] = nearestTo(owned, home);
+    const route = routeDistance(map, [home.x, home.y], [mx, my]);
+    if (route >= 0 && route <= MAX_MINE_ROUTE) continue;
+    // 文案里那句「差在哪」必须跟着数字说:没有墙挡路时(rute == chebyshev)说「是墙把路拉长的」
+    // 就是一句假话,而这条诊断是作者照着改图的唯一依据。
+    const straight = chebyshev(home.x, home.y, mx, my);
+    const because =
+      route > straight
+        ? `(两点只隔 ${straight} 格,是墙把路拉长的);`
+        : "(两点之间没有墙挡路,坐标差就是路长);";
     found.push({
       scope: "pool",
       rule: "mine-route-too-long",
       message:
-        `座位 ${owner} 的家 (${home.x},${home.y}) 到最近自家资源点 (${mx},${my}) 有 ${d} 格,` +
-        `超过红线 ${MAX_MINE_ROUTE_CHEBYSHEV};依据是采集往返 2d+20 的线性实测` +
-        "(d=10 → 枯竭 599,d=11 → 629 顶破 600 的窗口)。家门到自家矿那一小片必须留空。",
+        route === ROUTE_UNREACHABLE
+          ? `座位 ${owner} 的家 (${home.x},${home.y}) 到最近自家资源点 (${mx},${my}) 没有可走的路` +
+            "(墙把它整个围住了);依据是采集往返 2d+20 的线性实测(d=10 → 枯竭 599,d=11 → 629 " +
+            `顶破 600 的窗口),路走不通比走路长更糟。家门到自家矿那一小片不许被墙隔断。`
+          : `座位 ${owner} 的家 (${home.x},${home.y}) 到最近自家资源点 (${mx},${my}) 要走 ${route} 格,` +
+            `超过红线 ${MAX_MINE_ROUTE};这条线量的是**走过去要走多少格**,不是两点的坐标差${because}` +
+            "依据是采集往返 2d+20 的线性实测(d=10 → 枯竭 599,d=11 → 629 顶破 600 的窗口)。" +
+            "家门到自家矿那一小片不许被墙拉长。",
       where: map.name,
     });
   }
@@ -317,16 +430,6 @@ const mineRouteViolations = (map: MapDefinition): readonly MapLintViolation[] =>
 };
 
 // ── 风格判据:两两 Jaccard ─────────────────────────────────────────────────────
-
-const wallCellsOf = (map: MapDefinition): ReadonlySet<string> => {
-  const cells = new Set<string>();
-  map.terrain.forEach((row, y) => {
-    for (let x = 0; x < row.length; x += 1) {
-      if (row[x] === "#") cells.add(cellKey(x, y));
-    }
-  });
-  return cells;
-};
 
 /**
  * 两图的墙格相似度。**并集为空时取 1**(两张图都没墙,地形一模一样):
