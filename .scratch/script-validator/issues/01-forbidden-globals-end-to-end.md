@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 禁列规则是一个纯函数:一段源码 → 一组带行列的违规,不碰文件系统、不读时钟
 - [ ] 禁列的判据是**标识符链**而非裸全局名(成员路径也在内)——这是真源包交付的接口形状,不是自选
@@ -17,4 +17,38 @@
 - [ ] **同源断言**:改真源包里的禁列表,校验器行为随之改变——证明校验器一个名字都没自己存
 - [ ] 入口由 Node 直接执行,**退出码是 0/1**,标准输出是全部契约
 - [ ] 入口的自测里有**能被弄红的反例**;它不混进全量门禁(本工具不进 `check`)
+
+## Answer
+
+整条通路(读入 → 规则 → 两层违规输出 → 退出码)已通,第一条规则落在**禁列全局名**上,11 项验收逐条有着落。合并 commit `04e47c5`,合后裁决与结构修正 commit `4b0b3c0`。
+
+### 关键结论
+
+1. **判据是「标识符链整条命中」,不是「任一后缀命中」**。这条差一个字就误伤一片:`x.Date` 的后缀 `Date` 命中禁列,于是所有「读一个恰好叫 `Date` 的属性」的合规写法全被拒。误伤在五轮迭代预算里不对称地致命(spec《承载的重新划分》),所以宁可只判整条。唯一的例外是 `globalThis`:它是全局对象本身而不是某个对象的属性,比较之前先剥掉,且违规位置落在真正要改的那个名字上(`globalThis.Math.random` → `Math.random`)。
+2. **当键用的名字放行**:`x.Date`、`{ Date: 1 }`、`class A { Date() {} }`、解构简写 `{ performance }` 里的那个名字都不是一次按名字找全局。判据是「这个名字出现在链上」,不是「它是不是自由变量」——后者需要作用域信息,而 `oxc-parser` 0.152 不给(见结论 4)。
+3. **顺序漏洞用三条用例从三个层次各钉一遍**:规则层、判定链、入口子进程,都拿 `Math.random`(根 `Math` 在白名单内)当样本,并配一份只差这一个名字的合规产物作对照(同一入口,退出码 1 → 0)。把判据改成「根在白名单内就整条放行」这三条用例连同另外八条一起变红——反例是验过的,不是声称的。
+4. **两处判不了的缺口是有记录的,不是遗漏**:动态下标 `Math[k]`(按「不在禁列内」放行)与解构/变量中转(`const { random } = Math`、`m.random()`)。前者要常量传播,后者要作用域;两者需要的都不是静态遍历能给的。理由写在规则文件头注里,不是留在脑子里。
+5. **解析失败独占结果是由类型保证的,不只是靠早退**:`ParsedSource` 的失败分支不带 `program`,残树根本不在类型里,所以「在残树上跑规则」写不出来。删掉早退会让四条用例变红。
+6. **`--max-bytes` 必填且校验器不给默认值**,`--phase` 同样必填。缺任一按退出码 1 + 用法(stderr)处理,而不是悄悄拿某个数顶上:一条校验命令若能在缺参时照样返回 0,调用方会把「没查」读成「通过」。取值归 E 的规则集文件。
+7. **字节数由入口交给判定链**,不从解码后的字符串反算:产物不是合法 UTF-8 时解码期会替换成 U+FFFD(3 字节),两个数会差,那个差值不该由规则承担。库里调用方不传就按 UTF-8 重算。
+
+### 实现
+
+- `packages/tools/src/rules/forbidden-globals.ts` —— 禁列规则本体(纯函数)与判定链的第一级 `forbiddenGlobalStage`
+- `packages/tools/src/rules/script-lint.ts` —— 词汇表:违规形状、全序比较、阶段接口与上下文(中立位置,见裁决 3)
+- `packages/tools/src/validate/pipeline.ts` —— 五级判定链(顺序裁决在此)、`validateScriptSource`
+- `packages/tools/src/validate/render-violations.ts` —— 面向模型层渲染,同类合并成一行;类别标签表写成穷尽 `Record`
+- `packages/tools/src/validate/run-validate-script.ts` —— 子进程入口,退出码 0/1,stdout 只有面向模型的文本
+- `packages/tools/src/index.ts` —— 对外导出面
+- 测试:`rules/forbidden-globals.test.ts`、`validate/pipeline.test.ts`、`validate/render-violations.test.ts`、`validate/run-validate-script.test.ts`
+
+### 合后裁决三条
+
+1. **`ScriptLintContext` 多出的 `maxBytes`:接受,不改。** 体积级是四条规则里唯一拿不到上限就无从判定的一条;塞进各规则第二个参数的方案会让三条 AST 规则各带一个自己根本不看的参数。共享上下文是纯数据(调用方给的常量 + 一次解析结果),不违反纯函数纪律。
+2. **`ValidateScriptOptions` 多出的可选 `byteLength`:接受,不改。** `--max-bytes` 仍然必填、校验器仍然没有默认值,契约没被破坏;补的是一个只有拿到原始字节的调用方才需要的能力,缺省路径保持「按 UTF-8 重算」,入口自己显式传真实字节数。
+3. **`rules/` → `validate/` 那条反向边:真问题,已改,三处一次改齐。** 取的是「另立中立位置」那一支,而且让家落在**被约束的那一侧**:`rules/script-violation.ts` 改名 `rules/script-lint.ts`,把 `ScriptLintPhase` / `ScriptLintContext` / `ScriptLintStage` 一并搬进去。理由不是洁癖:①`validate/pipeline.ts` 本来就要 import `rules/` 的各级 stage,反向写就是环,类型擦得掉、图上的环擦不掉;②阶段接口是**规则要满足的约束**,不是判定链施加给规则的,约束归被约束方(依赖倒置);③票 02/03/04 的三个文件都落在 `rules/` 下,照这个方向各猜一次只会更快分叉。判定链的**顺序**仍然归 `pipeline.ts`——那是裁决,不是接口。改动面:`forbidden-globals.ts` / `pipeline.ts` / `render-violations.ts` / `run-validate-script.ts` / `index.ts` 的导入与导出面。包内箭头此后只有 `validate/` → `rules/` 一条,并写进 `rules/script-lint.ts` 与 `index.ts` 两处头注。行为与出口未变(unit 124 条不变)。
+
+### 与验收清单的一处出入(已按下面的读法收口)
+
+最后一条写的是「入口的自测……它不混进全量门禁(本工具不进 `check`)」。`check` 的定义里含 `vitest run --project unit`,而入口自测落在 `unit`,因此它**确实会被 `check` 跑**。按括号里的限定读——「本工具不进 `check`」指校验器不是一道仓库门禁(没有新增 `check:*` 脚本、不巡航本仓库源码)——收口时维持现状。反过来读(自测不得进 `check`)会让这批反例只靠人手触发,恰好废掉同一条里「有能被弄红的反例」的意图。`gates` project 里没有它,所以 `gates.test.ts` → `check` → unit 自测不构成递归。
 
