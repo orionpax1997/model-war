@@ -28,12 +28,41 @@ const RULE_LABELS: Record<MapLintRule, string> = {
   "variant-slot-not-orbit": "变体槽位不是完整四重轨道",
   "variant-slot-on-site": "变体槽位压住点位或八邻域",
   "variant-slot-on-spawn": "变体槽位压住初始单位",
+  "pool-empty": "地图池里没有地图",
+  "pool-too-few-maps": "地图池张数不足下限",
+  "pool-size-mismatch": "池内 size 不一致",
+  "nearest-ring-tie": "最近一圈资源点距离并列",
+  "nearest-ring-mismatch": "开局归属不等于最近一圈",
+  "nearest-ring-not-orbit": "归属资源点不成完整四重轨道",
+  "mine-route-too-long": "矿路超过红线",
+  "wall-jaccard-too-high": "两图墙体过于相似",
 };
 
 /** 一个类别在渲染文本里的样子。 */
 type Group = {
   readonly rule: MapLintRule;
   readonly violations: readonly MapLintViolation[];
+};
+
+/**
+ * 渲染的对象。两种读法分开是因为两种失效模式的改法不同:「这张图画错了」回到那一张图的
+ * terrain/sites,「这组图凑不齐」回到**整组**(size、张数、三条跨图判据)。
+ */
+type Subject = "map" | "pool";
+
+const PASS_TEXT: Record<Subject, string> = {
+  map: "地图校验通过:没有违规。",
+  pool: "地图池校验通过:没有违规。",
+};
+
+const failHeadline = (subject: Subject, count: number, groups: number): string =>
+  `${{ map: "地图", pool: "地图池" }[subject]}校验未通过:${count} 处违规,` +
+  `按类别合并成 ${groups} 条。`;
+
+/** 池层的合并行前面标出是哪一层。同一类违规在两种层里的改法完全不同。 */
+const SCOPE_TAG: Record<MapLintViolation["scope"], string> = {
+  map: "单图",
+  pool: "池级",
 };
 
 /** 按类别归并,并按「先出现的定位」排组。组内按定位排,否则两轮结果 diff 出来全是噪声。 */
@@ -62,23 +91,35 @@ const distinctTexts = (violations: readonly MapLintViolation[]): readonly string
   ...new Set(violations.map((violation) => violation.message)),
 ];
 
-const renderGroup = (group: Group): string => {
+const renderGroup = (group: Group, tagged: boolean): string => {
   const positions = group.violations.map((violation) => violation.where ?? "无定位").join("、");
+  const scope = group.violations[0]?.scope ?? "map";
+  const tag = tagged ? `[${SCOPE_TAG[scope]}] ` : "";
   return (
-    `- ${RULE_LABELS[group.rule]} · ${group.violations.length} 处 · 位置 ${positions}` +
+    `- ${tag}${RULE_LABELS[group.rule]} · ${group.violations.length} 处 · 位置 ${positions}` +
     ` · ${distinctTexts(group.violations).join(" / ")}`
   );
+};
+
+const renderViolations = (violations: readonly MapLintViolation[], subject: Subject): string => {
+  if (violations.length === 0) return `${PASS_TEXT[subject]}\n`;
+  const groups = groupByRule(violations);
+  // 池层渲染时一条一行里会同时出现两个 scope 的违规(单图判据逐张跑 + 池判据跑一次),
+  // 所以标签只在池层打;单图渲染的对象里不可能有 `pool`,打标签只会多一遍噪声。
+  const tagged = subject === "pool";
+  return `${[
+    failHeadline(subject, violations.length, groups.length),
+    ...groups.map((group) => renderGroup(group, tagged)),
+  ].join("\n")}\n`;
 };
 
 /**
  * 一组违规 → 一段面向地图作者的文本。空数组渲染成「通过」那一句;
  * 返回的文本恒以换行结尾,调用方直接写 stdout 即可。
  */
-export const renderMapViolations = (violations: readonly MapLintViolation[]): string => {
-  if (violations.length === 0) {
-    return "地图校验通过:没有违规。\n";
-  }
-  const groups = groupByRule(violations);
-  const headline = `地图校验未通过:${violations.length} 处违规,按类别合并成 ${groups.length} 条。`;
-  return `${[headline, ...groups.map(renderGroup)].join("\n")}\n`;
-};
+export const renderMapViolations = (violations: readonly MapLintViolation[]): string =>
+  renderViolations(violations, "map");
+
+/** 地图池那一层。抬头与单图不同,且每一行标出 `[单图]` / `[池级]`,两类失效读起来就分得开。 */
+export const renderPoolViolations = (violations: readonly MapLintViolation[]): string =>
+  renderViolations(violations, "pool");
