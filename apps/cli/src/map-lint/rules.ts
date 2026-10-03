@@ -12,7 +12,8 @@
  * 点位不压不重不越界、变体槽位是不是真轨道。判不了、也不该在这里判的是:
  * - 形状层(`MAP_JSON_SCHEMA` 管的那部分:字段有没有、类型对不对、字符集)。本层假定调用方
  *   已经过了 `validateMap`,所以 terrain 只判行数与行长——字符集归 schema,再判一次就是第二真源;
- * - **池级**判据(`size` 一致、最近一圈归属、矿路红线、Jaccard),它们跨图,单图判不了。
+ * - **池级**判据(`size` 一致、地图数量下限、最近一圈归属、矿路红线、Jaccard 风格判据),
+ *   它们跨图,单图判不了,在同目录的 `pool.ts` 里。
  *
  * ── 一条纪律:位置必须能定位 ──────────────────────────────────────────────────
  * 每条违规都带出「哪个字段、哪一格」。一张 64×64 的图有 4096 格,不定位的违规等于让人回去肉眼数格。
@@ -22,6 +23,7 @@ import type { MapDefinition, MapVariantSlot } from "@model-war/schema";
 
 /** 违规类别。`map` 层的类别名同时是机器层 diff 的兜底键,不进面向作者的文本。 */
 export type MapLintRule =
+  // ── `map` 层:一张地图自己跟自己比 ───────────────────────────────────────────
   /** terrain 绕中心 90° 旋转后与自身逐格不同。 */
   | "terrain-symmetry"
   /** 点位集合绕中心 90° 旋转后与自身不同。 */
@@ -39,26 +41,55 @@ export type MapLintRule =
   /** 变体槽位压住点位格或它的八邻域。 */
   | "variant-slot-on-site"
   /** 变体槽位覆盖初始单位落点。 */
-  | "variant-slot-on-spawn";
+  | "variant-slot-on-spawn"
+  // ── `pool` 层:跨图判据,单张地图判不了(见 `pool.ts`)────────────────────────
+  /** 池里一张地图也没有(目录里找不到任何地图文件)。 */
+  | "pool-empty"
+  /** 池内地图数不足下限。 */
+  | "pool-too-few-maps"
+  /** 池内 `size` 不一致。 */
+  | "pool-size-mismatch"
+  /** 某方主基地到不止一个资源点距离相同,「最近一圈」不唯一。 */
+  | "nearest-ring-tie"
+  /** 某方开局归属的资源点集合不等于它的最近一圈。 */
+  | "nearest-ring-mismatch"
+  /** 四方开局归属的资源点合起来不构成完整的四重轨道(或数量不是 4 的倍数)。 */
+  | "nearest-ring-not-orbit"
+  /** 某方家到最近自家资源点的距离超过红线。 */
+  | "mine-route-too-long"
+  /** 池内两张图的墙格集合相似度超过上限。 */
+  | "wall-jaccard-too-high";
 
 /**
  * 一条违规。`scope` 区分「这张图画错了」与「这组图凑不齐」——两种失效模式的读法不同,
- * 诊断文案也该分开(pool 层的类别在下一批落地时才出现)。
+ * 诊断文案也该分开(`pool.ts` 产出的那条 `scope` 是 `pool`)。
  */
 export type MapLintViolation = {
   readonly scope: "map" | "pool";
   readonly rule: MapLintRule;
   /** 面向地图作者的一句话:哪里错了、改什么。 */
   readonly message: string;
-  /** 定位:`(x,y)` / `terrain[12]` 这类坐标或下标;池层违规可为空。 */
+  /** 定位:`(x,y)` / `terrain[12]` 这类坐标或下标;池层违规给地图名或两图名。 */
   readonly where: string | null;
 };
 
-/** 四重旋转:`(x, y)` 绕中心 90°。与桩、生成器同一条 `rot` 行,换一条就换一套地图。 */
-const rotate = (x: number, y: number, size: number): readonly [number, number] => [size - 1 - y, x];
+/**
+ * 四重旋转:`(x, y)` 绕中心 90°。与桩、生成器同一条 `rot` 行,换一条就换一套地图。
+ *
+ * 导出是因为池层判据(最近一圈归属要判「归属集合是不是完整轨道」)必须用**同一条**旋转:
+ * 两层各抄一份旋转,它们就会在某次改动后悄悄分叉,而分叉的表象是一张对称的图被判成不对称。
+ */
+export const rotate = (x: number, y: number, size: number): readonly [number, number] => [
+  size - 1 - y,
+  x,
+];
 
-/** 从一格出发的那条完整四重轨道(4 格,依次是 0/1/2/3 次旋转)。 */
-const orbitOf = (x: number, y: number, size: number): readonly (readonly [number, number])[] => {
+/** 从一格出发的那条完整四重轨道(4 格,依次是 0/1/2/3 次旋转)。导出理由同上。 */
+export const orbitOf = (
+  x: number,
+  y: number,
+  size: number,
+): readonly (readonly [number, number])[] => {
   const cells: [number, number][] = [];
   let cursor: readonly [number, number] = [x, y];
   for (let turn = 0; turn < 4; turn += 1) {
@@ -252,8 +283,13 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
   return found;
 };
 
-/** 定位全序:没有定位的排在有定位的之后,与 `compareViolations` 把无位置的放末尾同一理由。 */
-const compareViolations = (left: MapLintViolation, right: MapLintViolation): number => {
+/**
+ * 定位全序:没有定位的排在有定位的之后,与 `compareViolations` 把无位置的放末尾同一理由。
+ *
+ * 导出是因为池层也要用它:两层各写一份排序,作者就会在某次改动后看到「改一张图时违规顺序变了」
+ * 这种与数据无关的抖动,而 diff 两轮 lint 结果的人正是靠顺序读噪声的。
+ */
+export const compareViolations = (left: MapLintViolation, right: MapLintViolation): number => {
   const ruleOrder = left.rule.localeCompare(right.rule);
   if (ruleOrder !== 0) return ruleOrder;
   const leftWhere = left.where ?? "";
