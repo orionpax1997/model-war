@@ -141,11 +141,16 @@
 
 | 项 | 选择 | 依据 |
 |---|---|---|
-| 真源 | **`schema` 包 = 类型 + 常量表 + 参数 key 清单 + JSON Schema;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移 |
-| 文档生成 | 由 `schema` 生成 `docs/rules-v1/api.md` 的 API/常量表,由 `rulesets/v1.json` 生成 `rules.md` 的数值表;**散文部分人工编写** | 生成物进版本库,CI 跑 `git diff --exit-code`,未重新提交即报错(FR-10 AC2) |
-| 数据格式校验 | JSON Schema(schema 包内定义,运行时用 `ajv`) | ruleset / 地图 / 存档 meta / result / 回放行的读入端强制校验;版本错配在装载期报错(FR-10 AC2) |
+| 真源 | **`schema` 包 = 五类数据形状(规则集 / 地图 / 存档 meta / result / 回放行)的 TS 类型与 JSON Schema + 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移。每类形状的**家只有这一个**,别的包不再重复声明(§3.1、§7.5) |
+| JSON Schema 的形态 | **导出的数据对象(`.ts` 里 `export const X_JSON_SCHEMA`),不是独立 `.json` 文件** | ajv 接受 JS 对象,不需要文件;`description` 是写给模型看的说明,写在源码里自然,顺带避开 `resolveJsonModule` 与本仓库编译配置的组合风险(ADR-0003) |
+| 文档生成 | 由 `schema` 生成 `docs/rules-v1/api.md` 的 API/常量表,由 `rulesets/v1.json` 生成 `rules.md` 的数值表;**散文部分人工编写** | 生成物进版本库,漂移检查(`check:drift`,§2.2.7)逐件判定「重生成后无差异 + 生成物在版本库里」,未重新生成或未提交即报错(FR-10 AC1:文档里的数值表与 API 表必须真的是当前规则集的) |
+| 数据格式校验 | JSON Schema 归真源包(交付**数据**),**校验器只在 `apps/cli` 一处**(唯一一份 `ajv` 实例,导出 `validateMap` / `validateRuleset` 两个纯函数) | 真源包受 §3.2 的包依赖规则约束、不能依赖 ajv;CLI 是唯一用户面,外部数据(文件 / 参数 / 子进程输出)全从它进来,一处校验覆盖全部入口(§2.2.8)。诊断分两层:机器层透出 ajv 原始条目,面向模型层渲染成短句并**对同类错误合并成一行** |
 | hash | `node:crypto` SHA-256(标准库) | stateHash、地图 hash、存档完整性校验,零第三方依赖 |
 | 随机数与 ID | **归 `driver` 所有**:整数 LCG + `IdGen`;RNG 消费顺序写入 rules-vN | 确定性原语不散落;消费顺序是回放断裂的经典成因(§4.6) |
+
+**「读入端强制校验」的覆盖面当前只有两类,是刻意的不完整,不是半成品**。本仓现在真正被校验的只有**规则集与地图**;存档 meta / result / 回放行三类的**家已经定在真源包**(见上表第一行),但**字段尚未回填**,因此真源包里只有它们的占位清单(标记 + 回填触发条件),没有 schema。另有一件要说清:规则集与地图两类的**校验通路已交付**(唯一一份 ajv 校验器、两个纯函数、两层诊断、装载期版本与派生量断言),但**还没有接进任何子命令的装载路径**——§9 明确不新增子命令,「读文件 → 校验 → 带诊断拒跑」那一调用点随 `map-lint` 与 runner 落地。因此 **FR-10 AC2 的「错配拒跑」与「读入端强制校验」都按尚未兑现记**:机制、家与诊断形态已经定死,差的是接线,不是设计。**写在这里是为了不让后来者以为它已经兑现**,也为了说明为什么不写半截 schema:放行额外属性的空 schema 等于不校验,却会让人以为「存档 meta 已校验」,比不写更坏。
+
+**漂移检查的实现是三段判定,不是裸的 `git diff --exit-code`**:① 内容一致性——真源现在会产出的东西与工作树里那个文件逐字节比(抓「改了真源没重跑」与「生成物被手改 / 被删」);② 对 `HEAD` 的差异检查,**限定在生成物路径上**(`git diff --quiet HEAD -- <生成物路径>`,抓「生成了但没提交」)——限定是为了不把开发者工作树里别的未提交内容报出来,把报错指向错误的地方;③ 按生成物路径的状态检查(`git ls-files`,未被索引跟踪即失败,抓「新增生成物没进版本库」)。后两刀是分开的:裸 `git diff` 看不见未跟踪文件,而新增生成物恰恰是漂移检查最该抓住的情形。路径清单从生成物注册表本身取,不另存一份(§3.1)。
 
 #### 2.2.6 gen 管线专属依赖(唯一允许联网的包)
 
@@ -163,9 +168,13 @@
 | 脚本 | 实际内容 | 用途 |
 |---|---|---|
 | `check:quick` | `oxfmt --check` + `oxlint` + 工具版本耦合断言 + 禁浮点门禁 | agent 每轮编辑循环 |
+| `check:no-float` | `node packages/tools/src/gate/run-no-float-gate.ts`(禁浮点门禁) | 仓库源码禁浮点字面量 |
+| `generate` | `tsc -b packages/schema && node packages/tools/src/generate/run-generate.ts && tsc -b` | 重跑生成器,产出全部生成物并入库(§3.1);**要一次构建**,故不是门禁而是提交前的动作 |
+| `check:declared-deps` | `node packages/tools/src/gate/run-declared-deps-gate.ts` | 挂在 `check` 末尾:工具包运行时源码里 import 的第三方包必须在它自己的 `package.json` 里声明(§3.2);**零构建**,与读 `dist` 的 `check:deps` 互补 |
+| `check:drift` | `node packages/tools/src/generate/run-drift-gate.ts`(生成物漂移检查) | 挂在 `check` 末尾,**不进 `check:quick`**:它需要一次 `tsc -b`(生产函数 import 真源包),而 `check:types` 里已经有,快门禁的零构建性质因此不受影响 |
 | `check:types` | `check:quick` + `tsc -b` + `oxlint --type-aware` | 改完一个 issue 跑一次 |
 | `check:deps` | `tsc -b` + dependency-cruiser(巡航 `dist` 而非 `src`,§2.2.10) | 依赖方向 |
-| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` | 全量 |
+| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` | 全量 |
 | `test:props` | `vitest run --project property` | 长时属性测试,单独跑 |
 | `test:gates` | `vitest run --project gates`(门禁自测:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
 | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 | — |
@@ -174,13 +183,15 @@
 
 **门禁耗时(实测;观测项,不是承诺)**。测量方法:在合并后的仓库树上先跑一次 `pnpm run build`,随后**连续 5 次**取该门禁的墙钟(`/usr/bin/time` 墙钟),**报中位数**(不报单次最好成绩);环境 Node v24.15.0 / Linux x64。
 
-| 门禁 | 5 次取样(s,2026-10-01 复测,合并后含本文改动的工作树) | 中位数 |
-|---|---|---|
-| `check:quick` | 1.01 / 1.03 / 1.04 / 1.04 / 1.05 | **1.04s** |
-| `check:types` | 1.75 / 1.75 / 1.76 / 1.75 / 1.94 | **1.75s** |
-| `check`(全量) | 4.41 / 4.46 / 4.52 / 4.62 / 4.63 | **4.52s** |
+| 门禁 | 5 次取样(s,2026-10-03 复测,基线提交 `a7f41f6` + 本票的文档改动) | 中位数 | 上一轮中位数(2026-10-01) |
+|---|---|---|---|
+| `check:quick` | 1.05 / 1.03 / 1.05 / 1.05 / 1.08 | **1.05s** | 1.04s |
+| `check:types` | 1.83 / 1.79 / 1.82 / 1.86 / 1.88 | **1.83s** | 1.75s |
+| `check`(全量) | 5.49 / 5.65 / 5.81 / 5.65 / 5.78 | **5.65s** | 4.52s |
 
-**先说清楚这些数字的适用边界**:取数当时仓库是 **49 个文件的骨架**(`apps/` 与 `packages/` 下 41 个 + 根 8 个配置文件,恰好是 `oxfmt --check` 的目标清单),引擎、结算管线、赛季调度都还不存在,`check` 里的测试跑的是空壳。所以它**只在骨架规模上成立**,而门禁耗时随源码量与依赖图规模增长——49 个文件不是真实仓库。
+**先说清楚这些数字的适用边界**:两次取数之间,`oxfmt --check` 的目标清单从 49 个文件长到 **77 个**(apps/ 与 packages/ 下 68 个 + 根 9 个配置文件),`check` 里的测试从空壳变成 17 个测试文件、152 条用例(含门禁自测的反例),于是全量门禁的中位数从 4.52s 涨到 5.65s——**这就是同一方法重测一次能拿到的信息:增长是可测的,不需要靠猜**。快门禁几乎没动(1.04s → 1.05s),因为新增的代码与测试都不在它的巡航面上;生成物漂移检查与「声明即依赖」门禁都刻意**不进快门禁**——前者要一次 `tsc -b`(ADR-0003 给这一条记了实测数字),后者要在每轮编辑循环里多付一次全源码树遍历加读 manifest;快门禁那四项本身在两次取数之间没有变过,这是分层取舍,不是遗漏。
+
+即便如此,它**仍然只在这个规模上成立**:引擎、结算管线、赛季调度、生成管线都还不存在,`check` 跑的是校验器与门禁这一层的测试。门禁耗时随源码量与依赖图规模增长——77 个文件仍然不是真实仓库。
 
 > 上一版这里写的是「`check:quick` 目标 < 5s」,那是一个没有实测支撑的许愿。现在有数字了,但**它不能变成承诺**:`< 5s` 若写成硬约束,后来者为了凑数字能改门禁的覆盖面(少查几个包、把类型感知挪出快门),而那比慢 5s 坏得多。**正确用法是把它当基线**:仓库长大后用同一方法(同机、5 次取样、报中位数)重测一次;只有重测出来的中位数显著上升,才谈是否再加一层分层。先前那条未经验证的许愿到此作废。
 
@@ -189,7 +200,7 @@
 | 阶段 | 内容 | 对应需求 |
 |---|---|---|
 | 1. 编译 | `tsc -b`(必须先于类型感知 lint) | — |
-| 2. 静态 | `oxfmt --check`、`oxlint --type-aware`、禁浮点门禁、工具版本耦合断言、dependency-cruiser;生成物漂移检查 `git diff --exit-code` **待 `schema` 落地后才有内容**(生成器尚不存在) | FR-2 AC3、FR-10 AC2、NFR-4 AC2 |
+| 2. 静态 | `oxfmt --check`、`oxlint --type-aware`、禁浮点门禁、工具版本耦合断言、dependency-cruiser、生成物漂移检查 `check:drift`(末尾一道,§2.2.7) | FR-2 AC3、FR-10 AC2、NFR-4 AC2 |
 | 3. 单测+属性 | Vitest 全量(结算、属性、沙箱裁决、地图校验) | FR-1/3/4 |
 | 4. 集成 | 样例对局端到端 + `modelwar verify` 重放一致性 + 重跑 10 次 hash 断言 | FR-2、NFR-1 |
 | 5. 基准 | `benchmarks/` 双模型基准脚本对打一个对局,断言正常终局(不判策略胜负) | srs §4 第 2 条的回归防线 |
@@ -203,9 +214,9 @@ CI 环境无网络、无模型 API、无凭证——保证 CI 上跑的永远是
 | 包 | 运行时第三方依赖 | 理由 |
 |---|---|---|
 | engine | 仅 `quickjs-wasi` + `node:crypto` | 除 stateHash 外**禁一切 `node:*`**,由 dependency-cruiser 强制——等于用 lint 证明"纯函数"。engine 不做磁盘 I/O:wasm 字节由 `apps/cli`/runner 读盘后传入,回放写向注入的输出 sink(§3.1),`engine` 包内不出现 `fs` |
-| runner / apps/cli | 受控少量(schema 校验器;CLI 参数解析用 `node:util` 的 `parseArgs`,不引命令行库) | 只做调度与读文件,不参与结算 |
+| runner / apps/cli | 受控少量(`ajv` 校验器**只在 `apps/cli`**;CLI 参数解析用 `node:util` 的 `parseArgs`,不引命令行库) | 只做调度与读文件,不参与结算。校验器不落回真源包,理由与覆盖面见 §2.2.5 |
 | gen | 允许(HTTP 客户端、SDK) | 唯一联网包,永不进对局进程(NFR-4 AC2) |
-| tools | 运行时依赖面暂不受门禁约束(已知缺口,见 §3.2) | 静态校验器以源码形态由 Node 的类型擦除执行(`node packages/tools/src/…`,§3.1);这是 Node 下限取 22.18 的成因之一(§2.2.1) |
+| tools | 第三方依赖面由 `check:declared-deps` 管(声明即依赖);包图方向只由 tsc 兜,**两者的取舍见 §3.2,此处不复述** | 静态校验器以源码形态由 Node 的类型擦除执行(`node packages/tools/src/…`,§3.1);这是 Node 下限取 22.18 的成因之一(§2.2.1) |
 | devDependencies | 全仓库共享(oxlint、oxfmt、Vitest、dependency-cruiser、`oxc-parser`、tsc) | 不进入任何运行时 |
 
 #### 2.2.9 观测与调试
@@ -227,11 +238,12 @@ CI 环境无网络、无模型 API、无凭证——保证 CI 上跑的永远是
 
 > 依赖规则与 TS project references 双保险:前者管运行时 import,后者管编译期类型引用。
 
-**三条实测出来的操作事实**(细节与原始输出在 `.dependency-cruiser.js` 的头注里,那里是它们的第一现场):
+**四条实测出来的操作事实**(细节与原始输出在 `.dependency-cruiser.js` 的头注里,那里是它们的第一现场):
 
 1. **规则只作用于运行时代码,测试代码豁免**。依据是 §3.2 已有的那条:门禁约束的是运行时行为,而测试代码不进对局进程;测试与属性测试文件必然要读盘、spawn 进程、依赖 vitest。
 2. **巡航入口是 `tsc -b` 的产物 `dist`,不是 `src`**。dependency-cruiser 18.4.0 把可用的 TypeScript 编译器硬编码为 `>=2.0.0 <7.0.0`,而本仓库的 TypeScript 7.0.2 **不再有 JS 编程 API**(`transpileModule` 不存在)。直接巡航 `src` 会得到「`x typescript >=2.0.0 <7.0.0` / `x .ts`(不可扫描)」,然后报告「0 modules, 0 dependencies cruised」并**退出 0**——一条永远全绿的假门禁。故 `check:deps` 自带 `tsc -b`,巡航 `packages/*/dist` 与 `apps/*/dist`(acorn 能解析,import 说明符原样保留),**依赖门禁必须排在 `tsc -b` 之后**。门禁自测里有一条用例专门断言巡航规模不为零,防这条假门禁复发。
-3. **`to.path` 匹配 specifier 还是 resolved realpath 是互斥的两态**:dist 未 build 时是 `@model-war/replay`,build 之后是 `packages/replay/dist/index.js`。每条架构规则都用 `(?:specifier|resolved)` 交替式,两种状态都成立;另外 depcruise 会**剥掉 `node:` 前缀**,故内建模块一律用 `dependencyTypes: ["core"]` + `pathNot` 表达。
+3. **`packages/tools` 有意落在本图的巡航范围之外**:它以源码形态执行、`emitDeclarationOnly`,`dist` 里没有 `.js`,depcruise 看不见它(实测巡航出的模块里一个 `tools` 的都没有)。这是取舍不是疏漏——让该包产 `.js` 就要让快门禁付一次构建,而快门禁必须零构建(§2.2.1 的 Node 下限成因之一)。缺掉的覆盖面怎么补、还剩哪半开着,见 §3.2。
+4. **`to.path` 匹配 specifier 还是 resolved realpath 是互斥的两态**:dist 未 build 时是 `@model-war/replay`,build 之后是 `packages/replay/dist/index.js`。每条架构规则都用 `(?:specifier|resolved)` 交替式,两种状态都成立;另外 depcruise 会**剥掉 `node:` 前缀**,故内建模块一律用 `dependencyTypes: ["core"]` + `pathNot` 表达。
 
 #### 2.2.11 明确不做
 
@@ -269,12 +281,12 @@ model-war/
 │  └─ cli/                    # 唯一用户面与唯一 bin(modelwar)
 │     └─ src/{index.ts, commands.ts}   # commands.ts = 六个子命令的登记表(命令名、承载包、待导出符号)
 ├─ packages/
-│  ├─ schema/                 # 唯一真源:类型 + 常量表 + 参数 key + JSON Schema(无运行时代码)
-│  ├─ replay/                 # 回放格式 + 解析/序列化 + stateHash 原语(只依赖 schema)
+│  ├─ schema/                 # 唯一真源:五类数据形状的类型与 JSON Schema + 常量表 + 参数 key 清单(无运行时代码)
+│  ├─ replay/                 # 回放的解析/序列化 + stateHash 原语 + 回放文件格式版本常量(只依赖 schema;行的形状归 schema)
 │  ├─ engine/                 # 确定性内核 + 沙箱(driver/processor/world/snapshot/runner/sandbox-runtime/replay-writer/ruleset-loader)
 │  ├─ runner/                 # 赛季调度、进程池、排名与种子纯函数、报告、叙事战报
 │  ├─ gen/                    # 脚本生成管线(离线,永不进对局进程)
-│  └─ tools/                  # 仓库自用静态校验器(禁浮点门禁、工具版本耦合断言);以源码执行,不产 JS、不设 bin
+│  └─ tools/                  # 仓库自用静态校验器(禁浮点门禁、工具版本耦合断言、声明即依赖门禁)+ 生成器(生成物注册表);以源码执行,不产 JS、不设 bin
 ├─ benchmarks/                # 模型基准脚本(≥2)
 ├─ prompts/                   # gen 的 prompt 模板(数据文件)
 ├─ rulesets/v1.json           # 规则数值数据文件(取值真源)
@@ -284,7 +296,7 @@ model-war/
 └─ runs/<runId>/              # 对局产物:回放 JSONL、result、报告、叙事战报
 ```
 
-**为什么多出 `packages/tools` 这第七个成员**:静态校验器有**两个消费者**——仓库自身的确定性门禁(已落)与将来的参赛脚本静态校验(随 `schema` 落地)——而现有包里没有一个放得下:`schema` 被 §3.2 明文限定为**无行为代码**,把门禁挂在它下面会让"真源"长出行为;`gen` 是**唯一联网包**,把仓库自身的门禁挂在它下面会污染依赖方向(且门禁绝不该继承联网面)。放进独立工具包后依赖方向仍单向,且它不进任何对局进程。形态上的代价是:本包**以源码形式由 Node 的类型擦除直接执行**(`node packages/tools/src/<entry>.ts`),因此全仓库遵守「可擦除语法」(禁 `enum`/`namespace`/参数属性,由基座 `erasableSyntaxOnly` 兜住),`tsconfig` 用 `emitDeclarationOnly` 只产 `.d.ts`(被引用项目不得禁用 emit),`exports` 指向 `./src/index.ts`。
+**为什么多出 `packages/tools` 这第七个成员**:静态校验器有**两个消费者**——仓库自身的确定性门禁(已落)与将来的参赛脚本静态校验(它的名表读取点已随 `schema` 落地,AST 规则随那张票)——而现有包里没有一个放得下:`schema` 被 §3.2 明文限定为**无行为代码**,把门禁挂在它下面会让"真源"长出行为;`gen` 是**唯一联网包**,把仓库自身的门禁挂在它下面会污染依赖方向(且门禁绝不该继承联网面)。放进独立工具包后依赖方向仍单向,且它不进任何对局进程。形态上的代价是:本包**以源码形式由 Node 的类型擦除直接执行**(`node packages/tools/src/<entry>.ts`),因此全仓库遵守「可擦除语法」(禁 `enum`/`namespace`/参数属性,由基座 `erasableSyntaxOnly` 兜住),`tsconfig` 用 `emitDeclarationOnly` 只产 `.d.ts`(被引用项目不得禁用 emit),`exports` 指向 `./src/index.ts`。
 
 | 模块 | 职责 | 对应需求 |
 |---|---|---|
@@ -294,15 +306,20 @@ model-war/
 | engine:snapshot | 只读快照构建与只读封存 | FR-3 AC1 |
 | engine:runner | 执行器缝:`Runner` 接口 + `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身) | FR-4、§5.2 |
 | engine:sandbox-runtime | 沙箱内 API 面(TS → IIFE bundle,版本 + hash 入 meta) | FR-4 |
-| engine:replay-writer | JSONL 写出(行格式取自 `replay` 包;写向注入的输出 sink,不直接碰 `fs`) | FR-2 AC2 |
+| engine:replay-writer | JSONL 写出(行格式取自 `schema` 包,§2.2.5;写向注入的输出 sink,不直接碰 `fs`) | FR-2 AC2 |
 | engine:ruleset-loader | 参数装载与版本比对 | NFR-4 AC1、FR-10 AC2 |
 | runner:scheduler | 组合 × 地图 × 种子 × 座位的对局枚举与并发调度 | FR-7 |
 | runner:ranker | 名次积分、并列处理、可选 Elo(**纯函数**) | FR-8 |
 | runner:reporter | Markdown 报告 + JSON 原始数据 + 叙事战报 | FR-8 AC2 |
 | gen:pipeline / validator / archiver | prompt 组装 → 模型 API → 校验迭代 → 冻结脚本;API 误用静态检查(白名单由 `schema` 生成);元数据强制存档 | FR-5、FR-6 |
-| replay | 回放行格式、解析/序列化、stateHash 原语 | FR-2 AC2、NFR-1 |
-| tools:rules / gate | 禁浮点纯规则(源码 → 带行列的违规)+ 目录薄壳与退出码;允许名单真源;工具版本耦合断言 | FR-2 AC3、NFR-1 |
+| replay | 回放的解析/序列化、stateHash 原语、回放**文件格式**版本常量;**不再声明行的类型**(归 `schema`,§2.2.5) | FR-2 AC2、NFR-1 |
+| tools:rules / gate | 禁浮点纯规则(源码 → 带行列的违规)+ 目录薄壳与退出码;工具版本耦合断言;声明即依赖门禁。**名单类数据一个名字都不在这里存**——真源在 `schema` 一侧,本包经生成器读生成物(§3.2) | FR-2 AC3、NFR-1 |
+| tools:generate | 生成器:真源 → 生成物,持有一张**生成物注册表**(每件 = id、产出路径、生产函数);**新增生成物是加一行注册**。漂移检查按注册表逐件判定(§2.2.5、§2.2.7) | FR-10 AC2 |
 | cli:replay-view / replay-verify / map-lint | ASCII 查看器(不依赖 engine);重放一致性断言;地图对称性校验 | FR-9、NFR-1、FR-1 AC2 |
+
+**生成器为什么在 `packages/tools` 而不在 `packages/gen`**(ADR-0003)。理由按权重:①生成物漂移检查要进 PR 主流水线,而 `gen` 是唯一联网包,将来按 §2.2.6 要装 HTTP 客户端与各厂商 SDK——一条只读写仓库内文件、零联网的仓库门禁,不该让依赖面随别的节点扩张;②它要推翻上面那段「工具包之所以独立存在,就是为了不把门禁挂在唯一联网包下」;③两个包的产物语义不同——生成管线按批次追加存档,而生成物是整体重生成、判定标准是「重生成后无差异」,放一起会让漂移检查的判定逻辑与追加语义缠在一起。落进 `schema` 或新开第 8 个包也被排除:前者受「无运行时代码」约束,后者要连拓扑图与本表一起改,代价与收益不成比例。
+
+**生成器与真源之间是混合传输,分界线是「能不能 afford 构建」**:生成器是低频入口(跑一次、产物入库),因此它**import 真源包**并为此在本包正式声明那条依赖;而工具包的规则层是每次提交都跑的快门禁,零构建是硬要求,因此它**读生成出来的源文件**,不 import 真源包。同一份名单在两侧都拿得到,分界线只按调用频率划(实测:让规则层直接 import 真源包,`check:quick` 由 1.04s 涨到约 1.36s,+31%,且新克隆第一次跑门禁就要先构建)。这层反直觉的间接是整件事里最容易被后来者「简化」掉的一处——简化掉它,快门禁就多了一个构建前置。
 
 ### 3.2 依赖规则
 
@@ -312,7 +329,8 @@ schema ←── replay ←── engine ←── apps/cli
    └──────── runner ────┘           │
    └──────── gen ───────────────────┘
 
-packages/tools ──→ (oxc-parser 等根 devDependency;不 import 任何 @model-war/*)
+packages/tools ──→ @model-war/schema   依赖图的根,本包唯一允许的 @model-war 依赖
+               └─→ 其余 import 都是第三方包,必须在本包 package.json 里声明
 ```
 
 - `schema` 只含类型、常量与 JSON Schema,**无运行时代码**;各包共享数据格式定义不违反 NFR-4 AC2(该条款约束的是运行时进程隔离,与测试代码无关)。
@@ -322,12 +340,13 @@ packages/tools ──→ (oxc-parser 等根 devDependency;不 import 任何 @mod
 - `engine` 内除 `node:crypto` 外禁一切 `node:*`。
 - `engine` 内部单向:`world → driver → processor → replay-writer`;`world → snapshot → runner(Runner 缝 → sandbox-runtime)`。`sandbox-runtime` 不 import 宿主代码,只消费 `schema` 生成的常量/API 名表。
 - 上述规则全部由 dependency-cruiser 强制(§2.2.10),违规直接导致全量门禁失败。
+- **工具包只允许 import 真源包这一个根包**,不得 import `replay` / `engine` / `runner` / `gen` / `apps/cli`(ADR-0003 的混合传输:名单类数据的真源在 `schema`,工具包经生成器拿生成物)。这条边指向依赖图的根,方向合法;**但它没有机器守护**,见下面那段缺口说明。
 - **作用域:本节全部规则只作用于运行时代码,测试代码豁免。理由**:门禁约束的是运行时行为——进对局进程的代码路径;测试代码不进对局进程(测试与属性测试必然要读盘、spawn 进程、依赖 vitest),不构成隔离风险(§2.2.10 第 1 条)。
 
-**`packages/tools` 在本图之外,这是已知缺口**:它以源码形态执行,`dist` 里没有 `.js`,故不在依赖门的巡航范围内(实测巡航出的模块里一个 `tools` 的都没有)。缺掉的覆盖面分两块,一块有人兜底、一块没人兜底:
+**`packages/tools` 有意落在依赖门的巡航范围之外,这是取舍不是疏漏**:它以源码形态执行、`emitDeclarationOnly`,`dist` 里没有 `.js`,depcruise 因此看不见它(实测巡航出的模块里一个 `tools` 的都没有)。让本包产 `.js` 就要让快门禁付一次构建,而快门禁必须零构建(§2.2.1 的 Node 下限成因之一)。缺掉的覆盖面分两块,**一块已补、一块仍开着**:
 
-- **包图方向:有人兜底,但兜它的是 tsc。** 本包既无 `references` 也无 `dependencies`,pnpm 不会把任何 `@model-war/*` 软链进 `packages/tools/node_modules`(该目录压根不存在);实测在 `packages/tools/src` 里 import `@model-war/engine` 会得 `TS2307`,`tsc -b` 非零退出。反向边被拦住,只是拦住它的是编译器不是本门禁。
-- **第三方依赖面:没人兜底。** Node 与 TypeScript 的模块解析一路向上找 `node_modules`,而 workspace 根把所有 devDependency 摆平了,于是本包可以 import 根上的 `oxc-parser` / `fast-check` / `vitest` / `ajv` / `esbuild` 而 `tsc -b` 退出 0,尽管 `packages/tools/package.json` 一个都没声明——本包此刻正吃着这条(`src/index.ts` import `oxc-parser`)。**「声明即依赖」在 tools 包里目前只靠自觉。** 补法有两条(`tsc --noResolve` 之类的自举检查,或把它纳入某条会产出 `.js` 的编译路径),留给下一个碰这个包的人。
+- **第三方依赖面:已由 `check:declared-deps` 兜住。** 该门禁读 `packages/tools/package.json` 的 `dependencies` 与本包运行时源码里的每一个 import 说明符,两者对不上即非零退出;它**零构建**(读源码树),与读 `dist` 的 `check:deps` 形态互补。此前这一格记的是「没人兜底」并点名仓库正吃着它(本包 import `oxc-parser` 而 manifest 一个都没声明),那处偷跑已改成正式声明。
+- **包图方向:只由 tsc 兜,本门禁看不到。** 本包现已正式声明 `@model-war/schema` 并加了 project reference,pnpm 只软链已声明的包,于是 import `@model-war/engine` 得 **TS2307**、`tsc -b` 非零退出。**但编译器只拦「没声明」,拦不住「声明了而方向反了」**——真源包不得反向 import 工具包这条仍靠规范,不由门禁承担。
 
 ## 4. engine 概要设计
 
@@ -553,7 +572,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 |---|---|
 | 编译 | `tsc` 编译通过;顶层声明 `function loop(): void` 入口 |
 | 模块系统 | 禁 `export` / `import` / 动态 `import()` / `require` / 动态 `eval`(单文件自包含) |
-| 全局白名单 | `packages/tools` 的静态校验器(`oxc-parser` 上的自建检查,承载方式见 §2.2.3):除注入 API 与内置纯函数子集(`Math`、`JSON`、`Number`、`String`、`Array`、`Map`/`Set`、`Object` 等)外全禁;白名单符号表由 `schema` 生成,与沙箱 runtime 暴露的 API 面同源;`Date` 视为确定性污染源,不可用;`__*` 前缀全禁 |
+| 全局白名单 | `packages/tools` 的静态校验器(`oxc-parser` 上的自建检查,承载方式见 §2.2.3):除注入 API 与内置纯函数子集(`Math`、`JSON`、`Number`、`String`、`Array`、`Map`/`Set`、`Object` 等)外全禁;白名单符号表的真源在 `schema`,本包经生成器读生成物(§3.2),与沙箱 runtime 暴露的 API 面同源;`Date` 视为确定性污染源,不可用;`__*` 前缀全禁 |
 | 确定性污染源 | 禁 `Date`、`Math.random`、`performance`、`queueMicrotask` 及其他非确定源(运行时 WASI 时钟已定格,本行为纵深防御) |
 | API 误用 | 类型层面由 `schema` 包的公开 `.d.ts` 约束(结构化 intent 类型) |
 | 脚本体积 | 顶层脚本体积上限(取值入 `rulesets/v1.json`)——封"直线代码不计量、大循环体放大每格工作量"的计数盲区 |
@@ -564,7 +583,15 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 ### 7.1 ruleset 数据文件(`rulesets/v1.json`)
 
-**全部参数取值的真源**:兵种表、经济参数、占领参数、tick 上限、异常阈值、领土分权重、点位数量不变量(每方主基地数)、预算参数。地图的尺寸与具体点位数量归地图数据(§7.2),不在此文件。参数的含义与设计意图由 gdd《参数清单》定义,取值一致性由 JSON Schema 校验,版本号必须与 `docs/rules-vN` 一致(runner 启动时比对,错配拒跑,FR-10 AC2)。
+**全部参数取值的真源**:兵种表、经济参数、占领参数、tick 上限、异常阈值、领土分权重、点位数量不变量(每方主基地数)、预算参数。地图的尺寸与具体点位数量归地图数据(§7.2),不在此文件。参数的含义与设计意图由 gdd《参数清单》定义,取值一致性由 JSON Schema 校验;版本号的一致性口径见本节末段。
+
+**键清单与必填性**:参数的**名字、类型、量纲、取值范围与含义**由真源包的键清单持有(它是机器可读的那一份,gdd《参数清单》定义含义与意图);取值文件按清单逐键落值。本仓现为 21 个键 = 13 个定稿键 + 8 个预算键。**全部必填,没有可选键**。
+
+**预算键的未定值口径,以及「缺键 ≠ 未定值」**:8 个预算键在标定完成前**一律必填**,取占位值 `0`,语义是**未定值**——机制已定、终值归后续的标定(hld §12 #2)。因此在 JSON Schema 里,**缺键与「键存在但取 0」是两种不同的错误**:前者是 `required` 缺失,直接拒;后者通过校验,只影响**面向模型的规则文档怎么渲染**——数值表把未定值渲染成「未定」而不是数字,是文档可见性,不为它引任何判罚逻辑。清单里每一键的标定状态是键自身的一个两态字段,不是一个全局标志位:某个预算上限标定完之后它的终值**可以真的取 0**,那时文档就该显示 0 而不是「未定」。
+
+**派生量双存 + 装载期断言**:生产耗时一类既出现在取值文件里、又由派生式算出的键,**两个都保留**——取值文件是那份数据的真源(缺了它,兵种表的可读性就依赖读者做算术),而派生系数只活在代码里就是第二真源。一致性由**装载期断言**判,不等即拒跑;断言与校验器同在 `apps/cli` 那一个入口(§2.2.5),真源包不交付「这个值算出来是多少」。
+
+**规则版本号三处一致,一致性由机器判定**:版本号由三处名字承担——取值文件 `rulesets/vN.json` 的文件名、规则文档目录名 `docs/rules-vN/`、真源包导出的版本常量——**取值文件内部没有版本键**(同一个值若既在文件名里又在内容里,那就是两处可能各写各的)。三处对不上在装载期拒跑,不静默降级。取值本身由真源包的项目键清单与 `rulesets/*.json` 承担,本文档不复制。
 
 ### 7.2 地图 JSON(`maps/*.json`)
 
@@ -576,13 +603,15 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
   "terrain": ["...", ...],          // 行字符串,'.'=平原,'#'=墙
   "sites": [ { "id": 1, "kind": "base", "x": 10, "y": 10, "initialOwner": 0 }, ... ],
   "spawnUnits": [ { "owner": 0, "type": "worker", "offset": [0,0] }, ... ],
-  "variantSlots": [ ... ]           // 变体槽位,机制见 gdd《地图变体》
+  "variantSlots": [ ... ]           // 变体槽位(过渡形状,见下),机制见 gdd《地图变体》
 }
 ```
 
+**七字段全部必填,并且禁止额外属性**:JSON Schema 对地图设 `additionalProperties: false`,规则集同理(§7.1)——手写 schema 若放行额外属性,那只是一份注释,不是校验。跨字段的自洽(terrain 行长等于 `size`、点位不越界、四重对称)JSON Schema 表达不了,归 map-lint。
+
 - 初始单位配置围绕主基地,由地图声明,引擎不硬编码。
 - **map-lint 强制校验**:四重旋转对称(terrain 与 sites 绕中心 90° 旋转自洽)、点位不重叠且不在墙上、地图池内 `size` 一致、地图数满足规则要求且风格覆盖(开阔/廊道/要塞)。校验不过的地图不进地图池。
-- `variantSlots` 的字段形状随 gdd《开放项》#2 的地图设计一并定稿;在此之前 map-lint 只校验其四重对称性。
+- `variantSlots` 的元素形状目前是**过渡形状,尚未定稿**:类型侧取「任意 JSON 值」、schema 侧是一个不带任何约束的数组并带显式的「待回填」标记。之所以写这么松——连「一个槽位是不是对象」都不知道(它也可能是一段轴索引或一个坐标对),**写窄一点就等于替地图图做决定**,而替它做决定的后果是回填变成返工。**回填触发条件是地图图产出地图**(gdd《开放项》#2 定稿之时),回填时**一次改完三处**:TS 类型 + JSON Schema + map-lint 的四重对称断言,漂移检查(§2.2.5)保证三处同改。在此之前 map-lint 只校验其四重对称性。这是一次**计划内的变更,不是返工**。
 
 ### 7.3 种子的用途
 
@@ -598,6 +627,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ```
 
 - 编译责任在 gen 包(定版前完成),engine 不引入 tsc(§2.2.8)。
+- `meta.json` 的**形状家归真源包**(§2.2.5),字段随生成管线那一票回填;在此之前本仓没有它的 JSON Schema,读入端不校验它(这是刻意的,不是漏做)。
 - runner 启动即校验元数据完整性,缺档**报错退出**(FR-6 AC2,不跳过)。
 - 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。
 
@@ -610,7 +640,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 末 行    {"type":"result", rankings, reason, territoryScores}
 ```
 
-- `schemaVersion` 由 `replay` 包 `CURRENT_SCHEMA_VERSION` 常量承担(`replay` 为唯一真源),跨版本兼容性以它为准(FR-9 AC2)。
+- `schemaVersion` 由 `replay` 包 `CURRENT_SCHEMA_VERSION` 常量承担,跨版本兼容性以它为准(FR-9 AC2)。**它是回放文件格式的版本,不是行的形状**:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包,`replay` 包只做编解码、不再声明行的类型(§2.2.5、§3.1)。这一格曾经有两个家(§2.2.5 说形状在真源包、§3.1 说行格式取自 `replay` 包),按「每个事实只有一个家」留在真源包。
 - 每 tick 记录足以绘制完整画面的状态:点位归属、占领进度条、单位位置血量携带、玩家资源。
 - **events 事件流**(叙事战报的统一来源):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`budget-soft-warning`、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态。
 
