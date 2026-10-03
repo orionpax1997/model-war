@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { SCRIPT_LINT_STAGES, forbiddenGlobalStage, validateScriptSource } from "../index.ts";
+import {
+  SCRIPT_LINT_STAGES,
+  forbiddenGlobalStage,
+  moduleSystemStage,
+  validateScriptSource,
+} from "../index.ts";
 
 /**
  * 断言对象只有一件事:一段源码进,一组**有序**的违规出(空数组 = 放行)。
@@ -99,6 +104,13 @@ it("禁列是判定链的第一级", () => {
   // 这条是白盒的,却必须留:五级顺序是裁决而不是实现细节,而顺序没有任何外部可观察的等价物
   // ——后面几张票(桥前缀 / 模块系统 / 体积)落地时,各自会在这里再加一条钉住自己那个槽位。
   expect(SCRIPT_LINT_STAGES[0]).toBe(forbiddenGlobalStage);
+});
+
+it("模块系统落在第三级:禁列在前、桥前缀在前、体积在后", () => {
+  // 同样是一条白盒断言,理由同上:模块系统这一格在五级顺序里的位置是裁决。
+  // 桥前缀(票 03)此刻仍是注释占位,所以这里钉的是**索引**而不是那几个槽位的内容;
+  // 桥前缀落地后它会把自己的那格插进来,本条随之改钉它在合并后的那一格。
+  expect(SCRIPT_LINT_STAGES[1]).toBe(moduleSystemStage);
 });
 
 it("违规都是拦截项,退出码那一侧因此只有一个 0/1", () => {
