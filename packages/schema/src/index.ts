@@ -11,6 +11,14 @@
 // 规则层读的是生成物而不是本包——分界线是「能不能 afford 构建」,见 ADR-0003。
 export { ALLOWED_MATH_MEMBERS, BUILTIN_GLOBAL_NAMES } from "./builtin-globals.js";
 
+// 参赛脚本可见面的名单:宿主桥前缀 / 禁列全局名 / 沙箱注入 API 符号表(hld §6.2)。
+// 同样经生成器分发到工具包,静态校验器(D)与沙箱执行器(G)读的是同一份。
+export {
+  FORBIDDEN_GLOBAL_NAMES,
+  HOST_BRIDGE_PREFIX,
+  SANDBOX_INJECTED_API_SYMBOLS,
+} from "./script-surface.js";
+
 /**
  * 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
