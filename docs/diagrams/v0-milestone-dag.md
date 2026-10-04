@@ -58,7 +58,7 @@ flowchart TB
   end
 
   subgraph human["人工前置 · 只有人能做"]
-    J["J 模型 API 凭证与端点开通"]
+    J["J 模型 API 凭证与端点开通 ✅"]
   end
 
   subgraph build["交付层 · 每格 = 一个 .scratch/&lt;feature&gt;/"]
@@ -129,7 +129,7 @@ flowchart TB
 
   classDef done fill:#e6f4ea,stroke:#34a853,color:#0b3d20
   classDef doing fill:#fef7e0,stroke:#f9ab00,color:#5c3b00
-  class D1,D2,D3,C,A done
+  class D1,D2,D3,C,A,J done
   class D doing
 ```
 
@@ -162,7 +162,7 @@ flowchart TB
 
 | 节点 | 状态 | 内容 | 阻塞 | skill |
 |---|---|---|---|---|
-| **J 模型 API 凭证与端点开通** | ○ 未开(人工) | 各厂商 API key 走环境变量、端点与账号开通、模型标识 | H(进而 M4) | **`wizard`**——只有人能做,agent 拿不到凭证。它同时是 `wizard` 的教科书场景:生成一份交互脚本,把值写进 `.env`,不靠 agent 再解释一遍 |
+| **J 模型 API 凭证与端点开通** | ✅ 已完成(人工,2026-10-04) | 各厂商 API key 走环境变量、端点与账号开通、模型标识 | 无(H 的硬依赖已解除) | **已办**。只接一家聚合商 Command Code(`https://api.commandcode.ai/provider/v1`,GOAT 档):key 落 `.env` 的 `COMMAND_CODE_API_KEY`(gitignore,60,不入 GitHub secrets —— hld §CI 规定 CI 无凭证),已发真实请求验过 HTTP 200。catalog 85 个模型全过上下文尺(契约草案 9K tokens × 10 余量 = 90K,最小的 200K 也够);**端点归属逐模型不同**(Claude 系只走 `/messages`,其余走 `/chat/completions`),H 的适配层须照 `supported_endpoints` 分家。非密钥事实(端点/模型标识/上下文)在 gitignore 的 `.modelwar-providers.md`,填完 `models.yaml` 即弃;变量名契约在 `.env.example`,操作脚本 `scripts/setup-model-credentials.sh` |
 
 ### 收尾层
 
@@ -186,12 +186,11 @@ C ✅ → D 🔶 → E 规则落库(M1★) → F 对局内核 → G 沙箱(M2★
 3. **A 已收口**,不再阻塞 F 的端到端验收与 I 的枚举规模(种子数 K=4 已定,推导链归 gdd《开放项》#6 的记录 #12,本节只带指针)。别把它与图上的**节点 K**(预算参数终值标定)混成一件:那条边要的输入是**点位数量**,与种子数无关。
 4. **K 卡在 G 与 I 之间**,是唯一被硬阻塞的收尾项。G 排得越晚,赛季越晚。
 
-**当前 frontier**(三格可同时开):
+**当前 frontier**(一格可开):
 
 | 可开的东西 | 类型 | 前置 |
 |---|---|---|
 | **E 规则集与契约落库** | 交付节点,进 `grill-with-docs` | C ✅ 已解除;D 只剩 D-08 一票且随 E 解锁,不构成阻塞 |
-| **J 凭证** | `wizard` 人工前置 | 无依赖,越早办越好 |
 
 **唯一带阻塞的遗留票**:**D-08**(解析层源形态比入口契约宽)硬依赖 E 的参赛脚本编译配置落地,随 E 一起解。
 
@@ -201,7 +200,7 @@ C ✅ → D 🔶 → E 规则落库(M1★) → F 对局内核 → G 沙箱(M2★
 |---|---|---|
 | 0 | D1 D2 D3 | ✅ 已完成 |
 | 1 | **C** | ✅ 已完成(6 票全落地)。唯一的根,无前置 |
-| 2 | **A** D J | ✅ A 已收口(三张真图 + map-lint 两层断言 + variantSlots 定稿);D 01–07 与 09 已落地,余 D-08 一票;J 是人工前置,本就不依赖任何节点 |
+| 2 | **A** D J | ✅ A 已收口(三张真图 + map-lint 两层断言 + variantSlots 定稿);D 01–07 与 09 已落地,余 D-08 一票;J 已于 2026-10-04 办结(凭证 + 端点 + 85 个模型目录,已发真实请求验证) |
 | 3 | **E** → M1★ | E 完成后 M1★ 即可关;D-08 同期解 |
 | 4 | **F** | 依赖已全部解除,可整格开;StubRunner 打通端到端闸门 |
 | 5 | **G** → M2★ | |

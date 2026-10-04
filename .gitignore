@@ -9,6 +9,15 @@ dist/
 .oxlint-cache/
 .vitest/
 
+# 人工配置与凭证:绝不入库(handoff J;hld §CI 规定 CI 无凭证)
+.env
+.env.local
+.env.*.local
+!.env.example
+# 模型开通的非密钥事实(端点/模型标识/上下文),归 hld models.yaml 前的暂存,填完即弃
+.modelwar-providers.md
+.modelwar-models.json
+
 # 对局运行产物:体量随 tick 数线性增长,且可由冻结脚本 + 规则集重生成(hld §3.1)。
 # 冻结脚本本身在 archive/ 下,必须入库,否则新克隆永远无法复算历史对局。
 runs/**
