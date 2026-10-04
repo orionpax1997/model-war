@@ -4,9 +4,10 @@
  * 这里断言的是读取形态的封装(前缀判定、名单查询),**不断言任何禁令**——禁 `__*`、禁列、
  * 禁 `export`/`import` 那些规则属 D,它们会以规则层 + 退出码的形式出现,不在这里。
  *
- * 倒数第二条用例是**占位纪律**的断言:沙箱注入面此刻为空,空表的语义是「还没铺」而不是
- * 「什么都不许用」。它会在 G 回填那张表时变红——那是有意的:回填是一次计划内变更,
- * 让它先把这条用例改掉,比让它悄悄生效更便宜。
+ * 最后一条用例守的是「注入面**不被任何规则消费**」这条纪律的另一半:查询认得出表里的名字,
+ * 认不出表外的名字(含类型名)。它曾是「表为空,任何查询都返回 false」的占位断言,注入面按
+ * 收录判据回填后改写成现在这个形态——**意图没变**:让「表里有什么」在这里能被一眼核对,
+ * 而不是靠注释说它空/不空。空表的语义不再是「还没铺」,判据已在真源侧定稿并回填。
  */
 
 import { expect, it } from "vitest";
@@ -48,7 +49,12 @@ it("名单外的名字不误伤", () => {
   expect(isForbiddenGlobalName("setTimeout")).toBe(false);
 });
 
-it("注入面当前为空:待沙箱执行器(G)回填", () => {
-  expect(SANDBOX_INJECTED_API_SYMBOLS).toEqual([]);
-  expect(isSandboxInjectedSymbol("anything")).toBe(false);
+it("注入面已按收录判据回填:查询认得出表里的名字,认不出表外的名字", () => {
+  expect(SANDBOX_INJECTED_API_SYMBOLS.length, "判据已裁决,注入面不该退回空表").toBeGreaterThan(0);
+  for (const symbol of SANDBOX_INJECTED_API_SYMBOLS) {
+    expect(isSandboxInjectedSymbol(symbol), `${symbol} 应当在注入面里`).toBe(true);
+  }
+  expect(isSandboxInjectedSymbol("fly"), "表外的名字不在注入面里").toBe(false);
+  expect(isSandboxInjectedSymbol("UnitType"), "类型名不产生运行时值,不在注入面里").toBe(false);
+  expect(isSandboxInjectedSymbol("__setSnapshot"), "宿主桥不在注入面里").toBe(false);
 });
