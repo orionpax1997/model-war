@@ -24,6 +24,7 @@ const ID = "script-surface-names";
 
 export const scriptSurfaceNames: GeneratedArtifact = {
   id: ID,
+  form: "whole-file",
   path: "packages/tools/src/generated/script-surface.ts",
   produce: () =>
     [

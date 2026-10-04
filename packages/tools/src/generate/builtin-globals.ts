@@ -18,6 +18,7 @@ const ID = "builtin-globals-allowlist";
 
 export const builtinGlobalsAllowlist: GeneratedArtifact = {
   id: ID,
+  form: "whole-file",
   path: "packages/tools/src/generated/builtin-globals.ts",
   produce: () =>
     [
