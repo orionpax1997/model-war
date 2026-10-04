@@ -16,7 +16,7 @@
     "test": "pnpm run typecheck && vitest run",
     "test:props": "vitest run --project property",
     "test:gates": "vitest run --project gates",
-    "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
+    "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
     "lint": "oxlint apps packages",
     "lint:types": "tsc -b --pretty false && oxlint --type-aware apps packages",
     "coupling": "node packages/tools/src/toolchain-coupling.ts",

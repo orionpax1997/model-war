@@ -22,6 +22,9 @@
  *     它巡航的是 dist(见 .dependency-cruiser.js 顶部:本仓库的 TypeScript 7 没有 JS 编程 API,
  *     depcruise 认不了 `.ts`),而 dist 不入库,所以这个反例既走真实配置与真实规则,
  *     又不会在失败时脏工作区。
+ *   - **落在根层那份真配置上**(参赛脚本编译配置那一节):门禁按路径列表逐个点名根层文件,
+ *     所以「它到底在不在门里」只有一个测法——排版弄坏真的那份配置,看门禁说不说话,
+ *     再按字节还原。它不是探针文件,所以不进 `PROBES`(没有第二次清理的机会)。
  *   - **落进真源与生成物**(生成器那一节):先改真源、不重跑生成器,规则层读到的还是上一版——
  *     这本身是漂移检查(票 04)要抓的形态,但在本票里它有个更直接的后果可测:
  *     真源改了 + 重跑生成器,门禁判决必须跟着变。
@@ -579,6 +582,34 @@ it("格式门禁:未格式化的文件被拦下,由 oxfmt 修好后放行", () =
   expect(fixed.status, `oxfmt 改过之后仍被拦下:\n${fixed.output}`).toBe(0);
 
   expect(script("fmt").status).toBe(0);
+});
+
+// ── 格式门禁覆盖面:根层那份脚本 tsconfig 也在门里 ───────────────────────────
+
+it("参赛脚本的编译配置在格式门禁的覆盖范围内:它排版坏掉就红,按字节还原 → 绿", () => {
+  // 根层配置逐个点名进了 fmt 的路径列表(`tsconfig.json`、`tsconfig.base.json` 之后多了一个)。
+  // 少了这一条,那份配置就成了一份无人看管的配置:它既不在任何 tsc project 的 include 里
+  // (根 `tsconfig.json` 是 files: []),oxlint 也不扫根层文件——排版坏了没有任何门禁会说话。
+  //
+  // 探针用的是**真实的配置文件本身**(按字节还原),不是临时目录里的另一份:只有动真文件,
+  // 「路径在不在 fmt 的列表里」这件事才会被判决到。JSON 仍合法,变的只是排版。
+  const config = `${repoRoot}tsconfig.scripts.json`;
+  const original = readFileSync(config, "utf8");
+  const mangled = original
+    .replace('    "types": [],', '    "types":[],')
+    .replace('"lib": ["es2023"],', '"lib":["es2023"],');
+  expect(mangled, "补丁没有改动配置,这条反例不成立").not.toBe(original);
+  writeFileSync(config, mangled, "utf8");
+
+  try {
+    const violated = script("fmt");
+    expect(violated.status, "配置排版坏掉却过了格式门禁,说明它不在门里").toBe(1);
+    expect(violated.output, violated.output).toContain("tsconfig.scripts.json");
+  } finally {
+    writeFileSync(config, original, "utf8");
+  }
+
+  expect(script("fmt").status, "还原后格式门禁没有回到绿").toBe(0);
 });
 
 // ── lint 门禁反例 ────────────────────────────────────────────────────────────
