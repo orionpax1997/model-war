@@ -1144,9 +1144,14 @@ it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
 
 // ── 契约自证门禁:四问的退出码与三个反例 ────────────────────────────────────
 //
-// 这一节的每一条都跑**整张矩阵**(4 臂 × 4 座位轮转 × 4 种子 = 64 场,单次约一分半),
-// 所以形态与前面几节不同:基线绿只跑一次(单独一条用例),每条反例只跑「红 → 还原 → 绿」两次。
-// 少掉的那次基线不是证据变薄——「还原后回到绿」与「基线是绿的」证明的是同一件事。
+// 基线绿那一条跑**整张矩阵**(4 臂 × 4 座位轮转 × 4 种子 = 64 场,单次约一分半)——四问的读数
+// 只能来自全矩阵。**每条反例跑的是缩矩阵**(`--probe`:1 臂组 × 1 轮转 × 1 种子 = 4 场),成对
+// 「红 → 同参数还原 → 绿」。理由是反例要证明的是「改这一项,门禁会红」,不是四问的取值;
+// 而红不红在小矩阵上照样判得红——真判不出来时下面那条 `toBe(1)` 会当场红,不会静默放过。
+// **例外是 `--same-script` 那一条**:它要证的是「三对都掉到 0/9」,一个关于指标的论断,
+// 小矩阵的采样噪声会混进来,所以那一条连同它的还原都跑全矩阵。
+// 形态与前面几节不同:基线绿只跑一次(单独一条用例),每条反例只跑两次,少掉的那次基线不是
+// 证据变薄——「同参数还原后回到绿」与「基线是绿的」证明的是同一件事。
 
 const selfproof = (args: readonly string[] = []): Outcome => script("check:selfproof", args);
 
@@ -1164,14 +1169,14 @@ it("契约自证门禁:四问全绿", () => {
 
 it("契约自证门禁:把配额改小 → ③ 变红,还原 → 绿", () => {
   // 配额是③的判据本身(默认总储量的 1/4),把它改到 6% 就低于 A 的实际消耗中位(6.9%)。
-  const shrunk = selfproof(["--quota-percent=6"]);
+  const shrunk = selfproof(["--probe", "--quota-percent=6"]);
   expect(shrunk.status, `配额改小后门禁仍为绿:\n${shrunk.output}`).toBe(1);
   expect(shrunk.output, shrunk.output).toContain("③ 消耗 ≤ 总储量 1/4（配额 6%");
   expect(shrunk.output, shrunk.output).toContain("**不过**");
   // 红的原因得是③而不是别的:另外三问仍然过。
   expect(shrunk.output, "红的原因不是③").toContain("契约自证门禁:红（① 过 ② 过 ③ 不过 ④ 过）");
 
-  expect(selfproof().status, "配额还原后没有回到绿").toBe(0);
+  expect(selfproof(["--probe"]).status, "配额还原后没有回到绿").toBe(0);
 });
 
 it("契约自证门禁:把一份产物换成违规脚本 → ① 变红,撤掉探针 → 绿", () => {
@@ -1185,7 +1190,7 @@ it("契约自证门禁:把一份产物换成违规脚本 → ① 变红,撤掉�
       "}",
       "",
     ].join("\n"),
-    () => selfproof([`--script-a=${repoRoot}${VIOLATING_SCRIPT_PROBE_PATH}`]),
+    () => selfproof(["--probe", `--script-a=${repoRoot}${VIOLATING_SCRIPT_PROBE_PATH}`]),
   );
   expect(violated.status, `换成违规脚本后门禁仍为绿:\n${violated.output}`).toBe(1);
   expect(violated.output, violated.output).toContain("① 零静态违规：**不过**");
@@ -1193,10 +1198,13 @@ it("契约自证门禁:把一份产物换成违规脚本 → ① 变红,撤掉�
   expect(violated.output, "报告里没有静态校验器的违规原文").toContain("禁列全局名");
   expect(violated.output, violated.output).toContain("宿主桥前缀");
 
-  expect(selfproof().status, "撤掉探针后没有回到绿").toBe(0);
+  expect(selfproof(["--probe"]).status, "撤掉探针后没有回到绿").toBe(0);
 });
 
 it("契约自证门禁:三份换成同一份 → ④ 变红,还原 → 绿", () => {
+  // 这一条**跑全矩阵**,不用 `--probe`:④ 的判据是「每一对至少 3 项指标相对差 ≥ 25%」,
+  // 而把三份换成同一份之后要证明的是「三对都掉到 0/9」——那是一个关于指标的论断,
+  // 拿 4 场的小矩阵去判它,采样噪声会混进来(淘汰率那一项就是这么混进来的)。
   const same = selfproof(["--same-script"]);
   expect(same.status, `三份同源后门禁仍为绿:\n${same.output}`).toBe(1);
   expect(same.output, same.output).toContain("④ 取策略互不相同：**不过**");

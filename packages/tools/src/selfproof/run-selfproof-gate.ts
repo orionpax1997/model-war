@@ -53,6 +53,14 @@
  * ── 反例用的三个开关(红 → 还原 → 绿) ───────────────────────────────────────
  * `--quota-percent=N` 把③的配额改小;`--script-a=<路径>` 把 A 那份产物换成别的脚本;
  * `--same-script` 让三份用同一份产物(④应当变红)。三个都在 `gates.test.ts` 里现做现验。
+ *
+ * ── `--probe`:反例用的缩矩阵,不是「快速模式」 ───────────────────────────────
+ * `--probe` 把矩阵从 **4 臂 × 4 座位轮转 × 4 种子 = 64 场**缩到 **1 臂组 × 1 轮转 × 1 种子 = 4 场**
+ * (夹具 + 三张真图各一场,夹具闸门照跑,判据一字不改)。它存在只有一个理由:反例要证明的是
+ * **「改这一项,门禁会红」**,不是四问的取值——而红不红在小矩阵上照样能判红。配 `gates.test.ts`
+ * 那一组「红 → 同参数还原 → 绿」用:全矩阵七次 → 全矩阵一次 + 缩矩阵六次(墙钟约 14 分钟 → 约 2 分钟)。
+ * **`pnpm run check` 里的正跑不许带这个开关**——正跑的取值就是四问的读数,读数来自全矩阵。
+ * 小矩阵真的判不出红时,门禁那条断言会当场红,不会静默放过。
  */
 
 import { spawn } from "node:child_process";
@@ -184,6 +192,8 @@ type Options = {
   readonly scriptA: string | null;
   /** 三份用同一份产物(反例④用)。 */
   readonly sameScript: boolean;
+  /** 缩矩阵(只给反例的「红 → 还原 → 绿」用,判据一字不改;正跑不带)。 */
+  readonly probe: boolean;
 };
 
 const parseArgs = (argv: readonly string[]): Options => {
@@ -206,6 +216,7 @@ const parseArgs = (argv: readonly string[]): Options => {
     quotaPercent,
     scriptA: valueOf("--script-a=") ?? null,
     sameScript: argv.includes("--same-script"),
+    probe: argv.includes("--probe"),
   };
 };
 
@@ -262,10 +273,12 @@ const registerInto = (harness: StubHarness, registrations: readonly Registration
 
 // ── 矩阵 ────────────────────────────────────────────────────────────────────
 
-const buildJobs = (harness: StubHarness): readonly StubJob[] => {
+const buildJobs = (harness: StubHarness, probe: boolean): readonly StubJob[] => {
   const jobs: StubJob[] = [];
-  for (const seats of harness.rotate(SEAT_BASE)) {
-    for (const seed of SEEDS) {
+  const rotations = probe ? [SEAT_BASE] : harness.rotate(SEAT_BASE);
+  const seeds = probe ? SEEDS.slice(0, 1) : SEEDS;
+  for (const seats of rotations) {
+    for (const seed of seeds) {
       const seatScripts = seats.map((label, seat) => `${label}#${seat}`);
       const rotation = seats.join("");
       jobs.push({
@@ -653,7 +666,7 @@ const main = async (argv: readonly string[]): Promise<number> => {
     return 1;
   }
 
-  const jobs = buildJobs(harness);
+  const jobs = buildJobs(harness, options.probe);
   const started = Date.now();
   const rows = await runJobs(harness, jobs, options);
   const elapsed = ((Date.now() - started) / 1000).toFixed(1);
@@ -674,7 +687,7 @@ const main = async (argv: readonly string[]): Promise<number> => {
   );
   process.stdout.write(`${report}\n`);
   process.stdout.write(
-    `矩阵：${jobs.length} 场（4 臂 × 4 座位轮转 × ${SEEDS.length} 种子，桩 ${STUB.replace(repoRoot, "")} 未改），用时 ${elapsed}s\n`,
+    `矩阵：${jobs.length} 场（${options.probe ? "探针缩矩阵（反例用）" : `4 臂 × 4 座位轮转 × ${SEEDS.length} 种子`}，桩 ${STUB.replace(repoRoot, "")} 未改），用时 ${elapsed}s\n`,
   );
 
   if (options.out !== null) {
