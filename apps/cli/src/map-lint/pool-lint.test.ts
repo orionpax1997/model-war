@@ -11,6 +11,7 @@
  *
  * 墙从**候选变体轨道**里取(`variantSlots`):那 8 条轨道实测一格不压点位及其八邻域、
  * 天生四重对称,于是「换一组墙」不必重画一张图,也不会顺手造出别的违规。
+ * 被取走当墙的轨道同时从候选清单里消失(见 `withWalls` 的头注)。
  * 落库文件本身只在测试开头读一次,反例从它改出来,所以「反例真的只坏了那一处」是可读的。
  */
 
@@ -49,6 +50,12 @@ const blankGrid = (size: number): string[] => Array.from({ length: size }, () =>
 /**
  * 造一张图:点位照抄落库那张图,墙由给定的几条候选轨道决定。
  *
+ * **被画成墙的那几条轨道必须同时从 `variantSlots` 里剔掉**:候选清单的语义是「种子可以
+ * 往这里填墙」,而候选轨道自己已经变成墙之后,清单里留着它就是一条死格——新判据
+ * `variant-slot-on-wall` 会把这张夹具图判失败(它在造池时就已经造出了那堵墙)。
+ * 这不是为了让夹具过关而放宽断言:候选清单与地形互相排斥是那张图的性质,fixture 只是
+ * 以前没造出这个性质而已。
+ *
  * 参数类型刻意宽松(`Record<string, unknown>` / `unknown[]`)与票 03 同理由:
  * 反例必须能从「文件读进来的 JSON 值」那一侧进来,规则层才有机会证明它判得了。
  */
@@ -65,7 +72,15 @@ const withWalls = (
       rows[y] = `${row.slice(0, x)}#${row.slice(x + 1)}`;
     }
   }
-  return { ...OPEN, name, size, terrain: rows, ...patch } as MapDefinition;
+  const remainingSlots = OPEN.variantSlots.filter((_, index) => !orbitIndexes.includes(index));
+  return {
+    ...OPEN,
+    name,
+    size,
+    terrain: rows,
+    variantSlots: remainingSlots,
+    ...patch,
+  } as MapDefinition;
 };
 
 /** 造一张图:任意一组墙格。**会破坏地形对称**,只在 Jaccard 判据的用例里用——
