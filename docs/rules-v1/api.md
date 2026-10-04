@@ -9,7 +9,77 @@
 
 ## 1. 脚本形态与座位自认
 
-TODO(→ 脚本形态与座位自认)
+你交的是**一份文件**:单个 TypeScript 源文件,交付名 `script.ts`。文件顶层声明一个入口函数 `loop()`,
+引擎每个 tick 调它一次,调完收走它这一 tick 提交的全部意图,然后叫下一个 tick。
+
+```ts
+// script.ts:交付的就是这一个文件。顶层声明入口 loop,返回类型可省略。
+// 模块级变量跨 tick 保留,所以变量里只放数值,不放过期的对象。
+var mineSiteId = -1;
+
+function loop() {
+  const me = getMyIndex();
+  const sites = getObjectsByType("site", { owner: me, kind: "resource" });
+  for (let i = 0; i < sites.length; i += 1) {
+    const site = sites[i];
+    if (site === undefined) {
+      // 数组下标可能取不到元素,判一下再用。
+      continue;
+    }
+    mineSiteId = site.id;
+  }
+}
+```
+
+### 1.1 形态:只留一种写法
+
+- **入口是顶层声明的 `function loop()`,返回类型可省略。** 写成 `function loop()` 或 `function loop(): void`
+  都对;不写返回类型不算错。引擎不读它的返回值——要交出去的是调动作函数提交的那些意图,不是返回值。
+- **顶层可以有任意多个变量与辅助函数**,它们在文件载入时建一次,顺序即书写顺序。辅助函数要声明在顶层
+  (`function f() {}` 或 `const f = () => {}` 都行);写在 `loop()` 里面的定义只活本 tick。
+- **禁模块语法**:整个文件里不许出现 `import`、`export`、`require`,也不许动态 `eval`——脚本不从任何
+  地方取代码,运行时拿到的代码只有它自己这一份。
+- **禁非确定源与宿主桥**:`Date`、`Math.random`、`performance`、`queueMicrotask` 这四个名字不可用,
+  `__` 前缀的全局(`__` 开头的是宿主注入的桥)也不可用。沙箱里没有定时器、没有 I/O、没有别的宿主能力,
+  整个可见面就是 §3 表里那些 API 名字,加上标准 ECMAScript 的纯函数。
+- **全整数运算**:坐标、id、tick、距离、携带量、资源数全是整数,没有半格也没有百分比;本契约里出现除法的
+  地方都整除。不要为了「保险」套一层 `Math.floor`,更不要引入浮点中间量。
+- **产物是裸脚本**:编译产物没有任何模块语法,注入沙箱后被直接调用(这一条的实测形态见 §6 末尾)。
+
+### 1.2 座位自认:只有一个正式入口
+
+`getMyIndex()` 返回 `0 | 1 | 2 | 3`,它是脚本**唯一**的「我是几号」来源。读一次存进模块级变量即可——
+它的取值整局不变,不需要每 tick 重读,重读也无害。
+
+**不要靠单位位置反推座位。** 四方是对称开局:四家看到的开局形状完全一样,四家跑同一份脚本,
+靠「我的单位站在哪儿」反推出的座位号算出来恰好是同一个数,于是四家都以为自己是同一号。
+四方混战实测就是这样:同款位置法脚本互相误判,把别人的动作当成自己的动作,该防的方向与该打的目标
+全错。快照里没有 `you`、也没有 `isSelf` 标记,那个字段不存在,不要去找。
+
+「某个 id 是不是我的」是另一个问题,由动作函数回答:拿一个非己方的 id 去调动作函数,会立刻拿到
+`ERR_NOT_OWNER`(沙箱内即时返回,那一行在 §3 的错误码表里)。那个码答的是「这个 id 归不归我」,
+不是「我是谁」——它不用于自认座位。
+
+### 1.3 每单位每 tick 只写一条意图
+
+**同一个单位在一个 tick 内提交多条单位级意图,只留最后一条**:前面的静默作废,不写事件流、不计异常、
+不扣款(这一行在 §4 那张对照表里)。`move` / `moveTo` / `attack` / `harvest` / `transfer` 是单位级意图,
+`spawnUnit` 是玩家级意图、不受这条约束。
+
+所以每个 tick 对每个单位最多调一次上面那五个函数里的任意一个。同一 tick 想做两件事(走一步再攻击),
+先想清楚这一 tick 哪一个更重要,只提交那一个;拿不准就只提交移动——目标没到位就开打多半落在射程外,
+拿到的只是一个被丢弃的意图。
+
+### 1.4 跨 tick 记忆:只存数值
+
+模块级变量跨 tick 保留(什么时候不保留见 [`rules.md`](./rules.md) §8.2)。按这三条写:
+
+- **只存数值,和你自己算出来的东西**:id、坐标、tick 号、计数,都可以留在模块级变量里带到下一 tick。
+- **不缓存对象引用**。`getObjectById` / `getObjectsByType` / `findPath` 返回的都只是**本 tick 的快照副本**,
+  下一 tick 世界已经变了;把上一 tick 拿到的那个对象存起来接着用,读到的就是过期状态——它不会跟着
+  单位一起死,也不会跟着点位换主。
+- **不缓存查询结果**。别把「某 tick 查过矿在哪」写成一张表留着复用:归属会变(点位可被占领与易主)、
+  单位会死、资源会采空。下一 tick 要用,就下一 tick 再查一次。查询花的是调用预算(见 §4),不是命。
 
 ## 2. 快照
 
@@ -204,4 +274,68 @@ if (isError(result)) {
 
 ## 6. 最小 `loop()` 骨架
 
-TODO(→ 脚本形态与座位自认)
+一份能跑的脚本最少做三件事:认出自己、读这一 tick 的快照、给每个单位提交一条意图。下面这份骨架
+各写了一遍,可以当起点改。
+
+```ts
+// 跨 tick 只带数值过去,只带这一个 id,不带任何对象。
+var assignedEnemyId = -1;
+
+function loop() {
+  const me = getMyIndex();
+  const mine = getObjectsByType("unit", { owner: me });
+  const foes = getObjectsByType("unit", { owner: foeOwnerOf(me) });
+
+  for (let i = 0; i < mine.length; i += 1) {
+    const unit = mine[i];
+    const enemy = nearestEnemyId(unit, foes);
+    if (enemy === null) {
+      continue;
+    }
+    // 记忆里那个 id 本 tick 还在不在:重新查一次,不信上一 tick 拿到的对象。
+    if (assignedEnemyId >= 0 && getObjectById(assignedEnemyId) === null) {
+      assignedEnemyId = -1;
+    }
+    assignedEnemyId = enemy;
+
+    // 每个单位本 tick 只提交这一条意图(见 §1.3);拿到码只是反馈,不是终裁。
+    const result = attack(unit.id, enemy);
+    if (isError(result)) {
+      const code = errCode(result);
+      if (code === ERR_INVALID_UNIT) {
+        continue;
+      }
+    }
+  }
+}
+
+/** 敌方的归属值:0..3 里除我以外的那一个。 */
+function foeOwnerOf(me: number): number {
+  return (me + 1) % 4;
+}
+
+/** 本 tick 最近的敌方单位 id,没有敌人时是 null。射程不归这里管:交给动作函数判。 */
+function nearestEnemyId(
+  unit: { x: number; y: number },
+  foes: readonly { id: number; x: number; y: number }[],
+): number | null {
+  let best = -1;
+  let bestRange = 0;
+  for (const foe of foes) {
+    const d = getRange(unit.x, unit.y, foe.x, foe.y);
+    if (best === -1 || d < bestRange) {
+      best = foe.id;
+      bestRange = d;
+    }
+  }
+  return best === -1 ? null : best;
+}
+```
+
+三条硬约束在这份骨架里的位置:座位只从 `getMyIndex()` 来(§1.2),跨 tick 只带 `assignedEnemyId`
+这一个数值过去而 `mine` / `foes` 每 tick 重新查(§1.4),每个单位每 tick 只 `attack` 一次(§1.3)。
+返回值走 `isError` / `errCode` 两步判别,不猜形状(§3)。
+
+这份骨架与 §1 那份例子都由仓库的编译门禁**真编译过**,用的就是参赛脚本那份编译配置:所以它们没有
+模块语法、没有 Node 与 DOM 的名字、没有非确定源,也没有别处的类型错误。示例本身也受门禁看管——
+把它改坏,门禁会红。
