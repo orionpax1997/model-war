@@ -16,6 +16,7 @@
     "test": "pnpm run typecheck && vitest run",
     "test:props": "vitest run --project property",
     "test:gates": "vitest run --project gates",
+    "bench:build": "node packages/tools/src/benchmarks/build-benchmarks.ts",
     "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
     "lint": "oxlint apps packages",
     "lint:types": "tsc -b --pretty false && oxlint --type-aware apps packages",
@@ -23,10 +24,11 @@
     "check:no-float": "node packages/tools/src/gate/run-no-float-gate.ts",
     "check:declared-deps": "node packages/tools/src/gate/run-declared-deps-gate.ts",
     "check:drift": "node packages/tools/src/generate/run-drift-gate.ts",
+    "check:bench": "node packages/tools/src/benchmarks/run-benchmarks-gate.ts",
     "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run check:no-float",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
     "check:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
-    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift"
+    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
