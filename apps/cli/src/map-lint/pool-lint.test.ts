@@ -37,6 +37,27 @@ const OPEN: MapDefinition = JSON.parse(
   readFileSync(fileURLToPath(new URL("../../../../maps/open-clash.json", import.meta.url)), "utf8"),
 );
 
+/** 仓库里落库的廊道分割图(两张同心方环)。0.195 那个探针的原料就是它。 */
+const CORRIDOR: MapDefinition = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL("../../../../maps/corridor-split.json", import.meta.url)),
+    "utf8",
+  ),
+);
+
+const keyOf = (cell: readonly [number, number]): string => `${cell[0]},${cell[1]}`;
+
+/** 一张图的墙格集合。地形里 `'#'` 是墙已由 `MAP_JSON_SCHEMA` 定死,这里只把它读成好用的集合。 */
+const wallCells = (map: MapDefinition): readonly (readonly [number, number])[] => {
+  const cells: [number, number][] = [];
+  map.terrain.forEach((row, y) => {
+    for (let x = 0; x < row.length; x += 1) {
+      if (row[x] === "#") cells.push([x, y]);
+    }
+  });
+  return cells;
+};
+
 const rulesOf = (pool: readonly MapDefinition[]): readonly MapLintRule[] => [
   ...new Set(poolViolations(pool).map((violation) => violation.rule)),
 ];
@@ -163,20 +184,93 @@ const POOL: readonly MapDefinition[] = [
 
 /** 测试侧独立算一遍墙格相似度:规则层算错时这里是第二份实现,两边对不上就红。 */
 const jaccardOf = (left: MapDefinition, right: MapDefinition): number => {
-  const walls = (map: MapDefinition): ReadonlySet<string> => {
-    const cells = new Set<string>();
-    map.terrain.forEach((row, y) => {
-      for (let x = 0; x < row.length; x += 1) {
-        if (row[x] === "#") cells.add(`${x},${y}`);
-      }
-    });
-    return cells;
-  };
-  const a = walls(left);
-  const b = walls(right);
+  const a = new Set(wallCells(left).map(keyOf));
+  const b = new Set(wallCells(right).map(keyOf));
   const intersection = [...a].filter((cell) => b.has(cell)).length;
   const union = a.size + b.size - intersection;
   return union === 0 ? 1 : intersection / union;
+};
+
+// ── 原型那个「双环图」探针:落库后能不能原样复现 0.195 ───────────────────────
+
+/** 盒 `[lo, hi]` 的整圈边框。与原型 `.scratch/map-pool/proto/quad.mjs` 的 `ring` 同一形状(那里再挖缺口)。 */
+const boxBorder = (lo: number, hi: number): readonly (readonly [number, number])[] => {
+  const cells: [number, number][] = [];
+  for (let x = lo; x <= hi; x += 1) cells.push([x, lo], [x, hi]);
+  for (let y = lo + 1; y < hi; y += 1) cells.push([lo, y], [hi, y]);
+  return cells;
+};
+
+/** 一格是否贴在盒 `[lo, hi]` 的某一条边上(环上的一格)。 */
+const onBox = (cell: readonly [number, number], lo: number, hi: number): boolean =>
+  cell[0] >= lo &&
+  cell[1] >= lo &&
+  cell[0] <= hi &&
+  cell[1] <= hi &&
+  (cell[0] === lo || cell[0] === hi || cell[1] === lo || cell[1] === hi);
+
+/**
+ * 廊道图(双环图)只把**外环**朝内挪 1 格,内环逐格不动 —— 原型那道 0.195 的探针。
+ *
+ * 环的盒参数与缺口全部**从这张真图量出来**,一个坐标都不写死:外环盒取全体墙格的极值,
+ * 内环取「不在外环上」的墙格的极值,缺口取「外环盒整圈边框里不是墙的那些格」。
+ * 读法都依赖一条图本身的性质——**四重旋转对称**(所以 `hi = size - 1 - lo`),而那正是
+ * `terrain-symmetry` 与 `sites-symmetry` 两条判据每张图都必须过的那一条。
+ *
+ * 「朝内一格」只有一个定义:横竖各收 1 格,角格因此落在新盒的角上(原型里也是这么收缩的)。
+ */
+const nudgedOuterRingByOne = (map: MapDefinition): MapDefinition => {
+  const cells = wallCells(map);
+  const [outerLo, outerHi] = boxOf(cells, map.size);
+  const outer = cells.filter((cell) => onBox(cell, outerLo, outerHi));
+  const inner = cells.filter((cell) => !onBox(cell, outerLo, outerHi));
+
+  const outerKeys = new Set(outer.map(keyOf));
+  const gaps = new Set(
+    boxBorder(outerLo, outerHi)
+      .filter((cell) => !outerKeys.has(keyOf(cell)))
+      .map((cell) => insetOne(cell, outerLo, outerHi))
+      .map(keyOf),
+  );
+  const outerNudged = boxBorder(outerLo + 1, outerHi - 1).filter((cell) => !gaps.has(keyOf(cell)));
+  return withWallCells({ ...map, name: `${map.name}-nudged` }, [...outerNudged, ...inner]);
+};
+
+/**
+ * 一格朝盒心收 1 格。
+ *
+ * **横竖各自独立判断**,所以角格横竖都收——那正是原型收缩方环时角格的落点。
+ * 写成「先判横、命中就不看竖」会把角格留在新盒的边上,缺口数就会多 4 个。
+ */
+const insetOne = (
+  cell: readonly [number, number],
+  lo: number,
+  hi: number,
+): readonly [number, number] => [
+  cell[0] === lo ? lo + 1 : cell[0] === hi ? hi - 1 : cell[0],
+  cell[1] === lo ? lo + 1 : cell[1] === hi ? hi - 1 : cell[1],
+];
+
+/** 一组格子框的 `[lo, hi]`,按四重旋转对称读成左右两侧(不写死 13/50 这种常数)。 */
+const boxOf = (
+  cells: readonly (readonly [number, number])[],
+  size: number,
+): readonly [number, number] => {
+  const lo = Math.min(...cells.map((cell) => cell[0]));
+  return [lo, size - 1 - lo];
+};
+
+/** 把若干格子画成一堵一堵墙(地形其余是平原),返回一张新图。 */
+const withWallCells = (
+  map: MapDefinition,
+  cells: readonly (readonly [number, number])[],
+): MapDefinition => {
+  const rows = blankGrid(map.size);
+  for (const [x, y] of cells) {
+    const row = rows[y] ?? "";
+    rows[y] = `${row.slice(0, x)}#${row.slice(x + 1)}`;
+  }
+  return { ...map, terrain: rows } as MapDefinition;
 };
 
 const poolWith = (pair: readonly [MapDefinition, MapDefinition]): readonly MapDefinition[] => [
@@ -361,6 +455,7 @@ it("两两 Jaccard 为 0 的合规池通过", () => {
 it("负对照:「同结构挪几格」那一档必被 0.15 挡住(0.2 那条线会放过它)", () => {
   // a 只有第 0 条轨道,b 是「同一条轨道 + 另外 5 条」:交集 4 格、并集 24 格 → J ≈ 0.167。
   // 这个数落在原型量到的缝里(真图 0.025 ↔ 最小结构共享 0.195),正是阈值从 0.2 收到 0.15 的理由。
+  // 原型那道 0.195 本身由下一条用例钉住,这条只管「从 0.2 收到 0.15」这个理由的另一端。
   const a = withWalls("a", [0]);
   const b = withWalls("b", [0, 1, 2, 3, 4]);
   const similarity = jaccardOf(a, b);
@@ -369,6 +464,28 @@ it("负对照:「同结构挪几格」那一档必被 0.15 挡住(0.2 那条线�
   const found = violationsOf(poolWith([a, b]));
   expect(found.map((violation) => violation.where)).toContain("a ↔ b");
   expect(found.map((violation) => violation.rule)).toContain("wall-jaccard-too-high");
+});
+
+it("负对照(真图):廊道图只把外环挪 1 格 = 0.195,必被 0.15 挡住(0.2 会放过它)", () => {
+  // 这条是判据的**存在理由**:原型量到的最小结构共享探针就是这张双环图「只把外环挪 1 格」。
+  // 它一直只活在注释里(spec《Testing Decisions》明写「这条是本判据存在的理由」),
+  // 于是本判据存在的理由没有任何测试守着。
+  //
+  // **落库没有让它不再是 0.195**:三张真图的墙格与原型 `quad.mjs` 逐格相同(逐格核对过),
+  // 所以探针从落库那张图上重跑得到的就是原型那个数。
+  const nudged = nudgedOuterRingByOne(CORRIDOR);
+  // 反例本身得是一张**合法的单图**:它只坏在池层那条 Jaccard 上。
+  expect(mapViolations(nudged)).toEqual([]);
+  // 交集 64(整个内环逐格不动)、并集 328 → 0.19512195…,与原型 report.mjs 的 0.195 同值。
+  const similarity = jaccardOf(CORRIDOR, nudged);
+  expect(similarity).toBeCloseTo(0.195, 3);
+  // 两个方向都要钉:0.15 挡住它(本判据存在的理由),0.2 放过它(阈值当初为什么从 0.2 收到 0.15)。
+  expect(similarity).toBeGreaterThan(MAX_WALL_JACCARD);
+  expect(similarity).toBeLessThanOrEqual(0.2);
+  const found = violationsOf([CORRIDOR, nudged, withWalls("third", [])]);
+  // 只坏在那一条:两图共享一整圈环带,但四方的初始条件与矿路逐格未动。
+  expect([...new Set(found.map((violation) => violation.rule))]).toEqual(["wall-jaccard-too-high"]);
+  expect(found[0]?.where).toBe("corridor-split ↔ corridor-split-nudged");
 });
 
 it("负对照:同风格只加密度(原型实测 0.509 那一档)必被挡住", () => {
