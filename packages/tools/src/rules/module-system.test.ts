@@ -61,6 +61,7 @@ it.each([
   ["无参 eval 算动态", "eval();\n", "module-system @ 1:1"],
   ["模板串含插值的 eval 算动态", "eval(`1${s}`);\n", "module-system @ 1:1"],
   ["字符串拼接的 eval 算动态:判据不做常量折叠", 'eval("1" + "1");\n', "module-system @ 1:1"],
+  ["无插值模板串同样算动态:判据不做常量折叠", "eval(`1+1`);\n", "module-system @ 1:1"],
   ["括号只做分组:剥掉它不改变实参是什么,变量仍算动态", "eval((s));\n", "module-system @ 1:1"],
   ["括号只做分组:内层仍是拼接,判据不做常量折叠", 'eval(("1" + "1"));\n', "module-system @ 1:1"],
   ["括号只做分组:内层仍是含插值的模板串", "eval((`1${s}`));\n", "module-system @ 1:1"],
