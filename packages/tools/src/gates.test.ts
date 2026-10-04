@@ -25,9 +25,12 @@
  *   - **落在根层那份真配置上**(参赛脚本编译配置那一节):门禁按路径列表逐个点名根层文件,
  *     所以「它到底在不在门里」只有一个测法——排版弄坏真的那份配置,看门禁说不说话,
  *     再按字节还原。它不是探针文件,所以不进 `PROBES`(没有第二次清理的机会)。
- *   - **落进真源与生成物**(生成器那一节):先改真源、不重跑生成器,规则层读到的还是上一版——
+ *   - **落在真源与生成物**(生成器那一节):先改真源、不重跑生成器,规则层读到的还是上一版——
  *     这本身是漂移检查(票 04)要抓的形态,但在本票里它有个更直接的后果可测:
  *     真源改了 + 重跑生成器,门禁判决必须跟着变。
+ *   - **落在数据文件上的真源**(规则文档数值表那一节):那一件生成物的真源不是 `.ts` 而是
+ *     `rulesets/v1.json`,所以「改真源」不需要先编过去——门禁当场读到的就是新值。
+ *     断言落在同一处:改了取值不重跑必须红,手改文档里那段表格也必须红。
  *   - **登记进注册表的新生成物**(漂移检查那一节):它必须**留在版本库之外**,否则第二刀就抓不到它,
  *     而落进 `dist/` 之类被忽略的目录会让它压根不进视野。所以它落在 `packages/tools/src/generated/`,
  *     并且进了 `PROBES` 列表。
@@ -699,6 +702,95 @@ it("生成器:区块正文被手改后重跑 → 填回去且不动散文;标记
     "读不出目标文件",
   );
   expect(noTarget.output, noTarget.output).toContain(SECTION_PROBE_BEGIN);
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+// ── 生成物漂移检查:规则文档的数值表(真源是数据文件,区块外散文不比) ─────────────────
+
+/** 数值表那两件区块形态生成物的落点,以及它们的真源取值文件。 */
+const RULESET_JSON = "rulesets/v1.json";
+const RULES_DOC = "docs/rules-v1/rules.md";
+const API_DOC = "docs/rules-v1/api.md";
+
+/**
+ * 改取值文件 → 跑 `body` → **按字节**还原,无论成败。
+ *
+ * 不经生成器还原,理由同 `withPatchedTruth`:否则这条反例的判决就依赖生成器是否正确。
+ * 这一件的特别之处是**真源是数据文件**,所以改完立刻可判——不需要先 `tsc -b` 把真源编过去,
+ * 门禁读的正是磁盘上那份 JSON。
+ */
+const withPatchedRuleset = (patch: (source: string) => string, body: () => Outcome): Outcome => {
+  const truth = `${repoRoot}${RULESET_JSON}`;
+  const original = readFileSync(truth, "utf8");
+  const patched = patch(original);
+  // 补丁没打上 = 判据随真源改了形状,这条用例会安静地测一个不存在的东西。必须当场红。
+  expect(patched, "补丁没有改动取值文件,这条反例不成立").not.toBe(original);
+  writeFileSync(truth, patched, "utf8");
+  try {
+    return body();
+  } finally {
+    writeFileSync(truth, original, "utf8");
+  }
+};
+
+it("生成物漂移检查:规则文档数值表——改取值不重跑 → 变红,两份文档同时说话,还原 → 变绿", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:改真源取值而**不重跑生成器**。两份文档里那段表格停在上一版,而检查当场读到的是新值。
+  const stale = withPatchedRuleset(
+    (source) => source.replace('"resourcePerSite": 200', '"resourcePerSite": 250'),
+    () => driftCheck(),
+  );
+  expect(stale.status, "改了取值不重跑生成器,漂移检查必须非零退出").toBe(1);
+  expect(stale.output, stale.output).toContain("区块与真源不一致");
+  // 同一份内容的两处落点必须**同时**说话:少一处,就是有一份文档挂的不是这份真源,
+  // 而它照样看起来是一份带表的文档。
+  expect(stale.output, "机制文档那份数值表没有判红").toContain(RULES_DOC);
+  expect(stale.output, "API 文档那份数值表没有判红").toContain(API_DOC);
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+it("生成物漂移检查:手改数值表区块正文 → 变红,手改表外散文 → 内容判定沉默,还原 → 变绿", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  const doc = `${repoRoot}${RULES_DOC}`;
+  const original = readFileSync(doc, "utf8");
+
+  // 形态一:改区块**外面**的一段散文。内容判定必须沉默——逐字节锁死整份文档的实现会把这一条变红,
+  // 那正是区块形态要兑掉的形态。版本库那一刀仍会说话(文件整体未提交),所以退出码仍是 1。
+  const prose = original.replace("# rules-v1 规则", "# rules-v1 规则(手写的一句话)");
+  expect(prose, "补丁没有改到散文,这条反例不成立").not.toBe(original);
+  writeFileSync(doc, prose, "utf8");
+  try {
+    const untouched = driftCheck();
+    expect(untouched.output, `手改散文却报内容不一致:\n${untouched.output}`).not.toContain(
+      "区块与真源不一致",
+    );
+  } finally {
+    writeFileSync(doc, original, "utf8");
+  }
+
+  // 形态二:改区块**里面**的一格(表格里的一个数字)。内容判定必须说话,并按标记指认是哪一段。
+  const tampered = original.replace("| `tickLimit` | 600 |", "| `tickLimit` | 999 |");
+  expect(tampered, "补丁没有改到表格,这条反例不成立").not.toBe(original);
+  writeFileSync(doc, tampered, "utf8");
+  try {
+    const violated = driftCheck();
+    expect(violated.status, "手改区块正文必须非零退出").toBe(1);
+    expect(violated.output, violated.output).toContain("区块与真源不一致");
+    expect(violated.output, violated.output).toContain(
+      "<!-- generated:rules-v1-value-table:begin -->",
+    );
+    // 只动了机制文档那一份,API 文档那份逐字节未动:报告不该把它一起点名
+    // (那会让「哪一段漂了」这条信息变得没法用)。
+    expect(violated.output, "没被动过的那一份也被点名了").not.toContain("api-v1-value-table");
+  } finally {
+    writeFileSync(doc, original, "utf8");
+  }
 
   expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
 });
