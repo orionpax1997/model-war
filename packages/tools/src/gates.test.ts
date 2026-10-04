@@ -47,6 +47,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
 
+import { sectionMarker } from "./generate/section.ts";
+
 const here = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
 const repoRoot = here("../../../");
 const bin = (name: string): string => here(`../../../node_modules/.bin/${name}`);
@@ -73,6 +75,7 @@ const script = (name: string, args: readonly string[] = []): Outcome =>
 const EXTRA_ARTIFACT_PATH = "packages/tools/src/generated/__drift-probe.ts";
 const IGNORED_ARTIFACT_PATH = "packages/tools/dist/__drift-probe.ts";
 const UNRELATED_NOISE_PATH = "docs/__drift-noise-probe.md";
+const SECTION_PROBE_PATH = "docs/__section-probe.md";
 
 /** 本文件用过的全部探针路径。 */
 const PROBES = [
@@ -86,6 +89,7 @@ const PROBES = [
   EXTRA_ARTIFACT_PATH,
   IGNORED_ARTIFACT_PATH,
   UNRELATED_NOISE_PATH,
+  SECTION_PROBE_PATH,
 ] as const;
 
 /** 放一个探针进去,跑 `body`,无论成败都把它撤掉。 */
@@ -195,6 +199,7 @@ it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", (
 /** 白名单的真源与它的生成物。规则层读的是后者,所以只改前者不会有任何效果——必须重跑。 */
 const SCHEMA_ALLOWLIST = "packages/schema/src/builtin-globals.ts";
 const GENERATED_ALLOWLIST = "packages/tools/src/generated/builtin-globals.ts";
+const GENERATED_SCRIPT_SURFACE = "packages/tools/src/generated/script-surface.ts";
 
 /** 探针:一条用到 `Math.abs` 的运行时代码。 */
 const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
@@ -292,6 +297,47 @@ it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变",
 /** 漂移检查的命名脚本。它需要构建前置(生产函数 import 真源包),所以只挂在全量门禁末尾。 */
 const driftCheck = (): Outcome => script("check:drift");
 
+/**
+ * 往注册表数组字面量里插一条生成物声明,跑 `body`,无论成败都把注册表**按字节**还原。
+ *
+ * 注册表数组字面量的首行与末行是**结构性锚点**,不写死整条声明。
+ *
+ * 写死 `= [builtinGlobalsAllowlist];` 这种整条文本是脆的:第二件生成物(参赛脚本可见面的
+ * 三张名单)一注册进来,锚点就不存在了,这条反例会以「注册表的锚点变了」红掉——
+ * 而注册表按设计就是**加一行**的事(文档生成那几件还会再加几行),拿它当锚点等于
+ * 把「加一行」的纪律钉死成「注册表永远只有一件」。所以只认首行(`= [`)与末行(`];`),
+ * 件数与内容都不参与匹配。
+ *
+ * 插在末尾的 `];` 之前,而不是切字符:切一个字符会把数组提前闭合,一个漏掉的逗号会让它
+ * 变成语法错误——两份错法都会被门禁报成「注册表坏了」,不是「生成物没入库」,
+ * 于是这条反例测的根本不是它要测的那件事。
+ *
+ * 声明是**源码文本**而不是真构造出来的对象:注册表是代码里的字面量,而门禁跑的就是那份源码。
+ * 所以 `form` 这类契约字段必须一并写全——漏了它,这条反例会因为「形态不完整」而不是因为
+ * 它要测的那件事变红。
+ */
+const withRegistryEntry = (entry: string, body: () => Outcome): Outcome => {
+  const registry = `${repoRoot}packages/tools/src/generate/registry.ts`;
+  const original = readFileSync(registry, "utf8");
+
+  const arrayOpen = "export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [";
+  const closeAt = original.lastIndexOf("\n];");
+  expect(original, "注册表的形状变了(找不到数组字面量的开头)").toContain(arrayOpen);
+  expect(closeAt, "注册表的形状变了(找不到数组字面量的结尾)").toBeGreaterThan(0);
+  const arrayEnd = original.slice(closeAt, closeAt + 3);
+
+  writeFileSync(
+    registry,
+    original.slice(0, closeAt + 1) + entry + arrayEnd + original.slice(closeAt + 3),
+    "utf8",
+  );
+  try {
+    return body();
+  } finally {
+    writeFileSync(registry, original, "utf8");
+  }
+};
+
 it("生成物漂移检查:改真源不重跑 → 变红,重跑并提交 → 变绿", () => {
   const clean = driftCheck();
   expect(clean.status, clean.output).toBe(0);
@@ -358,56 +404,28 @@ it("生成物漂移检查:生成物被手改 → 变红,按字节还原 → 变�
 });
 
 it("生成物漂移检查:新增一件生成物但没进版本库 → 变红", () => {
-  const registry = `${repoRoot}packages/tools/src/generate/registry.ts`;
-  const original = readFileSync(registry, "utf8");
-
-  /**
-   * 注册表数组字面量的首行与末行——**结构性锚点**,不写死整条声明。
-   *
-   * 写死 `= [builtinGlobalsAllowlist];` 这种整条文本是脆的:第二件生成物(参赛脚本可见面的
-   * 三张名单)一注册进来,锚点就不存在了,这条反例会以「注册表的锚点变了」红掉——
-   * 而注册表按设计就是**加一行**的事(E 接入文档生成时还会再加两行),拿它当锚点等于
-   * 把「加一行」的纪律钉死成「注册表永远只有一件」。所以只认首行(`= [`)与末行(`];`),
-   * 件数与内容都不参与匹配。
-   */
-  const arrayOpen = "export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [";
-  const closeAt = original.lastIndexOf("\n];");
-  expect(original, "注册表的形状变了(找不到数组字面量的开头)").toContain(arrayOpen);
-  expect(closeAt, "注册表的形状变了(找不到数组字面量的结尾)").toBeGreaterThan(0);
-  const arrayEnd = original.slice(closeAt, closeAt + 3);
-
   /**
    * 把一件新生成物登记进注册表(内容与生产函数逐字节一致,所以一致性那一段是绿的),
    * 按 `path` 写出它的文件,跑 `body`,无论成败都把注册表与文件按字节还原。
-   *
-   * 插在末尾的 `];` 之前,而不是切字符:切一个字符会把数组提前闭合,一个漏掉的逗号会让它
-   * 变成语法错误——两份错法都会被门禁报成「注册表坏了」,不是「生成物没入库」,
-   * 于是这条反例测的根本不是它要测的那件事。
    */
-  const withRegisteredArtifact = (path: string, body: () => Outcome): Outcome => {
-    writeFileSync(
-      registry,
-      original.slice(0, closeAt) +
-        `  {\n    id: "drift-probe",\n    path: "${path}",\n` +
-        `    produce: () => "export const driftProbe: readonly string[] = [];\\n",\n  },\n` +
-        arrayEnd +
-        original.slice(closeAt + 3),
-      "utf8",
+  const withRegisteredArtifact = (path: string, body: () => Outcome): Outcome =>
+    withRegistryEntry(
+      `  {\n    id: "drift-probe",\n    form: "whole-file",\n    path: "${path}",\n` +
+        `    produce: () => "export const driftProbe: readonly string[] = [];\\n",\n  },`,
+      () => {
+        mkdirSync(dirname(`${repoRoot}${path}`), { recursive: true });
+        writeFileSync(
+          `${repoRoot}${path}`,
+          "export const driftProbe: readonly string[] = [];\n",
+          "utf8",
+        );
+        try {
+          return body();
+        } finally {
+          rmSync(`${repoRoot}${path}`, { force: true });
+        }
+      },
     );
-    mkdirSync(dirname(`${repoRoot}${path}`), { recursive: true });
-    writeFileSync(
-      `${repoRoot}${path}`,
-      "export const driftProbe: readonly string[] = [];\n",
-      "utf8",
-    );
-
-    try {
-      return body();
-    } finally {
-      writeFileSync(registry, original, "utf8");
-      rmSync(`${repoRoot}${path}`, { force: true });
-    }
-  };
 
   // 形态一:文件在生成物目录下、内容正确、但没 `git add`。版本两刀里只有「在不在版本库里」
   // 那一刀能看见它——差异检查对未跟踪文件一律沉默,而第一件生成物正是新增的。
@@ -464,6 +482,225 @@ it("生成物漂移检查挂在全量门禁末尾,且不进快门禁", () => {
   // 「零构建」没法直接断言,能断言的是它没被挂进快门禁这条链里。
   expect(manifest.scripts["check:quick"]).not.toContain("check:drift");
   expect(manifest.scripts["check:types"]).not.toContain("check:drift");
+});
+
+// ── 生成物漂移检查:区块形态(一份文件里的某一段是生成物) ─────────────────────────
+
+/**
+ * 探针区块的定界标记与真源产出的正文。
+ *
+ * 标记**取自 `sectionMarker(id)`** 而不是在这里重写一遍字面量:它必须只由 `id` 决定才叫稳定串,
+ * 而「这个默认形状有没有人走」正是靠探针走它来回答的——在这里另抄一份字面量,那个默认就会变成
+ * 一个没人走过的死代码,而没人走过的默认值等于没有默认值(票 04 起的每一件都得自己重新想一遍形状)。
+ * 报告里指认区块用的仍然是这两个串,断言的是门禁的外部输出。
+ */
+const SECTION_PROBE_MARKER = sectionMarker("section-probe");
+const SECTION_PROBE_BEGIN = SECTION_PROBE_MARKER.begin;
+const SECTION_PROBE_END = SECTION_PROBE_MARKER.end;
+const SECTION_PROBE_BLOCK = ["| 一 | 二 |", "| --- | --- |", "| 1 | 2 |"];
+
+/** 真源产出的区块正文:末尾带换行,与文档里夹住的那段逐字节相同。 */
+const sectionProbeContent = (block: readonly string[]): string => `${block.join("\n")}\n`;
+
+/** 探针文档:散文 + 区块 + 散文。散文刻意留在两侧——它就是「不比」的那半边。 */
+const sectionProbeDoc = (block: readonly string[]): string =>
+  [
+    "# 区块探针",
+    "",
+    "上面这段散文不在区块里,手改它漂移检查不该管。",
+    "",
+    SECTION_PROBE_BEGIN,
+    ...block,
+    SECTION_PROBE_END,
+    "",
+    "下面这段散文同样不比。",
+    "",
+  ].join("\n");
+
+/** 整段被删掉之后的样子:两行标记与区块正文都没了,剩下的全是散文。 */
+const sectionProbeDocWithoutSection = (): string =>
+  [
+    "# 区块探针",
+    "",
+    "上面这段散文不在区块里,手改它漂移检查不该管。",
+    "",
+    "下面这段散文同样不比。",
+    "",
+  ].join("\n");
+
+/**
+ * 登记一件**区块形态**的生成物(真源产出的正文恒为 `SECTION_PROBE_BLOCK`),写出文档 `doc`
+ * (`undefined` = 文档根本不存在),跑 `body`,无论成败都还原注册表与文档。
+ *
+ * 真源与文档分开传:反例要动的永远是**文档**那一侧,而真源那侧一动,红的原因就变成「真源改了」,
+ * 不是「文档被手改」了。两者同源是基线的前提,所以基线里它们必须逐字节相同。
+ *
+ * `doc` 传 `undefined` 是为着把「落点还没有」与「落点上没有标记」分开:生成器对前者与后者
+ * 都非零退出,但两条的处方不同(先建文件 / 把标记写回去),报告要说得出是哪一种。
+ */
+const withSectionProbe = (doc: string | undefined, body: () => Outcome): Outcome => {
+  const entry =
+    `  {\n    id: "section-probe",\n    form: "section",\n    path: "${SECTION_PROBE_PATH}",\n` +
+    `    produce: () => ({\n` +
+    `      marker: { begin: "${SECTION_PROBE_BEGIN}", end: "${SECTION_PROBE_END}" },\n` +
+    `      content: ${JSON.stringify(sectionProbeContent(SECTION_PROBE_BLOCK))},\n` +
+    `    }),\n  },`;
+  return withRegistryEntry(entry, () => {
+    if (doc !== undefined) {
+      writeFileSync(`${repoRoot}${SECTION_PROBE_PATH}`, doc, "utf8");
+    }
+    try {
+      return body();
+    } finally {
+      rmSync(`${repoRoot}${SECTION_PROBE_PATH}`, { force: true });
+    }
+  });
+};
+
+/** 内容判定(①)说话时必出的两个片段。版本库那两刀(未提交 / 未跟踪)说话时**不带**这两个。 */
+const SECTION_CONTENT_VERDICTS = ["区块与真源不一致", "抽不出区块"];
+
+/**
+ * 跑 `body`,无论成败都把两件已入库的生成物**按字节**还原。
+ *
+ * 理由同 `withPatchedTruth`:`generate` 是逐件重写注册表上的**每一件**,所以它跑一次就把工作树
+ * 改成了「本机 dist 里的真源」那个形态。不还原的话,红着的就变成了真实的漂移,后面每一条
+ * 「回到绿」的断言都跟着失效——而那些断言正是防止一条永远红的假门禁混过去的那道。
+ */
+const withGeneratedArtifactsRestored = (body: () => Outcome): Outcome => {
+  const snapshots = [GENERATED_ALLOWLIST, GENERATED_SCRIPT_SURFACE].map((path) => ({
+    path,
+    text: readFileSync(`${repoRoot}${path}`, "utf8"),
+  }));
+  try {
+    return body();
+  } finally {
+    for (const snapshot of snapshots) {
+      writeFileSync(`${repoRoot}${snapshot.path}`, snapshot.text, "utf8");
+    }
+  }
+};
+
+it("生成物漂移检查:区块形态——改正文、删整段、改标记都判红,改散文不管", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  /**
+   * 基线:区块与真源逐字节相同。
+   *
+   * 它仍然是红的——一件**运行期登记**的生成物按定义没被 `git add`,所以版本库那两刀一定要说话,
+   * 而内容判定必须沉默。这个区分是这一节全部断言的前提:不先把它立住,「所有形态都红」
+   * 也能满足下面每一条断言。
+   */
+  const installed = withSectionProbe(sectionProbeDoc(SECTION_PROBE_BLOCK), () => driftCheck());
+  expect(installed.status, "运行期登记的生成物必然红在版本库那一层").toBe(1);
+  expect(installed.output, installed.output).toContain("不在版本库里");
+  for (const verdict of SECTION_CONTENT_VERDICTS) {
+    expect(
+      installed.output,
+      `内容逐字节相同却报「${verdict}」:\n${installed.output}`,
+    ).not.toContain(verdict);
+  }
+
+  // 散文两侧被手改:内容判定仍然沉默。逐字节比整份的实现会把这一条变红——
+  // 那就是「区块形态」这条能力没兑现的形态。
+  const prose = withSectionProbe(
+    `${sectionProbeDoc(SECTION_PROBE_BLOCK)}\n又一段手写的散文。\n`,
+    () => driftCheck(),
+  );
+  for (const verdict of SECTION_CONTENT_VERDICTS) {
+    expect(prose.output, `手改散文却报「${verdict}」:\n${prose.output}`).not.toContain(verdict);
+  }
+
+  // 反例①:区块正文被手改(表格里一个数字)。内容判定必须说话。
+  const tampered = withSectionProbe(
+    sectionProbeDoc([...SECTION_PROBE_BLOCK.slice(0, 2), "| 1 | 999 |"]),
+    () => driftCheck(),
+  );
+  expect(tampered.status, "区块正文被手改必须非零退出").toBe(1);
+  expect(tampered.output, tampered.output).toContain("区块与真源不一致");
+  // 报告按标记指认是哪一段:只有 id 与路径,人看不出是哪一区块被手改了。
+  expect(tampered.output, tampered.output).toContain(SECTION_PROBE_BEGIN);
+
+  // 反例②:整段(两行标记 + 正文)被删。「让检查没东西可查」就是绕过检查的路,
+  // 所以**抽不出区块必须按漂移报出来**,而不是悄悄跳过这一件。
+  const removed = withSectionProbe(sectionProbeDocWithoutSection(), () => driftCheck());
+  expect(removed.status, "整段被删必须非零退出").toBe(1);
+  expect(removed.output, removed.output).toContain("抽不出区块");
+  expect(removed.output, "删掉整段后必须说得出是整段没了").toContain("整段被删");
+  expect(removed.output, "报告必须仍指着这一件生成物").toContain(SECTION_PROBE_BEGIN);
+
+  // 反例③:标记被手改(区块正文一字未动)。少了这一条,「改掉标记另立一段」的形态没人管。
+  const markerTampered = withSectionProbe(
+    sectionProbeDoc(SECTION_PROBE_BLOCK).replace("section-probe:begin", "section-probe:start"),
+    () => driftCheck(),
+  );
+  expect(markerTampered.status, "标记被手改必须非零退出").toBe(1);
+  expect(markerTampered.output, markerTampered.output).toContain("抽不出区块");
+  expect(markerTampered.output, "只剩一端标记要说得出是哪一种").toContain("只剩一端");
+
+  // 反例④:只删掉**末行**那一行标记(起点还在)。它与上面三条都不同路:起点找得到、
+  // 整条正则匹配不上。少了这一条,「删掉一端标记、留另一端顶着」就是一条没人管的绕过面。
+  const endGone = withSectionProbe(
+    sectionProbeDoc(SECTION_PROBE_BLOCK).replace(`${SECTION_PROBE_END}\n`, ""),
+    () => driftCheck(),
+  );
+  expect(endGone.status, "末行标记被删必须非零退出").toBe(1);
+  expect(endGone.output, endGone.output).toContain("抽不出区块");
+  expect(endGone.output, "只删一端标记要说得出是哪一种").toContain("只剩一端");
+  expect(endGone.output, "报告必须仍指着这一件生成物").toContain(SECTION_PROBE_BEGIN);
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+it("生成器:区块正文被手改后重跑 → 填回去且不动散文;标记没了则拒绝硬填", () => {
+  // 反向的一条缝:填与抽是同一份机械(`section.ts`),所以「生成器写的」与「检查比的」必须是同一段字节。
+  // 文档里的正文被手改 + 散文被手改,重跑之后:正文回到真源产出,散文一字不动。
+  const docBefore = sectionProbeDoc([...SECTION_PROBE_BLOCK.slice(0, 2), "| 1 | 999 |"]);
+  const proseLine = "又一段手写的散文。\n";
+
+  withGeneratedArtifactsRestored(() =>
+    withSectionProbe(`${docBefore}\n${proseLine}`, () => {
+      const generated = script("generate");
+      expect(generated.status, `生成器自身非零退出:\n${generated.output}`).toBe(0);
+
+      const filled = readFileSync(`${repoRoot}${SECTION_PROBE_PATH}`, "utf8");
+      expect(filled, "重跑后区块正文应当被填回真源产出").toContain(
+        sectionProbeContent(SECTION_PROBE_BLOCK),
+      );
+      expect(filled, "重跑后区块外的散文必须逐字节不动").toContain(proseLine);
+
+      const after = driftCheck();
+      expect(after.output, `生成器填回去了,内容判定还在说话:\n${after.output}`).not.toContain(
+        "区块与真源不一致",
+      );
+      // 生成器已经把它能做的做完了,剩下的红只来自版本库那一层(探针没入库),
+      // 内容判定沉默就是这一条要的证据。
+      expect(after.status, "重跑之后只剩版本库那一层在红").toBe(1);
+      expect(after.output, after.output).toContain("不在版本库里");
+      return after;
+    }),
+  );
+
+  // 标记被删掉后重跑:生成器不猜这段该落在哪,非零退出并说明原因。
+  const noMarker = withGeneratedArtifactsRestored(() =>
+    withSectionProbe(sectionProbeDocWithoutSection(), () => script("generate")),
+  );
+  expect(noMarker.status, "目标文件里没有定界标记时生成器必须非零退出").toBe(1);
+  expect(noMarker.output, noMarker.output).toContain("生成器:section-probe");
+  expect(noMarker.output, noMarker.output).toContain(SECTION_PROBE_BEGIN);
+
+  // 落点根本不存在(与「有文件、没有标记」分开):处方不同,报告也得说得出是哪一种。
+  const noTarget = withGeneratedArtifactsRestored(() =>
+    withSectionProbe(undefined, () => script("generate")),
+  );
+  expect(noTarget.status, "区块形态的落点不存在时生成器必须非零退出").toBe(1);
+  expect(noTarget.output, "报告必须说得出是落点还没有,而不是让人去找标记").toContain(
+    "读不出目标文件",
+  );
+  expect(noTarget.output, noTarget.output).toContain(SECTION_PROBE_BEGIN);
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
 });
 
 // ── 依赖门禁反例:注入违规,确认规则真的挂在图上 ────────────────────────────────
