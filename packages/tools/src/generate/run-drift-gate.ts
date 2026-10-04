@@ -11,8 +11,12 @@
  *
  * ── 三段判定:前一段管内容,后两刀管版本库 ──
  *
- * ① **一致性**:`produce()` 的输出与工作树里那个文件逐字节比。抓「改了真源没重跑」(文件停在
- *    上一版)与「生成物被手改 / 被删」(文件不再是真源现在会产出的东西)。
+ * ① **一致性**:真源现在会产出的东西,与工作树里那个文件是不是同一份。**整文件形态**整份逐字节比;
+ *    **区块形态**按定界标记抽出那一段逐字节比,区块外的散文不比(散文逐字节锁死等于让人不敢改文档)。
+ *    抽与填共用 `section.ts` 那一份机械,所以「比的那段」与「生成器填的那段」不可能是两个口径。
+ *    抓「改了真源没重跑」(文件停在上一版)与「生成物被手改 / 被删」(文件不再是真源现在会产出的东西)。
+ *    **抽不出区块按漂移报,不按「无事可查」跳过**:标记被手改、整段被删、只删了一端标记,
+ *    三条都是绕过检查的路,而它们全落在「抽不到区块」这一支上——折算成一致,这三张牌就都是通的。
  * ② **第一刀(差异)**:`git diff --quiet HEAD -- <生成物路径>`。抓「生成了但没提交」。
  *    **限定在生成物路径上**,是为了不误报:开发者工作树里别的未提交内容与这道检查无关,
  *    而裸的 `git diff --exit-code` 会把它们一并报出来,于是报错指向错误的地方。
@@ -21,6 +25,8 @@
  *    「新增生成物没进版本库」——① 与 ② 都看不见未跟踪文件,而本 feature 的第一件生成物正是新增的,
  *    它若没被提交,两刀差异检查依然全绿。被 `.gitignore` 命中的生成物同样按失败处理:
  *    它在 `status` 与 `ls-files` 里连痕迹都不留,却同样进不了干净克隆。
+ *
+ * ② 与 ③ 对两种形态一视同仁:它们只看 `path`,而 `path` 是两种形态共有的落点。
  *
  * 路径清单来自 `GENERATED_ARTIFACTS` 本身、**不另存一份**:注册表加一件生成物,三段判定自动跟着覆盖。
  * 反过来,这也是为什么 ② 的路径限定不能写成「仓库根」——限定一旦放宽,误报防护就没了。
@@ -33,6 +39,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { GENERATED_ARTIFACTS } from "./registry.ts";
+import { readSection } from "./section.ts";
+import type { GeneratedArtifact } from "./artifact.ts";
 
 /** 本文件在 `<repo>/packages/tools/src/generate/` 下,上溯四层是仓库根。 */
 const repoRoot = resolve(import.meta.dirname, "../../../..");
@@ -59,6 +67,45 @@ const lines = (text: string): string[] =>
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
+/**
+ * ① 的判定:一件生成物在工作树里的现状,是不是真源现在会产出的东西。返回 finding(空数组 = 一致)。
+ *
+ * 整文件与区块走两段判定,报告文本也分开——因为「整份不一致」与「抽不出区块」要开的药方不同:
+ * 前者跑生成器就行,后者多半是标记那两行被手改了。
+ */
+const consistencyFindings = (artifact: GeneratedArtifact, actual: string): readonly string[] => {
+  if (artifact.form === "whole-file") {
+    return artifact.produce() === actual
+      ? []
+      : [
+          `${artifact.id}:生成物与真源不一致(${artifact.path})——真源改了没重跑,或生成物被手改。` +
+            `跑 \`pnpm run generate\` 后提交。`,
+        ];
+  }
+
+  const section = artifact.produce();
+  const read = readSection(actual, section.marker);
+  if (read.state !== "found") {
+    // 三条绕过检查的路(标记被手改 / 整段被删 / 只删了一端)全落在这里。**不折算成一致**:
+    // 折算了就是一条永远绿的检查,后面三个报告片段一个也不会出现。
+    const cause =
+      read.state === "unmarked"
+        ? "文件里一行定界标记都没有(整段被删,或标记被手改)"
+        : "定界标记只剩一端(或终点排在起点之前)";
+    return [
+      `${artifact.id}:抽不出区块(${artifact.path},标记 ${section.marker.begin})——${cause}。` +
+        `按漂移报出来:让检查没东西可查就是绕过检查。撤销手改,或把标记行写回去后跑 ` +
+        `\`pnpm run generate\` 重新填入。`,
+    ];
+  }
+  return read.content === section.content
+    ? []
+    : [
+        `${artifact.id}:区块与真源不一致(${artifact.path},标记 ${section.marker.begin})——` +
+          `真源改了没重跑,或区块被手改。跑 \`pnpm run generate\` 后提交。`,
+      ];
+};
+
 const main = (): number => {
   const findings: string[] = [];
 
@@ -73,7 +120,6 @@ const main = (): number => {
 
   // ① 一致性:真源现在会产出的东西,与工作树里那个文件是不是同一份。
   for (const artifact of GENERATED_ARTIFACTS) {
-    const expected = artifact.produce();
     let actual: string;
     try {
       actual = readFileSync(resolve(repoRoot, artifact.path), "utf8");
@@ -83,12 +129,7 @@ const main = (): number => {
       );
       continue;
     }
-    if (actual !== expected) {
-      findings.push(
-        `${artifact.id}:生成物与真源不一致(${artifact.path})——真源改了没重跑,或生成物被手改。` +
-          `跑 \`pnpm run generate\` 后提交。`,
-      );
-    }
+    findings.push(...consistencyFindings(artifact, actual));
   }
 
   // ② 第一刀:对 HEAD 的差异,只限定在生成物路径上。
