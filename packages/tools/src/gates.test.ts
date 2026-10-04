@@ -80,6 +80,16 @@ const IGNORED_ARTIFACT_PATH = "packages/tools/dist/__drift-probe.ts";
 const UNRELATED_NOISE_PATH = "docs/__drift-noise-probe.md";
 const SECTION_PROBE_PATH = "docs/__section-probe.md";
 
+/**
+ * 契约自证门禁那条反例用的违规脚本探针(反例①)。
+ *
+ * 落点与别的探针同一形态:`packages/tools/src` 下的 `.js`——各包 tsconfig 的 `include` 只收 `.ts`
+ * 且不开 `allowJs`,所以它进得了桩的装载、进不了 `tsc -b`,反例只证明它该证明的那一件事。
+ * 它**刻意不含 `import` / `export`**:那两条虽然也违规,但会让桩在装载产物时抛异常,
+ * 门禁读到的是「跑批崩了」,而不是「静态校验器判它红」——那证明不了①这一问。
+ */
+const VIOLATING_SCRIPT_PROBE_PATH = "packages/tools/src/selfproof/__selfproof-probe.js";
+
 /** 本文件用过的全部探针路径。 */
 const PROBES = [
   "packages/schema/src/__fmt-probe.js",
@@ -93,6 +103,7 @@ const PROBES = [
   IGNORED_ARTIFACT_PATH,
   UNRELATED_NOISE_PATH,
   SECTION_PROBE_PATH,
+  VIOLATING_SCRIPT_PROBE_PATH,
 ] as const;
 
 /** 放一个探针进去,跑 `body`,无论成败都把它撤掉。 */
@@ -110,6 +121,35 @@ afterAll(() => {
     rmSync(`${repoRoot}${probe}`, { force: true });
   }
 });
+
+// ── 全量门禁末尾那一组:提交内容复核 ───────────────────────────────────────────
+//
+// 三道门禁共享同一条位置纪律:**「提交内容对不对」的复核都挂在 `check` 末尾**,
+// 排在编译、静态、单测与依赖方向那几道各自独立的检查之后。
+// 这个清单只在这里写一份,由下面三处断言共用:写成三份 `slice(-2)` 的话,加一道门禁要改三处,
+// 而三处里漏掉一处的后果是「有一道复核其实不在末尾」没人发现。
+//
+// 为什么是清单而不是「最后 N 步」:纪律是「末尾那几道都是复核」,不是「末尾恰好 N 道」。
+// 清单可枚举,N 会漂——多一道或少一道,前者让断言变红,后者让它安静地放过一道混进末尾的新检查。
+
+/** 挂在 `check` 末尾的提交内容复核(逐条写出来,顺序不钉死)。 */
+const CONTENT_RECHECKS = [
+  "pnpm run check:drift",
+  "pnpm run check:bench",
+  "pnpm run check:selfproof",
+] as const;
+
+type Manifest = { scripts: Record<string, string> };
+
+const manifest = (): Manifest =>
+  JSON.parse(readFileSync(`${repoRoot}package.json`, "utf8")) as Manifest;
+
+/** 全量门禁末尾那一组(取与复核清单等长的一段)。 */
+const tailSteps = (): string[] =>
+  (manifest().scripts["check"] ?? "")
+    .split("&&")
+    .map((step) => step.trim())
+    .slice(-CONTENT_RECHECKS.length);
 
 // ── 分层门禁在空壳上各自退出 0 ────────────────────────────────────────────────
 
@@ -502,23 +542,13 @@ it("生成物漂移检查:工作树里有与生成物无关的未提交内容时
 });
 
 it("生成物漂移检查挂在全量门禁末尾,且不进快门禁", () => {
-  const manifest = JSON.parse(readFileSync(`${repoRoot}package.json`, "utf8")) as {
-    scripts: Record<string, string>;
-  };
-
-  // 挂在末尾而不是中间:前面几道各自独立,末尾那几道是「提交内容对不对」的复核。
-  // 取最后两步而不是「整个字符串的结尾」:末尾不止一道(漂移检查、基准产物门禁),
-  // 把「哪一道排最后」当成纪律的话,加一道门禁就得改这条断言——而那正是纪律失效的样子。
-  const tail = (manifest.scripts["check"] ?? "")
-    .split("&&")
-    .slice(-2)
-    .map((step) => step.trim());
-  expect(tail, "漂移检查不在全量门禁的末尾两步里").toContain("pnpm run check:drift");
+  // 挂在末尾而不是中间:前面几道各自独立,末尾那几道是「提交内容对不对」的复核(清单见上)。
+  expect(tailSteps(), "漂移检查不在全量门禁末尾那一组复核里").toContain("pnpm run check:drift");
 
   // 不进快门禁的理由是它需要一次 `tsc -b`,而快门禁的零构建性质不能破(ADR-0003 的混合传输)。
   // 「零构建」没法直接断言,能断言的是它没被挂进快门禁这条链里。
-  expect(manifest.scripts["check:quick"]).not.toContain("check:drift");
-  expect(manifest.scripts["check:types"]).not.toContain("check:drift");
+  expect(manifest().scripts["check:quick"]).not.toContain("check:drift");
+  expect(manifest().scripts["check:types"]).not.toContain("check:drift");
 });
 
 // ── 生成物漂移检查:区块形态(一份文件里的某一段是生成物) ─────────────────────────
@@ -1104,20 +1134,91 @@ it("基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原
 });
 
 it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
-  const manifest = JSON.parse(readFileSync(`${repoRoot}package.json`, "utf8")) as {
-    scripts: Record<string, string>;
-  };
-
-  // 与漂移检查同一位置纪律:提交内容对不对的那几道复核都在末尾(末尾两步里的另一半)。
-  const tail = (manifest.scripts["check"] ?? "")
-    .split("&&")
-    .slice(-2)
-    .map((step) => step.trim());
-  expect(tail, "基准产物门禁不在全量门禁的末尾两步里").toContain("pnpm run check:bench");
+  // 与漂移检查同一位置纪律:提交内容对不对的那几道复核都在末尾(清单见上)。
+  expect(tailSteps(), "基准产物门禁不在全量门禁末尾那一组复核里").toContain("pnpm run check:bench");
 
   // 它要 spawn 一次 tsc,与快门禁的零构建性质不相容(理由同 check:drift)。
-  expect(manifest.scripts["check:quick"]).not.toContain("check:bench");
-  expect(manifest.scripts["check:types"]).not.toContain("check:bench");
+  expect(manifest().scripts["check:quick"]).not.toContain("check:bench");
+  expect(manifest().scripts["check:types"]).not.toContain("check:bench");
+});
+
+// ── 契约自证门禁:四问的退出码与三个反例 ────────────────────────────────────
+//
+// 这一节的每一条都跑**整张矩阵**(4 臂 × 4 座位轮转 × 4 种子 = 64 场,单次约一分半),
+// 所以形态与前面几节不同:基线绿只跑一次(单独一条用例),每条反例只跑「红 → 还原 → 绿」两次。
+// 少掉的那次基线不是证据变薄——「还原后回到绿」与「基线是绿的」证明的是同一件事。
+
+const selfproof = (args: readonly string[] = []): Outcome => script("check:selfproof", args);
+
+it("契约自证门禁:四问全绿", () => {
+  const result = selfproof();
+  expect(result.status, result.output).toBe(0);
+  // 报告要说得出四问各自的判据读数,而不只是一个「绿」——否则红起来时没人知道是哪一问。
+  expect(result.output, result.output).toContain("① 零静态违规：过");
+  expect(result.output, result.output).toContain("② 正常终局：过");
+  expect(result.output, result.output).toContain("③ 消耗 ≤ 总储量 1/4");
+  expect(result.output, result.output).toContain("④ 取策略互不相同：过");
+  // 夹具闸门先于正表:锚点漂了就不该有正表的读数,所以这一行必须在场。
+  expect(result.output, "报告里没有夹具闸门的锚点读数").toContain("p100=479");
+});
+
+it("契约自证门禁:把配额改小 → ③ 变红,还原 → 绿", () => {
+  // 配额是③的判据本身(默认总储量的 1/4),把它改到 6% 就低于 A 的实际消耗中位(6.9%)。
+  const shrunk = selfproof(["--quota-percent=6"]);
+  expect(shrunk.status, `配额改小后门禁仍为绿:\n${shrunk.output}`).toBe(1);
+  expect(shrunk.output, shrunk.output).toContain("③ 消耗 ≤ 总储量 1/4（配额 6%");
+  expect(shrunk.output, shrunk.output).toContain("**不过**");
+  // 红的原因得是③而不是别的:另外三问仍然过。
+  expect(shrunk.output, "红的原因不是③").toContain("契约自证门禁:红（① 过 ② 过 ③ 不过 ④ 过）");
+
+  expect(selfproof().status, "配额还原后没有回到绿").toBe(0);
+});
+
+it("契约自证门禁:把一份产物换成违规脚本 → ① 变红,撤掉探针 → 绿", () => {
+  const violated = withProbeFile(
+    VIOLATING_SCRIPT_PROBE_PATH,
+    [
+      "// 故意违规的参赛脚本:确定性污染源 + 宿主桥 + 浮点字面量。",
+      "function loop() {",
+      "    const noise = Math.random() * 100;",
+      "    console.log(__peekHost(noise), Date.now(), performance.now());",
+      "}",
+      "",
+    ].join("\n"),
+    () => selfproof([`--script-a=${repoRoot}${VIOLATING_SCRIPT_PROBE_PATH}`]),
+  );
+  expect(violated.status, `换成违规脚本后门禁仍为绿:\n${violated.output}`).toBe(1);
+  expect(violated.output, violated.output).toContain("① 零静态违规：**不过**");
+  // 判红的依据是静态校验器自己的报告,不是本门禁的一句话。
+  expect(violated.output, "报告里没有静态校验器的违规原文").toContain("禁列全局名");
+  expect(violated.output, violated.output).toContain("宿主桥前缀");
+
+  expect(selfproof().status, "撤掉探针后没有回到绿").toBe(0);
+});
+
+it("契约自证门禁:三份换成同一份 → ④ 变红,还原 → 绿", () => {
+  const same = selfproof(["--same-script"]);
+  expect(same.status, `三份同源后门禁仍为绿:\n${same.output}`).toBe(1);
+  expect(same.output, same.output).toContain("④ 取策略互不相同：**不过**");
+  // 三份指纹逐项相同,所以每一对的分开项数都掉到 0——这是④的判据失效的样子,不是「差距不够大」。
+  expect(same.output, same.output).toContain("A vs B：分开 0/9 项");
+
+  expect(selfproof().status, "还原后没有回到绿").toBe(0);
+});
+
+it("契约自证门禁挂在全量门禁末尾,且不进快门禁", () => {
+  const steps = tailSteps();
+  expect(steps, "契约自证门禁不在全量门禁末尾那一组复核里").toContain("pnpm run check:selfproof");
+  // 末尾这一组的最后一道是它:它读的是入库产物与对局读数,排在纯文本复核之后。
+  expect(
+    (manifest().scripts["check"] ?? "").split("&&").at(-1)?.trim(),
+    "契约自证门禁不在全量门禁的最后一步",
+  ).toBe("pnpm run check:selfproof");
+  // 与基准产物门禁同侧:提交内容对不对的那几道复核都在末尾那一组里。
+  expect(steps, "基准产物门禁被挤出了末尾那一组").toContain("pnpm run check:bench");
+  // 它要跑 64 场对局,与快门禁的零构建、秒级性质都不相容(理由同 check:drift / check:bench)。
+  expect(manifest().scripts["check:quick"]).not.toContain("check:selfproof");
+  expect(manifest().scripts["check:types"]).not.toContain("check:selfproof");
 });
 
 // ── 反递归不变量 ─────────────────────────────────────────────────────────────

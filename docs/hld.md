@@ -174,9 +174,11 @@
 | `generate` | `tsc -b packages/schema && node packages/tools/src/generate/run-generate.ts && tsc -b` | 重跑生成器,产出全部生成物并入库(§3.1);**要一次构建**,故不是门禁而是提交前的动作 |
 | `check:declared-deps` | `node packages/tools/src/gate/run-declared-deps-gate.ts` | 挂在 `check` 末尾:工具包运行时源码里 import 的第三方包必须在它自己的 `package.json` 里声明(§3.2);**零构建**,与读 `dist` 的 `check:deps` 互补 |
 | `check:drift` | `node packages/tools/src/generate/run-drift-gate.ts`(生成物漂移检查) | 挂在 `check` 末尾,**不进 `check:quick`**:它需要一次 `tsc -b`(生产函数 import 真源包),而 `check:types` 里已经有,快门禁的零构建性质因此不受影响 |
+| `check:bench` | `node packages/tools/src/benchmarks/run-benchmarks-gate.ts`(基准产物门禁) | 挂在 `check` 末尾:入库的基准产物必须是 `tsconfig.scripts.json` 真跑出来的那一份(逐字节判);**不进 `check:quick`**:它要 spawn 一次 `tsc` |
+| `check:selfproof` | `node packages/tools/src/selfproof/run-selfproof-gate.ts`(契约自证门禁) | 挂在 `check` 末尾(最后一道):拿终稿契约把 `benchmarks/` 的三份产物**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同);srs §4 第 2 条的机器防线;**不进 `check:quick`**:它要跑 64 场对局 |
 | `check:types` | `check:quick` + `tsc -b` + `oxlint --type-aware` | 改完一个 issue 跑一次 |
 | `check:deps` | `tsc -b` + dependency-cruiser(巡航 `dist` 而非 `src`,§2.2.10) | 依赖方向 |
-| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` | 全量 |
+| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` + `check:selfproof` | 全量 |
 | `test:props` | `vitest run --project property` | 长时属性测试,单独跑 |
 | `test:gates` | `vitest run --project gates`(门禁自测:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
 | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 | — |
@@ -198,6 +200,13 @@
 即便如此,它**仍然只在这个规模上成立**:引擎、结算管线、赛季调度、生成管线都还不存在,`check` 跑的是校验器与门禁这一层的测试。门禁耗时随源码量与依赖图规模增长——77 个文件仍然不是真实仓库。
 
 > 上一版这里写的是「`check:quick` 目标 < 5s」,那是一个没有实测支撑的许愿。现在有数字了,但**它不能变成承诺**:`< 5s` 若写成硬约束,后来者为了凑数字能改门禁的覆盖面(少查几个包、把类型感知挪出快门),而那比慢 5s 坏得多。**正确用法是把它当基线**:仓库长大后用同一方法(同机、5 次取样、报中位数)重测一次;只有重测出来的中位数显著上升,才谈是否再加一层分层。先前那条未经验证的许愿到此作废。
+
+**票 14 之后全量门禁离开秒级(观测项,不是承诺)**。`check` 的末尾多了一道 `check:selfproof`,它要真跑
+64 场对局(标定环那个桩、6 路并行):同机单次实测**墙钟 95s**(其中这道门禁自己 84s),而上一表里
+`check` 的中位数是 5.65s。**快门禁不受影响**——`check:quick` 那四项一项没动,契约自证按位置纪律
+不进快门禁,与漂移检查、基准产物门禁同一理由(要跑真实命令,不是零构建)。这一条同样不作承诺:
+该做的分层取舍是「反馈回路归快门禁、提交前的复核归全量」,哪一道该进哪一层由它的耗时与
+覆盖面决定,不由它在表里的位置决定。
 
 **主流水线**(每次 PR 与主干 push,全部通过才可合并;**尚未建成**,当前全部以命名脚本手工触发):
 
