@@ -43,6 +43,7 @@ import {
 import type { Ruleset, RulesetKey, UnitStats } from "@model-war/schema";
 
 import { sectionMarker } from "./section.ts";
+import { tableCell } from "./emit.ts";
 import type { GeneratedArtifact, Section, SectionArtifact } from "./artifact.ts";
 
 /** 取值文件。仓库根起的相对串,与生成物落点的 `path` 同一记法。 */
@@ -140,12 +141,6 @@ const spawnTicksOf = (key: RulesetKey, stats: UnitStats): number => {
   return derived;
 };
 
-/**
- * 表格单元。竖线要转义,否则一条带竖线的说明会把整张表拆成两列;换行不可能出现
- * (说明是键清单里的单行常量),所以不必处理它。
- */
-const cell = (text: string): string => text.replaceAll("|", "\\|");
-
 /** 参数取值表。行序即键清单的键序,不另定一处(键清单头注就是这么定的)。 */
 const parameterTable = (truth: Ruleset): string[] => [
   "| 键 | 值 | 量纲 | 说明 |",
@@ -156,7 +151,7 @@ const parameterTable = (truth: Ruleset): string[] => [
     // 写成 `value === 0` 会把「未定」与「一个真的 0」混成一件(CONTEXT.md《未定值》)。
     const shown =
       entry.calibration.state === "undetermined" ? UNDETERMINED_LABEL : `${integerOf(truth, key)}`;
-    return `| \`${key}\` | ${shown} | ${entry.unit} | ${cell(entry.description)} |`;
+    return `| \`${key}\` | ${shown} | ${entry.unit} | ${tableCell(entry.description)} |`;
   }),
 ];
 
@@ -172,7 +167,7 @@ const unitTable = (truth: Ruleset): string[] => {
       const columns = UNIT_STAT_COLUMNS.map((column) =>
         column.field === "spawnTicks" ? `${spawnTicksOf(key, stats)}` : `${stats[column.field]}`,
       );
-      return `| \`${key}\` | ${columns.join(" | ")} | ${cell(RULESET_KEY_CATALOG[key].description)} |`;
+      return `| \`${key}\` | ${columns.join(" | ")} | ${tableCell(RULESET_KEY_CATALOG[key].description)} |`;
     }),
   ];
 };

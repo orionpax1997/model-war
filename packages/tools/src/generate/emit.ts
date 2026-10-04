@@ -53,3 +53,14 @@ export const documentedArray = (doc: string, name: string, items: readonly strin
 /** 一条带文档注释的 `string` 常量声明。取值用 `JSON.stringify` 写出,与数组项同一套引号形态。 */
 export const documentedString = (doc: string, name: string, value: string): string =>
   `/** ${doc} */\nexport const ${name}: string = ${JSON.stringify(value)};`;
+
+/**
+ * 一格 Markdown 表格单元。**竖线要转义**,否则一条带竖线的说明或签名会把整张表拆成两列。
+ *
+ * 它属于排版零件而不属于任何一件生产函数:契约文档的表格由真源包的数据渲染,而那些数据里有竖线
+ * 是常事(签名里的联合类型、字面量联合)。每件生产函数各写一份 `replaceAll` 的话,分叉时没人会
+ * 发现——而分叉的后果是一张表在某一格处悄悄断成两列。
+ *
+ * 换行不可能出现(说明与签名都是单行常量),所以不必处理它;真出现时先改真源那一侧。
+ */
+export const tableCell = (text: string): string => text.replaceAll("|", "\\|");
