@@ -73,7 +73,13 @@ export type ScriptOutcomeEntry = {
   readonly kind: ScriptOutcomeKind;
   /** 这一行**特有**的那一点后果。共性的那一半在 `SCRIPT_OUTCOME_CLASSES` 上,不重抄。 */
   readonly outcome: string;
-  /** 一句例子:一个具体的调用或局面。空着的写法是「模型照这句写不出脚本」。 */
+  /**
+   * 一句例子:一个具体的调用或局面。空着的写法是「模型照这句写不出脚本」。
+   *
+   * **刻意不写具体数字。** 数值归 `rulesets/vN.json` 那条链(它渲染成契约文档里的数值表),
+   * 而本行会被逐字渲染进「丢弃 vs 异常」对照表——那里写死的取值与数值表那一格构成两份会分叉的
+   * 第二家,改规则集时只有一份跟着变,于是没人判红。要一个带数的例子就去引数值表,不在这里拄。
+   */
   readonly example: string;
   /**
    * 这一情形可能返回的错误码。**按名字引用**符号表,不重写码的语义。
@@ -85,7 +91,8 @@ export type ScriptOutcomeEntry = {
 };
 
 /**
- * 「没生效」的六种情形。两类后果都有行,四行没有码、其中两行返回码。
+ * 「没生效」的六种情形。两类后果都有行;**四行不返回任何码**,它们不是错误而是「这一 tick 白跑」或
+ * 「静默丢弃」;**另两行返回码**,且它们合计覆盖符号表里的每一个码(一个码恰好一行)。
  *
  * 行序即模型最该先看的那几条在前:**调用侧的丢弃在前,`loop()` 侧的异常在后**——因为「写错参数
  * 最多丢一条、写崩 `loop()` 才丢整 tick」是这份表最该被一眼看到的那条对照,而它恰好横跨两张表。
@@ -118,7 +125,7 @@ export const SCRIPT_OUTCOME_CATALOG: readonly ScriptOutcomeEntry[] = [
     situation: "`spawnUnit` 资金不足:这一单下单无效。",
     kind: "discard",
     outcome: "不占产线队列、不扣款,资金一个不少地留着。",
-    example: "开局 16 资源买 12 的远程后剩 4,再买 8 的近战 → 第二单无效。",
+    example: "钱不够买下一个兵种时再下单 → 这一单无效,钱一个不少地留着(换个兵种也一样)。",
     codes: ["ERR_NOT_ENOUGH_RESOURCES"],
   },
   {

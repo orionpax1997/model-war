@@ -116,7 +116,7 @@ const functionTables = (): string[] =>
  * 一处可改,取错了方向就是第二份答案。取不到(`outcomeOf` 给不出)时非零退出而不是留一格「—」——
  * 一个码在后果表里没有落点,意味着模型读到它时无从判断要不要兜,而空格会被读成「不用管」。
  *
- * 「那一类丢的是什么」不进这一栏:同一类的七行会逐字重复同一句话,而真正要紧的差别(丢的范围与
+ * 「那一类丢的是什么」不进这一栏:同一类的每一行会逐字重复同一句话,而真正要紧的差别(丢的范围与
  * 累计)只有两句,写在表前那两行里就够,完整形态在第 4 节那张对照表。
  */
 const errorCodeTable = (): string[] => {
@@ -197,7 +197,7 @@ const exampleNames = (): void => {
   }
 };
 
-const discriminationNote = (): string[] => {
+const discriminationNote = (codes: readonly { readonly symbol: string }[]): string[] => {
   exampleNames();
   return [
     "判一次调用错没错,只有上面那两个 helper 这一条路:`isError(result)` 判有没有出错,",
@@ -208,7 +208,7 @@ const discriminationNote = (): string[] => {
     "const result = move(unitId, 0, 1);",
     "if (isError(result)) {",
     "  // 这一条意图没生效:落在哪一类、丢的是什么,见「错误码表」与第 4 节那张对照表。",
-    "  const code = errCode(result); // 取回「错误码表」里的七个码之一",
+    `  const code = errCode(result); // 取回「错误码表」里的那一个码(全表 ${codes.length} 个)`,
     "} else {",
     "  // 这一条意图已提交;合法性终裁在结算时按同一套界检查做。",
     "}",
@@ -225,20 +225,26 @@ const discriminationNote = (): string[] => {
  * 「落在哪类」与「丢的是什么」来自后果行目录,组标题与那句判别说明是排版零件(措辞随排版走,
  * 不随真源走,因为它们描述的是**表怎么读**,不是哪个名字收不收)。
  */
-const apiSurfaceContent = (): string =>
-  [
-    "> 本节三张表是**生成物**,勿手改:由 `packages/tools/src/generate/api-surface.ts` 从",
-    `> \`${SYMBOL_TRUTH}\`(注入面符号表)与 \`${OUTCOME_TRUTH}\`(后果行)产出。`,
-    "> 改真源后跑 `pnpm run generate`;手改会在下一次生成时被原样覆盖,并被生成物漂移检查",
-    "> (`check:drift`)判红。",
-    "",
-    "**API 表**",
-    "",
-    ...functionTables(),
-    ...errorCodeTable(),
-    ...constantTable(),
-    ...discriminationNote(),
-  ].join("\n") + "\n";
+const apiSurfaceContent = (): string => {
+  const errorCodes = SANDBOX_INJECTED_API_SYMBOL_CATALOG.filter(
+    (entry) => entry.kind === "error-code",
+  );
+  return (
+    [
+      "> 本节三张表是**生成物**,勿手改:由 `packages/tools/src/generate/api-surface.ts` 从",
+      `> \`${SYMBOL_TRUTH}\`(注入面符号表)与 \`${OUTCOME_TRUTH}\`(后果行)产出。`,
+      "> 改真源后跑 `pnpm run generate`;手改会在下一次生成时被原样覆盖,并被生成物漂移检查",
+      "> (`check:drift`)判红。",
+      "",
+      "**API 表**",
+      "",
+      ...functionTables(),
+      ...errorCodeTable(),
+      ...constantTable(),
+      ...discriminationNote(errorCodes),
+    ].join("\n") + "\n"
+  );
+};
 
 /** 两类后果的措辞。类只有这两档,顺序由这份清单定,不由对象的键序定。 */
 const OUTCOME_CLASS_ORDER: readonly ScriptOutcomeKind[] = ["discard", "exception"];

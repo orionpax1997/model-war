@@ -29,8 +29,8 @@
  * **夹具**:三张真图(`maps/{open-clash,corridor-split,fortress-core}.json`)+ 一张无墙夹具对照
  * (`center-fortress@64`,点位布局与三张真图逐格相同)——与 #13 复验那一轮(`pilot-prop2.mjs`)
  * 逐字同夹具。**臂数**:4 臂 × 4 个座位轮转 × 4 颗种子(`SEEDS_PROBE` = 11/23/41/71)= **64 场**,
- * 与那一轮同臂数。参数 `resourcePerSite=200`、`tickLimit=600`、开局矿一圈(`ownedMineOrbits=1`)
- * 也逐字同。
+ * 与那一轮同臂数。参数(`resourcePerSite`、`tickLimit`)一律**从 `rulesets/v1.json` 现读**
+ * (见下面的 `RULESET_FILE`,取值不在本文件的任何一行里手写),开局矿一圈取 `FIXTURE.ownedMineOrbits`。
  * **座位轮转**:四席三份,重复席位给 B;四轮转之后每个座位恰好各当一次 A/B/C
  * (与标定环 `rotate(['a','b','c','d'])` 的均摊性质同形)。
  * **不动 mirror**:`mirror: false`。M1 的镜像补丁是草案代「没有座位自认 API」的宿主侧替代品,
@@ -71,8 +71,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SANDBOX_INJECTED_API_SYMBOL_CATALOG } from "@model-war/schema";
+import type { Ruleset } from "@model-war/schema";
 
-import { COMPAT_GAPS, compatPrelude } from "./contract-compat.ts";
+import { compatGapsOf, compatPrelude } from "./contract-compat.ts";
 import { BENCHMARK_NAMES, PRODUCT_FILE, benchmarkFile, repoRoot } from "../benchmarks/compile.ts";
 import {
   DEFAULT_QUOTA_PERCENT,
@@ -155,17 +156,27 @@ type StubHarness = {
   rotate: <T>(seats: readonly T[]) => readonly (readonly T[])[];
 };
 
-type RulesetFile = {
-  tickLimit: number;
-  resourcePerSite: number;
-  initialResources: number;
-  harvestRate: number;
-  worker: { cost: number; spawnTicks: number };
-  melee: { cost: number; spawnTicks: number };
-  ranged: { cost: number; spawnTicks: number };
-  cavalry: { cost: number; spawnTicks: number };
-  scriptSizeLimit: number;
-};
+/**
+ * 本文件从规则集文件里读到的那几项。**从真源包的 `Ruleset` 取子集**,不手拄一份形状。
+ *
+ * 为什么是 `Pick` 而不是整个 `Ruleset`:整份类型在这里用不到(预算键与得分键本文件不读),
+ * 而把用不到的那几项也写进来只会让「改了规则集文件多了个键」在这里变成一个无关的编译错。
+ * 真正要防的是**另一半**:手拄一份子集形状时,真源包给某个键改了类型(比如 `spawnTicks` 从
+ * 键变成派生量),这里会安静地继续按旧形状读,而报告里的数已经不对了——而没有任何东西会红。
+ * 从 `Ruleset` 取子集让那种改动当场编译不过。
+ */
+type RulesetFile = Pick<
+  Ruleset,
+  | "tickLimit"
+  | "resourcePerSite"
+  | "initialResources"
+  | "harvestRate"
+  | "worker"
+  | "melee"
+  | "ranged"
+  | "cavalry"
+  | "scriptSizeLimit"
+>;
 
 const RULESET_FILE = JSON.parse(readFileSync(`${repoRoot}rulesets/v1.json`, "utf8")) as RulesetFile;
 
@@ -176,7 +187,7 @@ const spawnTicksOf = (): Record<string, number> =>
 const unitCostOf = (): Record<string, number> =>
   Object.fromEntries(UNIT_TYPES.map((type) => [type, RULESET_FILE[type].cost]));
 
-/** 错误码名字取自真源包的注入面目录(那 7 个 `ERR_*`),不在这里手写第二份。 */
+/** 错误码名字取自真源包的注入面目录(每一档 `error-code` 一行),不在这里手写第二份,也不数它的个数。 */
 const ERROR_CODES = SANDBOX_INJECTED_API_SYMBOL_CATALOG.filter(
   (entry) => entry.kind === "error-code",
 ).map((entry) => entry.symbol);
@@ -484,18 +495,47 @@ const maxBytesFor = (
  * 恰恰要与 #13 并排看,所以那两条得跟着一起出现;后三条是本轮自己的口径(消耗怎么算、
  * 独立样本有多少、矩阵是什么)。
  */
-const CALIBER_TEXT = [
-  "口径（引用本读数时必须一起带）：",
-  "- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；",
-  "  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。",
-  "  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。",
-  "- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；",
-  "  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」，更不是「128 场独立样本」**。",
-  "- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量",
-  "  （16 矿 × resourcePerSite 200 = 3200），不是单矿储量。",
-  "- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，",
-  "  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。",
-].join("\n");
+/**
+ * 报告抬头那段**必须随引用一起带的口径**。
+ *
+ * 前两条是 gdd §8 记录 #13 写下的两条口径,它们约束的是「怎么读 #13 的数字」,而本报告的数字
+ * 恰恰要与 #13 并排看,所以那两条得跟着一起出现;后几条是本轮自己的口径(消耗怎么算、
+ * 独立样本有多少、矩阵是什么)。
+ *
+ * **本轮自己的那几条里的每一个数都现算**,不手写:矩阵规模从这批跑批自己的行里数(所以
+ * `--probe` 缩矩阵时报的是缩矩阵的数),消耗分母从桩逐场报的 `total` 取(那是地图自己的总储量),
+ * 单矿储量从规则集文件取。
+ * 这一段自称「必须随引用一起带」——而它下面的代码就在从规则集读值,所以把取值抄在这里
+ * 等于让这段口径在改取值之后变成假话:报告读数已经变了,抬头还写着上一代的数,而没人会去看它。
+ */
+const caliberTextOf = (rows: readonly MatchRow[]): string => {
+  // 每臂场数与轮转数:**从这批跑批自己的行里数**,不从常量推——`--probe` 缩矩阵时两者都更小,
+  // 而抬头那段是要跟着读数一起被引用的,写死常量等于让缩矩阵的报告带上一句关于全矩阵的话。
+  const seedsOfFirstArm = new Set(
+    rows.filter((row) => row.arm === (rows[0]?.arm ?? "")).map((r) => r.seed),
+  );
+  const matchesOfFirstArm = rows.filter((row) => row.arm === (rows[0]?.arm ?? "")).length;
+  const rotations =
+    seedsOfFirstArm.size > 0 ? Math.round(matchesOfFirstArm / seedsOfFirstArm.size) : 0;
+  const perArm = matchesOfFirstArm;
+  // 总储量与单矿储量:分母是逐场报的 `total`(地图自己的),单矿那一项取规则集文件。
+  const total = rows[0]?.total ?? 0;
+  const perSite = RULESET_FILE.resourcePerSite;
+  const sites = perSite > 0 ? total / perSite : 0;
+  return [
+    "口径（引用本读数时必须一起带）：",
+    "- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；",
+    "  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。",
+    "  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。",
+    `- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **${rotations} 个座位轮转**；`,
+    `  本报告每臂 ${perArm} 场 = ${rotations} 座位轮转 × ${seedsOfFirstArm.size} 种子，` +
+      `**不得写成「${perArm} 场独立样本」**。`,
+    "- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量",
+    `  （${sites} 个资源点 × resourcePerSite ${perSite} = ${total}），不是单矿储量。`,
+    "- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，",
+    "  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。",
+  ].join("\n");
+};
 
 const tenths = (value: number): string => `${Math.floor(value / 10) % 100}.${value % 10}`;
 
@@ -512,7 +552,7 @@ const renderReport = (
   const lines: string[] = [];
   lines.push("契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩");
   lines.push("");
-  lines.push(CALIBER_TEXT);
+  lines.push(caliberTextOf(rows));
   lines.push("");
   lines.push(
     `夹具闸门：farmer6 四方自战 p100=${anchor.p100.join("/")}、delivered=${anchor.delivered.join("/")}`,
@@ -591,7 +631,7 @@ const renderReport = (
     { rejected: 0, refunds: 0 },
   );
   lines.push("桩与终稿契约的缺口（由兼容层补，不静默换口径）：");
-  for (const gap of COMPAT_GAPS) lines.push(`   - ${gap.gap} → ${gap.fill}`);
+  for (const gap of compatGapsOf()) lines.push(`   - ${gap.gap} → ${gap.fill}`);
   lines.push(
     `   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 ${compatTotals.rejected} 次、基地易主退款 ${compatTotals.refunds} 次。`,
   );
@@ -759,7 +799,7 @@ const writeEvidence = (
         consumption,
         distinctness,
         anchor,
-        compatGaps: COMPAT_GAPS,
+        compatGaps: compatGapsOf(),
         elapsedSeconds: elapsed,
       },
       null,
