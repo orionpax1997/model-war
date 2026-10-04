@@ -24,13 +24,14 @@ const ID = "script-surface-names";
 
 export const scriptSurfaceNames: GeneratedArtifact = {
   id: ID,
+  form: "whole-file",
   path: "packages/tools/src/generated/script-surface.ts",
   produce: () =>
     [
       generatedHeader(
         ID,
         "packages/schema/src/script-surface.ts",
-        "收录判据与「为什么此刻是空的」都随真源走,不在此复述。",
+        "收录判据与逐个「为什么收」都随真源走,不在此复述。",
       ),
       `// 生成物 id:${ID}`,
       documentedString(
@@ -44,7 +45,8 @@ export const scriptSurfaceNames: GeneratedArtifact = {
         FORBIDDEN_GLOBAL_NAMES,
       ),
       documentedArray(
-        "沙箱注入的 API 符号表。真源:`SANDBOX_INJECTED_API_SYMBOLS`,当前为空——待沙箱执行器(G)回填。",
+        "沙箱注入的 API 符号表。真源:`SANDBOX_INJECTED_API_SYMBOLS`。这里交出的只是**名字**——" +
+          "「怎么注入」由沙箱执行器定,与这张表无关;要改名改真源并重跑生成器。",
         "SANDBOX_INJECTED_API_SYMBOLS",
         SANDBOX_INJECTED_API_SYMBOLS,
       ),

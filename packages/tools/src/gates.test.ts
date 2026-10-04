@@ -22,9 +22,15 @@
  *     它巡航的是 dist(见 .dependency-cruiser.js 顶部:本仓库的 TypeScript 7 没有 JS 编程 API,
  *     depcruise 认不了 `.ts`),而 dist 不入库,所以这个反例既走真实配置与真实规则,
  *     又不会在失败时脏工作区。
- *   - **落进真源与生成物**(生成器那一节):先改真源、不重跑生成器,规则层读到的还是上一版——
+ *   - **落在根层那份真配置上**(参赛脚本编译配置那一节):门禁按路径列表逐个点名根层文件,
+ *     所以「它到底在不在门里」只有一个测法——排版弄坏真的那份配置,看门禁说不说话,
+ *     再按字节还原。它不是探针文件,所以不进 `PROBES`(没有第二次清理的机会)。
+ *   - **落在真源与生成物**(生成器那一节):先改真源、不重跑生成器,规则层读到的还是上一版——
  *     这本身是漂移检查(票 04)要抓的形态,但在本票里它有个更直接的后果可测:
  *     真源改了 + 重跑生成器,门禁判决必须跟着变。
+ *   - **落在数据文件上的真源**(规则文档数值表那一节):那一件生成物的真源不是 `.ts` 而是
+ *     `rulesets/v1.json`,所以「改真源」不需要先编过去——门禁当场读到的就是新值。
+ *     断言落在同一处:改了取值不重跑必须红,手改文档里那段表格也必须红。
  *   - **登记进注册表的新生成物**(漂移检查那一节):它必须**留在版本库之外**,否则第二刀就抓不到它,
  *     而落进 `dist/` 之类被忽略的目录会让它压根不进视野。所以它落在 `packages/tools/src/generated/`,
  *     并且进了 `PROBES` 列表。
@@ -43,6 +49,8 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
+
+import { sectionMarker } from "./generate/section.ts";
 
 const here = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
 const repoRoot = here("../../../");
@@ -70,6 +78,17 @@ const script = (name: string, args: readonly string[] = []): Outcome =>
 const EXTRA_ARTIFACT_PATH = "packages/tools/src/generated/__drift-probe.ts";
 const IGNORED_ARTIFACT_PATH = "packages/tools/dist/__drift-probe.ts";
 const UNRELATED_NOISE_PATH = "docs/__drift-noise-probe.md";
+const SECTION_PROBE_PATH = "docs/__section-probe.md";
+
+/**
+ * 契约自证门禁那条反例用的违规脚本探针(反例①)。
+ *
+ * 落点与别的探针同一形态:`packages/tools/src` 下的 `.js`——各包 tsconfig 的 `include` 只收 `.ts`
+ * 且不开 `allowJs`,所以它进得了桩的装载、进不了 `tsc -b`,反例只证明它该证明的那一件事。
+ * 它**刻意不含 `import` / `export`**:那两条虽然也违规,但会让桩在装载产物时抛异常,
+ * 门禁读到的是「跑批崩了」,而不是「静态校验器判它红」——那证明不了①这一问。
+ */
+const VIOLATING_SCRIPT_PROBE_PATH = "packages/tools/src/selfproof/__selfproof-probe.js";
 
 /** 本文件用过的全部探针路径。 */
 const PROBES = [
@@ -83,6 +102,8 @@ const PROBES = [
   EXTRA_ARTIFACT_PATH,
   IGNORED_ARTIFACT_PATH,
   UNRELATED_NOISE_PATH,
+  SECTION_PROBE_PATH,
+  VIOLATING_SCRIPT_PROBE_PATH,
 ] as const;
 
 /** 放一个探针进去,跑 `body`,无论成败都把它撤掉。 */
@@ -100,6 +121,35 @@ afterAll(() => {
     rmSync(`${repoRoot}${probe}`, { force: true });
   }
 });
+
+// ── 全量门禁末尾那一组:提交内容复核 ───────────────────────────────────────────
+//
+// 三道门禁共享同一条位置纪律:**「提交内容对不对」的复核都挂在 `check` 末尾**,
+// 排在编译、静态、单测与依赖方向那几道各自独立的检查之后。
+// 这个清单只在这里写一份,由下面三处断言共用:写成三份 `slice(-2)` 的话,加一道门禁要改三处,
+// 而三处里漏掉一处的后果是「有一道复核其实不在末尾」没人发现。
+//
+// 为什么是清单而不是「最后 N 步」:纪律是「末尾那几道都是复核」,不是「末尾恰好 N 道」。
+// 清单可枚举,N 会漂——多一道或少一道,前者让断言变红,后者让它安静地放过一道混进末尾的新检查。
+
+/** 挂在 `check` 末尾的提交内容复核(逐条写出来,顺序不钉死)。 */
+const CONTENT_RECHECKS = [
+  "pnpm run check:drift",
+  "pnpm run check:bench",
+  "pnpm run check:selfproof",
+] as const;
+
+type Manifest = { scripts: Record<string, string> };
+
+const manifest = (): Manifest =>
+  JSON.parse(readFileSync(`${repoRoot}package.json`, "utf8")) as Manifest;
+
+/** 全量门禁末尾那一组(取与复核清单等长的一段)。 */
+const tailSteps = (): string[] =>
+  (manifest().scripts["check"] ?? "")
+    .split("&&")
+    .map((step) => step.trim())
+    .slice(-CONTENT_RECHECKS.length);
 
 // ── 分层门禁在空壳上各自退出 0 ────────────────────────────────────────────────
 
@@ -192,12 +242,27 @@ it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", (
 /** 白名单的真源与它的生成物。规则层读的是后者,所以只改前者不会有任何效果——必须重跑。 */
 const SCHEMA_ALLOWLIST = "packages/schema/src/builtin-globals.ts";
 const GENERATED_ALLOWLIST = "packages/tools/src/generated/builtin-globals.ts";
+const GENERATED_SCRIPT_SURFACE = "packages/tools/src/generated/script-surface.ts";
 
 /** 探针:一条用到 `Math.abs` 的运行时代码。 */
 const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
 
 /**
- * 改真源 →(可选地跑根脚本 `generate`)→ 跑 `body`,无论成败都把真源与生成物**按字节**还原。
+ * 一次真源改动的两端:改哪个真源、重跑生成器会重写哪些落点。
+ *
+ * 两端都要显式写出来,而不是靠「改了白名单真源就顺手还原白名单生成物」这种默认:本文件里已有两处
+ * 真源(白名单与注入面符号表),而它们的落点形状完全不同——前者是一份整文件生成物,后者是一段
+ * 落在契约文档里的区块。漏还原一个落点,后面每一条「回到绿」的断言就都在替上一条用例擦屁股。
+ */
+type TruthTarget = {
+  /** 真源的仓库根相对路径。真源是 `.ts`,所以改完必须 `tsc -b` 才成为门禁看得见的状态。 */
+  readonly truth: string;
+  /** 重跑生成器会重写的落点,按字节与真源一起还原。 */
+  readonly rewritten: readonly string[];
+};
+
+/**
+ * 改真源 →(可选地跑根脚本 `generate`)→ 跑 `body`,无论成败都把真源与落点**按字节**还原。
  *
  * 还原走字节而不是「再跑一次生成器」,是为了让「本用例有没有留下副作用」与生成器是否正确无关:
  * 生成器坏了也不该由还原路径顺手把它修好,那样这条用例的判决就永远绿。
@@ -206,14 +271,19 @@ const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
  * 「生成物停在上一版」那个状态。两条用例共用这一条还原路径,免得仓库里有两份。
  */
 const withPatchedTruth = (
+  target: TruthTarget,
   patch: (source: string) => string,
   options: { readonly regenerate: boolean },
   body: () => Outcome,
 ): Outcome => {
-  const truth = `${repoRoot}${SCHEMA_ALLOWLIST}`;
-  const generated = `${repoRoot}${GENERATED_ALLOWLIST}`;
-  const originalTruth = readFileSync(truth, "utf8");
-  const originalGenerated = readFileSync(generated, "utf8");
+  const truth = `${repoRoot}${target.truth}`;
+  const originals = [truth, ...target.rewritten.map((path) => `${repoRoot}${path}`)].map(
+    (path) => ({
+      path,
+      text: readFileSync(path, "utf8"),
+    }),
+  );
+  const originalTruth = originals[0]?.text ?? "";
 
   const patched = patch(originalTruth);
   // 补丁没打上 = 判据随真源改了形状,这条用例会安静地测一个不存在的东西。必须当场红。
@@ -233,8 +303,9 @@ const withPatchedTruth = (
     }
     return body();
   } finally {
-    writeFileSync(truth, originalTruth, "utf8");
-    writeFileSync(generated, originalGenerated, "utf8");
+    for (const snapshot of originals) {
+      writeFileSync(snapshot.path, snapshot.text, "utf8");
+    }
     // 真源还原之后,`packages/schema/dist` 可能停在被改过的源码上。补一次构建,
     // 让后续用例(尤其依赖已就位产物的 check:deps 与漂移检查)看到一致状态;结果不额外断言,
     // 断言留给那些真正依赖构建产物的用例,免得它盖掉 body 原本的失败信息。
@@ -242,11 +313,17 @@ const withPatchedTruth = (
   }
 };
 
+/** 白名单那一对:真源是一份整文件生成物。 */
+const ALLOWLIST_TARGET: TruthTarget = {
+  truth: SCHEMA_ALLOWLIST,
+  rewritten: [GENERATED_ALLOWLIST],
+};
+
 /** `withPatchedTruth` 的「改了真源并重跑生成器」那一档。 */
 const withRegeneratedAllowlist = (
   patch: (source: string) => string,
   body: () => Outcome,
-): Outcome => withPatchedTruth(patch, { regenerate: true }, body);
+): Outcome => withPatchedTruth(ALLOWLIST_TARGET, patch, { regenerate: true }, body);
 
 it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变", () => {
   // 基线:`abs` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
@@ -289,6 +366,47 @@ it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变",
 /** 漂移检查的命名脚本。它需要构建前置(生产函数 import 真源包),所以只挂在全量门禁末尾。 */
 const driftCheck = (): Outcome => script("check:drift");
 
+/**
+ * 往注册表数组字面量里插一条生成物声明,跑 `body`,无论成败都把注册表**按字节**还原。
+ *
+ * 注册表数组字面量的首行与末行是**结构性锚点**,不写死整条声明。
+ *
+ * 写死 `= [builtinGlobalsAllowlist];` 这种整条文本是脆的:第二件生成物(参赛脚本可见面的
+ * 三张名单)一注册进来,锚点就不存在了,这条反例会以「注册表的锚点变了」红掉——
+ * 而注册表按设计就是**加一行**的事(文档生成那几件还会再加几行),拿它当锚点等于
+ * 把「加一行」的纪律钉死成「注册表永远只有一件」。所以只认首行(`= [`)与末行(`];`),
+ * 件数与内容都不参与匹配。
+ *
+ * 插在末尾的 `];` 之前,而不是切字符:切一个字符会把数组提前闭合,一个漏掉的逗号会让它
+ * 变成语法错误——两份错法都会被门禁报成「注册表坏了」,不是「生成物没入库」,
+ * 于是这条反例测的根本不是它要测的那件事。
+ *
+ * 声明是**源码文本**而不是真构造出来的对象:注册表是代码里的字面量,而门禁跑的就是那份源码。
+ * 所以 `form` 这类契约字段必须一并写全——漏了它,这条反例会因为「形态不完整」而不是因为
+ * 它要测的那件事变红。
+ */
+const withRegistryEntry = (entry: string, body: () => Outcome): Outcome => {
+  const registry = `${repoRoot}packages/tools/src/generate/registry.ts`;
+  const original = readFileSync(registry, "utf8");
+
+  const arrayOpen = "export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [";
+  const closeAt = original.lastIndexOf("\n];");
+  expect(original, "注册表的形状变了(找不到数组字面量的开头)").toContain(arrayOpen);
+  expect(closeAt, "注册表的形状变了(找不到数组字面量的结尾)").toBeGreaterThan(0);
+  const arrayEnd = original.slice(closeAt, closeAt + 3);
+
+  writeFileSync(
+    registry,
+    original.slice(0, closeAt + 1) + entry + arrayEnd + original.slice(closeAt + 3),
+    "utf8",
+  );
+  try {
+    return body();
+  } finally {
+    writeFileSync(registry, original, "utf8");
+  }
+};
+
 it("生成物漂移检查:改真源不重跑 → 变红,重跑并提交 → 变绿", () => {
   const clean = driftCheck();
   expect(clean.status, clean.output).toBe(0);
@@ -296,6 +414,7 @@ it("生成物漂移检查:改真源不重跑 → 变红,重跑并提交 → 变�
   // 反例①:真源加一个成员,生成器不跑。生成物路径上的内容一字未动,所以**只有**「重生成后无差异」
   // 那一段能抓住它——这正是这道检查不能只做 git 两刀的理由。
   const stale = withPatchedTruth(
+    ALLOWLIST_TARGET,
     (source) => source.replace('  "abs",\n', '  "abs",\n  "sign2",\n'),
     { regenerate: false },
     () => driftCheck(),
@@ -306,6 +425,7 @@ it("生成物漂移检查:改真源不重跑 → 变红,重跑并提交 → 变�
   // 同一处真源改动 + 重跑生成器:内容回到一致,剩下「未提交」那一刀,红的原因跟着变。
   // 少了这条,「它只会报那句生成器提示」也能满足上面两条。
   const regenerated = withPatchedTruth(
+    ALLOWLIST_TARGET,
     (source) => source.replace('  "abs",\n', '  "abs",\n  "sign2",\n'),
     { regenerate: true },
     () => driftCheck(),
@@ -355,56 +475,28 @@ it("生成物漂移检查:生成物被手改 → 变红,按字节还原 → 变�
 });
 
 it("生成物漂移检查:新增一件生成物但没进版本库 → 变红", () => {
-  const registry = `${repoRoot}packages/tools/src/generate/registry.ts`;
-  const original = readFileSync(registry, "utf8");
-
-  /**
-   * 注册表数组字面量的首行与末行——**结构性锚点**,不写死整条声明。
-   *
-   * 写死 `= [builtinGlobalsAllowlist];` 这种整条文本是脆的:第二件生成物(参赛脚本可见面的
-   * 三张名单)一注册进来,锚点就不存在了,这条反例会以「注册表的锚点变了」红掉——
-   * 而注册表按设计就是**加一行**的事(E 接入文档生成时还会再加两行),拿它当锚点等于
-   * 把「加一行」的纪律钉死成「注册表永远只有一件」。所以只认首行(`= [`)与末行(`];`),
-   * 件数与内容都不参与匹配。
-   */
-  const arrayOpen = "export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [";
-  const closeAt = original.lastIndexOf("\n];");
-  expect(original, "注册表的形状变了(找不到数组字面量的开头)").toContain(arrayOpen);
-  expect(closeAt, "注册表的形状变了(找不到数组字面量的结尾)").toBeGreaterThan(0);
-  const arrayEnd = original.slice(closeAt, closeAt + 3);
-
   /**
    * 把一件新生成物登记进注册表(内容与生产函数逐字节一致,所以一致性那一段是绿的),
    * 按 `path` 写出它的文件,跑 `body`,无论成败都把注册表与文件按字节还原。
-   *
-   * 插在末尾的 `];` 之前,而不是切字符:切一个字符会把数组提前闭合,一个漏掉的逗号会让它
-   * 变成语法错误——两份错法都会被门禁报成「注册表坏了」,不是「生成物没入库」,
-   * 于是这条反例测的根本不是它要测的那件事。
    */
-  const withRegisteredArtifact = (path: string, body: () => Outcome): Outcome => {
-    writeFileSync(
-      registry,
-      original.slice(0, closeAt) +
-        `  {\n    id: "drift-probe",\n    path: "${path}",\n` +
-        `    produce: () => "export const driftProbe: readonly string[] = [];\\n",\n  },\n` +
-        arrayEnd +
-        original.slice(closeAt + 3),
-      "utf8",
+  const withRegisteredArtifact = (path: string, body: () => Outcome): Outcome =>
+    withRegistryEntry(
+      `  {\n    id: "drift-probe",\n    form: "whole-file",\n    path: "${path}",\n` +
+        `    produce: () => "export const driftProbe: readonly string[] = [];\\n",\n  },`,
+      () => {
+        mkdirSync(dirname(`${repoRoot}${path}`), { recursive: true });
+        writeFileSync(
+          `${repoRoot}${path}`,
+          "export const driftProbe: readonly string[] = [];\n",
+          "utf8",
+        );
+        try {
+          return body();
+        } finally {
+          rmSync(`${repoRoot}${path}`, { force: true });
+        }
+      },
     );
-    mkdirSync(dirname(`${repoRoot}${path}`), { recursive: true });
-    writeFileSync(
-      `${repoRoot}${path}`,
-      "export const driftProbe: readonly string[] = [];\n",
-      "utf8",
-    );
-
-    try {
-      return body();
-    } finally {
-      writeFileSync(registry, original, "utf8");
-      rmSync(`${repoRoot}${path}`, { force: true });
-    }
-  };
 
   // 形态一:文件在生成物目录下、内容正确、但没 `git add`。版本两刀里只有「在不在版本库里」
   // 那一刀能看见它——差异检查对未跟踪文件一律沉默,而第一件生成物正是新增的。
@@ -450,17 +542,372 @@ it("生成物漂移检查:工作树里有与生成物无关的未提交内容时
 });
 
 it("生成物漂移检查挂在全量门禁末尾,且不进快门禁", () => {
-  const manifest = JSON.parse(readFileSync(`${repoRoot}package.json`, "utf8")) as {
-    scripts: Record<string, string>;
-  };
-
-  // 挂在末尾而不是中间:前面几道各自独立,漂移检查是最后一道「提交内容对不对」的复核。
-  expect(manifest.scripts["check"]?.trimEnd().endsWith("pnpm run check:drift")).toBe(true);
+  // 挂在末尾而不是中间:前面几道各自独立,末尾那几道是「提交内容对不对」的复核(清单见上)。
+  expect(tailSteps(), "漂移检查不在全量门禁末尾那一组复核里").toContain("pnpm run check:drift");
 
   // 不进快门禁的理由是它需要一次 `tsc -b`,而快门禁的零构建性质不能破(ADR-0003 的混合传输)。
   // 「零构建」没法直接断言,能断言的是它没被挂进快门禁这条链里。
-  expect(manifest.scripts["check:quick"]).not.toContain("check:drift");
-  expect(manifest.scripts["check:types"]).not.toContain("check:drift");
+  expect(manifest().scripts["check:quick"]).not.toContain("check:drift");
+  expect(manifest().scripts["check:types"]).not.toContain("check:drift");
+});
+
+// ── 生成物漂移检查:区块形态(一份文件里的某一段是生成物) ─────────────────────────
+
+/**
+ * 探针区块的定界标记与真源产出的正文。
+ *
+ * 标记**取自 `sectionMarker(id)`** 而不是在这里重写一遍字面量:它必须只由 `id` 决定才叫稳定串,
+ * 而「这个默认形状有没有人走」正是靠探针走它来回答的——在这里另抄一份字面量,那个默认就会变成
+ * 一个没人走过的死代码,而没人走过的默认值等于没有默认值(票 04 起的每一件都得自己重新想一遍形状)。
+ * 报告里指认区块用的仍然是这两个串,断言的是门禁的外部输出。
+ */
+const SECTION_PROBE_MARKER = sectionMarker("section-probe");
+const SECTION_PROBE_BEGIN = SECTION_PROBE_MARKER.begin;
+const SECTION_PROBE_END = SECTION_PROBE_MARKER.end;
+const SECTION_PROBE_BLOCK = ["| 一 | 二 |", "| --- | --- |", "| 1 | 2 |"];
+
+/** 真源产出的区块正文:末尾带换行,与文档里夹住的那段逐字节相同。 */
+const sectionProbeContent = (block: readonly string[]): string => `${block.join("\n")}\n`;
+
+/** 探针文档:散文 + 区块 + 散文。散文刻意留在两侧——它就是「不比」的那半边。 */
+const sectionProbeDoc = (block: readonly string[]): string =>
+  [
+    "# 区块探针",
+    "",
+    "上面这段散文不在区块里,手改它漂移检查不该管。",
+    "",
+    SECTION_PROBE_BEGIN,
+    ...block,
+    SECTION_PROBE_END,
+    "",
+    "下面这段散文同样不比。",
+    "",
+  ].join("\n");
+
+/** 整段被删掉之后的样子:两行标记与区块正文都没了,剩下的全是散文。 */
+const sectionProbeDocWithoutSection = (): string =>
+  [
+    "# 区块探针",
+    "",
+    "上面这段散文不在区块里,手改它漂移检查不该管。",
+    "",
+    "下面这段散文同样不比。",
+    "",
+  ].join("\n");
+
+/**
+ * 登记一件**区块形态**的生成物(真源产出的正文恒为 `SECTION_PROBE_BLOCK`),写出文档 `doc`
+ * (`undefined` = 文档根本不存在),跑 `body`,无论成败都还原注册表与文档。
+ *
+ * 真源与文档分开传:反例要动的永远是**文档**那一侧,而真源那侧一动,红的原因就变成「真源改了」,
+ * 不是「文档被手改」了。两者同源是基线的前提,所以基线里它们必须逐字节相同。
+ *
+ * `doc` 传 `undefined` 是为着把「落点还没有」与「落点上没有标记」分开:生成器对前者与后者
+ * 都非零退出,但两条的处方不同(先建文件 / 把标记写回去),报告要说得出是哪一种。
+ */
+const withSectionProbe = (doc: string | undefined, body: () => Outcome): Outcome => {
+  const entry =
+    `  {\n    id: "section-probe",\n    form: "section",\n    path: "${SECTION_PROBE_PATH}",\n` +
+    `    produce: () => ({\n` +
+    `      marker: { begin: "${SECTION_PROBE_BEGIN}", end: "${SECTION_PROBE_END}" },\n` +
+    `      content: ${JSON.stringify(sectionProbeContent(SECTION_PROBE_BLOCK))},\n` +
+    `    }),\n  },`;
+  return withRegistryEntry(entry, () => {
+    if (doc !== undefined) {
+      writeFileSync(`${repoRoot}${SECTION_PROBE_PATH}`, doc, "utf8");
+    }
+    try {
+      return body();
+    } finally {
+      rmSync(`${repoRoot}${SECTION_PROBE_PATH}`, { force: true });
+    }
+  });
+};
+
+/** 内容判定(①)说话时必出的两个片段。版本库那两刀(未提交 / 未跟踪)说话时**不带**这两个。 */
+const SECTION_CONTENT_VERDICTS = ["区块与真源不一致", "抽不出区块"];
+
+/**
+ * 跑 `body`,无论成败都把两件已入库的生成物**按字节**还原。
+ *
+ * 理由同 `withPatchedTruth`:`generate` 是逐件重写注册表上的**每一件**,所以它跑一次就把工作树
+ * 改成了「本机 dist 里的真源」那个形态。不还原的话,红着的就变成了真实的漂移,后面每一条
+ * 「回到绿」的断言都跟着失效——而那些断言正是防止一条永远红的假门禁混过去的那道。
+ */
+const withGeneratedArtifactsRestored = (body: () => Outcome): Outcome => {
+  const snapshots = [GENERATED_ALLOWLIST, GENERATED_SCRIPT_SURFACE].map((path) => ({
+    path,
+    text: readFileSync(`${repoRoot}${path}`, "utf8"),
+  }));
+  try {
+    return body();
+  } finally {
+    for (const snapshot of snapshots) {
+      writeFileSync(`${repoRoot}${snapshot.path}`, snapshot.text, "utf8");
+    }
+  }
+};
+
+it("生成物漂移检查:区块形态——改正文、删整段、改标记都判红,改散文不管", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  /**
+   * 基线:区块与真源逐字节相同。
+   *
+   * 它仍然是红的——一件**运行期登记**的生成物按定义没被 `git add`,所以版本库那两刀一定要说话,
+   * 而内容判定必须沉默。这个区分是这一节全部断言的前提:不先把它立住,「所有形态都红」
+   * 也能满足下面每一条断言。
+   */
+  const installed = withSectionProbe(sectionProbeDoc(SECTION_PROBE_BLOCK), () => driftCheck());
+  expect(installed.status, "运行期登记的生成物必然红在版本库那一层").toBe(1);
+  expect(installed.output, installed.output).toContain("不在版本库里");
+  for (const verdict of SECTION_CONTENT_VERDICTS) {
+    expect(
+      installed.output,
+      `内容逐字节相同却报「${verdict}」:\n${installed.output}`,
+    ).not.toContain(verdict);
+  }
+
+  // 散文两侧被手改:内容判定仍然沉默。逐字节比整份的实现会把这一条变红——
+  // 那就是「区块形态」这条能力没兑现的形态。
+  const prose = withSectionProbe(
+    `${sectionProbeDoc(SECTION_PROBE_BLOCK)}\n又一段手写的散文。\n`,
+    () => driftCheck(),
+  );
+  for (const verdict of SECTION_CONTENT_VERDICTS) {
+    expect(prose.output, `手改散文却报「${verdict}」:\n${prose.output}`).not.toContain(verdict);
+  }
+
+  // 反例①:区块正文被手改(表格里一个数字)。内容判定必须说话。
+  const tampered = withSectionProbe(
+    sectionProbeDoc([...SECTION_PROBE_BLOCK.slice(0, 2), "| 1 | 999 |"]),
+    () => driftCheck(),
+  );
+  expect(tampered.status, "区块正文被手改必须非零退出").toBe(1);
+  expect(tampered.output, tampered.output).toContain("区块与真源不一致");
+  // 报告按标记指认是哪一段:只有 id 与路径,人看不出是哪一区块被手改了。
+  expect(tampered.output, tampered.output).toContain(SECTION_PROBE_BEGIN);
+
+  // 反例②:整段(两行标记 + 正文)被删。「让检查没东西可查」就是绕过检查的路,
+  // 所以**抽不出区块必须按漂移报出来**,而不是悄悄跳过这一件。
+  const removed = withSectionProbe(sectionProbeDocWithoutSection(), () => driftCheck());
+  expect(removed.status, "整段被删必须非零退出").toBe(1);
+  expect(removed.output, removed.output).toContain("抽不出区块");
+  expect(removed.output, "删掉整段后必须说得出是整段没了").toContain("整段被删");
+  expect(removed.output, "报告必须仍指着这一件生成物").toContain(SECTION_PROBE_BEGIN);
+
+  // 反例③:标记被手改(区块正文一字未动)。少了这一条,「改掉标记另立一段」的形态没人管。
+  const markerTampered = withSectionProbe(
+    sectionProbeDoc(SECTION_PROBE_BLOCK).replace("section-probe:begin", "section-probe:start"),
+    () => driftCheck(),
+  );
+  expect(markerTampered.status, "标记被手改必须非零退出").toBe(1);
+  expect(markerTampered.output, markerTampered.output).toContain("抽不出区块");
+  expect(markerTampered.output, "只剩一端标记要说得出是哪一种").toContain("只剩一端");
+
+  // 反例④:只删掉**末行**那一行标记(起点还在)。它与上面三条都不同路:起点找得到、
+  // 整条正则匹配不上。少了这一条,「删掉一端标记、留另一端顶着」就是一条没人管的绕过面。
+  const endGone = withSectionProbe(
+    sectionProbeDoc(SECTION_PROBE_BLOCK).replace(`${SECTION_PROBE_END}\n`, ""),
+    () => driftCheck(),
+  );
+  expect(endGone.status, "末行标记被删必须非零退出").toBe(1);
+  expect(endGone.output, endGone.output).toContain("抽不出区块");
+  expect(endGone.output, "只删一端标记要说得出是哪一种").toContain("只剩一端");
+  expect(endGone.output, "报告必须仍指着这一件生成物").toContain(SECTION_PROBE_BEGIN);
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+it("生成器:区块正文被手改后重跑 → 填回去且不动散文;标记没了则拒绝硬填", () => {
+  // 反向的一条缝:填与抽是同一份机械(`section.ts`),所以「生成器写的」与「检查比的」必须是同一段字节。
+  // 文档里的正文被手改 + 散文被手改,重跑之后:正文回到真源产出,散文一字不动。
+  const docBefore = sectionProbeDoc([...SECTION_PROBE_BLOCK.slice(0, 2), "| 1 | 999 |"]);
+  const proseLine = "又一段手写的散文。\n";
+
+  withGeneratedArtifactsRestored(() =>
+    withSectionProbe(`${docBefore}\n${proseLine}`, () => {
+      const generated = script("generate");
+      expect(generated.status, `生成器自身非零退出:\n${generated.output}`).toBe(0);
+
+      const filled = readFileSync(`${repoRoot}${SECTION_PROBE_PATH}`, "utf8");
+      expect(filled, "重跑后区块正文应当被填回真源产出").toContain(
+        sectionProbeContent(SECTION_PROBE_BLOCK),
+      );
+      expect(filled, "重跑后区块外的散文必须逐字节不动").toContain(proseLine);
+
+      const after = driftCheck();
+      expect(after.output, `生成器填回去了,内容判定还在说话:\n${after.output}`).not.toContain(
+        "区块与真源不一致",
+      );
+      // 生成器已经把它能做的做完了,剩下的红只来自版本库那一层(探针没入库),
+      // 内容判定沉默就是这一条要的证据。
+      expect(after.status, "重跑之后只剩版本库那一层在红").toBe(1);
+      expect(after.output, after.output).toContain("不在版本库里");
+      return after;
+    }),
+  );
+
+  // 标记被删掉后重跑:生成器不猜这段该落在哪,非零退出并说明原因。
+  const noMarker = withGeneratedArtifactsRestored(() =>
+    withSectionProbe(sectionProbeDocWithoutSection(), () => script("generate")),
+  );
+  expect(noMarker.status, "目标文件里没有定界标记时生成器必须非零退出").toBe(1);
+  expect(noMarker.output, noMarker.output).toContain("生成器:section-probe");
+  expect(noMarker.output, noMarker.output).toContain(SECTION_PROBE_BEGIN);
+
+  // 落点根本不存在(与「有文件、没有标记」分开):处方不同,报告也得说得出是哪一种。
+  const noTarget = withGeneratedArtifactsRestored(() =>
+    withSectionProbe(undefined, () => script("generate")),
+  );
+  expect(noTarget.status, "区块形态的落点不存在时生成器必须非零退出").toBe(1);
+  expect(noTarget.output, "报告必须说得出是落点还没有,而不是让人去找标记").toContain(
+    "读不出目标文件",
+  );
+  expect(noTarget.output, noTarget.output).toContain(SECTION_PROBE_BEGIN);
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+// ── 生成物漂移检查:规则文档的数值表(真源是数据文件,区块外散文不比) ─────────────────
+
+/** 数值表那两件区块形态生成物的落点,以及它们的真源取值文件。 */
+const RULESET_JSON = "rulesets/v1.json";
+const RULES_DOC = "docs/rules-v1/rules.md";
+const API_DOC = "docs/rules-v1/api.md";
+
+/**
+ * 改取值文件 → 跑 `body` → **按字节**还原,无论成败。
+ *
+ * 不经生成器还原,理由同 `withPatchedTruth`:否则这条反例的判决就依赖生成器是否正确。
+ * 这一件的特别之处是**真源是数据文件**,所以改完立刻可判——不需要先 `tsc -b` 把真源编过去,
+ * 门禁读的正是磁盘上那份 JSON。
+ */
+const withPatchedRuleset = (patch: (source: string) => string, body: () => Outcome): Outcome => {
+  const truth = `${repoRoot}${RULESET_JSON}`;
+  const original = readFileSync(truth, "utf8");
+  const patched = patch(original);
+  // 补丁没打上 = 判据随真源改了形状,这条用例会安静地测一个不存在的东西。必须当场红。
+  expect(patched, "补丁没有改动取值文件,这条反例不成立").not.toBe(original);
+  writeFileSync(truth, patched, "utf8");
+  try {
+    return body();
+  } finally {
+    writeFileSync(truth, original, "utf8");
+  }
+};
+
+it("生成物漂移检查:规则文档数值表——改取值不重跑 → 变红,两份文档同时说话,还原 → 变绿", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:改真源取值而**不重跑生成器**。两份文档里那段表格停在上一版,而检查当场读到的是新值。
+  const stale = withPatchedRuleset(
+    (source) => source.replace('"resourcePerSite": 200', '"resourcePerSite": 250'),
+    () => driftCheck(),
+  );
+  expect(stale.status, "改了取值不重跑生成器,漂移检查必须非零退出").toBe(1);
+  expect(stale.output, stale.output).toContain("区块与真源不一致");
+  // 同一份内容的两处落点必须**同时**说话:少一处,就是有一份文档挂的不是这份真源,
+  // 而它照样看起来是一份带表的文档。
+  expect(stale.output, "机制文档那份数值表没有判红").toContain(RULES_DOC);
+  expect(stale.output, "API 文档那份数值表没有判红").toContain(API_DOC);
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+it("生成物漂移检查:手改数值表区块正文 → 变红,手改表外散文 → 内容判定沉默,还原 → 变绿", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  const doc = `${repoRoot}${RULES_DOC}`;
+  const original = readFileSync(doc, "utf8");
+
+  // 形态一:改区块**外面**的一段散文。内容判定必须沉默——逐字节锁死整份文档的实现会把这一条变红,
+  // 那正是区块形态要兑掉的形态。版本库那一刀仍会说话(文件整体未提交),所以退出码仍是 1。
+  const prose = original.replace("# rules-v1 规则", "# rules-v1 规则(手写的一句话)");
+  expect(prose, "补丁没有改到散文,这条反例不成立").not.toBe(original);
+  writeFileSync(doc, prose, "utf8");
+  try {
+    const untouched = driftCheck();
+    expect(untouched.output, `手改散文却报内容不一致:\n${untouched.output}`).not.toContain(
+      "区块与真源不一致",
+    );
+  } finally {
+    writeFileSync(doc, original, "utf8");
+  }
+
+  // 形态二:改区块**里面**的一格(表格里的一个数字)。内容判定必须说话,并按标记指认是哪一段。
+  const tampered = original.replace("| `tickLimit` | 600 |", "| `tickLimit` | 999 |");
+  expect(tampered, "补丁没有改到表格,这条反例不成立").not.toBe(original);
+  writeFileSync(doc, tampered, "utf8");
+  try {
+    const violated = driftCheck();
+    expect(violated.status, "手改区块正文必须非零退出").toBe(1);
+    expect(violated.output, violated.output).toContain("区块与真源不一致");
+    expect(violated.output, violated.output).toContain(
+      "<!-- generated:rules-v1-value-table:begin -->",
+    );
+    // 只动了机制文档那一份,API 文档那份逐字节未动:报告不该把它一起点名
+    // (那会让「哪一段漂了」这条信息变得没法用)。
+    expect(violated.output, "没被动过的那一份也被点名了").not.toContain("api-v1-value-table");
+  } finally {
+    writeFileSync(doc, original, "utf8");
+  }
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+// ── 生成物漂移检查:API 面的表(真源是符号表与后果行,落在契约文档的正文里) ─────────
+
+/** 注入面符号表那一件的真源:它渲染成契约文档里的一段区块,而它的落点是一份手写散文夹着的文档。 */
+const INJECTED_SURFACE_TRUTH = "packages/schema/src/script-surface.ts";
+
+it("生成物漂移检查:API 表区块——改真源不重跑 → 变红,手改区块正文 → 变红,还原 → 变绿", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例①:改真源(一行「为什么收」的措辞)而**不重跑生成器**。真源是 `.ts`,所以这一条比数值表
+  // 那一节多一道前提:改了得先 `tsc -b` 编过去,否则门禁读到的还是上一版 dist,这条反例会假绿。
+  const stale = withPatchedTruth(
+    { truth: INJECTED_SURFACE_TRUTH, rewritten: [API_DOC] },
+    (source) =>
+      source.replace(
+        'reason: "当前 tick 号;脚本每 tick 都要读一次时间轴,读出来是个数值。",',
+        'reason: "当前 tick 号(探针改的措辞);读出来是个数值。",',
+      ),
+    { regenerate: false },
+    () => driftCheck(),
+  );
+  expect(stale.status, "改了真源不重跑生成器,漂移检查必须非零退出").toBe(1);
+  expect(stale.output, stale.output).toContain("区块与真源不一致");
+  // 报告按标记指认是哪一段:API 表与数值表落在同一份文档里,不指认就没法一眼看出是哪半边。
+  expect(stale.output, stale.output).toContain("<!-- generated:api-v1-api-surface:begin -->");
+  // 反过来也成立:逐字节未动的那几段**不该**被点名(它们读的是别的真源)。
+  expect(stale.output, "没被动过的数值表被连坐点名了").not.toContain("api-v1-value-table");
+  expect(stale.output, "没被动过的对照表被连坐点名了").not.toContain("api-v1-outcome-table");
+  expect(stale.output, "没被动过的整文件生成物被连坐点名了").not.toContain("script-surface-names");
+
+  // 反例②:手改文档里那段区块正文(把签名里的一个参数名改掉)。形状与逐字节锁死整份文档时一样,
+  // 但报告只该说这一段。
+  const doc = `${repoRoot}${API_DOC}`;
+  const original = readFileSync(doc, "utf8");
+  const tampered = original.replace("| `getTick(): number` |", "| `getTick(n: number): number` |");
+  expect(tampered, "补丁没有改到 API 表,这条反例不成立").not.toBe(original);
+  writeFileSync(doc, tampered, "utf8");
+  try {
+    const violated = driftCheck();
+    expect(violated.status, "手改 API 表区块正文必须非零退出").toBe(1);
+    expect(violated.output, violated.output).toContain("区块与真源不一致");
+    expect(violated.output, violated.output).toContain(
+      "<!-- generated:api-v1-api-surface:begin -->",
+    );
+  } finally {
+    writeFileSync(doc, original, "utf8");
+  }
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
 });
 
 // ── 依赖门禁反例:注入违规,确认规则真的挂在图上 ────────────────────────────────
@@ -581,6 +1028,34 @@ it("格式门禁:未格式化的文件被拦下,由 oxfmt 修好后放行", () =
   expect(script("fmt").status).toBe(0);
 });
 
+// ── 格式门禁覆盖面:根层那份脚本 tsconfig 也在门里 ───────────────────────────
+
+it("参赛脚本的编译配置在格式门禁的覆盖范围内:它排版坏掉就红,按字节还原 → 绿", () => {
+  // 根层配置逐个点名进了 fmt 的路径列表(`tsconfig.json`、`tsconfig.base.json` 之后多了一个)。
+  // 少了这一条,那份配置就成了一份无人看管的配置:它既不在任何 tsc project 的 include 里
+  // (根 `tsconfig.json` 是 files: []),oxlint 也不扫根层文件——排版坏了没有任何门禁会说话。
+  //
+  // 探针用的是**真实的配置文件本身**(按字节还原),不是临时目录里的另一份:只有动真文件,
+  // 「路径在不在 fmt 的列表里」这件事才会被判决到。JSON 仍合法,变的只是排版。
+  const config = `${repoRoot}tsconfig.scripts.json`;
+  const original = readFileSync(config, "utf8");
+  const mangled = original
+    .replace('    "types": [],', '    "types":[],')
+    .replace('"lib": ["es2023"],', '"lib":["es2023"],');
+  expect(mangled, "补丁没有改动配置,这条反例不成立").not.toBe(original);
+  writeFileSync(config, mangled, "utf8");
+
+  try {
+    const violated = script("fmt");
+    expect(violated.status, "配置排版坏掉却过了格式门禁,说明它不在门里").toBe(1);
+    expect(violated.output, violated.output).toContain("tsconfig.scripts.json");
+  } finally {
+    writeFileSync(config, original, "utf8");
+  }
+
+  expect(script("fmt").status, "还原后格式门禁没有回到绿").toBe(0);
+});
+
 // ── lint 门禁反例 ────────────────────────────────────────────────────────────
 
 it("lint 门禁:被禁写法被拦下,改正后放行", () => {
@@ -622,6 +1097,136 @@ it("lint 门禁:被禁写法被拦下,改正后放行", () => {
   expect(anyFixed.status, `unknown 仍被拦下:\n${anyFixed.output}`).toBe(0);
 
   expect(script("lint").status).toBe(0);
+});
+
+// ── 基准产物门禁反例:产物与源码分叉即红 ─────────────────────────────────────
+
+/**
+ * 反例手法:改入库产物里的**一个字节**,不改源码。
+ *
+ * 选产物而不是源码:改源码那一步,任何「产物是编译出来的」机制都会跟着变红,
+ * 证明不了「入库的产物没人重新编译过」这一件——而那正是产物入库的理由
+ * (clone 完直接能跑)。所以这里只动产物。
+ */
+it("基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原 → 变绿", () => {
+  const product = `${repoRoot}benchmarks/cell-c-claim-no-harvest/script.js`;
+  const committed = readFileSync(product);
+
+  const clean = script("check:bench");
+  expect(clean.status, clean.output).toBe(0);
+  // 绿的时候报告要说清「判的是哪几份」,否则红起来时没人知道漏了谁。
+  expect(clean.output, clean.output).toContain("基准产物门禁:绿(3 份");
+
+  try {
+    // 只改最后一行的缩进:编译产物的内容不变而字节变了——正是「手改过」与「编译出来的」的分界。
+    writeFileSync(product, committed.toString("utf8").replace(/\n$/, "\n\n"), "utf8");
+    const drifted = script("check:bench");
+    expect(drifted.status, "入库的产物与源码分叉了,门禁必须非零退出").not.toBe(0);
+    expect(drifted.output, drifted.output).toContain("cell-c-claim-no-harvest");
+    expect(drifted.output, drifted.output).toContain("与重新编译的结果不一致");
+    expect(drifted.output, drifted.output).toContain("基准产物门禁:红");
+  } finally {
+    writeFileSync(product, committed);
+  }
+
+  const restored = script("check:bench");
+  expect(restored.status, `按字节还原后没有回到绿:\n${restored.output}`).toBe(0);
+});
+
+it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
+  // 与漂移检查同一位置纪律:提交内容对不对的那几道复核都在末尾(清单见上)。
+  expect(tailSteps(), "基准产物门禁不在全量门禁末尾那一组复核里").toContain("pnpm run check:bench");
+
+  // 它要 spawn 一次 tsc,与快门禁的零构建性质不相容(理由同 check:drift)。
+  expect(manifest().scripts["check:quick"]).not.toContain("check:bench");
+  expect(manifest().scripts["check:types"]).not.toContain("check:bench");
+});
+
+// ── 契约自证门禁:四问的退出码与三个反例 ────────────────────────────────────
+//
+// 基线绿那一条跑**整张矩阵**(4 臂 × 4 座位轮转 × 4 种子 = 64 场,单次约一分半)——四问的读数
+// 只能来自全矩阵。**每条反例跑的是缩矩阵**(`--probe`:1 臂组 × 1 轮转 × 1 种子 = 4 场),成对
+// 「红 → 同参数还原 → 绿」。理由是反例要证明的是「改这一项,门禁会红」,不是四问的取值;
+// 而红不红在小矩阵上照样判得红——真判不出来时下面那条 `toBe(1)` 会当场红,不会静默放过。
+// **例外是 `--same-script` 那一条**:它要证的是「三对都掉到 0/9」,一个关于指标的论断,
+// 小矩阵的采样噪声会混进来,所以那一条连同它的还原都跑全矩阵。
+// 形态与前面几节不同:基线绿只跑一次(单独一条用例),每条反例只跑两次,少掉的那次基线不是
+// 证据变薄——「同参数还原后回到绿」与「基线是绿的」证明的是同一件事。
+
+const selfproof = (args: readonly string[] = []): Outcome => script("check:selfproof", args);
+
+it("契约自证门禁:四问全绿", () => {
+  const result = selfproof();
+  expect(result.status, result.output).toBe(0);
+  // 报告要说得出四问各自的判据读数,而不只是一个「绿」——否则红起来时没人知道是哪一问。
+  expect(result.output, result.output).toContain("① 零静态违规：过");
+  expect(result.output, result.output).toContain("② 正常终局：过");
+  expect(result.output, result.output).toContain("③ 消耗 ≤ 总储量 1/4");
+  expect(result.output, result.output).toContain("④ 取策略互不相同：过");
+  // 夹具闸门先于正表:锚点漂了就不该有正表的读数,所以这一行必须在场。
+  expect(result.output, "报告里没有夹具闸门的锚点读数").toContain("p100=479");
+});
+
+it("契约自证门禁:把配额改小 → ③ 变红,还原 → 绿", () => {
+  // 配额是③的判据本身(默认总储量的 1/4),把它改到 6% 就低于 A 的实际消耗中位(6.9%)。
+  const shrunk = selfproof(["--probe", "--quota-percent=6"]);
+  expect(shrunk.status, `配额改小后门禁仍为绿:\n${shrunk.output}`).toBe(1);
+  expect(shrunk.output, shrunk.output).toContain("③ 消耗 ≤ 总储量 1/4（配额 6%");
+  expect(shrunk.output, shrunk.output).toContain("**不过**");
+  // 红的原因得是③而不是别的:另外三问仍然过。
+  expect(shrunk.output, "红的原因不是③").toContain("契约自证门禁:红（① 过 ② 过 ③ 不过 ④ 过）");
+
+  expect(selfproof(["--probe"]).status, "配额还原后没有回到绿").toBe(0);
+});
+
+it("契约自证门禁:把一份产物换成违规脚本 → ① 变红,撤掉探针 → 绿", () => {
+  const violated = withProbeFile(
+    VIOLATING_SCRIPT_PROBE_PATH,
+    [
+      "// 故意违规的参赛脚本:确定性污染源 + 宿主桥 + 浮点字面量。",
+      "function loop() {",
+      "    const noise = Math.random() * 100;",
+      "    console.log(__peekHost(noise), Date.now(), performance.now());",
+      "}",
+      "",
+    ].join("\n"),
+    () => selfproof(["--probe", `--script-a=${repoRoot}${VIOLATING_SCRIPT_PROBE_PATH}`]),
+  );
+  expect(violated.status, `换成违规脚本后门禁仍为绿:\n${violated.output}`).toBe(1);
+  expect(violated.output, violated.output).toContain("① 零静态违规：**不过**");
+  // 判红的依据是静态校验器自己的报告,不是本门禁的一句话。
+  expect(violated.output, "报告里没有静态校验器的违规原文").toContain("禁列全局名");
+  expect(violated.output, violated.output).toContain("宿主桥前缀");
+
+  expect(selfproof(["--probe"]).status, "撤掉探针后没有回到绿").toBe(0);
+});
+
+it("契约自证门禁:三份换成同一份 → ④ 变红,还原 → 绿", () => {
+  // 这一条**跑全矩阵**,不用 `--probe`:④ 的判据是「每一对至少 3 项指标相对差 ≥ 25%」,
+  // 而把三份换成同一份之后要证明的是「三对都掉到 0/9」——那是一个关于指标的论断,
+  // 拿 4 场的小矩阵去判它,采样噪声会混进来(淘汰率那一项就是这么混进来的)。
+  const same = selfproof(["--same-script"]);
+  expect(same.status, `三份同源后门禁仍为绿:\n${same.output}`).toBe(1);
+  expect(same.output, same.output).toContain("④ 取策略互不相同：**不过**");
+  // 三份指纹逐项相同,所以每一对的分开项数都掉到 0——这是④的判据失效的样子,不是「差距不够大」。
+  expect(same.output, same.output).toContain("A vs B：分开 0/9 项");
+
+  expect(selfproof().status, "还原后没有回到绿").toBe(0);
+});
+
+it("契约自证门禁挂在全量门禁末尾,且不进快门禁", () => {
+  const steps = tailSteps();
+  expect(steps, "契约自证门禁不在全量门禁末尾那一组复核里").toContain("pnpm run check:selfproof");
+  // 末尾这一组的最后一道是它:它读的是入库产物与对局读数,排在纯文本复核之后。
+  expect(
+    (manifest().scripts["check"] ?? "").split("&&").at(-1)?.trim(),
+    "契约自证门禁不在全量门禁的最后一步",
+  ).toBe("pnpm run check:selfproof");
+  // 与基准产物门禁同侧:提交内容对不对的那几道复核都在末尾那一组里。
+  expect(steps, "基准产物门禁被挤出了末尾那一组").toContain("pnpm run check:bench");
+  // 它要跑 64 场对局,与快门禁的零构建、秒级性质都不相容(理由同 check:drift / check:bench)。
+  expect(manifest().scripts["check:quick"]).not.toContain("check:selfproof");
+  expect(manifest().scripts["check:types"]).not.toContain("check:selfproof");
 });
 
 // ── 反递归不变量 ─────────────────────────────────────────────────────────────

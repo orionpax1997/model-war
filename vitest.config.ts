@@ -48,8 +48,10 @@ export default defineConfig({
           name: "gates",
           include: [GATES_TEST],
           exclude: NEVER_TEST,
-          testTimeout: 300_000,
-          hookTimeout: 300_000,
+          // 每道门禁都是 spawn 真实命令,而其中两道(漂移检查、契约自证)会跑构建 / 64 场对局。
+          // 超时定得太紧的后果是「门禁跑不完」被报成「门禁失败」,两件事的处方完全不同,所以留足。
+          testTimeout: 600_000,
+          hookTimeout: 600_000,
         },
       },
     ],

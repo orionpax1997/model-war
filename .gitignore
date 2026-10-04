@@ -8,6 +8,8 @@ dist/
 # 工具临时目录
 .oxlint-cache/
 .vitest/
+# codegraph 索引(由源码重建)
+.codegraph/
 
 # 人工配置与凭证:绝不入库(handoff J;hld §CI 规定 CI 无凭证)
 .env

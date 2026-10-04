@@ -28,16 +28,29 @@
  * 所以它只在能 afford 构建的那一侧成立。
  */
 
+import { apiOutcomeTable, apiSurfaceTables } from "./api-surface.ts";
 import { builtinGlobalsAllowlist } from "./builtin-globals.ts";
 import type { GeneratedArtifact } from "./artifact.ts";
+import { apiValueTable, rulesValueTable } from "./rules-value-table.ts";
 import { scriptSurfaceNames } from "./script-surface.ts";
 
 /**
  * 注册表。**新增生成物是往这个数组里加一行**,外加一份生产函数——骨架(本文件 + `artifact.ts`
- * + `run-generate.ts`)不用动。表里已有两件,分属两个域:内置全局白名单(禁浮点规则那一半)
- * 与参赛脚本可见面的三张名单(静态校验器那一半)。漂移检查逐件覆盖,报告按 `id` 指认。
+ * + `run-generate.ts`)不用动。表里已有三件分属三个域:内置全局白名单(禁浮点规则那一半)、
+ * 参赛脚本可见面的三张名单(静态校验器那一半)、规则文档的数值表(面向模型的那份契约)。
+ * 漂移检查逐件覆盖,报告按 `id` 指认。
+ *
+ * 第三、四行是同一份内容的两处落点(机制文档与 API 文档各挂一份),不是一个键名的两个版本:
+ * 内容由一个生产函数产出,两处逐字节相同,改真源时两处一起变。
+ *
+ * 最后两行挂在 API 文档的不同小节、读两个不同的真源(注入面符号表 / 后果行),分成两件而不是
+ * 合成一整块:漂移的报告要能指认是哪一句判据下的那一段漂了,合成一块就分不出来了。
  */
 export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [
   builtinGlobalsAllowlist,
   scriptSurfaceNames,
+  rulesValueTable,
+  apiValueTable,
+  apiSurfaceTables,
+  apiOutcomeTable,
 ];

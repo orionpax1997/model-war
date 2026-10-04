@@ -7,6 +7,10 @@
  *
  * **不复述收录判据**:判据随真源走(名单为什么是这几个,只有判据能回答)。生成物里抄一份就会漂移,
  * 而漂移的注释比没有注释更坏——读的人会以为它说的是真的。
+ *
+ * **这份零件是唯一的**。区块形态(一份文件里的某一段是生成物)的正文也走它,而不是另起一套宽度
+ * 判断——排版规则一多就有第二份,而第二份与格式化器的分叉没人会发现,后果是每跑一次生成器就多
+ * 一份与格式化器不一致的正文,`pnpm run fmt` 当场变红。
  */
 
 /** 生成头注释。`id` 与 `truth` 都要进正文,改动等于改入库文件,漂移检查会照出来。 */
@@ -49,3 +53,14 @@ export const documentedArray = (doc: string, name: string, items: readonly strin
 /** 一条带文档注释的 `string` 常量声明。取值用 `JSON.stringify` 写出,与数组项同一套引号形态。 */
 export const documentedString = (doc: string, name: string, value: string): string =>
   `/** ${doc} */\nexport const ${name}: string = ${JSON.stringify(value)};`;
+
+/**
+ * 一格 Markdown 表格单元。**竖线要转义**,否则一条带竖线的说明或签名会把整张表拆成两列。
+ *
+ * 它属于排版零件而不属于任何一件生产函数:契约文档的表格由真源包的数据渲染,而那些数据里有竖线
+ * 是常事(签名里的联合类型、字面量联合)。每件生产函数各写一份 `replaceAll` 的话,分叉时没人会
+ * 发现——而分叉的后果是一张表在某一格处悄悄断成两列。
+ *
+ * 换行不可能出现(说明与签名都是单行常量),所以不必处理它;真出现时先改真源那一侧。
+ */
+export const tableCell = (text: string): string => text.replaceAll("|", "\\|");
