@@ -291,6 +291,7 @@ model-war/
 │  └─ tools/                  # 仓库自用静态校验器(禁浮点门禁、工具版本耦合断言、声明即依赖门禁)+ 生成器(生成物注册表);以源码执行,不产 JS、不设 bin
 ├─ benchmarks/                # 模型基准脚本(≥2)
 ├─ prompts/                   # gen 的 prompt 模板(数据文件)
+├─ scripts/                   # 面向人的一次性开通脚本(不进运行时;当前只有 J 的凭证 wizard)
 ├─ rulesets/v1.json           # 规则数值数据文件(取值真源)
 ├─ maps/                      # 地图 JSON
 ├─ docs/rules-v1/{rules.md,api.md}   # 面向模型的文档(表格为生成物)
