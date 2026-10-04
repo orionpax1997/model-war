@@ -51,3 +51,12 @@ it("构建产物与 tsbuildinfo 不入库", () => {
   expect(isIgnored("packages/engine/tsconfig.tsbuildinfo")).toBe(true);
   expect(isIgnored("node_modules/.bin/tsc")).toBe(true);
 });
+
+it("参赛脚本的编译产物入库:脚本 tsconfig 的 outDir 落在 dist 之外", () => {
+  // 两头一起断言:`.gitignore` 里那条 dist/ 是无锚点规则(命中任意层级),而 hld §7.4 要求
+  // 编译产物入库。所以脚本 tsconfig 的 outDir 必须是一个 git 放行的目录名——
+  // 名字取自 `tsconfig.scripts.json`,这里断言的是「它真的过得了 git check-ignore」。
+  expect(isIgnored("script-products/probe.js")).toBe(false);
+  // 反面:同一个产物换个目录名就入库不了。这条不是装饰,它是上面那条成立的原因。
+  expect(isIgnored("dist/probe.js")).toBe(true);
+});

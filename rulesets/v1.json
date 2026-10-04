@@ -1,0 +1,51 @@
+{
+  "tickLimit": 600,
+  "captureTicks": 10,
+  "initialResources": 16,
+  "harvestRate": 1,
+  "carryLimit": 20,
+  "resourcePerSite": 200,
+  "worker": {
+    "cost": 4,
+    "hp": 2,
+    "damage": 0,
+    "range": 1,
+    "speed": 1,
+    "spawnTicks": 2
+  },
+  "melee": {
+    "cost": 8,
+    "hp": 12,
+    "damage": 3,
+    "range": 1,
+    "speed": 1,
+    "spawnTicks": 4
+  },
+  "ranged": {
+    "cost": 12,
+    "hp": 4,
+    "damage": 2,
+    "range": 2,
+    "speed": 1,
+    "spawnTicks": 6
+  },
+  "cavalry": {
+    "cost": 16,
+    "hp": 6,
+    "damage": 2,
+    "range": 1,
+    "speed": 2,
+    "spawnTicks": 8
+  },
+  "baseScore": 4,
+  "resourceScore": 1,
+  "unitCostDivisor": 6,
+  "exceptionTickLimit": 0,
+  "eventTickLimit": 0,
+  "apiCallTickLimit": 0,
+  "memoryLimit": 0,
+  "memoryTickCeiling": 0,
+  "wallClockSoftLimit": 0,
+  "wallClockHardTimeout": 0,
+  "scriptSizeLimit": 0
+}

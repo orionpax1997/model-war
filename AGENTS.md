@@ -11,7 +11,8 @@ Local markdown: issues live as `.scratch/<feature>/spec.md` and `.scratch/<featu
 ### Subagents
 
 - code-review skill:Standards 与 Spec 两个子代理都用 `review`(`.pi/agents/review.md`)派发。
-- research 任务:调研与探索派给 `explore` 子代理,主线程只聚合结论。
+- research 任务:调研与探索一律派给 `explore` 子代理,主线程只下指令和聚合结论,不自己读文件爬代码。派发时必须在 prompt 里写明「用 codegraph 查」,探索子代理优先调用 codegraph MCP 工具(见下节),grep/find/read 只作补充。
+- 探索子代理的产出是结论 + 关键文件:行号引用,不是文件转储;不要让它整段贴源码回来。
 
 ### Triage labels
 
@@ -39,3 +40,14 @@ Single-context layout: one `CONTEXT.md` at the repo root and `docs/adr/` for ADR
 - 变更历史由 git 承载,文档头部不写逐版本变更记录。
 
 Issue/triage/domain 的权威定义见 docs/agents/(issue-tracker/triage-labels/domain.md),本文件只做索引,不复制。
+
+<!-- CODEGRAPH_START -->
+## CodeGraph
+
+In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+
+- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
+- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+
+If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
+<!-- CODEGRAPH_END -->
