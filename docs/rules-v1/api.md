@@ -5,7 +5,8 @@
 >
 > 本文件里的四组表(API 表与错误码表、常量表、「丢弃 vs 异常」对照表、数值常量表)是**生成物**:
 > 它们由真源包与 `rulesets/v1.json` 渲染,改表不改这份文档——手改表会被生成物漂移检查判红。
-> 其余各节的正文分批落地,`TODO(→…)` 标着它的去处。
+> 其余各节(§1 脚本形态与座位自认、§2 快照面与错误面、§4 那节正文、§6 骨架)是**手写散文**,
+> 里面有类型声明块与可运行示例,示例同样受编译门禁看管。
 
 ## 1. 脚本形态与座位自认
 
@@ -81,9 +82,173 @@ function loop() {
 - **不缓存查询结果**。别把「某 tick 查过矿在哪」写成一张表留着复用:归属会变(点位可被占领与易主)、
   单位会死、资源会采空。下一 tick 要用,就下一 tick 再查一次。查询花的是调用预算(见 §4),不是命。
 
-## 2. 快照
+## 2. 快照面与错误面
 
-TODO(→ 快照面与错误面)
+### 2.1 快照形状
+
+每个 tick 引擎把世界拷成一份副本放进你的脚本容器,你通过第 3 节那些查询函数读它。**你不会收到一个
+可以直接翻的 `Snapshot` 对象**:它是容器里的东西,查询函数是它的门。这一 tick 拿到的副本在下 tick
+全部作废(§1.4),所以下面这份形状的每个字段都是「本 tick 此刻的值」。
+
+快照的全部字段就下面这些,**字段名照这一份写**——本文档里没有第二份字段清单:
+
+```ts
+type UnitType = 'worker' | 'melee' | 'ranged' | 'cavalry';
+
+type Player = {
+  /** 座位号 0..3。四方对称开局,这一栏不是靠位置反推出来的,是编号。 */
+  index: 0 | 1 | 2 | 3;
+  /** 全局共享资源池里的钱,无上限、不按基地分池。下单从这里扣。 */
+  resources: number;
+  /** 本方是否还在局里。false 表示已被淘汰。 */
+  alive: boolean;
+  /** 累计异常 tick 数。用来知道自己离判负出局还有多远。 */
+  exceptionTicks: number;
+};
+
+type Unit = {
+  id: number;
+  owner: 0 | 1 | 2 | 3;
+  type: UnitType;
+  x: number;
+  y: number;
+  hp: number;
+  /** 农民携带量;其余兵种恒为 0。 */
+  carrying: number;
+};
+
+type Site = {
+  id: number;
+  kind: 'base' | 'resource';
+  x: number;
+  y: number;
+  /** -1 是中立。 */
+  owner: -1 | 0 | 1 | 2 | 3;
+  /** 正在累积占领进度的那一方,进度落在 progress 上。 */
+  progressOwner: -1 | 0 | 1 | 2 | 3;
+  progress: number;
+  /** 仅资源点有:这个矿还剩多少资源。 */
+  remaining?: number;
+  /**
+   * 这一条产线当前的订单,没有订单时是 null。
+   * 开局每条产线都是空的,所以开局读到的就是 null;null 不等于「字段不存在」。
+   */
+  producing: { type: UnitType; remainingTicks: number } | null;
+};
+```
+
+形状上有三件事要知道:
+
+- **座位不在快照里。** 没有 `you`、没有 `isSelf`,也没有「自己那一号」这一栏——座位只从
+  `getMyIndex()` 读(§1.2),那一栏是它的唯一入口。
+- **产线的当前订单挂在基地上,不是一张独立的队列表。** 四个座位的产线状态全在 `producing` 这一栏里,
+  所以你不需要、也不该在脚本里另记一份队列(下一小节说这件事)。
+- **快照只给读得到的东西。** 引擎内部的那些字段(对象 id 的分配器、终局结果之类)不在快照里,别去找。
+
+这份类型块与真源包逐字一致(`packages/engine` 的 `Player` / `Unit` / `Site` 状态模型,`producing`
+这一栏是快照侧的投影——引擎内部按 `productions` 队列维护,投影到脚本可见的这一份)。脚本 API 的
+**类型声明面尚未回填**(家已定在那份声明里,内容由对局内核与沙箱执行器回填,hld §6.2「API 误用」),
+所以 `ErrResult`、`Intent` 这两个类型名本文档不展开:回填那天这一段与第 3 节的签名一并改为从那份声明
+投影,而字段名不改——改字段名要走一次有意的变更,像改一个错误码名那样。
+
+### 2.2 玩家侧三项与产线订单:在哪读
+
+**钱、存活、异常计数**——`getObjectsByType("player")` 一次读回四个座位,每行按 `index` 编号;你自己的
+那一行是 `index === getMyIndex()`。三个字段都是**每 tick 重读一次**的东西,不需要你记:
+
+- `resources`:你的钱。下单从这里扣,采集往这里加;能不能买得起,每一 tick 都重新看一眼。
+- `alive`:你还在不在局里。为 `false` 时你已被淘汰(机制见 [`rules.md`](./rules.md) §7.2)。
+- `exceptionTicks`:累计异常 tick 数。离 `exceptionTickLimit`(取值见第 5 节)还有多远,这一栏告诉你。
+
+**产线的当前订单**——每个 `kind === 'base'` 的点位上有 `producing`。它是 `null` 就是这条产线空着;
+不是 `null` 就是 `{ type, remainingTicks }`:正在造哪个兵种、还要几个 tick。
+
+这两句必须一起读,单看任何一句都会把脚本写坏:
+
+- **一条产线一次只有一个订单。** 下单那一刻就占住这条产线,一直占到出兵格空出来续出那一步
+  (机制见 [`rules.md`](./rules.md) §4.4)。
+- **这条产线已经有订单时再下单,那一单被静默丢弃:不扣款、不计异常、队列不变。** 它既不是错误码,
+  也不计入 `exceptionTicks`——所以别去 `isError` 它,也别指望能拿到一个码来告诉你「它忙」。
+
+正因为一次只有一个,重复下单才必然落空;而落空什么也不罚,这就是错误码表里**没有**「产线忙」
+这一码的原因(那一格由 `producing` 供给)。**正确写法是先读 `producing`,是 `null` 才下单**:
+不必自己记队列,也不必靠重复下单去试探队列状态。开局时每条产线都是空的,所以开局就该下第一单。
+
+### 2.3 错误面:只有两步判别
+
+六个动作函数都返回 `void | ErrResult`(签名逐字在第 3 节的 API 表里)。`void` 那一侧就是「这一条意图
+已提交」。**判别只有两步,也只有这两步**:
+
+```ts
+const result = spawnUnit(baseId, "melee");
+if (isError(result)) {
+  const code = errCode(result); // 「错误码表」里的七个码之一
+} else {
+  // 这一条意图已提交;合法性终裁在结算时按同一套界检查做。
+}
+```
+
+**不许用 `typeof`、不许用真值去猜。** 一句原因:它们答的是「这个值长什么样 / 这个值是不是真的」,
+不是「这次调用是不是错了」,而**这两种形态下它们都可能给错答案**:
+
+- **真值**判据今天碰巧对得上,只因为「成功那一侧恒为 `undefined`(假值)、错误那一侧恰好恒为真值」
+  这两条巧合。而 `ErrResult` 的**承载形态**(是对象还是字符串)本文档不披露——它是类型面事实,尚未
+  回填。承载形态一旦换掉,`if (result)` 与 `!result` 就在同一条调用上给出相反的答案,而它是**静默**
+  的:出错的那一 tick 会被读成「没出错」,脚本对着一条根本没提交的意图继续往下走。
+- **`typeof`** 判据的依据同样只是那个未披露的形态:`typeof` 只能区分「对象」与「字符串」这类**形状**,
+  答不出「这个值是不是错误」。形态从字符串换成对象的那一天,`typeof result === "string"` 从
+  `true` 变 `false`,错还是那个错,判定却反了。
+
+换成 helper 就没有这个问题:回填那天改的是 `ErrResult` 的承载形态,`isError` / `errCode` 的签名不变,
+**你的脚本一行都不用改**。这就是它们是唯一入口的原因。
+
+下面这份是一段完整可跑的 `loop()`:读玩家侧三项、读产线队列、空才下单、返回值走那两步判别。
+
+```ts
+// 完整的 loop:读钱 → 看产线空不空 → 空才下单 → 两步判别返回值。
+function loop() {
+  const me = getMyIndex();
+  const players = getObjectsByType("player");
+  const mine = players[me];
+  if (mine === undefined) {
+    // 数组下标可能取不到元素,判一下再用(§1 的写法)。
+    return;
+  }
+
+  const bases = getObjectsByType("site", { owner: me, kind: "base" });
+  for (let i = 0; i < bases.length; i += 1) {
+    const base = bases[i];
+    if (base === undefined) {
+      continue;
+    }
+    // 队列状态在快照里,开局就有这一栏:非 null 就是这条产线已经有订单,这一 tick 不要再下。
+    // (重复下单不扣款也不计异常,可它同样什么也不产出——所以判据是这一栏,不是重发一次试试。)
+    if (base.producing !== null) {
+      continue;
+    }
+    // 钱是从快照读的,不是自己记的:一个 tick 一个数,别跨 tick 留着它。
+    if (mine.resources <= 0) {
+      // 一分钱都没有时下单必然拿到 ERR_NOT_ENOUGH_RESOURCES,那一单什么也不产出(见下)。
+      continue;
+    }
+    // 买什么兵种、留多少钱,那是策略,本文档不管;这一份只示范「空才下单」与两步判别。
+    const result = spawnUnit(base.id, "melee");
+    if (!isError(result)) {
+      continue; // 这一单已提交;出兵与续出的时机归引擎
+    }
+    // 到了这里就是错了。判错、取码只有那两个 helper,不用 typeof、不用真值。
+    const code = errCode(result);
+    if (code === ERR_NOT_ENOUGH_RESOURCES) {
+      // 这一单无效:钱一个不少、队列不变(第 4 节那张对照表里「丢弃」那一类)。
+      continue;
+    }
+    // 其余六个码答的是「这一条意图为什么没生效」,同样落在「丢弃」:本 tick 其余意图照常结算。
+  }
+}
+```
+
+七码全落在「丢弃」这一类,后果与累计逐条在第 4 节那张对照表里;那一整类都不会清掉你的跨 tick
+记忆,也不会把本 tick 的其余意图一起丢掉。
 
 ## 3. API 表、错误码表与常量表
 
@@ -104,8 +269,8 @@ TODO(→ 快照面与错误面)
 | 函数 | 签名 | 一句语义 |
 | --- | --- | --- |
 | `getTick` | `getTick(): number` | 当前 tick 号;脚本每 tick 都要读一次时间轴,读出来是个数值。 |
-| `getObjectById` | `getObjectById(id: number): Unit \| Site \| Production \| null` | 按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。 |
-| `getObjectsByType` | `getObjectsByType(kind: 'unit' \| 'site', filter?: { owner?: -1\|0\|1\|2\|3; type?: UnitType; kind?: 'base' \| 'resource' }): (Unit \| Site)[]` | 按类型批量取快照对象(可带过滤);同一个快照值的批量入口。 |
+| `getObjectById` | `getObjectById(id: number): Unit \| Site \| null` | 按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。 |
+| `getObjectsByType` | `getObjectsByType(kind: 'unit' \| 'site' \| 'player', filter?: { owner?: -1\|0\|1\|2\|3; type?: UnitType; kind?: 'base' \| 'resource' }): (Unit \| Site \| Player)[]` | 按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的批量入口。四个座位的资源、存活与异常计数也从这里读,不必在脚本里另记一份。 |
 | `getRange` | `getRange(ax: number, ay: number, bx: number, by: number): number` | 两点间 Chebyshev 距离;射程心算要读它算出来的那个数值。 |
 | `getTerrainAt` | `getTerrainAt(x: number, y: number): 'plain' \| 'wall' \| 'out'` | 某格地形(`plain`/`wall`/`out`);绕墙寻路之前先读它。 |
 | `findPath` | `findPath(sx: number, sy: number, tx: number, ty: number): { x: number; y: number }[] \| null` | 寻路路径是一串坐标点,读得到的就是值;它计入 API 调用预算,而预算值不归这张表。 |
@@ -334,8 +499,8 @@ function nearestEnemyId(
 
 三条硬约束在这份骨架里的位置:座位只从 `getMyIndex()` 来(§1.2),跨 tick 只带 `assignedEnemyId`
 这一个数值过去而 `mine` / `foes` 每 tick 重新查(§1.4),每个单位每 tick 只 `attack` 一次(§1.3)。
-返回值走 `isError` / `errCode` 两步判别,不猜形状(§3)。
+返回值走 `isError` / `errCode` 两步判别,不猜形状(§2.3)。
 
-这份骨架与 §1 那份例子都由仓库的编译门禁**真编译过**,用的就是参赛脚本那份编译配置:所以它们没有
+这份骨架与 §1、§2 那两份例子都由仓库的编译门禁**真编译过**,用的就是参赛脚本那份编译配置:所以它们没有
 模块语法、没有 Node 与 DOM 的名字、没有非确定源,也没有别处的类型错误。示例本身也受门禁看管——
 把它改坏,门禁会红。
