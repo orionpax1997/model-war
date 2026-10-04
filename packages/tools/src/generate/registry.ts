@@ -28,6 +28,7 @@
  * 所以它只在能 afford 构建的那一侧成立。
  */
 
+import { apiOutcomeTable, apiSurfaceTables } from "./api-surface.ts";
 import { builtinGlobalsAllowlist } from "./builtin-globals.ts";
 import type { GeneratedArtifact } from "./artifact.ts";
 import { apiValueTable, rulesValueTable } from "./rules-value-table.ts";
@@ -41,10 +42,15 @@ import { scriptSurfaceNames } from "./script-surface.ts";
  *
  * 第三、四行是同一份内容的两处落点(机制文档与 API 文档各挂一份),不是一个键名的两个版本:
  * 内容由一个生产函数产出,两处逐字节相同,改真源时两处一起变。
+ *
+ * 最后两行挂在 API 文档的不同小节、读两个不同的真源(注入面符号表 / 后果行),分成两件而不是
+ * 合成一整块:漂移的报告要能指认是哪一句判据下的那一段漂了,合成一块就分不出来了。
  */
 export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [
   builtinGlobalsAllowlist,
   scriptSurfaceNames,
   rulesValueTable,
   apiValueTable,
+  apiSurfaceTables,
+  apiOutcomeTable,
 ];

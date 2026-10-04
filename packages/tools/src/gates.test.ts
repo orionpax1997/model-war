@@ -208,7 +208,21 @@ const GENERATED_SCRIPT_SURFACE = "packages/tools/src/generated/script-surface.ts
 const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
 
 /**
- * 改真源 →(可选地跑根脚本 `generate`)→ 跑 `body`,无论成败都把真源与生成物**按字节**还原。
+ * 一次真源改动的两端:改哪个真源、重跑生成器会重写哪些落点。
+ *
+ * 两端都要显式写出来,而不是靠「改了白名单真源就顺手还原白名单生成物」这种默认:本文件里已有两处
+ * 真源(白名单与注入面符号表),而它们的落点形状完全不同——前者是一份整文件生成物,后者是一段
+ * 落在契约文档里的区块。漏还原一个落点,后面每一条「回到绿」的断言就都在替上一条用例擦屁股。
+ */
+type TruthTarget = {
+  /** 真源的仓库根相对路径。真源是 `.ts`,所以改完必须 `tsc -b` 才成为门禁看得见的状态。 */
+  readonly truth: string;
+  /** 重跑生成器会重写的落点,按字节与真源一起还原。 */
+  readonly rewritten: readonly string[];
+};
+
+/**
+ * 改真源 →(可选地跑根脚本 `generate`)→ 跑 `body`,无论成败都把真源与落点**按字节**还原。
  *
  * 还原走字节而不是「再跑一次生成器」,是为了让「本用例有没有留下副作用」与生成器是否正确无关:
  * 生成器坏了也不该由还原路径顺手把它修好,那样这条用例的判决就永远绿。
@@ -217,14 +231,19 @@ const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
  * 「生成物停在上一版」那个状态。两条用例共用这一条还原路径,免得仓库里有两份。
  */
 const withPatchedTruth = (
+  target: TruthTarget,
   patch: (source: string) => string,
   options: { readonly regenerate: boolean },
   body: () => Outcome,
 ): Outcome => {
-  const truth = `${repoRoot}${SCHEMA_ALLOWLIST}`;
-  const generated = `${repoRoot}${GENERATED_ALLOWLIST}`;
-  const originalTruth = readFileSync(truth, "utf8");
-  const originalGenerated = readFileSync(generated, "utf8");
+  const truth = `${repoRoot}${target.truth}`;
+  const originals = [truth, ...target.rewritten.map((path) => `${repoRoot}${path}`)].map(
+    (path) => ({
+      path,
+      text: readFileSync(path, "utf8"),
+    }),
+  );
+  const originalTruth = originals[0]?.text ?? "";
 
   const patched = patch(originalTruth);
   // 补丁没打上 = 判据随真源改了形状,这条用例会安静地测一个不存在的东西。必须当场红。
@@ -244,8 +263,9 @@ const withPatchedTruth = (
     }
     return body();
   } finally {
-    writeFileSync(truth, originalTruth, "utf8");
-    writeFileSync(generated, originalGenerated, "utf8");
+    for (const snapshot of originals) {
+      writeFileSync(snapshot.path, snapshot.text, "utf8");
+    }
     // 真源还原之后,`packages/schema/dist` 可能停在被改过的源码上。补一次构建,
     // 让后续用例(尤其依赖已就位产物的 check:deps 与漂移检查)看到一致状态;结果不额外断言,
     // 断言留给那些真正依赖构建产物的用例,免得它盖掉 body 原本的失败信息。
@@ -253,11 +273,17 @@ const withPatchedTruth = (
   }
 };
 
+/** 白名单那一对:真源是一份整文件生成物。 */
+const ALLOWLIST_TARGET: TruthTarget = {
+  truth: SCHEMA_ALLOWLIST,
+  rewritten: [GENERATED_ALLOWLIST],
+};
+
 /** `withPatchedTruth` 的「改了真源并重跑生成器」那一档。 */
 const withRegeneratedAllowlist = (
   patch: (source: string) => string,
   body: () => Outcome,
-): Outcome => withPatchedTruth(patch, { regenerate: true }, body);
+): Outcome => withPatchedTruth(ALLOWLIST_TARGET, patch, { regenerate: true }, body);
 
 it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变", () => {
   // 基线:`abs` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
@@ -348,6 +374,7 @@ it("生成物漂移检查:改真源不重跑 → 变红,重跑并提交 → 变�
   // 反例①:真源加一个成员,生成器不跑。生成物路径上的内容一字未动,所以**只有**「重生成后无差异」
   // 那一段能抓住它——这正是这道检查不能只做 git 两刀的理由。
   const stale = withPatchedTruth(
+    ALLOWLIST_TARGET,
     (source) => source.replace('  "abs",\n', '  "abs",\n  "sign2",\n'),
     { regenerate: false },
     () => driftCheck(),
@@ -358,6 +385,7 @@ it("生成物漂移检查:改真源不重跑 → 变红,重跑并提交 → 变�
   // 同一处真源改动 + 重跑生成器:内容回到一致,剩下「未提交」那一刀,红的原因跟着变。
   // 少了这条,「它只会报那句生成器提示」也能满足上面两条。
   const regenerated = withPatchedTruth(
+    ALLOWLIST_TARGET,
     (source) => source.replace('  "abs",\n', '  "abs",\n  "sign2",\n'),
     { regenerate: true },
     () => driftCheck(),
@@ -788,6 +816,57 @@ it("生成物漂移检查:手改数值表区块正文 → 变红,手改表外散
     // 只动了机制文档那一份,API 文档那份逐字节未动:报告不该把它一起点名
     // (那会让「哪一段漂了」这条信息变得没法用)。
     expect(violated.output, "没被动过的那一份也被点名了").not.toContain("api-v1-value-table");
+  } finally {
+    writeFileSync(doc, original, "utf8");
+  }
+
+  expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
+});
+
+// ── 生成物漂移检查:API 面的表(真源是符号表与后果行,落在契约文档的正文里) ─────────
+
+/** 注入面符号表那一件的真源:它渲染成契约文档里的一段区块,而它的落点是一份手写散文夹着的文档。 */
+const INJECTED_SURFACE_TRUTH = "packages/schema/src/script-surface.ts";
+
+it("生成物漂移检查:API 表区块——改真源不重跑 → 变红,手改区块正文 → 变红,还原 → 变绿", () => {
+  const clean = driftCheck();
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例①:改真源(一行「为什么收」的措辞)而**不重跑生成器**。真源是 `.ts`,所以这一条比数值表
+  // 那一节多一道前提:改了得先 `tsc -b` 编过去,否则门禁读到的还是上一版 dist,这条反例会假绿。
+  const stale = withPatchedTruth(
+    { truth: INJECTED_SURFACE_TRUTH, rewritten: [API_DOC] },
+    (source) =>
+      source.replace(
+        'reason: "当前 tick 号;脚本每 tick 都要读一次时间轴,读出来是个数值。",',
+        'reason: "当前 tick 号(探针改的措辞);读出来是个数值。",',
+      ),
+    { regenerate: false },
+    () => driftCheck(),
+  );
+  expect(stale.status, "改了真源不重跑生成器,漂移检查必须非零退出").toBe(1);
+  expect(stale.output, stale.output).toContain("区块与真源不一致");
+  // 报告按标记指认是哪一段:API 表与数值表落在同一份文档里,不指认就没法一眼看出是哪半边。
+  expect(stale.output, stale.output).toContain("<!-- generated:api-v1-api-surface:begin -->");
+  // 反过来也成立:逐字节未动的那几段**不该**被点名(它们读的是别的真源)。
+  expect(stale.output, "没被动过的数值表被连坐点名了").not.toContain("api-v1-value-table");
+  expect(stale.output, "没被动过的对照表被连坐点名了").not.toContain("api-v1-outcome-table");
+  expect(stale.output, "没被动过的整文件生成物被连坐点名了").not.toContain("script-surface-names");
+
+  // 反例②:手改文档里那段区块正文(把签名里的一个参数名改掉)。形状与逐字节锁死整份文档时一样,
+  // 但报告只该说这一段。
+  const doc = `${repoRoot}${API_DOC}`;
+  const original = readFileSync(doc, "utf8");
+  const tampered = original.replace("| `getTick(): number` |", "| `getTick(n: number): number` |");
+  expect(tampered, "补丁没有改到 API 表,这条反例不成立").not.toBe(original);
+  writeFileSync(doc, tampered, "utf8");
+  try {
+    const violated = driftCheck();
+    expect(violated.status, "手改 API 表区块正文必须非零退出").toBe(1);
+    expect(violated.output, violated.output).toContain("区块与真源不一致");
+    expect(violated.output, violated.output).toContain(
+      "<!-- generated:api-v1-api-surface:begin -->",
+    );
   } finally {
     writeFileSync(doc, original, "utf8");
   }
