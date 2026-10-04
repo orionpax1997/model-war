@@ -14,6 +14,7 @@
 
 import { isAllowedMathMember } from "../allowlist.ts";
 import { identifierName, isAstNode, startOf, endOf, walk, type AstNode } from "../ast.ts";
+import { memberNameOf } from "./identifier-chain.ts";
 import { parseToAst, positionAt, type SourceKind } from "../parse-source.ts";
 
 /** 违规类别。`syntax-error` 不是一条规则,而是「无法判定」的确定结论:解析不过就没有干净可言。 */
@@ -169,18 +170,7 @@ const isMathObject = (object: unknown): boolean => {
   );
 };
 
-/** 成员名:非计算属性取 `property.name`;计算属性取字符串字面量的值;动态下标取不到,返回 undefined。 */
-const memberNameOf = (node: AstNode): string | undefined => {
-  const { property } = node;
-  if (node.computed !== true) {
-    return identifierName(property);
-  }
-  if (isAstNode(property) && property.type === "Literal" && typeof property.value === "string") {
-    return property.value;
-  }
-  return undefined;
-};
-
+/** 成员名取法收在 `identifier-chain.ts` 的公共件里(理由见它的头注):同一判据留两份,迟早有一份漏改。 */
 const checkMathMember = (node: AstNode, source: string): PendingViolation | undefined => {
   if (node.type !== "MemberExpression" || !isMathObject(node.object)) {
     return undefined;

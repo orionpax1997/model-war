@@ -24,8 +24,13 @@
  * `syntax-error`,本规则见不到它(也不需要见)。
  *
  * ── 裁决:动态 `eval` 拦、静态 `eval` 不拦 ────────────────────────────────────
- * 判据落在**实参的形状**上:直接调用 `eval` / `globalThis.eval` 且**第一个实参是字符串字面量**
- * 算静态(不拦);其余一切算动态(拦)。
+ * 判据落在**实参的形状**上:直接调用 `eval` / `globalThis.eval` 且**剥掉括号后的第一个实参
+ * 是字符串字面量**算静态(不拦);其余一切算动态(拦)。括号在 JS 里是纯分组,**不改变被引用的是谁**
+ * ——`eval(("1+1"))` 与 `eval("1+1")` 求值的是同一段编译期就写定的常量,没有理由一个放行一个拦,
+ * 误伤一份本来能跑的脚本在五轮预算里是纯亏损。
+ * 括号那一层与下面「不做常量折叠」**不是一回事**:折叠要一层求值器(另一个成本层级),
+ * 剥括号不要——它与 `(Math).random()` 那侧是同一条遍历层纪律,剥括号只做在实参这一侧
+ * (理由与那句纪律的对齐见 `identifier-chain.ts` 头注)。
  * 为什么不拦静态的那一种:
  * - 它是本规则五形态里唯一「拦了没有收益」的一种。静态 `eval` 被求值的文本是**编译期就完全写定
  *   的一段常量**,它能做到的最坏结果与「把这几行直接写进脚本」完全等价;而拦住它的代价是模型
@@ -61,9 +66,9 @@
  * 所以谁先判都不改变结论;顺序按裁决插位即可,见 `validate/pipeline.ts`。
  */
 
-import { identifierName, isAstNode, startOf, walk, type AstNode } from "../ast.ts";
+import { identifierName, startOf, walk, type AstNode } from "../ast.ts";
 import { parseToAst, positionAt } from "../parse-source.ts";
-import { isGlobalThisNode, withoutParentheses } from "./identifier-chain.ts";
+import { isGlobalThisNode, memberNameOf, withoutParentheses } from "./identifier-chain.ts";
 import type { ScriptLintContext, ScriptLintStage, ScriptViolation } from "./script-lint.ts";
 
 /** 收集阶段先记偏移,最后统一换算行列——避免每个节点都重算一次行号(与 `rules/no-float.ts` 同做法)。 */
@@ -129,10 +134,13 @@ const MODULE_FORMS: Readonly<Record<string, string>> = {
  *
  * 取得到的三种写法:裸标识符(`eval(s)`)、带括号的同一写法(`(eval)(s)`——括号在 JS 里是纯分组,
  * 剥掉它就是上面那一种,判据与遍历层共用同一句,理由见 `identifier-chain.ts` 的头注)、
- * `globalThis` 的等价写法(`globalThis.eval(s)`)。
- * `a.eval(s)` 取不到:那是一次对象上的方法调用,不是全局 `eval`。`globalThis` 那一支与
- * `forbidden-globals.ts` 的处理同一条纪律(它是全局对象本身,不是某个对象的属性),判据取自
- * 那份公共件而不是在这里再写一遍字面量。
+ * `globalThis` 的等价写法(`globalThis.eval(s)`,以及成员名走字符串下标的同一写法
+ * `globalThis["eval"](s)`——**同一种成员名取法**,所以判据取自那份公共件的 `memberNameOf`
+ * 而不在这里再写一遍「只认非计算」那一支;否则本包会对 `Math["random"]()` 认、对
+ * `globalThis["eval"](s)` 不认,而两份代码对同一种写法给出相反结论时没有任何东西会变红)。
+ * `a.eval(s)` 与 `a["eval"](s)` 都取不到:那是一次对象上的方法调用,不是全局 `eval`。
+ * `globalThis` 那一支与 `forbidden-globals.ts` 的处理同一条纪律(它是全局对象本身,不是某个对象的
+ * 属性),判据取自那份公共件而不是在这里再写一遍字面量。
  */
 const calleeNameOf = (
   node: AstNode,
@@ -145,8 +153,8 @@ const calleeNameOf = (
   if (direct !== undefined) {
     return { name: direct, start: startOf(callee) };
   }
-  if (callee.type === "MemberExpression" && callee.computed !== true) {
-    const member = identifierName(callee.property);
+  if (callee.type === "MemberExpression") {
+    const member = memberNameOf(callee);
     return member !== undefined && isGlobalThisNode(callee.object)
       ? { name: member, start: startOf(callee) }
       : undefined;
@@ -154,10 +162,19 @@ const calleeNameOf = (
   return undefined;
 };
 
-/** 动态 eval 的判据:第一个实参是字符串字面量就算静态(不拦),其余一律动态(拦)。 */
+/**
+ * 动态 eval 的判据:剥掉括号后的第一个实参是字符串字面量就算静态(不拦),其余一律动态(拦)。
+ *
+ * 括号在 JS 里是纯分组,剥掉它**不改变实参是什么**,所以 `eval((s))` 仍然算动态、
+ * `eval(("1+1"))` 与 `eval("1+1")` 属同一类;而**不做常量折叠**仍然成立:
+ * `eval(("1" + "1"))` 的内层不是字面量,照拦(理由见头注的裁决段)。
+ */
 const isStaticEvalArgument = (node: AstNode): boolean => {
   const [first] = Array.isArray(node.arguments) ? node.arguments : [];
-  return isAstNode(first) && first.type === "Literal" && typeof first.value === "string";
+  const argument = withoutParentheses(first);
+  return (
+    argument !== undefined && argument.type === "Literal" && typeof argument.value === "string"
+  );
 };
 
 /** 遍历一棵已解析成功的树,收出本级的违规。规则层与判定链两个入口共用这一份扫描。 */
