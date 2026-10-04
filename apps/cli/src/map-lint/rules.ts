@@ -102,10 +102,23 @@ export const orbitOf = (
   return cells;
 };
 
-const key = (x: number, y: number): string => `${x},${y}`;
-
-const isInside = (x: number, y: number, size: number): boolean =>
+/**
+ * 网格边界判定:坐标落在 `[0, size)` 内。
+ *
+ * 导出是因为池层也要用**同一条**判定,理由与 `rotate` / `orbitOf` 同一条:两层各抄一份,
+ * 它们就会在某次改动后悄悄分叉,而分叉的表象是一张越界点位被单图层放过、被池层拦下
+ * (或反过来)。边界算错的后果不在数字里,在「同一件事两处不同答案」里。
+ */
+export const isInside = (x: number, y: number, size: number): boolean =>
   x >= 0 && y >= 0 && x < size && y < size;
+
+/**
+ * 一格的字符串键。**两层只许有这一个拼格键的方式**:墙格集合、最近一圈归属的集合、
+ * BFS 的 `seen`、对称性的存在性判据——它们拼出来的字符串是彼此的索引,一旦拼法不一致,
+ * 「同格」就会在某一层静默地变成「不同格」。名字取 `cellKey` 而不是泛泛的 `key`,
+ * 因为这两个文件里键的对象不止一种(`id`、`owner`、类别名);`cellKey` 说清了它键住的是一格。
+ */
+export const cellKey = (x: number, y: number): string => `${x},${y}`;
 
 /**
  * terrain 行数与行长必须等于 `size`。字符集归 `MAP_JSON_SCHEMA`,这里不重复判——
@@ -166,11 +179,11 @@ const terrainSymmetryViolations = (map: MapDefinition): readonly MapLintViolatio
 const siteSymmetryViolations = (map: MapDefinition): readonly MapLintViolation[] => {
   const size = map.size;
   const found: MapLintViolation[] = [];
-  const present = new Set(map.sites.map((site) => key(site.x, site.y)));
+  const present = new Set(map.sites.map((site) => cellKey(site.x, site.y)));
   for (const site of map.sites) {
     if (!isInside(site.x, site.y, size)) continue;
     const [rx, ry] = rotate(site.x, site.y, size);
-    if (!present.has(key(rx, ry))) {
+    if (!present.has(cellKey(rx, ry))) {
       found.push({
         scope: "map",
         rule: "sites-symmetry",
@@ -186,7 +199,7 @@ const sitePlacementViolations = (map: MapDefinition): readonly MapLintViolation[
   const found: MapLintViolation[] = [];
   const seen = new Map<string, number>();
   for (const site of map.sites) {
-    const cell = key(site.x, site.y);
+    const cell = cellKey(site.x, site.y);
     const rival = seen.get(cell);
     if (rival !== undefined) {
       found.push({
@@ -232,13 +245,14 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
   const siteCells = new Set<string>();
   for (const site of map.sites) {
     for (let dx = -1; dx <= 1; dx += 1) {
-      for (let dy = -1; dy <= 1; dy += 1) siteCells.add(key(site.x + dx, site.y + dy));
+      for (let dy = -1; dy <= 1; dy += 1) siteCells.add(cellKey(site.x + dx, site.y + dy));
     }
   }
   const spawnCells = new Set<string>();
   for (const unit of map.spawnUnits) {
     const home = map.sites.find((site) => site.kind === "base" && site.initialOwner === unit.owner);
-    if (home !== undefined) spawnCells.add(key(home.x + unit.offset[0], home.y + unit.offset[1]));
+    if (home !== undefined)
+      spawnCells.add(cellKey(home.x + unit.offset[0], home.y + unit.offset[1]));
   }
 
   const cellsOf = (slot: MapVariantSlot): readonly (readonly [number, number])[] =>
@@ -247,12 +261,12 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
   map.variantSlots.forEach((slot, index) => {
     const where = `variantSlots[${index}]`;
     const cells = cellsOf(slot);
-    const wanted = new Set(cells.map(([x, y]) => key(x, y)));
+    const wanted = new Set(cells.map(([x, y]) => cellKey(x, y)));
     const isOrbit =
       cells.length === 4 &&
       cells.every(([x, y]) => isInside(x, y, size)) &&
       orbitOf(cells[0]?.[0] ?? 0, cells[0]?.[1] ?? 0, size)
-        .map(([x, y]) => key(x, y))
+        .map(([x, y]) => cellKey(x, y))
         .every((cell) => wanted.has(cell));
     if (!isOrbit) {
       found.push({
@@ -264,7 +278,7 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
       return;
     }
     for (const [x, y] of cells) {
-      if (siteCells.has(key(x, y))) {
+      if (siteCells.has(cellKey(x, y))) {
         found.push({
           scope: "map",
           rule: "variant-slot-on-site",
@@ -272,7 +286,7 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
           where,
         });
       }
-      if (spawnCells.has(key(x, y))) {
+      if (spawnCells.has(cellKey(x, y))) {
         found.push({
           scope: "map",
           rule: "variant-slot-on-spawn",
