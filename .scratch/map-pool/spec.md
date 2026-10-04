@@ -1,6 +1,8 @@
 # 地图池与种子变体定案
 
-Status: ready-for-agent
+Status: resolved
+
+> 七票全部有 `## Answer`（票 06 的答案是「无法判定」，同属有答案）。仍未竟的两件事都不在本 spec 内：① 号窗口重推是 gdd §8 记录 #13 的复验/回流，终稿契约下的复验与真引擎首触复核已作为交办账落在 DAG §7。
 
 ## Problem Statement
 
