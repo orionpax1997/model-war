@@ -100,7 +100,7 @@ SC2Arena、TextStarCraft II、LLM-PySC2 等让 LLM 在对局中逐帧决策,共�
 
 - 技术路线已被最近似先例验证,且本项目架构(赛前写码、赛中无 AI)规避了 LLM 游戏 benchmark 的全部运行时风险;
 - 成本可忽略;真正的项目风险不在工程,而在**规则设计**(R2)与**防污染机制**(R1),分别由 M1 里程碑和规则版本化策略承接;
-- 下一步:进入 v0 规则设计,解决 gdd《开放项》,以 `.scratch/v0-rules/spec.md` 起题(见 `docs/agents/issue-tracker.md`)。
+- 下一步:进入 v0 规则设计,解决 gdd《开放项》,以 `.scratch/rules-landing/spec.md` 那一格起题(规则集与契约落库,见 `docs/agents/issue-tracker.md`)。
 
 ## 附:引用
 

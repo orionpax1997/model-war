@@ -3,12 +3,11 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 import {
+  PROSE_SCANNED_DOCS,
   boundParameterNames,
   describeHandCopiedValue,
   handCopiedValuesIn,
 } from "./rules-doc-prose.ts";
-
-const rulesDoc = fileURLToPath(new URL("../../../docs/rules-v1/rules.md", import.meta.url));
 
 /** 一段正文 + 一张生成区块,拼成门禁真正吃的那份文件形状。 */
 const withValueTable = (prose: string): string =>
@@ -67,18 +66,32 @@ it("收窄门禁:报告指得出是哪一行哪一个键", () => {
   const hit = hits[0];
   expect(hit?.key).toBe("carryLimit");
   expect(hit?.line).toBe(2);
-  expect(describeHandCopiedValue(hit!), describeHandCopiedValue(hit!)).toContain("第 2 行");
-  expect(describeHandCopiedValue(hit!)).toContain("carryLimit");
+  const said = describeHandCopiedValue(hit!, "docs/rules-v1/api.md");
+  expect(said).toContain("第 2 行");
+  expect(said).toContain("carryLimit");
+  // 报告里的文档名是调用方给的:两份契约文档共用这一个函数,指错文件名比不报更坏。
+  expect(said.startsWith("docs/rules-v1/api.md ")).toBe(true);
 });
 
 it("收窄门禁:更长的标识符里含有键名不算命中", () => {
   expect(handCopiedValuesIn(withValueTable("结算器读 myTickLimitOf = 600 去做什么。"))).toEqual([]);
 });
 
-it("规则文档正文现在没有手抄的第二份取值", () => {
-  const hits = handCopiedValuesIn(readFileSync(rulesDoc, "utf8"));
-  expect(
-    hits.map((hit) => describeHandCopiedValue(hit)).join("\n"),
-    "规则文档的生成区块之外出现了键名绑数字",
-  ).toBe("");
+it("两份契约文档与四份设计文档的正文现在没有手抄的第二份取值", () => {
+  // 扫的集合是显式列出来的,不是「扫到谁算谁」:少列一份就是少一个家(两份契约文档是模型真读的,
+  // 收窄门禁先前只盯了 rules.md 一份,api.md 的散文是同一类风险)。gdd 不在集合里,理由见模块头注。
+  for (const doc of PROSE_SCANNED_DOCS) {
+    const file = fileURLToPath(new URL(doc.href, import.meta.url));
+    const hits = handCopiedValuesIn(readFileSync(file, "utf8"));
+    expect(
+      hits.map((hit) => describeHandCopiedValue(hit, doc.label)).join("\n"),
+      `${doc.label} 的生成区块之外出现了键名绑数字`,
+    ).toBe("");
+  }
+});
+
+it("扫的集合里确实有那两份契约文档(别把最要紧的一份从名单里改没了)", () => {
+  const labels = PROSE_SCANNED_DOCS.map((doc) => doc.label);
+  expect(labels).toContain("docs/rules-v1/rules.md");
+  expect(labels).toContain("docs/rules-v1/api.md");
 });
