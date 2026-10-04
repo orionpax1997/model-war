@@ -1,7 +1,7 @@
 # 09:模块系统规则的两处「等价写法没兑现」(`eval(("1+1"))` 与 `globalThis["eval"]`)
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by:
 
 ## 来源
@@ -73,3 +73,37 @@ Blocked by:
 实参是字符串字面量」,并把「剥括号只做在这一侧」的理由与 `identifier-chain.ts` 头注对齐。
 ③ 两处要么都收进 `identifier-chain.ts` 的公共件,要么各自留一份并注明为什么——
 **不得留三处各写一遍的形态**(与 `withoutGlobalThis` 同一纪律)。
+
+## Answer
+
+两处都是误伤(合规脚本被拒),已按票面修复。落点:`rules/module-system.ts` 的
+`isStaticEvalArgument` 与 `calleeNameOf`,判据本身收在 `rules/identifier-chain.ts` 的公共件。
+
+**① `eval(("1+1"))`**:实参先过 `withoutParentheses` 再判字符串字面量。与「不做常量折叠」
+的分工写在两份头注里:**折叠要一层求值器,剥括号不要**;`eval((s))`、`eval(("1"+"1"))`、
+``eval((`1${s}`))`` 内层不是字面量,照拦。
+
+**② `globalThis["eval"](s)`**:`calleeNameOf` 改调公共件的 `memberNameOf`(原先由私有转导出),
+那份「只认非计算成员名」的分支删掉。本仓另有 `rules/no-float.ts` 也有一份逐字相同的
+`memberNameOf`,**本票没有动它**——它的头注明确记着一条依赖边界的裁决:那条零构建快门禁是
+本 feature 之前就有的,让它依赖本 feature 的新文件会把两个消费者的变更面绑在一起,代价
+(同一条等价规则留两份)当场记在头注里。跨越它属于重新 grill 依赖边界,不属于这张票,
+且票面 ③ 的「三处」指的是模块系统那几个位置,不含它。
+
+**钉住相反的一侧**(验收 ①):放行侧 `eval(("1+1"))`、`eval((("1+1")))`、
+`globalThis["eval"]("1+1")`;拦侧 `eval((s))`、`eval(("1"+"1"))`、``eval((`1${s}`))``、
+``eval(`1+1`)``(无插值模板串单独钉——票面把它列为「不做折叠」的样本,而带插值的那种天然
+动态,约束不住这条裁决)、`globalThis["eval"](s)`、`(globalThis)["eval"](s)`;
+另一侧 `o["eval"](s)`、`(o)["eval"](s)`、`a.eval(s)`、`a["eval"](s)`、`globalThis[k](s)` 放行。
+
+**一处票面未点名的连带收窄**:`memberNameOf` 对 `require` 与 `eval` 是同一个判据,所以
+`globalThis["require"]("std")` 也随之由放行变拦截(已补用例)。它是 ③ 的必然结果,不是新规则
+面——规则本来就拦 `globalThis.require("std")`,这一条只是把同一名字的等价写法补齐;
+刻意只让 `eval` 走计算成员名分支,就会重新引入票面警告的「同判据两套答案」。
+
+**顺带确认一处不是本票产物**:`eval(( ))` 这类空括号组**解析即失败**
+(`Empty parenthesized expression`),归判定链独占那条 `syntax-error`,模块系统规则见不到,
+所以它在规则层「放行」与本票无关。
+
+**hld §6.2 无需改**:那一格列的是形态(禁哪五种),判据的措辞与边界的家是规则文件的头注,
+这是本仓既有做法;本票改的是实现,没有改那一行的任何取值或形态。
