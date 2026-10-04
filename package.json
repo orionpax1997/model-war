@@ -25,10 +25,11 @@
     "check:declared-deps": "node packages/tools/src/gate/run-declared-deps-gate.ts",
     "check:drift": "node packages/tools/src/generate/run-drift-gate.ts",
     "check:bench": "node packages/tools/src/benchmarks/run-benchmarks-gate.ts",
+    "check:selfproof": "node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run check:no-float",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
     "check:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
-    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench"
+    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:selfproof"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",

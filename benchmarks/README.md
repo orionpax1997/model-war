@@ -120,3 +120,23 @@ node .scratch/rules-landing/blind/static-check.ts cell-a cell-b cell-c
 ```
 
 判读全文:`.scratch/rules-landing/blind/verdict-2026-10-04.md`。
+## 7. 机器防线:契约自证门禁
+
+这三份产物不只是**证据**,还是一道门禁的输入:`check:selfproof`
+(`node packages/tools/src/selfproof/run-selfproof-gate.ts`,挂在 `check` 末尾最后一道)拿终稿契约
+把它们**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题:
+
+| 问 | 判据 | 本轮读数 |
+| --- | --- | --- |
+| ① 零静态违规 | 静态校验器逐份退出码 0(`--phase freeze`,`--max-bytes` 取三份入库产物的最大值——`scriptSizeLimit` 仍是占位 0) | 三份全 0 |
+| ② 正常终局 | 每席 `exceptionTicks` 为 0 且终局原因属 `victory` / `shortcut` / `timeout` | 64 场 256 席,异常 0 |
+| ③ 消耗 ≤ 总储量 1/4 | 每份脚本每席位消耗的中位与最坏单席都 ≤ 800(= 3200 的 1/4) | A 6.9% / B 3.0% / C 0.0%,最坏单场 19.3% |
+| ④ 取策略互不相同 | 每一对脚本在 9 项行为指标上至少 3 项相对差 ≥ 25% | 两两分别 8 / 8 / 6 项 |
+
+矩阵是 4 臂(三张真图 + 一张无墙夹具对照,夹具与臂数与 gdd §8 记录 #13 那一轮逐字同)× 4 个座位轮转 ×
+4 颗种子 = 64 场;跑正表前先过夹具闸门(`farmer6` 锚点 `p100=479` / `delivered=3080`)。
+三份产物在**终稿契约**与**草案代桩**之间的五处缺口由宿主侧兼容层补齐,
+补法与残余偏差记在 `packages/tools/src/selfproof/contract-compat.ts`——桩一行未改,
+补法也不静默:换契约版本时**判据不变、门禁仍绿是正常的,而四问的取值会全部变**,
+本目录这张表里的静态校验结果与本节的读数都不是回归基线。
+完整报告(口径、逐臂读数、区分度矩阵)见 `.scratch/rules-landing/selfproof/report.md`。
