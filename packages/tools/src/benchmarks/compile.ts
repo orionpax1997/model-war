@@ -203,7 +203,9 @@ export const compileBenchmarkSource = (source: string): Compilation => {
  *
  * 取值全部由 `SANDBOX_INJECTED_API_SYMBOL_CATALOG` 的 `signature` 推导,本文件**一个 API 名字都不写**——
  * 名字只有一处可改(真源包那张目录),而这张表多抄一份就等于多一处会悄悄过期的名单。
- * 推导不出来时抛错:那种情况说明签名形状变了,该改这里并让门禁红一次,而不是塞个默认值糊过去。
+ * 连「取不到错误码时的兜底值」那个位置也不写名字:错误码同样只从目录投影,推不出来就抛错。
+ * 抛错而不是塞个兜底值:那种情况说明目录里一个错误码都没有,塞个名字糊过去会让本文件
+ * 自己的纪律(「一个名字都不写」)当场失效,而失效的形式恰好是最难发现的那种。
  */
 const EMPTY_VALUE_OF = (signature: string, errorCodes: readonly string[]): unknown => {
   // 签名形如 `名字(参数): 返回值`,可能折行;返回值从最后一个 `): ` 之后取。
@@ -215,7 +217,14 @@ const EMPTY_VALUE_OF = (signature: string, errorCodes: readonly string[]): unkno
   if (returns.endsWith("[]")) return [];
   if (returns.includes("null")) return null;
   if (returns === "boolean") return false;
-  if (returns === "ErrCode") return errorCodes[0] ?? "ERR_BAD_ARGS";
+  if (returns === "ErrCode") {
+    // 错误码目录为空时非零退出而不是给一个写死的兜底码:那个码名只能有一处家(真源包目录)。
+    const anyCode = errorCodes[0];
+    if (anyCode === undefined) {
+      throw new Error("注入面目录里一个错误码都没有,桩给不出 `ErrCode` 的空值。");
+    }
+    return anyCode;
+  }
   // 字符串字面量联合(地形的 `'plain' | 'wall' | 'out'`):取第一个候选,当作「最普通的那种」。
   const literal = /^'([a-z]+)'(\s*\|\s*'[a-z]+')*$/.exec(returns);
   if (literal !== null) return literal[1] ?? "";

@@ -25,7 +25,7 @@
  *    `errCode(r)` = 原样返回。残余偏差:返回值的**形状**不同(对象 vs 字符串),
  *    但「有没有错」与「错在哪」这两个判断在两种表示下同义——三份脚本只用这两个 helper,
  *    不碰返回值的内部结构。
- * 3. **错误码常量**。终稿把 7 个 `ERR_*` 当注入面里的字符串常量(真源包
+ * 3. **错误码常量**。终稿把每一个 `ERR_*` 当注入面里的字符串常量(真源包
  *    `SANDBOX_INJECTED_API_SYMBOL_CATALOG`,category `error-code`),桩不注入它们。
  *    补法:按那张目录逐个铺成同名同值的字符串。名单不在本文件里写第二份。
  * 4. **快照里的产线字段**。终稿把「这条产线在不在产」挂在 `site.producing = {type, remainingTicks}`
@@ -61,11 +61,26 @@
  * `exceptionTicks` 恒 0——后者不是猜的:四问之二就是判它为 0,真出现异常那一问当场红。
  */
 
-/** 兼容层补的四处缺口 + 刻意记下来的一处口径。报告与人读文档引用这一份,不另写一份。 */
-export const COMPAT_GAPS: readonly { readonly gap: string; readonly fill: string }[] = [
+import { SANDBOX_INJECTED_API_SYMBOL_CATALOG } from "@model-war/schema";
+
+/**
+ * 兼容层补的四处缺口 + 刻意记下来的一处口径。报告与人读文档引用这一份,不另写一份。
+ *
+ * **数目一律不手写。** 这一张表会被逐行打进报告(而报告是要被人读的),所以带数的那一格在
+ * `compatGapsOf()` 里现算——目录加一个错误码,这一行就跟着变,不留一处会悄悄过期的事实。
+ */
+const ERROR_CODE_COUNT = SANDBOX_INJECTED_API_SYMBOL_CATALOG.filter(
+  (entry) => entry.kind === "error-code",
+).length;
+
+/** 这一张表的投影:带数的那一格在调用时从真源包目录取,不在本文件里写死。 */
+export const compatGapsOf = (): readonly { readonly gap: string; readonly fill: string }[] => [
   { gap: "座位自认:getMyIndex()", fill: "按座位注入常量函数(与终稿同义)" },
   { gap: "错误判别:isError / errCode", fill: "按桩的裸字符串返回形态翻译(判断同义)" },
-  { gap: "错误码常量:7 个 ERR_*", fill: "按真源包注入面目录逐个铺成同名同值字符串" },
+  {
+    gap: `错误码常量:${ERROR_CODE_COUNT} 个 ERR_*`,
+    fill: "按真源包注入面目录逐个铺成同名同值字符串",
+  },
   {
     gap: "快照产线字段:site.producing",
     fill: "脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)",
