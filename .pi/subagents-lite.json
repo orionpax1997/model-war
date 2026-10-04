@@ -1,6 +1,6 @@
 {
   "agent": {
-    "Explore": "minimax-cn/MiniMax-M3",
+    "Explore": "minimax-cn/MiniMax-M3.1-Flash-Preview",
     "review": "commandcode/deepseek/deepseek-v4.1-flash"
   }
 }
