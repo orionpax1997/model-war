@@ -506,8 +506,14 @@ it("生成物漂移检查挂在全量门禁末尾,且不进快门禁", () => {
     scripts: Record<string, string>;
   };
 
-  // 挂在末尾而不是中间:前面几道各自独立,漂移检查是最后一道「提交内容对不对」的复核。
-  expect(manifest.scripts["check"]?.trimEnd().endsWith("pnpm run check:drift")).toBe(true);
+  // 挂在末尾而不是中间:前面几道各自独立,末尾那几道是「提交内容对不对」的复核。
+  // 取最后两步而不是「整个字符串的结尾」:末尾不止一道(漂移检查、基准产物门禁),
+  // 把「哪一道排最后」当成纪律的话,加一道门禁就得改这条断言——而那正是纪律失效的样子。
+  const tail = (manifest.scripts["check"] ?? "")
+    .split("&&")
+    .slice(-2)
+    .map((step) => step.trim());
+  expect(tail, "漂移检查不在全量门禁的末尾两步里").toContain("pnpm run check:drift");
 
   // 不进快门禁的理由是它需要一次 `tsc -b`,而快门禁的零构建性质不能破(ADR-0003 的混合传输)。
   // 「零构建」没法直接断言,能断言的是它没被挂进快门禁这条链里。
@@ -1061,6 +1067,57 @@ it("lint 门禁:被禁写法被拦下,改正后放行", () => {
   expect(anyFixed.status, `unknown 仍被拦下:\n${anyFixed.output}`).toBe(0);
 
   expect(script("lint").status).toBe(0);
+});
+
+// ── 基准产物门禁反例:产物与源码分叉即红 ─────────────────────────────────────
+
+/**
+ * 反例手法:改入库产物里的**一个字节**,不改源码。
+ *
+ * 选产物而不是源码:改源码那一步,任何「产物是编译出来的」机制都会跟着变红,
+ * 证明不了「入库的产物没人重新编译过」这一件——而那正是产物入库的理由
+ * (clone 完直接能跑)。所以这里只动产物。
+ */
+it("基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原 → 变绿", () => {
+  const product = `${repoRoot}benchmarks/cell-c-claim-no-harvest/script.js`;
+  const committed = readFileSync(product);
+
+  const clean = script("check:bench");
+  expect(clean.status, clean.output).toBe(0);
+  // 绿的时候报告要说清「判的是哪几份」,否则红起来时没人知道漏了谁。
+  expect(clean.output, clean.output).toContain("基准产物门禁:绿(3 份");
+
+  try {
+    // 只改最后一行的缩进:编译产物的内容不变而字节变了——正是「手改过」与「编译出来的」的分界。
+    writeFileSync(product, committed.toString("utf8").replace(/\n$/, "\n\n"), "utf8");
+    const drifted = script("check:bench");
+    expect(drifted.status, "入库的产物与源码分叉了,门禁必须非零退出").not.toBe(0);
+    expect(drifted.output, drifted.output).toContain("cell-c-claim-no-harvest");
+    expect(drifted.output, drifted.output).toContain("与重新编译的结果不一致");
+    expect(drifted.output, drifted.output).toContain("基准产物门禁:红");
+  } finally {
+    writeFileSync(product, committed);
+  }
+
+  const restored = script("check:bench");
+  expect(restored.status, `按字节还原后没有回到绿:\n${restored.output}`).toBe(0);
+});
+
+it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
+  const manifest = JSON.parse(readFileSync(`${repoRoot}package.json`, "utf8")) as {
+    scripts: Record<string, string>;
+  };
+
+  // 与漂移检查同一位置纪律:提交内容对不对的那几道复核都在末尾(末尾两步里的另一半)。
+  const tail = (manifest.scripts["check"] ?? "")
+    .split("&&")
+    .slice(-2)
+    .map((step) => step.trim());
+  expect(tail, "基准产物门禁不在全量门禁的末尾两步里").toContain("pnpm run check:bench");
+
+  // 它要 spawn 一次 tsc,与快门禁的零构建性质不相容(理由同 check:drift)。
+  expect(manifest.scripts["check:quick"]).not.toContain("check:bench");
+  expect(manifest.scripts["check:types"]).not.toContain("check:bench");
 });
 
 // ── 反递归不变量 ─────────────────────────────────────────────────────────────
