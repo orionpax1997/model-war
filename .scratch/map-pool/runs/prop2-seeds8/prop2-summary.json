@@ -1,0 +1,550 @@
+{
+ "manifest": {
+  "generatedAt": "2026-10-03T20:54:38.592Z",
+  "node": "v24.15.0",
+  "setOverrides": {
+   "resourcePerSite": 200
+  },
+  "rulesetVersion": "stub-v1 (from draft rules.md §10) + override {\"resourcePerSite\":200}",
+  "tickLimit": 600,
+  "baseScripts": [
+   {
+    "key": "a",
+    "cell": "cell-a",
+    "model": "deepseek-v4.1-flash",
+    "strategy": "A 爆兵压制",
+    "file": "/tmp/mw-ticket-06/.scratch/rules-calibration/blind/cell-a/work/script.v1.js"
+   },
+   {
+    "key": "b",
+    "cell": "cell-b",
+    "model": "MiniMax-M3",
+    "strategy": "B 扩张运营",
+    "file": "/tmp/mw-ticket-06/.scratch/rules-calibration/blind/cell-b/work/script.v1.js"
+   },
+   {
+    "key": "c",
+    "cell": "cell-c",
+    "model": "deepseek-v4.1-flash(thinking=low)",
+    "strategy": "C 占点(不采集)",
+    "file": "/tmp/mw-ticket-06/.scratch/rules-calibration/blind/cell-c/work/script.v1.js"
+   },
+   {
+    "key": "d",
+    "cell": "cell-d",
+    "model": "space-bunny-alpha",
+    "strategy": "A 爆兵压制(交叉验证)",
+    "file": "/tmp/mw-ticket-06/.scratch/rules-calibration/blind/cell-d/work/script.v2.js"
+   }
+  ],
+  "seeds": [
+   11,
+   23,
+   37,
+   41,
+   59,
+   71,
+   83,
+   97
+  ],
+  "matrixCaliber": "M1 逐字：mirror=true, rotate([a,b,c,d]) × SEEDS_PROBE, 夹具 ownedMineOrbits 默认=1",
+  "fixtureControl": {
+   "variant": "center-fortress",
+   "size": 64
+  },
+  "quota": {
+   "fraction": 0.25,
+   "total": 3200,
+   "absolute": 800
+  },
+  "seedCaliber": "SEEDS 全集（补充扫）",
+  "anchorGate": {
+   "expected": {
+    "p100": 479,
+    "delivered": 3080
+   },
+   "observed": [
+    {
+     "id": "anchor/fixture/farmer6/s11",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    },
+    {
+     "id": "anchor/fixture/farmer6/s23",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    },
+    {
+     "id": "anchor/fixture/farmer6/s37",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    },
+    {
+     "id": "anchor/fixture/farmer6/s41",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    },
+    {
+     "id": "anchor/fixture/farmer6/s59",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    },
+    {
+     "id": "anchor/fixture/farmer6/s71",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    },
+    {
+     "id": "anchor/fixture/farmer6/s83",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    },
+    {
+     "id": "anchor/fixture/farmer6/s97",
+     "p100": 479,
+     "delivered": 3080,
+     "workerPeak": 6
+    }
+   ],
+   "pass": true
+  },
+  "maps": [
+   {
+    "name": "open-clash",
+    "file": "maps/open-clash.json",
+    "sha256": "b72bf179af6cd014b7ee2403554c91e554b42eb2078dbb4718c031bb0e7ac94c",
+    "size": 64,
+    "resourceSites": 16,
+    "ownedMinesPerSeat": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "wallsInJson": 132,
+    "wallsAfterVariantFill": 140
+   },
+   {
+    "name": "corridor-split",
+    "file": "maps/corridor-split.json",
+    "sha256": "fc17279cf3c2242326c03a515f5ed49866a0ccb2b337de283987633f26e2b612",
+    "size": 64,
+    "resourceSites": 16,
+    "ownedMinesPerSeat": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "wallsInJson": 200,
+    "wallsAfterVariantFill": 208
+   },
+   {
+    "name": "fortress-core",
+    "file": "maps/fortress-core.json",
+    "sha256": "e12356065ff5eccfaf1a2da16b2cedfaf3d598aadc7e1da614db44c11d3b1b16",
+    "size": 64,
+    "resourceSites": 16,
+    "ownedMinesPerSeat": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "wallsInJson": 72,
+    "wallsAfterVariantFill": 80
+   }
+  ],
+  "metricCaliber": {
+   "consumed": "depletion.total − depletion.remainingEnd（全图储量被采走的量）",
+   "delivered": "Σ players[].delivered（送到自家基地的量 = 标定环 tables §6.2「全场交付合计」）",
+   "harvested": "Σ players[].harvests（自洽校验用）",
+   "judged": "consumed"
+  }
+ },
+ "rows": [
+  {
+   "group": "P0/fixture",
+   "matches": 32,
+   "total": 3200,
+   "quota": 800,
+   "consumed": {
+    "n": 32,
+    "min": 242,
+    "p25": 242,
+    "median": 350.5,
+    "p75": 360,
+    "max": 460,
+    "mean": 350.8
+   },
+   "consumedPct": {
+    "n": 32,
+    "min": 7.6,
+    "p25": 7.6,
+    "median": 11,
+    "p75": 11.3,
+    "max": 14.4,
+    "mean": 11
+   },
+   "delivered": {
+    "n": 32,
+    "min": 120,
+    "p25": 120,
+    "median": 280,
+    "p75": 280,
+    "max": 380,
+    "mean": 265
+   },
+   "harvested": {
+    "n": 32,
+    "min": 242,
+    "p25": 242,
+    "median": 350.5,
+    "p75": 360,
+    "max": 460,
+    "mean": 350.8
+   },
+   "overQuotaMatches": 0,
+   "consumedVsHarvestedExact": true,
+   "deliveredByScript": {
+    "a": 150,
+    "b": 20,
+    "c": 0,
+    "d": 95
+   },
+   "outcomeReasons": {
+    "timeout": 8,
+    "shortcut": 16,
+    "victory": 8
+   },
+   "outcomeTicks": {
+    "n": 32,
+    "min": 257,
+    "p25": 257,
+    "median": 288,
+    "p75": 306,
+    "max": 600,
+    "mean": 358.3
+   },
+   "depletionP100": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null,
+    "mean": null
+   },
+   "remainingEndPct": {
+    "n": 32,
+    "min": 85.6,
+    "p25": 85.6,
+    "median": 89.05,
+    "p75": 89.3,
+    "max": 92.4,
+    "mean": 89
+   }
+  },
+  {
+   "group": "P1/corridor-split",
+   "matches": 32,
+   "total": 3200,
+   "quota": 800,
+   "consumed": {
+    "n": 32,
+    "min": 263,
+    "p25": 263,
+    "median": 384,
+    "p75": 406,
+    "max": 406,
+    "mean": 359.3
+   },
+   "consumedPct": {
+    "n": 32,
+    "min": 8.2,
+    "p25": 8.2,
+    "median": 12,
+    "p75": 12.7,
+    "max": 12.7,
+    "mean": 11.2
+   },
+   "delivered": {
+    "n": 32,
+    "min": 180,
+    "p25": 180,
+    "median": 330,
+    "p75": 340,
+    "max": 360,
+    "mean": 300
+   },
+   "harvested": {
+    "n": 32,
+    "min": 263,
+    "p25": 263,
+    "median": 384,
+    "p75": 406,
+    "max": 406,
+    "mean": 359.3
+   },
+   "overQuotaMatches": 0,
+   "consumedVsHarvestedExact": true,
+   "deliveredByScript": {
+    "a": 150,
+    "b": 25,
+    "c": 0,
+    "d": 125
+   },
+   "outcomeReasons": {
+    "timeout": 8,
+    "victory": 24
+   },
+   "outcomeTicks": {
+    "n": 32,
+    "min": 279,
+    "p25": 279,
+    "median": 334.5,
+    "p75": 355,
+    "max": 600,
+    "mean": 387
+   },
+   "depletionP100": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null,
+    "mean": null
+   },
+   "remainingEndPct": {
+    "n": 32,
+    "min": 87.3,
+    "p25": 87.3,
+    "median": 88,
+    "p75": 88.7,
+    "max": 91.8,
+    "mean": 88.8
+   }
+  },
+  {
+   "group": "P1/fortress-core",
+   "matches": 32,
+   "total": 3200,
+   "quota": 800,
+   "consumed": {
+    "n": 32,
+    "min": 259,
+    "p25": 259,
+    "median": 332,
+    "p75": 342,
+    "max": 412,
+    "mean": 333.8
+   },
+   "consumedPct": {
+    "n": 32,
+    "min": 8.1,
+    "p25": 8.1,
+    "median": 10.399999999999999,
+    "p75": 10.7,
+    "max": 12.9,
+    "mean": 10.4
+   },
+   "delivered": {
+    "n": 32,
+    "min": 140,
+    "p25": 140,
+    "median": 280,
+    "p75": 300,
+    "max": 360,
+    "mean": 265
+   },
+   "harvested": {
+    "n": 32,
+    "min": 259,
+    "p25": 259,
+    "median": 332,
+    "p75": 342,
+    "max": 412,
+    "mean": 333.8
+   },
+   "overQuotaMatches": 0,
+   "consumedVsHarvestedExact": true,
+   "deliveredByScript": {
+    "a": 150,
+    "b": 20,
+    "c": 0,
+    "d": 95
+   },
+   "outcomeReasons": {
+    "timeout": 8,
+    "shortcut": 24
+   },
+   "outcomeTicks": {
+    "n": 32,
+    "min": 242,
+    "p25": 242,
+    "median": 290,
+    "p75": 301,
+    "max": 600,
+    "mean": 355.5
+   },
+   "depletionP100": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null,
+    "mean": null
+   },
+   "remainingEndPct": {
+    "n": 32,
+    "min": 87.1,
+    "p25": 87.1,
+    "median": 89.6,
+    "p75": 89.9,
+    "max": 91.9,
+    "mean": 89.6
+   }
+  },
+  {
+   "group": "P1/open-clash",
+   "matches": 32,
+   "total": 3200,
+   "quota": 800,
+   "consumed": {
+    "n": 32,
+    "min": 340,
+    "p25": 340,
+    "median": 374,
+    "p75": 381,
+    "max": 447,
+    "mean": 383.8
+   },
+   "consumedPct": {
+    "n": 32,
+    "min": 10.6,
+    "p25": 10.6,
+    "median": 11.7,
+    "p75": 11.9,
+    "max": 14,
+    "mean": 12
+   },
+   "delivered": {
+    "n": 32,
+    "min": 260,
+    "p25": 260,
+    "median": 300,
+    "p75": 320,
+    "max": 420,
+    "mean": 320
+   },
+   "harvested": {
+    "n": 32,
+    "min": 340,
+    "p25": 340,
+    "median": 374,
+    "p75": 381,
+    "max": 447,
+    "mean": 383.8
+   },
+   "overQuotaMatches": 0,
+   "consumedVsHarvestedExact": true,
+   "deliveredByScript": {
+    "a": 150,
+    "b": 15,
+    "c": 0,
+    "d": 155
+   },
+   "outcomeReasons": {
+    "shortcut": 16,
+    "victory": 16
+   },
+   "outcomeTicks": {
+    "n": 32,
+    "min": 220,
+    "p25": 220,
+    "median": 327.5,
+    "p75": 333,
+    "max": 427,
+    "mean": 325.5
+   },
+   "depletionP100": {
+    "n": 0,
+    "min": null,
+    "p25": null,
+    "median": null,
+    "p75": null,
+    "max": null,
+    "mean": null
+   },
+   "remainingEndPct": {
+    "n": 32,
+    "min": 86,
+    "p25": 86,
+    "median": 88.3,
+    "p75": 88.5,
+    "max": 89.4,
+    "mean": 88
+   }
+  }
+ ],
+ "verdict": [
+  {
+   "group": "P0/fixture",
+   "medianPass": true,
+   "maxPass": true,
+   "over": 0
+  },
+  {
+   "group": "P1/corridor-split",
+   "medianPass": true,
+   "maxPass": true,
+   "over": 0
+  },
+  {
+   "group": "P1/fortress-core",
+   "medianPass": true,
+   "maxPass": true,
+   "over": 0
+  },
+  {
+   "group": "P1/open-clash",
+   "medianPass": true,
+   "maxPass": true,
+   "over": 0
+  }
+ ],
+ "batch": {
+  "matches": 128,
+  "total": 3200,
+  "quota": 800,
+  "consumed": {
+   "n": 128,
+   "min": 242,
+   "p25": 322,
+   "median": 361,
+   "p75": 406,
+   "max": 460,
+   "mean": 356.9
+  },
+  "consumedPct": {
+   "n": 128,
+   "min": 7.6,
+   "p25": 10.1,
+   "median": 11.3,
+   "p75": 12.7,
+   "max": 14.4,
+   "mean": 11.2
+  },
+  "overQuotaMatches": 0,
+  "consumedEqualsHarvestedEveryMatch": true
+ }
+}

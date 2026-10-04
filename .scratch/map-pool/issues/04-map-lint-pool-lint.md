@@ -10,7 +10,7 @@
 
 **Blocked by:** 03（map-lint 单图断言）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] 入口接受**一个目录**（地图池）而不是单文件；目录读取是薄壳的活，断言本身仍是纯函数
 - [x] **池内 `size` 一致**：不同尺寸的图进不了池
