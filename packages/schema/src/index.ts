@@ -17,7 +17,9 @@ export {
   FORBIDDEN_GLOBAL_NAMES,
   HOST_BRIDGE_PREFIX,
   SANDBOX_INJECTED_API_SYMBOLS,
+  SANDBOX_INJECTED_API_SYMBOL_CATALOG,
 } from "./script-surface.js";
+export type { InjectedApiSymbolEntry, InjectedApiSymbolKind } from "./script-surface.js";
 
 /**
  * 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,

@@ -52,16 +52,247 @@ export const FORBIDDEN_GLOBAL_NAMES: readonly string[] = [
 ];
 
 /**
- * 沙箱执行器注入的 API 符号表:表上的每一个成员,沙箱 runtime 就必须真的把它铺进 guest。
- * 静态校验器**不据此判违规**(它没有这条规则):「注入面之外的名字」那一半归编译器的名字解析,
- * 而它读的是类型面不是这张表(hld §6.2)。
+ * 注入面表上一行的**类别**。
  *
- * ── 待沙箱执行器(G)回填,当前刻意为空 ──
- * 回填触发条件:G 节点产出沙箱执行器,注入面随它的实现定稿(哪些是 runtime bundle 注入的、
- * 哪些是宿主桥,两者在本文件里必须分清——桥走 `HOST_BRIDGE_PREFIX` 那条约定,注入面走本表)。
+ * **这五档就是判据在运行时一侧的全部形态,刻意没有「类型」这一档**:类别联合里没有它,
+ * 于是给一个类型名标类别会在 `tsc -b` 当场编译不过。这是「类型名入表即红」的编译期那一半,
+ * 运行期那一半(逐字类型名清单)是 `script-surface.test.ts` 里的机器断言。
  *
- * 为什么空着也能交付:本表当下没有任何规则消费它(理由见上),一张预填的名字只会先于 runtime
- * 存在,于是校验器放行一个运行时不存在的符号——正是 hld §6.2「与沙箱 runtime 暴露的 API 面
- * 同源」要防的那个洞。它与地图变体槽位同属一条纪律:**位置留着,回填有触发条件**。
+ * 另四个方向同样不该出现,它们各自另有机器断言兜着,不在这个联合里:`"builtin"`(内置全局名
+ * 归 `BUILTIN_GLOBAL_NAMES`,两表不相交)、`"forbidden"`(归 `FORBIDDEN_GLOBAL_NAMES`)、
+ * `"bridge"`(归 `HOST_BRIDGE_PREFIX` 那条前缀约定)、`"value"`(数值归 `rulesets/*.json`)。
  */
-export const SANDBOX_INJECTED_API_SYMBOLS: readonly string[] = [];
+export type InjectedApiSymbolKind =
+  /** 查询函数:只读本 tick 的快照副本,不改引擎状态。 */
+  | "query"
+  /** 动作函数:收集一条意图 + 参数界检查,合法性终裁归引擎。 */
+  | "action"
+  /** 座位自认入口:脚本唯一的「我是几号」来源。 */
+  | "seat"
+  /** 错误判别 helper:把动作函数的返回值拆成可判的两步。 */
+  | "helper"
+  /** 错误码字符串:动作函数可能返回的那个值本身。 */
+  | "error-code";
+
+/**
+ * 注入面表上一行:名字、类别,以及**为什么收**。
+ *
+ * 理由不是装饰:它是判据在这个名字上的一次应用,也是加名字的门槛。加不进来的名字先问
+ * 「它运行时是个值吗」,答不上来就停在这一步,不必再问「能不能通融」——没有通融这一档。
+ */
+export type InjectedApiSymbolEntry = {
+  /** 全局名。表上的成员一律是裸标识符,不是 `A.b` 那样的成员路径。 */
+  readonly symbol: string;
+  readonly kind: InjectedApiSymbolKind;
+  /** 一句「为什么收」。面向模型的那份契约文档直接渲染它,所以它写给模型看。 */
+  readonly reason: string;
+};
+
+/**
+ * 沙箱注入的 API 符号表:表上的每一个成员,沙箱 runtime 就必须真的把它铺进 guest。
+ *
+ * ── 收录判据:一句话,对所有候选名一视同仁 ──
+ *
+ *   **收:脚本在运行时能把它当值用到的名字。** 即脚本代码里写下这个名字,它就有一个运行时的
+ *   值(一个函数、一个字符串常量)可读可调;把类型标注擦掉之后剩下的那个标识符,就是这张表
+ *   上的一个成员。
+ *
+ *   判据只有这一种形态:**不产生运行时值的名字一律不收**。没有第三种形态,也没有
+ *   「但这个例外」的口子——「运行时是个值」要么成立要么不成立,不存在需要人裁量的中间态。
+ *
+ * ── 明确不收:逐条理由,理由本身也是判据的实例 ──
+ *
+ * - **类型名**(`UnitType` / `IntentKind` / `ErrCode` 这类)——它们擦掉类型标注后不剩任何
+ *   运行时值:名字活在**类型面**上,而类型面是「API 误用」那条判据(hld §6.2)读的东西。
+ *   两张脸各管一件事:这张表管「脚本运行时能拿到哪些名字」,类型面管「拿到的值形状对不对、
+ *   参数类型给不给得过」。把类型名塞进这张表,类型面与符号面就分叉成了两个家,而分叉的形状
+ *   正是「文档说能用、编译后压根没有这个名字」。
+ * - **数值**——预算类 8 键(墙钟、内存、事件/API 计数、体积上限)与兵种类六项属性归
+ *   `rulesets/*.json` 那条生成链,已经是另一张表。收在这里等于同一份事实两个家。
+ *
+ * ── 错误码字符串与函数同表,`ERR_*` 的命名在本文件定死 ──
+ *
+ *   命名规则:`ERR_` 前缀 + 失效原因的**全大写名词短语**;**一条原因一个码**,按动作函数做
+ *   界检查时能查出的**那一件事**命名,不按返回值的形状命名(形状归 `isError` / `errCode`)。
+ *   全表 7 个,逐条理由见下面各行。
+ *
+ *   `ERR_BASE_BUSY` **不收**:同一产线重复下单不是错误而是静默丢弃(不扣款、不计异常),
+ *   那一格由快照的 `producing` 字段供给(交接单「`ERR_BASE_BUSY` 可查询化」的裁决)。把一个
+ *   非错误的状态做成错误码,是让模型去 `isError` 一个它其实不该问的东西。
+ *
+ * ── 逐个名字为什么收(判据的实例;加名字的门槛就是这些行) ──
+ *
+ * 查询函数——读出来的是一个值,所以收:
+ * - `getTick` —— 当前 tick 号;脚本每 tick 都要读一次时间轴。
+ * - `getObjectById` —— 按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。
+ * - `getObjectsByType` —— 按类型批量取快照对象(可带过滤);同一个快照值的批量入口。
+ * - `getRange` —— 两点间 Chebyshev 距离;射程心算要读它算出来的那个数值。
+ * - `getTerrainAt` —— 某格地形(`plain`/`wall`/`out`);绕墙寻路前先读它。
+ * - `findPath` —— 寻路路径是一串坐标点,读得到的就是值。它计入 API 调用预算,而**预算值不归
+ *   这张表**(数值归 `rulesets/*.json`),归的是它这个函数本身。
+ *
+ * 动作函数——调用即得到一个返回值(成功的 `void` 或一个 `ERR_*`),所以收:
+ * - `move` —— 走一步(含对角),提交一条单位级意图。
+ * - `moveTo` —— 朝目标点走一步,提交一条单位级意图;路径由引擎沿 `findPath` 走。
+ * - `attack` —— 攻击敌方单位,提交一条单位级意图。
+ * - `harvest` —— 在己方资源点采集,提交一条单位级意图。
+ * - `transfer` —— 把携带量交给相邻己方基地,提交一条单位级意图。
+ * - `spawnUnit` —— 在己方基地下单出兵,提交一条**玩家级**意图。
+ *
+ * 座位自认:
+ * - `getMyIndex` —— 座位自认的**唯一**正式入口(交接单 P0-1、P0-N4:草案里「候选 A/B 二选一」
+ *   的措辞作废)。脚本由此读到自己是 0..3 里的几号,返回值就是那个数值;往快照加
+ *   `you`/`isSelf` 标记的方案已被否掉,那个字段并不存在。
+ *
+ * 错误判别 helper(交接单 P0-N2:`ErrResult` 必须显式判别,禁止让模型拿 `typeof`/真值去猜):
+ * - `isError` —— 「这次调用是不是错了」的布尔;显式判别的第一步。
+ * - `errCode` —— 取回那个错误码字符串;显式判别的第二步,读出来的正是一个 `ERR_*` 值。
+ *
+ * 错误码字符串:
+ * - `ERR_NOT_ENOUGH_RESOURCES` —— 下单资金不足;**唯一在来源文档里被点名过**的错误码。
+ * - `ERR_INVALID_UNIT` —— 动作函数点名的单位 id 不存在。
+ * - `ERR_NOT_OWNER` —— 动作函数点名的单位/基地不归本方;沙箱内即时返回,**不用于自认座位**
+ *   (它答的是「这个 id 是不是我的」,不是「我是谁」)。
+ * - `ERR_OUT_OF_RANGE` —— 射程外。
+ * - `ERR_INVALID_TARGET` —— 目标非法(如把基地当攻击目标)。
+ * - `ERR_INVALID_SITE` —— 点位类型或归属不对(如把基地当资源点采集)。
+ * - `ERR_BAD_ARGS` —— 参数越界(如 `move` 的 `dx`/`dy` 不是 -1/0/1)。
+ *
+ * ── 这张表不被静态校验器的任何规则消费 ──
+ *
+ * 静态校验器判「这个名字存不存在」是**编译器名字解析**的职责,而它读的是**类型面**,不是这张
+ * 表(hld §6.2「API 误用」那一行)。两侧**不得互相引用为依据**:校验器那一侧的依据是编译器
+ * 的名字解析规则,这张表的依据是上面那一句判据。把任一侧当成另一侧的证明,两条链就会在其中
+ * 一侧被改动时悄悄分叉,而分叉的形状正是「文档说能用、编译器说不能用」。
+ *
+ * 本表的消费者是**面向模型的 API 契约文档**(直接进 prompt)与将来的沙箱执行器,两者读的都是
+ * 名字本身;`packages/tools` 那边只有一个读取点(查询封装),没有任何规则调用它。
+ *
+ * ── 交接给沙箱执行器(G)的那一格:填「怎么注入」,不是「注入哪些名字」 ──
+ *
+ * 名字在本表已经定稿。G 那一格回来填的是:runtime bundle 的形状、这些名字铺进 guest 的时机、
+ * 以及桥函数在初始化后怎么删(`HOST_BRIDGE_PREFIX` 管的是命名约定,注入面走的是本表,两者
+ * 在本文件里必须分清)。G 若要改名,那是**改本表并重跑 `pnpm run generate`**,不是在 G 里
+ * 另定一份——「注入面与沙箱 runtime 暴露的 API 面同源」要防的就是同一个名字两个家。
+ */
+export const SANDBOX_INJECTED_API_SYMBOL_CATALOG: readonly InjectedApiSymbolEntry[] = [
+  {
+    symbol: "getTick",
+    kind: "query",
+    reason: "当前 tick 号;脚本每 tick 都要读一次时间轴,读出来是个数值。",
+  },
+  {
+    symbol: "getObjectById",
+    kind: "query",
+    reason: "按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。",
+  },
+  {
+    symbol: "getObjectsByType",
+    kind: "query",
+    reason: "按类型批量取快照对象(可带过滤);同一个快照值的批量入口。",
+  },
+  {
+    symbol: "getRange",
+    kind: "query",
+    reason: "两点间 Chebyshev 距离;射程心算要读它算出来的那个数值。",
+  },
+  {
+    symbol: "getTerrainAt",
+    kind: "query",
+    reason: "某格地形(`plain`/`wall`/`out`);绕墙寻路之前先读它。",
+  },
+  {
+    symbol: "findPath",
+    kind: "query",
+    reason: "寻路路径是一串坐标点,读得到的就是值;它计入 API 调用预算,而预算值不归这张表。",
+  },
+  {
+    symbol: "move",
+    kind: "action",
+    reason: "走一步(含对角),提交一条单位级意图。",
+  },
+  {
+    symbol: "moveTo",
+    kind: "action",
+    reason: "朝目标点走一步,提交一条单位级意图;路径由引擎沿 `findPath` 走。",
+  },
+  {
+    symbol: "attack",
+    kind: "action",
+    reason: "攻击敌方单位,提交一条单位级意图。",
+  },
+  {
+    symbol: "harvest",
+    kind: "action",
+    reason: "在己方资源点采集,提交一条单位级意图。",
+  },
+  {
+    symbol: "transfer",
+    kind: "action",
+    reason: "把携带量交给相邻己方基地,提交一条单位级意图。",
+  },
+  {
+    symbol: "spawnUnit",
+    kind: "action",
+    reason: "在己方基地下单出兵,提交一条玩家级意图。",
+  },
+  {
+    symbol: "getMyIndex",
+    kind: "seat",
+    reason: "座位自认的唯一正式入口(交接单 P0-1/P0-N4);快照里没有 `you`/`isSelf` 标记。",
+  },
+  {
+    symbol: "isError",
+    kind: "helper",
+    reason: "「这次调用是不是错了」的布尔,显式判别的第一步(交接单 P0-N2)。",
+  },
+  {
+    symbol: "errCode",
+    kind: "helper",
+    reason: "取回那个错误码字符串,显式判别的第二步;读出来的正是一个 `ERR_*` 值。",
+  },
+  {
+    symbol: "ERR_NOT_ENOUGH_RESOURCES",
+    kind: "error-code",
+    reason: "下单资金不足;唯一在来源文档里被点名过的错误码。",
+  },
+  {
+    symbol: "ERR_INVALID_UNIT",
+    kind: "error-code",
+    reason: "动作函数点名的单位 id 不存在。",
+  },
+  {
+    symbol: "ERR_NOT_OWNER",
+    kind: "error-code",
+    reason: "点名的单位/基地不归本方;沙箱内即时返回,不用于自认座位。",
+  },
+  {
+    symbol: "ERR_OUT_OF_RANGE",
+    kind: "error-code",
+    reason: "射程外。",
+  },
+  {
+    symbol: "ERR_INVALID_TARGET",
+    kind: "error-code",
+    reason: "目标非法(如把基地当攻击目标)。",
+  },
+  {
+    symbol: "ERR_INVALID_SITE",
+    kind: "error-code",
+    reason: "点位类型或归属不对(如把基地当资源点采集)。",
+  },
+  {
+    symbol: "ERR_BAD_ARGS",
+    kind: "error-code",
+    reason: "参数越界(如 `move` 的 `dx`/`dy` 不是 -1/0/1)。",
+  },
+];
+
+/**
+ * 注入面的裸名字清单,**由上面的目录投影而来**,不另存一份。
+ *
+ * 投影而不是再抄一份字面量:名字只有一处可改(`…_CATALOG`),而「名字 + 类别 + 为什么收」
+ * 三样一起是可枚举的数据,面向模型的契约文档按它逐行渲染(票 05)。
+ */
+export const SANDBOX_INJECTED_API_SYMBOLS: readonly string[] =
+  SANDBOX_INJECTED_API_SYMBOL_CATALOG.map((entry) => entry.symbol);
