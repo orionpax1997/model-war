@@ -46,7 +46,7 @@
 
 import type { MapDefinition, MapSite } from "@model-war/schema";
 
-import { compareViolations, orbitOf, type MapLintViolation } from "./rules.js";
+import { cellKey, compareViolations, isInside, orbitOf, type MapLintViolation } from "./rules.js";
 
 /**
  * 池内地图数下限。gdd §4 把地图池的三种风格定为下限 3 张;下界是「风格各异」这条要求能
@@ -108,11 +108,13 @@ export const poolMapFileNames = (fileNames: readonly string[]): readonly string[
 const chebyshev = (ax: number, ay: number, bx: number, by: number): number =>
   Math.max(Math.abs(ax - bx), Math.abs(ay - by));
 
-const cellKey = (x: number, y: number): string => `${x},${y}`;
-
 /**
  * 墙格集合。地形怎么表示(`'#'` 是墙)已经由 `MAP_JSON_SCHEMA` 定死,本函数只把同一份约定
  * 读成本文件内好用的集合——**BFS 与 Jaccard 读的是同一个 `wallCellsOf`**,不是各读一遍地形。
+ *
+ * 拼格键用 `cellKey`、判边界用 `isInside`,两者都从 `rules.ts` 导入而不是本文件里再抄一份:
+ * 那两个函数是两层共用的坐标语言,抄一份就是给「同格」这件事安两个定义。理由与 `rotate`
+ * 那段同源。
  */
 const wallCellsOf = (map: MapDefinition): ReadonlySet<string> => {
   const cells = new Set<string>();
@@ -146,9 +148,6 @@ const OCTILE_DIRECTIONS: readonly (readonly [number, number])[] = [
 
 /** 墙把矿整个围死时的距离:走不到。**比任何长的路都更该被红线挡住**,故不是一个豁免值。 */
 const ROUTE_UNREACHABLE = -1;
-
-const isInside = (x: number, y: number, size: number): boolean =>
-  x >= 0 && y >= 0 && x < size && y < size;
 
 /**
  * 越界的点位在这里**跳过**,与 `rules.ts` 的对称性判据同一条理由:
