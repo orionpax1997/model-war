@@ -151,6 +151,37 @@ it("每一行都有类别,且类别只有运行时那五档", () => {
 });
 
 /**
+ * **每一行都带一句「为什么收」;四个函数档还带签名,错误码那一档不带。**
+ *
+ * 分档的意义在这里兑现:函数档缺签名、错误码档多一个签名,两种形态错位都在 `tsc -b` 与本条上说话。
+ * 运行期这一半查的是**渲染出来会不会是空格**——面向模型的 API 表把签名当一栏渲染,少了它那一栏
+ * 就是空的,而模型会照着空的写。
+ *
+ * 签名同时也是「签名只此一家」的证据:文档里那一栏由它逐字渲染,不多不少。
+ *
+ * 反例:删掉某一行函数档的 `signature`(先把它改成可选字段才编得过),本条红。
+ */
+it("每一行都有「为什么收」,函数档都有签名而错误码档没有", () => {
+  const signatures = new Set<string>();
+  for (const entry of SANDBOX_INJECTED_API_SYMBOL_CATALOG) {
+    expect(entry.reason, `${entry.symbol} 缺「为什么收」`).not.toBe("");
+    if (entry.kind === "error-code") {
+      // 它是一个字符串常量,不是函数:签名那一栏对它不存在,渲染时不留空。
+      continue;
+    }
+    expect(entry.signature, `${entry.symbol} 是函数档,缺签名`).toMatch(/^\w+\(.*\):\s*\S/);
+    expect(entry.signature, `${entry.symbol} 的签名里没有它自己的名字`).toContain(
+      `${entry.symbol}(`,
+    );
+    signatures.add(entry.signature);
+  }
+  // 签名各不相同:两条一样的签名意味着其中一条写错了(或者两行其实说的是同一个函数)。
+  expect(signatures.size, "签名有重复").toBe(
+    SANDBOX_INJECTED_API_SYMBOL_CATALOG.filter((entry) => entry.kind !== "error-code").length,
+  );
+});
+
+/**
  * 裸名字清单**由目录投影而来**:名字只有一处可改。
  *
  * 反例:在真源里再补一份 `SANDBOX_INJECTED_API_SYMBOLS` 字面量而目录没跟上(或反过来),

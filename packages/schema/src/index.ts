@@ -21,6 +21,19 @@ export {
 } from "./script-surface.js";
 export type { InjectedApiSymbolEntry, InjectedApiSymbolKind } from "./script-surface.js";
 
+// 「没生效」的后果:每个错误码落在「丢弃」还是「异常」,以及每类丢的是什么、累计在哪儿。
+// 面向模型的「丢弃 vs 异常」对照表与错误码表由它渲染,同一份真源出两处落点。
+export {
+  SCRIPT_OUTCOME_BY_CODE,
+  SCRIPT_OUTCOME_CATALOG,
+  SCRIPT_OUTCOME_CLASSES,
+} from "./script-outcome.js";
+export type {
+  ScriptOutcomeClass,
+  ScriptOutcomeEntry,
+  ScriptOutcomeKind,
+} from "./script-outcome.js";
+
 /**
  * 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
