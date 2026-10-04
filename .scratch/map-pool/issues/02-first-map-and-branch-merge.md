@@ -6,7 +6,7 @@
 
 **Blocked by:** 01（变体槽位形状定稿）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] **原型分支合进 `main`**：`prototype/map-pool-terrain` 的内容并入主干（三张墙形定义、terrain 纯文本、度量原文、可双击的渲染器、findings）。理由是本仓的既有做法——规则标定环的桩、沙箱预算的 spike 都以 `.scratch/<feature>/` 的形式留在 `main` 上，不是只活在分支里
 - [x] **合并前先确认工作树干净**，合流不带进任何未提交内容
