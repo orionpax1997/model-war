@@ -214,6 +214,40 @@ const orbitAt = (x: number, y: number): readonly (readonly [number, number])[] =
   return cells;
 };
 
+// ── 变体槽位:不得与地形里已有的墙重叠 ───────────────────────────────────────
+
+it("三张落库真图的候选轨道一格都不压在已有墙上(槽位压墙这条判据的既有范围)", () => {
+  // 断言对象是「三张真图 + 新判据 = 零违规」:这条判据是**补上文档已经宣称的那一条**,
+  // 不是给真图加新要求。所以先把真图钉在这里——将来谁动了真图的墙或候选轨道,
+  // 红的应该是这条,而不是一次看不出所以然的 lint 失败。
+  for (const name of ["corridor-split", "fortress-core", "open-clash"]) {
+    const map: MapDefinition = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL(`../../../../maps/${name}.json`, import.meta.url)),
+        "utf8",
+      ),
+    );
+    expect(mapViolations(map), `${name} 压在已有墙上`).toEqual([]);
+  }
+});
+
+it("变体槽位压在已有墙上被拒(反例只坏在那一条)", () => {
+  // 轨道取自开阔图西北角那撮墙本身:四重旋转对称保证它整条 4 格都是墙,
+  // 而它离每个点位八邻域与初始单位落点都远——所以反例只坏在「压墙」这一条上。
+  const rules = rulesOf(broken({ variantSlots: [orbitAt(58, 2)] }));
+  expect(rules).toEqual(["variant-slot-on-wall"]);
+});
+
+it("压墙那条与压点位/压初始单位是三条独立断言(不是同一条的换句话说)", () => {
+  // 反例:把整条候选轨道压到点位主基地上。三条判据各有各的读法,这条钉住它们互不吞并。
+  const home = OPEN.sites.find((site) => site.kind === "base" && site.initialOwner === 3);
+  expect(home).toBeDefined();
+  if (home === undefined) return;
+  expect(rulesOf(broken({ variantSlots: [orbitAt(home.x, home.y)] }))).toEqual([
+    "variant-slot-on-site",
+  ]);
+});
+
 // ── 违规序列的顺序是契约(两轮 lint 结果要能 diff) ────────────────────────────
 
 it("同一份地图两次判定给出同一组违规(顺序也一样)", () => {

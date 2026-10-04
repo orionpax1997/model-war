@@ -146,7 +146,7 @@ NFR-3 单场墙钟 X、hld #5 工具链基线(独立小图)。
 | c | deepseek-v4.1-flash(thinking=low) | **C 占点(不采集)** | **原标签“农民海”已修正**:它几乎不采集(平均交付 20.4 资源、经济死亡中位 tick 94) |
 | d | space-bunny-alpha | A 爆兵压制(交叉验证) | 4 舱中唯一会造骑兵的脚本(以 v2 通过) |
 
-农民海只能用“会采集的农民海”测(`sim/probes/farmer.js`,交付 160–244);探针**不进 `benchmarks/`、不计入 FR-10 AC1 证据**。
+农民海只能用“会采集的农民海”测(`sim/probes/farmer.js`,交付 160–244);**版本**:本环那 1336 场的数字出自**票 06 之前那一版**探针,该版已冻结为 `sim/probes/farmer.calibration-v1.js`(复现入口在它头注)。地图池那轮把 `farmer.js` 重写了(修四条缺陷:墙感知移动、扩张车道、资源记账、扩张无目标即静止),**两版读数不可互比**——移动层变了,拿新版读数去核旧版结论会得到假反驳。诊断见 `.scratch/map-pool/docs/diagnostics/06-confound.md`,版本与证据归属见 `docs/gdd.md` §2 证据校准注;探针**不进 `benchmarks/`、不计入 FR-10 AC1 证据**。
 `xiaomi/mimo-v2.6-pro` 的 7 次零产出存档(`blind/cell-c-failed-attempts/`)不进 `benchmarks/`,但**随图保留**。
 
 ## 6. 非规则卡点(归 hld / 管线侧,不进规则面)

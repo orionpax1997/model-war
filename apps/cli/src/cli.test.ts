@@ -69,18 +69,49 @@ afterAll(() => {
  * `map-lint` 现在收的是**目录**,而 `maps/` 里只有一张图(池级判据要求至少 3 张,三张真图是
  * 票 05 的活),所以进程级断言得自己造池。造法与 `pool-lint.test.ts` 同源:沿用落库那张图的点位,
  * 墙从它的候选变体轨道里取——那 8 条轨道实测一格不压点位、天生四重对称。
+ * 当了墙的轨道同时从候选清单里剔掉(`slotsOf`):夹具里 `orbitIndexes` 就是那张图**用掉**了
+ * 哪几条候选轨道,它一进 `writePool`,地形与候选清单就一起由它决定,两处不可能再分叉。
  */
-const writePool = (maps: readonly { name: string; terrain?: string[] }[]): string => {
+const writePool = (
+  maps: readonly {
+    name: string;
+    orbitIndexes?: readonly number[];
+    terrain?: string[];
+    patch?: Record<string, unknown>;
+  }[],
+): string => {
   // 目录名带序号:同一个临时根下造两个池时不会互相覆盖(否则断言顺序一变就读到别人的文件)。
   poolSeq += 1;
   const dir = join(scratch, `pool-${poolSeq}`);
   mkdirSync(dir, { recursive: true });
   const source = openMap();
   for (const map of maps) {
-    writeFileSync(join(dir, `${map.name}.json`), JSON.stringify({ ...source, ...map }));
+    const indexes = map.orbitIndexes ?? [];
+    const terrain = map.terrain ?? terrainWithOrbits(source, indexes);
+    writeFileSync(
+      join(dir, `${map.name}.json`),
+      JSON.stringify({
+        ...source,
+        ...slotsOf(source, indexes),
+        terrain,
+        name: map.name,
+        ...map.patch,
+      }),
+    );
   }
   return dir;
 };
+
+/**
+ * 候选清单里剔掉「已经被画成墙」的轨道。
+ *
+ * 夹具把候选轨道填进地形当墙用,而候选清单的语义是「种子可以往这里填墙」——两处同时留着
+ * 同一组格子就是一条死格,新判据 `variant-slot-on-wall` 会把这张夹具图判失败。
+ * 剔掉它们是让夹具自洽,不是给判据开口子:真图 `maps/*.json` 早已满足这条。
+ */
+const slotsOf = (source: MapDefinition, used: readonly number[]): Record<string, unknown> => ({
+  variantSlots: source.variantSlots.filter((_, index) => !used.includes(index)),
+});
 
 /** 落库那张开阔对攻图(进程级断言的原料;它本身是合规的)。 */
 const openMap = (): MapDefinition => JSON.parse(readFileSync(mapPath, "utf8"));
@@ -127,11 +158,10 @@ it.each(UNIMPLEMENTED)("未实现的 %s 显式失败,不静默返回成功", (co
 });
 
 it("`map-lint` 不再走「未实现」那条路径", () => {
-  const source = openMap();
   const dir = writePool([
-    { name: "pool-a", terrain: terrainWithOrbits(source, [0]) },
-    { name: "pool-b", terrain: terrainWithOrbits(source, [1, 2]) },
-    { name: "pool-c", terrain: terrainWithOrbits(source, [3]) },
+    { name: "pool-a", orbitIndexes: [0] },
+    { name: "pool-b", orbitIndexes: [1, 2] },
+    { name: "pool-c", orbitIndexes: [3] },
   ]);
   const result = run(["map-lint", dir]);
   expect(result.stderr).not.toContain("未实现");
@@ -147,9 +177,9 @@ it("`map-lint` 对不合法的地图池非零退出(退出码由处理器返回,
   const rows = terrainWithOrbits(source, [0]);
   rows[0] = `${".".repeat(3)}#${".".repeat((rows[0]?.length ?? 0) - 4)}`;
   const dir = writePool([
-    { name: "pool-a", terrain: rows },
-    { name: "pool-b", terrain: terrainWithOrbits(source, [1, 2]) },
-    { name: "pool-c", terrain: terrainWithOrbits(source, [3]) },
+    { name: "pool-a", orbitIndexes: [0], terrain: rows },
+    { name: "pool-b", orbitIndexes: [1, 2] },
+    { name: "pool-c", orbitIndexes: [3] },
   ]);
   const result = run(["map-lint", dir]);
   expect(result.status).not.toBe(0);

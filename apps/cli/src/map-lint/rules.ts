@@ -9,7 +9,8 @@
  *
  * ── 本层判什么、不判什么 ────────────────────────────────────────────────────
  * 判的是**单张地图自己跟自己比**的那些东西:四重旋转对称(terrain 与 sites 各一条独立断言)、
- * 点位不压不重不越界、变体槽位是不是真轨道。判不了、也不该在这里判的是:
+ * 点位不压不重不越界、变体槽位是不是真轨道、槽位压没压住点位与已有的墙。
+ * 判不了、也不该在这里判的是:
  * - 形状层(`MAP_JSON_SCHEMA` 管的那部分:字段有没有、类型对不对、字符集)。本层假定调用方
  *   已经过了 `validateMap`,所以 terrain 只判行数与行长——字符集归 schema,再判一次就是第二真源;
  * - **池级**判据(`size` 一致、地图数量下限、最近一圈归属、矿路红线、Jaccard 风格判据),
@@ -42,6 +43,8 @@ export type MapLintRule =
   | "variant-slot-on-site"
   /** 变体槽位覆盖初始单位落点。 */
   | "variant-slot-on-spawn"
+  /** 变体槽位与地形里**已有的**墙格重叠。 */
+  | "variant-slot-on-wall"
   // ── `pool` 层:跨图判据,单张地图判不了(见 `pool.ts`)────────────────────────
   /** 池里一张地图也没有(目录里找不到任何地图文件)。 */
   | "pool-empty"
@@ -99,10 +102,23 @@ export const orbitOf = (
   return cells;
 };
 
-const key = (x: number, y: number): string => `${x},${y}`;
-
-const isInside = (x: number, y: number, size: number): boolean =>
+/**
+ * 网格边界判定:坐标落在 `[0, size)` 内。
+ *
+ * 导出是因为池层也要用**同一条**判定,理由与 `rotate` / `orbitOf` 同一条:两层各抄一份,
+ * 它们就会在某次改动后悄悄分叉,而分叉的表象是一张越界点位被单图层放过、被池层拦下
+ * (或反过来)。边界算错的后果不在数字里,在「同一件事两处不同答案」里。
+ */
+export const isInside = (x: number, y: number, size: number): boolean =>
   x >= 0 && y >= 0 && x < size && y < size;
+
+/**
+ * 一格的字符串键。**两层只许有这一个拼格键的方式**:墙格集合、最近一圈归属的集合、
+ * BFS 的 `seen`、对称性的存在性判据——它们拼出来的字符串是彼此的索引,一旦拼法不一致,
+ * 「同格」就会在某一层静默地变成「不同格」。名字取 `cellKey` 而不是泛泛的 `key`,
+ * 因为这两个文件里键的对象不止一种(`id`、`owner`、类别名);`cellKey` 说清了它键住的是一格。
+ */
+export const cellKey = (x: number, y: number): string => `${x},${y}`;
 
 /**
  * terrain 行数与行长必须等于 `size`。字符集归 `MAP_JSON_SCHEMA`,这里不重复判——
@@ -163,11 +179,11 @@ const terrainSymmetryViolations = (map: MapDefinition): readonly MapLintViolatio
 const siteSymmetryViolations = (map: MapDefinition): readonly MapLintViolation[] => {
   const size = map.size;
   const found: MapLintViolation[] = [];
-  const present = new Set(map.sites.map((site) => key(site.x, site.y)));
+  const present = new Set(map.sites.map((site) => cellKey(site.x, site.y)));
   for (const site of map.sites) {
     if (!isInside(site.x, site.y, size)) continue;
     const [rx, ry] = rotate(site.x, site.y, size);
-    if (!present.has(key(rx, ry))) {
+    if (!present.has(cellKey(rx, ry))) {
       found.push({
         scope: "map",
         rule: "sites-symmetry",
@@ -183,7 +199,7 @@ const sitePlacementViolations = (map: MapDefinition): readonly MapLintViolation[
   const found: MapLintViolation[] = [];
   const seen = new Map<string, number>();
   for (const site of map.sites) {
-    const cell = key(site.x, site.y);
+    const cell = cellKey(site.x, site.y);
     const rival = seen.get(cell);
     if (rival !== undefined) {
       found.push({
@@ -229,13 +245,14 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
   const siteCells = new Set<string>();
   for (const site of map.sites) {
     for (let dx = -1; dx <= 1; dx += 1) {
-      for (let dy = -1; dy <= 1; dy += 1) siteCells.add(key(site.x + dx, site.y + dy));
+      for (let dy = -1; dy <= 1; dy += 1) siteCells.add(cellKey(site.x + dx, site.y + dy));
     }
   }
   const spawnCells = new Set<string>();
   for (const unit of map.spawnUnits) {
     const home = map.sites.find((site) => site.kind === "base" && site.initialOwner === unit.owner);
-    if (home !== undefined) spawnCells.add(key(home.x + unit.offset[0], home.y + unit.offset[1]));
+    if (home !== undefined)
+      spawnCells.add(cellKey(home.x + unit.offset[0], home.y + unit.offset[1]));
   }
 
   const cellsOf = (slot: MapVariantSlot): readonly (readonly [number, number])[] =>
@@ -244,12 +261,12 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
   map.variantSlots.forEach((slot, index) => {
     const where = `variantSlots[${index}]`;
     const cells = cellsOf(slot);
-    const wanted = new Set(cells.map(([x, y]) => key(x, y)));
+    const wanted = new Set(cells.map(([x, y]) => cellKey(x, y)));
     const isOrbit =
       cells.length === 4 &&
       cells.every(([x, y]) => isInside(x, y, size)) &&
       orbitOf(cells[0]?.[0] ?? 0, cells[0]?.[1] ?? 0, size)
-        .map(([x, y]) => key(x, y))
+        .map(([x, y]) => cellKey(x, y))
         .every((cell) => wanted.has(cell));
     if (!isOrbit) {
       found.push({
@@ -261,7 +278,7 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
       return;
     }
     for (const [x, y] of cells) {
-      if (siteCells.has(key(x, y))) {
+      if (siteCells.has(cellKey(x, y))) {
         found.push({
           scope: "map",
           rule: "variant-slot-on-site",
@@ -269,11 +286,26 @@ const variantSlotViolations = (map: MapDefinition): readonly MapLintViolation[] 
           where,
         });
       }
-      if (spawnCells.has(key(x, y))) {
+      if (spawnCells.has(cellKey(x, y))) {
         found.push({
           scope: "map",
           rule: "variant-slot-on-spawn",
           message: `变体槽位覆盖了 (${x},${y}) 上的初始单位落点。`,
+          where,
+        });
+      }
+      // 判据的另一半在 `MapVariantSlot` 的类型头注里承诺过(「槽位格不得与地形里已有的墙格
+      // 重叠」),却在这一层缺席了很久:文档与类型都宣称了一条零强制力的断言。
+      // 它的内容与上面两条不重合——点位八邻域里不许有墙(画墙的硬规则),所以真图上
+      // 「压点位」与「压墙」判不到同一格上;而压墙这一条治的是种子往已有墙格里填格子,
+      // 那会让这一格永远填不进东西(候选清单变成一张有死格的清单)。
+      if (map.terrain[y]?.[x] === "#") {
+        found.push({
+          scope: "map",
+          rule: "variant-slot-on-wall",
+          message:
+            `变体槽位的 (${x},${y}) 上地形里已经是一堵墙;候选轨道必须落在平原上,` +
+            "否则这一格无论种子怎么选都填不进东西。",
           where,
         });
       }
