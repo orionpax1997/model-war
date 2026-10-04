@@ -20,6 +20,9 @@
  *   (见这两个文件的头注与 ADR-0003);
  * - `generate/` 生成器(注册表 + 入口 + 排版零件 + 各件的生产函数):本包唯一需要构建前置的一侧。
  *   它不联网——生成器放这里而不放生成管线包,理由是**依赖面**随后者扩张(hld §2.2.6),不是联网。
+ * - `benchmarks/` 基准目录那一侧:编译(按根层那份 `tsconfig.scripts.json` 派生运行配置)、
+ *   诊断分类与注入面空值桩。包内箭头是 `benchmarks/` → `@model-war/schema`(只取注入面那张目录),
+ *   与 `generate/` 同一根;它的两个入口是 `bench:build`(写回产物)与 `check:bench`(门禁)。
  *
  * ── 本包**有意**在 dependency-cruiser 的巡航范围之外 ──
  * 不是疏漏,是取舍:depcruise 巡航 `dist`,而本包 `emitDeclarationOnly`、`dist` 里没有 `.js`;
@@ -83,3 +86,18 @@ export { scriptSizeStage, scriptSizeViolations } from "./rules/script-size.ts";
 export type { ValidateScriptOptions } from "./validate/pipeline.ts";
 export { SCRIPT_LINT_STAGES, validateScriptSource } from "./validate/pipeline.ts";
 export { renderViolations } from "./validate/render-violations.ts";
+
+// ── 基准目录(编译产物入库那一侧) ────────────────────────────────────────────
+// 对外面只有「编译一份基准脚本」与「注入面空值桩」两样:门禁与单元测试都经它们,
+// 而登记册、说明表、排除项那些判决在 `benchmarks.test.ts` 与门禁入口里。
+export type { Compilation, Diagnostic, DiagnosticClass } from "./benchmarks/compile.ts";
+export {
+  BENCHMARK_NAMES,
+  PRODUCT_FILE,
+  SOURCE_FILE,
+  classifyDiagnostics,
+  compileBenchmarkSource,
+  emptyInjectedSurface,
+  loadProduct,
+} from "./benchmarks/compile.ts";
+export type { BenchmarkName } from "./benchmarks/compile.ts";

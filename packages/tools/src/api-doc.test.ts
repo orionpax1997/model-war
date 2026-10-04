@@ -14,6 +14,9 @@
  * - **符号表 ⊆ 文档**(符号表里有、文档里没有的名字也要报):这是**漏披露**——模型会当它不存在,
  *   于是走一条更笨的路(比如自己算 Chebyshev 距离,或者靠位置反推座位)。
  *
+ * 第三个方向(**基准脚本 ⊆ 符号表 ⊆ 文档**,见下面那条用例)沿用同一条断言与同一张表:
+ * 基准脚本是模型照着这份文档写出来的成品,是这三者里唯一一份「真的会被加载」的文本。
+ *
  * ── 怎么从文档里取名字而不解析整篇 Markdown ───────────────────────────────────
  * 只取**两行定界标记之间**、且**表格首列是反引号包着的标识符**的那些行。ADR-0004 之所以否掉
  * 「解析 Markdown 抽标识符」那条路,是因为它要扫全篇散文、误报面极大;限定在生成区块的表头列上,
@@ -32,6 +35,7 @@ import { expect, it } from "vitest";
 
 import { SANDBOX_INJECTED_API_SYMBOL_CATALOG, SCRIPT_OUTCOME_CATALOG } from "@model-war/schema";
 
+import { BENCHMARK_NAMES, benchmarkFile, compileBenchmarkSource } from "./benchmarks/compile.ts";
 import { readSection, sectionMarker } from "./generate/section.ts";
 
 /** 契约文档里 API 面那一份。仓库根起的相对路径,与生成物落点同一记法。 */
@@ -101,6 +105,37 @@ it("注入面符号表里的每个名字都在 API 文档里披露", () => {
       documented,
       `符号表里有 \`${name}\`,而 API 文档的表里没有它——模型会当它不存在`,
     ).toContain(name);
+  }
+});
+
+/**
+ * **方向三:基准脚本用到的每个 API 名字,同样在符号表里、也在文档里。**
+ * 这一条**不另立名单**:它读的是编译器判出来的「这个名字还没有声明」那批诊断
+ * (`benchmarks/compile.ts` 的分类),而那批诊断正是白名单反转本身(hld §6.2「全局白名单」:
+ * 承载方是编译器的名字解析,不是任何一张自建名单)。
+ * 于是基准脚本这一侧与文档那一侧用的是同一套机械:文档里的名字要能被运行时铺出来,
+ * 脚本里的名字要能在文档里查到。两侧交叉的那一格就是双向断言的第三个方向。
+ *
+ * 判据为什么落在「未声明的名字」上:脚本 API 的类型声明面尚未回填,于是脚本调用的每一个
+ * API 名字对 `tsc` 都是未声明的;而脚本自己声明的名字(变量、辅助函数)不会落进这批诊断。
+ * 类型面回填那天这批诊断会归零,那时这条断言改读类型面(与 §3 里那个开关同一件事)。
+ *
+ * 反例:在基准脚本里写一句 `getResources()`(不在注入面里),或从真源里删掉 `getRange`
+ * 而文档不动,本条红。
+ */
+it("基准脚本里用到的每个 API 名字都在符号表里、且都在契约文档的表里披露", () => {
+  const documented = nameCells(sectionContent("api-v1-api-surface"));
+  for (const name of BENCHMARK_NAMES) {
+    const source = readFileSync(benchmarkFile(name, "script.ts"), "utf8");
+    const used = compileBenchmarkSource(source)
+      .diagnostics.filter((diagnostic) => diagnostic.cls === "unresolved-name")
+      .map((diagnostic) => diagnostic.name ?? "");
+    expect(used.length, `${name} 一个未声明的名字都没有,那它压根没用注入面`).toBeGreaterThan(0);
+
+    for (const api of used) {
+      expect(SYMBOLS, `${name} 用到了符号表里没有的名字 \`${api}\``).toContain(api);
+      expect(documented, `${name} 用到了 \`${api}\`,而 API 文档的表里没有它`).toContain(api);
+    }
   }
 });
 

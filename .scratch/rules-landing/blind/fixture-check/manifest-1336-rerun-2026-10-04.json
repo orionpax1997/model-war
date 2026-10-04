@@ -1,0 +1,161 @@
+{
+  "generatedAt": "2026-10-04T11:46:36.115Z",
+  "node": "v24.15.0",
+  "quick": false,
+  "setOverrides": {
+    "resourcePerSite": 200
+  },
+  "outDir": "data-rerun-200",
+  "variants": [
+    "center-fortress@64",
+    "open-four@64",
+    "center-fortress@40"
+  ],
+  "jobs": 1336,
+  "parallel": 6,
+  "seeds": [
+    11,
+    23,
+    37,
+    41,
+    59,
+    71,
+    83,
+    97
+  ],
+  "mirrorPatches": [
+    {
+      "script": "a",
+      "cell": "cell-a",
+      "patches": [
+        {
+          "find": "if (MY_INDEX < 0) MY_INDEX = detectMyIndex();",
+          "replace": "if (MY_INDEX < 0) MY_INDEX = MIRROR_SEAT;"
+        }
+      ]
+    },
+    {
+      "script": "b",
+      "cell": "cell-b",
+      "patches": [
+        {
+          "find": "const MY_INDEX: 0|1|2|3 = 0;",
+          "replace": "const MY_INDEX = MIRROR_SEAT;"
+        }
+      ]
+    },
+    {
+      "script": "c",
+      "cell": "cell-c",
+      "patches": [
+        {
+          "find": "  if (found >= 0) {\n    myIndex = found;\n    markState = 2;\n    return true;\n  }",
+          "replace": "  void found;\n  myIndex = MIRROR_SEAT;\n  markState = 2;\n  return true;"
+        }
+      ]
+    },
+    {
+      "script": "d",
+      "cell": "cell-d",
+      "patches": []
+    }
+  ],
+  "scripts": {
+    "a": {
+      "cell": "cell-a",
+      "model": "deepseek-v4.1-flash",
+      "strategy": "A 爆兵压制",
+      "file": "../blind/cell-a/work/script.v1.js",
+      "sha256": "1222a2db952e916b875baf4b9f98148f01e030a84aa5eb1ae52b259632f3ae94",
+      "inject": null
+    },
+    "b": {
+      "cell": "cell-b",
+      "model": "MiniMax-M3",
+      "strategy": "B 扩张运营",
+      "file": "../blind/cell-b/work/script.v1.js",
+      "sha256": "067d84408280570159c93c4c7b0847fa77f96555336bcca90e5160b3fbec5e43",
+      "inject": null
+    },
+    "c": {
+      "cell": "cell-c",
+      "model": "deepseek-v4.1-flash(thinking=low)",
+      "strategy": "C 占点(不采集)",
+      "file": "../blind/cell-c/work/script.v1.js",
+      "sha256": "29bb5efbbce4019a4f8b0b1dd9f7014f383408fc1c03b9ba5b8d9bbf2769c28a",
+      "inject": null
+    },
+    "d": {
+      "cell": "cell-d",
+      "model": "space-bunny-alpha",
+      "strategy": "A 爆兵压制(交叉验证)",
+      "file": "../blind/cell-d/work/script.v2.js",
+      "sha256": "db450c2e671a5703d4d8a5476bf10c6849653f9c18f0946a3f67ff41be70aed6",
+      "inject": null
+    },
+    "raider": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "R 骑兵突袭",
+      "file": "probes/raider.js",
+      "sha256": "8fe00145b6e39f5060018d2ec7ea423c11c12d1ee0e1d1f4bd52dc0004537d3c",
+      "inject": null
+    },
+    "legion": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "L 造兵探针·开骑兵",
+      "file": "probes/legion.js",
+      "sha256": "0e1e223bdc77b0a195bb699d93053fcfb58b48c862f7269bd5236947729f528a",
+      "inject": "const USE_CAVALRY = true;\n"
+    },
+    "legionNoCav": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "L 造兵探针·不开骑兵",
+      "file": "probes/legion.js",
+      "sha256": "0e1e223bdc77b0a195bb699d93053fcfb58b48c862f7269bd5236947729f528a",
+      "inject": "const USE_CAVALRY = false;\n"
+    },
+    "farmer2": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "农民海 2 农（1 采 1 扩）",
+      "file": "probes/farmer.js",
+      "sha256": "2fddd47ba78bcb4acb1419af725fa6399ec9e8bf591f017df599d35a5cb1844f",
+      "inject": "const WORKER_TARGET = 2;\nconst HARVEST_PCT = 50;\n"
+    },
+    "farmer4": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "农民海 4 农（2 采 2 扩）",
+      "file": "probes/farmer.js",
+      "sha256": "2fddd47ba78bcb4acb1419af725fa6399ec9e8bf591f017df599d35a5cb1844f",
+      "inject": "const WORKER_TARGET = 4;\nconst HARVEST_PCT = 50;\n"
+    },
+    "farmer8": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "农民海 8 农（5 采 3 扩）",
+      "file": "probes/farmer.js",
+      "sha256": "2fddd47ba78bcb4acb1419af725fa6399ec9e8bf591f017df599d35a5cb1844f",
+      "inject": "const WORKER_TARGET = 8;\nconst HARVEST_PCT = 66;\n"
+    },
+    "farmer6": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "农民海 6 农（4 采 2 扩）",
+      "file": "probes/farmer.js",
+      "sha256": "2fddd47ba78bcb4acb1419af725fa6399ec9e8bf591f017df599d35a5cb1844f",
+      "inject": "const WORKER_TARGET = 6;\nconst HARVEST_PCT = 66;\n"
+    },
+    "farmer12": {
+      "cell": "probe",
+      "model": "桩模拟器自写探针（非盲写）",
+      "strategy": "农民海 12 农（7 采 5 扩）",
+      "file": "probes/farmer.js",
+      "sha256": "2fddd47ba78bcb4acb1419af725fa6399ec9e8bf591f017df599d35a5cb1844f",
+      "inject": "const WORKER_TARGET = 12;\nconst HARVEST_PCT = 60;\n"
+    }
+  }
+}

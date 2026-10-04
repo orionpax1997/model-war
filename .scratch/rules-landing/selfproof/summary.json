@@ -1,0 +1,475 @@
+{
+ "generatedAt": "2026-10-04T15:19:08.520Z",
+ "node": "v24.15.0",
+ "ruleSet": {
+  "resourcePerSite": 200,
+  "tickLimit": 600
+ },
+ "quotaPercent": 25,
+ "matrix": {
+  "jobs": 64,
+  "arms": [
+   "P0/fixture",
+   "P1/open-clash",
+   "P1/corridor-split",
+   "P1/fortress-core"
+  ],
+  "seatBase": [
+   "A",
+   "B",
+   "C",
+   "B"
+  ],
+  "rotations": 4,
+  "seeds": [
+   11,
+   23,
+   41,
+   71
+  ],
+  "mirror": false,
+  "stub": ".scratch/rules-calibration/sim"
+ },
+ "products": [
+  {
+   "path": "benchmarks/cell-a-melee-pressure/script.js",
+   "sha256": "529677d2727ea99a135d729bdbde0cc0b5b1c65d9a59dd02819d26f82f788b7e"
+  },
+  {
+   "path": "benchmarks/cell-b-expansion-economy/script.js",
+   "sha256": "8f1884029f1ea56fc32ec5976a0e55bbbf44e1f778cc5763d904b089937d834a"
+  },
+  {
+   "path": "benchmarks/cell-c-claim-no-harvest/script.js",
+   "sha256": "af51db9c07554c00ff26b49f474c540bfaa3150c78b4889e5b61d2f782287ee1"
+  }
+ ],
+ "staticCheck": {
+  "maxBytes": 8831,
+  "maxBytesSource": "规则集文件的 scriptSizeLimit 仍是占位 0 → 取三份入库产物的最大值 8831 字节(地板值)",
+  "verdicts": [
+   {
+    "name": "A benchmarks/cell-a-melee-pressure/script.js",
+    "status": 0,
+    "output": "脚本静态校验通过:没有违规。\n"
+   },
+   {
+    "name": "B benchmarks/cell-b-expansion-economy/script.js",
+    "status": 0,
+    "output": "脚本静态校验通过:没有违规。\n"
+   },
+   {
+    "name": "C benchmarks/cell-c-claim-no-harvest/script.js",
+    "status": 0,
+    "output": "脚本静态校验通过:没有违规。\n"
+   }
+  ],
+  "pass": true
+ },
+ "outcomeCheck": {
+  "matches": 64,
+  "seats": 256,
+  "exceptionTicks": 0,
+  "worstMatch": {
+   "id": "P0/fixture/ABCB/s11",
+   "exceptionTicks": 0
+  },
+  "reasons": {
+   "shortcut": 28,
+   "victory": 24,
+   "timeout": 12
+  },
+  "exceptionTicksByLabel": {
+   "A": 0,
+   "B": 0,
+   "C": 0
+  },
+  "abnormalOutcomes": [],
+  "pass": true
+ },
+ "consumption": {
+  "quotaPercent": 25,
+  "totals": {
+   "P0/fixture": 3200,
+   "P1/open-clash": 3200,
+   "P1/corridor-split": 3200,
+   "P1/fortress-core": 3200
+  },
+  "quotaAbsolute": {
+   "P0/fixture": 800,
+   "P1/open-clash": 800,
+   "P1/corridor-split": 800,
+   "P1/fortress-core": 800
+  },
+  "byLabel": [
+   {
+    "label": "A",
+    "seats": 64,
+    "consumed": {
+     "n": 64,
+     "min": 121,
+     "median": 220,
+     "max": 380
+    },
+    "medianTenthsPercent": 69,
+    "maxTenthsPercent": 119,
+    "medianPass": true,
+    "maxPass": true
+   },
+   {
+    "label": "B",
+    "seats": 128,
+    "consumed": {
+     "n": 128,
+     "min": 35,
+     "median": 96,
+     "max": 200
+    },
+    "medianTenthsPercent": 30,
+    "maxTenthsPercent": 63,
+    "medianPass": true,
+    "maxPass": true
+   },
+   {
+    "label": "C",
+    "seats": 64,
+    "consumed": {
+     "n": 64,
+     "min": 0,
+     "median": 0,
+     "max": 0
+    },
+    "medianTenthsPercent": 0,
+    "maxTenthsPercent": 0,
+    "medianPass": true,
+    "maxPass": true
+   }
+  ],
+  "byArm": [
+   {
+    "arm": "P0/fixture",
+    "consumed": {
+     "n": 16,
+     "min": 396,
+     "median": 414,
+     "max": 513
+    }
+   },
+   {
+    "arm": "P1/corridor-split",
+    "consumed": {
+     "n": 16,
+     "min": 475,
+     "median": 516,
+     "max": 616
+    }
+   },
+   {
+    "arm": "P1/fortress-core",
+    "consumed": {
+     "n": 16,
+     "min": 435,
+     "median": 511,
+     "max": 579
+    }
+   },
+   {
+    "arm": "P1/open-clash",
+    "consumed": {
+     "n": 16,
+     "min": 355,
+     "median": 449,
+     "max": 492
+    }
+   }
+  ],
+  "harvestEqualsConsumedEveryMatch": true,
+  "batch": {
+   "consumed": {
+    "n": 64,
+    "min": 355,
+    "median": 475,
+    "max": 616
+   },
+   "overQuota": 0
+  },
+  "pass": true
+ },
+ "distinctness": {
+  "fingerprints": [
+   {
+    "label": "A",
+    "seats": 64,
+    "values": [
+     220,
+     200,
+     2,
+     12,
+     8,
+     31,
+     23,
+     1,
+     31
+    ]
+   },
+   {
+    "label": "B",
+    "seats": 128,
+    "values": [
+     96,
+     80,
+     6,
+     9,
+     0,
+     33,
+     0,
+     3,
+     72
+    ]
+   },
+   {
+    "label": "C",
+    "seats": 64,
+    "values": [
+     0,
+     0,
+     2,
+     4,
+     0,
+     11,
+     0,
+     2,
+     94
+    ]
+   }
+  ],
+  "pairs": [
+   {
+    "left": "A",
+    "right": "B",
+    "gaps": [
+     {
+      "key": "harvests",
+      "left": 220,
+      "right": 96,
+      "gap": 56
+     },
+     {
+      "key": "delivered",
+      "left": 200,
+      "right": 80,
+      "gap": 60
+     },
+     {
+      "key": "workerPeak",
+      "left": 2,
+      "right": 6,
+      "gap": 67
+     },
+     {
+      "key": "unitPeak",
+      "left": 12,
+      "right": 9,
+      "gap": 25
+     },
+     {
+      "key": "endMelee",
+      "left": 8,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "workerSharePercent",
+      "left": 31,
+      "right": 33,
+      "gap": 6
+     },
+     {
+      "key": "captures",
+      "left": 23,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "finalRank",
+      "left": 1,
+      "right": 3,
+      "gap": 67
+     },
+     {
+      "key": "eliminationPercent",
+      "left": 31,
+      "right": 72,
+      "gap": 57
+     }
+    ],
+    "separated": 8,
+    "pass": true
+   },
+   {
+    "left": "A",
+    "right": "C",
+    "gaps": [
+     {
+      "key": "harvests",
+      "left": 220,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "delivered",
+      "left": 200,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "workerPeak",
+      "left": 2,
+      "right": 2,
+      "gap": 0
+     },
+     {
+      "key": "unitPeak",
+      "left": 12,
+      "right": 4,
+      "gap": 67
+     },
+     {
+      "key": "endMelee",
+      "left": 8,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "workerSharePercent",
+      "left": 31,
+      "right": 11,
+      "gap": 65
+     },
+     {
+      "key": "captures",
+      "left": 23,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "finalRank",
+      "left": 1,
+      "right": 2,
+      "gap": 50
+     },
+     {
+      "key": "eliminationPercent",
+      "left": 31,
+      "right": 94,
+      "gap": 67
+     }
+    ],
+    "separated": 8,
+    "pass": true
+   },
+   {
+    "left": "B",
+    "right": "C",
+    "gaps": [
+     {
+      "key": "harvests",
+      "left": 96,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "delivered",
+      "left": 80,
+      "right": 0,
+      "gap": 100
+     },
+     {
+      "key": "workerPeak",
+      "left": 6,
+      "right": 2,
+      "gap": 67
+     },
+     {
+      "key": "unitPeak",
+      "left": 9,
+      "right": 4,
+      "gap": 56
+     },
+     {
+      "key": "endMelee",
+      "left": 0,
+      "right": 0,
+      "gap": 0
+     },
+     {
+      "key": "workerSharePercent",
+      "left": 33,
+      "right": 11,
+      "gap": 67
+     },
+     {
+      "key": "captures",
+      "left": 0,
+      "right": 0,
+      "gap": 0
+     },
+     {
+      "key": "finalRank",
+      "left": 3,
+      "right": 2,
+      "gap": 33
+     },
+     {
+      "key": "eliminationPercent",
+      "left": 72,
+      "right": 94,
+      "gap": 23
+     }
+    ],
+    "separated": 6,
+    "pass": true
+   }
+  ],
+  "separatedNeeded": 3,
+  "pass": true
+ },
+ "anchor": {
+  "p100": [
+   479,
+   479,
+   479,
+   479
+  ],
+  "delivered": [
+   3080,
+   3080,
+   3080,
+   3080
+  ],
+  "pass": true
+ },
+ "compatGaps": [
+  {
+   "gap": "座位自认:getMyIndex()",
+   "fill": "按座位注入常量函数(与终稿同义)"
+  },
+  {
+   "gap": "错误判别:isError / errCode",
+   "fill": "按桩的裸字符串返回形态翻译(判断同义)"
+  },
+  {
+   "gap": "错误码常量:7 个 ERR_*",
+   "fill": "按真源包注入面目录逐个铺成同名同值字符串"
+  },
+  {
+   "gap": "快照产线字段:site.producing",
+   "fill": "脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)"
+  },
+  {
+   "gap": "getObjectsByType('player')",
+   "fill": "宿主账本:初始资金 + 下单扣款 + 交付入账"
+  }
+ ],
+ "elapsedSeconds": "81.2"
+}
