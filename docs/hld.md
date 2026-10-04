@@ -70,7 +70,7 @@
 | Monorepo | pnpm workspace(锁 lockfile,CI 用 `--frozen-lockfile`) | 多包单仓,包间边界清晰(§3.2) |
 | 拓扑 | `apps/cli` + `packages/{schema,replay,engine,runner,gen,tools}`(拓扑图与新增 `tools` 的理由见 §3.1) | CLI 是 app 不是库;回放格式独立成包;仓库自用工具独立成包 |
 | 包间类型引用 | workspace `exports` 的 `types` 条件 + TypeScript project references(`tsc -b`);**既不用 `paths`,也禁用 `baseUrl`** | 编译期强制依赖方向;`baseUrl` 已被 TypeScript 7 移除(TS5102,连写都写不进去) |
-| 共享编译基座 | 根 `tsconfig.base.json` | 各包继承,不另设配置包 |
+| 共享编译基座 | 根 `tsconfig.base.json` | 各包继承,不另设配置包;参赛脚本那份刻意不继承它,理由见 §6.2 |
 | 构建(库包) | 纯 `tsc -b` 产物;两个例外:`tools` 只产 `.d.ts`(`emitDeclarationOnly`,运行面是源码,§3.1)、VM 内 runtime bundle(打包方式属实现期选择,形态见 §4.5) | 库 + 子进程入口,无需打包器 |
 | 构建(CLI) | `apps/cli` 用 esbuild 打成单文件 | 唯一 bin;子命令 `await import()` 动态加载便于分包 |
 | 脚本预编译 | 冻结脚本由 gen 包用 `tsc` 编译为 script-mode JS;编译器版本锁定并写入存档 meta | 判据是"语义可预测 + 冻结后不再变",不是快 |
@@ -575,7 +575,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 | 类别 | 规则 |
 |---|---|
-| 编译 | **校验流水线里有这一步**,不是校验器内部跑这一步:编译责任在 gen 包(§7.4,engine 不引入 tsc),`tsc` 编译通过 + 顶层声明 `function loop(): void` 入口。编译诊断由管线直接透传给模型,校验器不复现它。**参赛脚本的编译配置(脚本 tsconfig)归生成管线的编译步骤,当前尚未交付**——没有它,下面那条白名单反转与入口签名都无从执行 |
+| 编译 | **校验流水线里有这一步**,不是校验器内部跑这一步:编译责任在 gen 包(§7.4,engine 不引入 tsc),`tsc` 编译通过 + 顶层声明 `function loop()` 入口(返回类型可省略,不写成必须标注 `: void`)。编译诊断由管线直接透传给模型,校验器不复现它。**参赛脚本的编译配置(脚本 tsconfig)由规则落库这一格定、生成管线按它实现**,落点是根层 `tsconfig.scripts.json`:它**刻意不继承** `tsconfig.base.json`(`types: []` + 不带 DOM 的 `lib`,否则等于把 Node 类型带进沙箱),而它承载的正是下面那条白名单反转与入口签名。定与实现分开是刻意的:承载形状与契约面同源,它是下游的实现 |
 | 模块系统 | 禁 `export` / `import` / 动态 `import()` / `require` / 动态 `eval`(单文件自包含)。静态校验器承担,判据是「这段代码是不是从自己之外取来的」 |
 | 全局白名单 | **承载方是编译器的名字解析**:脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types`、只额外引入脚本 API 类型声明的环境里编译,「找不到这个名字」就是精确的白名单反转。**静态校验器不做反转**,也不为它自建作用域分析(实测与理由见本节末)。名字级别的禁令(`__*` 前缀全禁、确定性污染源)仍由它承担。内置全局表与注入符号表的真源在 `schema`,本包经生成器读生成物(§3.2),与沙箱 runtime 暴露的 API 面同源;**名单取值不在本文档复制**(见下一行与 `packages/schema/src/builtin-globals.ts`) |
 | 内置全局白名单的收录判据 | **这一格放的是一条收录准则(一整句话的判据),不是名单的取值**:判据原文、判据的边界(什么算这一格里的名字)与逐个名字的「为什么收/不收」都在 `packages/schema/src/builtin-globals.ts` 的头注,那是它们的家,本文档只留指针。**这张表的消费者是面向模型的规则文档,不参与白名单反转的判定**;两侧不得互相引用为依据 |
