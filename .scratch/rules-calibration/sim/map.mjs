@@ -80,7 +80,9 @@ function orbitOf(x, y, size) {
 }
 
 // 整数 LCG（hld §4.6：唯一 Random 在 engine 内、开局前一次性消费；2^31 模域内自乘不溢出 2^53）
-function makeLcg(seed) {
+// 票 06：导出给 harness 的 mapFromJson —— 真图的候选轨道填充要用**同一个** LCG 与同一套消费次序，
+// 否则同一颗种子在夹具与真图上会得到不同的墙集合，「带墙后枯竭推后多少」就不可比。这里只加 export。
+export function makeLcg(seed) {
   let s = (seed % 2147483646) + 1; // 落在 1..2147483646
   return () => {
     s = (s * 48271) % 2147483647;
