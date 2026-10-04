@@ -170,7 +170,10 @@ export type InjectedErrorCodeEntry = InjectedApiSymbolBase & {
  * 查询函数——读出来的是一个值,所以收:
  * - `getTick` —— 当前 tick 号;脚本每 tick 都要读一次时间轴。
  * - `getObjectById` —— 按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。
- * - `getObjectsByType` —— 按类型批量取快照对象(可带过滤);同一个快照值的批量入口。
+ * - `getObjectsByType` —— 按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的
+ *   批量入口。**`player` 这一档是收口「快照里有、API 面里没有」那一条的落点**:玩家的资源、存活与
+ *   异常计数只在这一档里读得到,产线的当前订单则挂在 `site.producing` 上(见下面的 `ERR_BASE_BUSY`
+ *   那一段),两者都不需要脚本自己记。
  * - `getRange` —— 两点间 Chebyshev 距离;射程心算要读它算出来的那个数值。
  * - `getTerrainAt` —— 某格地形(`plain`/`wall`/`out`);绕墙寻路前先读它。
  * - `findPath` —— 寻路路径是一串坐标点,读得到的就是值。它计入 API 调用预算,而**预算值不归
@@ -231,15 +234,18 @@ export const SANDBOX_INJECTED_API_SYMBOL_CATALOG: readonly InjectedApiSymbolEntr
     symbol: "getObjectById",
     kind: "query",
     reason: "按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。",
-    signature: "getObjectById(id: number): Unit | Site | Production | null",
+    signature: "getObjectById(id: number): Unit | Site | null",
   },
   {
     symbol: "getObjectsByType",
     kind: "query",
-    reason: "按类型批量取快照对象(可带过滤);同一个快照值的批量入口。",
+    reason:
+      "按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的批量入口。" +
+      "四个座位的资源、存活与异常计数也从这里读,不必在脚本里另记一份。",
     signature:
-      "getObjectsByType(kind: 'unit' | 'site', filter?: " +
-      "{ owner?: -1|0|1|2|3; type?: UnitType; kind?: 'base' | 'resource' }): (Unit | Site)[]",
+      "getObjectsByType(kind: 'unit' | 'site' | 'player', filter?: " +
+      "{ owner?: -1|0|1|2|3; type?: UnitType; kind?: 'base' | 'resource' }): " +
+      "(Unit | Site | Player)[]",
   },
   {
     symbol: "getRange",
