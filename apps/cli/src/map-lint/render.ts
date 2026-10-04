@@ -28,6 +28,7 @@ const RULE_LABELS: Record<MapLintRule, string> = {
   "variant-slot-not-orbit": "变体槽位不是完整四重轨道",
   "variant-slot-on-site": "变体槽位压住点位或八邻域",
   "variant-slot-on-spawn": "变体槽位压住初始单位",
+  "variant-slot-on-wall": "变体槽位与已有墙重叠",
   "pool-empty": "地图池里没有地图",
   "pool-too-few-maps": "地图池张数不足下限",
   "pool-size-mismatch": "池内 size 不一致",
