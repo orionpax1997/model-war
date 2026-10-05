@@ -60,7 +60,10 @@ export type Change =
   | { readonly kind: "move-unit"; readonly unitId: number; readonly x: number; readonly y: number };
 
 /** 按数值 id 升序插入。数组短(每 tick 几百个对象),有序插入比「先插后排」少一次全数组重排。 */
-const insertById = <T extends { readonly id: number }>(items: readonly T[], item: T): readonly T[] => {
+const insertById = <T extends { readonly id: number }>(
+  items: readonly T[],
+  item: T,
+): readonly T[] => {
   let at = items.length;
   while (at > 0 && items[at - 1]!.id > item.id) {
     at -= 1;
@@ -97,7 +100,11 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
     case "move-unit":
       return {
         ...state,
-        units: replaceById(state.units, change.unitId, (unit) => ({ ...unit, x: change.x, y: change.y })),
+        units: replaceById(state.units, change.unitId, (unit) => ({
+          ...unit,
+          x: change.x,
+          y: change.y,
+        })),
       };
     default: {
       // 穷尽性靠编译期兜住:新增一种变更而这里没跟上,是编译错误而不是运行期静默不改状态。

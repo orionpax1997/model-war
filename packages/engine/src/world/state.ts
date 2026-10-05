@@ -32,7 +32,8 @@ export type UnitType = "worker" | "melee" | "ranged" | "cavalry";
 /** 四条兵种线的一个封闭集合。判定用它而不是 `string`:地图声明的初始兵种名要过这一关。 */
 export const UNIT_TYPES: readonly UnitType[] = ["worker", "melee", "ranged", "cavalry"];
 
-export const isUnitType = (value: string): value is UnitType => UNIT_TYPES.includes(value as UnitType);
+export const isUnitType = (value: string): value is UnitType =>
+  UNIT_TYPES.includes(value as UnitType);
 
 export type Player = {
   readonly index: PlayerIndex;

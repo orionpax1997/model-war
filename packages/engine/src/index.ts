@@ -1,91 +1,28 @@
 /**
- * engine 包:确定性内核 + 沙箱(hld §3.1)。
+ * engine 包的对外导出面。**外部缝唯一是 `runMatch`**(02b 落,本票尚不存在)。
  * 依赖方向单向:engine → replay → schema;不得 import runner / gen(hld §3.2)。
  * 运行时只允许 `node:crypto` 一个内置模块;wasm 字节由上层读盘后传入,本包不做磁盘 I/O。
+ *
+ * ── 运行时导出当前是**空的**,这是有意的 ──
+ *
+ * hld《模块的深度》那条验收是「**调用方要学的东西少于它拿到的能力**」。而导出面就是这句话的
+ * 落点:每多导出一个**运行时**符号,调用方就多一样必须先读懂才能用对的东西。02b 把 `runMatch`
+ * 接进来之前,引擎内核**没有一个**外部缝可给——`processTick` 是处理器自己的私有内部缝,
+ * 六个 intent 各有**且只有一个**实现因而**不构成缝**。
+ * 下面这些是 `export type`:类型不产生运行时能力,它们是 02b 接线时要用到的真源包形状的中转。
+ *
+ * 明确**不**导出的(每一条都有理由,不是「暂时没写」):
+ * - `processTick` 与六个 intent:`processTick` 对外即等于给「跑一局」开了第二条路,
+ *   而 ADR-0005 逐条裁掉的正是这类平行表示;六个 intent 不可替换,导出等于对外承诺可替换性。
+ * - `buildSnapshot` / `groupIntents` / `createEventCollector`:各只有一个实现,只在管线内部被用到。
+ * - `buildTickLine` / `buildMetaLine`:写出路径的**内部**一步。行组装是 `runMatch` 的实现细节,
+ *   不是调用方要组装的东西。
+ *
+ * 状态模型(`GameState` / `Snapshot` / `Outcome`)随 `runMatch` 一起在 02b 进来时再定导出面:
+ * 现在导出一份没人用的形状,等于在 02b 改形状时多一处要改的地方。
  *
  * 状态模型用 `type` 而非 `interface`:要进入回放的形状必须可赋给 schema 的 `JsonValue`,
  * 而只有类型别名拿得到隐式索引签名。
  */
 
-import { stateHashOf } from "@model-war/replay";
-
-/** 座位下标。固定 0..3,顺序即 playerIndex 串行执行顺序(hld §2.3)。 */
-export type PlayerIndex = 0 | 1 | 2 | 3;
-
-export type UnitType = "worker" | "melee" | "ranged" | "cavalry";
-
-export type Player = {
-  index: PlayerIndex;
-  /** 全局共享资源池,无上限。全整数(FR-2 AC3)。 */
-  resources: number;
-  alive: boolean;
-  /** 累计异常 tick 数;随 JSONL 持久化,VM 重建后由持久化值续算不清零(hld §5.2)。 */
-  exceptionTicks: number;
-};
-
-export type Unit = {
-  id: number;
-  owner: PlayerIndex;
-  type: UnitType;
-  x: number;
-  y: number;
-  hp: number;
-  /** 农民携带量;其余兵种恒 0。 */
-  carrying: number;
-};
-
-export type Site = {
-  id: number;
-  kind: "base" | "resource";
-  x: number;
-  y: number;
-  /** -1 为中立 */
-  owner: -1 | PlayerIndex;
-  progressOwner: -1 | PlayerIndex;
-  progress: number;
-};
-
-export type Production = {
-  baseId: number;
-  type: UnitType;
-  ticksLeft: number;
-};
-
-export type Outcome = {
-  /** rankings[i] = 玩家 i 的名次(1 起,可并列) */
-  rankings: readonly number[];
-  reason: "victory" | "shortcut" | "timeout";
-  territoryScores: readonly number[];
-};
-
-/** 对局状态。units/sites 按数值 id 升序维护——该不变量是回放哈希可复算的前提(hld §4.6)。 */
-export type GameState = {
-  /** 唯一时间单位 */
-  tick: number;
-  players: readonly Player[];
-  units: readonly Unit[];
-  sites: readonly Site[];
-  productions: readonly Production[];
-  /** 全局单调递增,对象创建时分配 */
-  nextId: number;
-  outcome: Outcome | null;
-};
-
-/**
- * 序列化一个 tick 的回放行(hld §7.5 的 tick 行格式)。
- *
- * 写向由调用方负责:本包返回行文本,不碰 fs(hld §2.2.8)。
- * `events` 在空壳阶段恒为空数组——事件流由结算管线填充,此处不预造行为。
- * `nextId` / `outcome` 不进 tick 行(它们是状态机与末行 result 的事,hld §7.5)。
- */
-export const replayTickLine = (state: GameState): string => {
-  const { tick, players, units, sites, productions } = state;
-  const settled = { players, units, sites, productions };
-  return JSON.stringify({
-    type: "tick",
-    tick,
-    ...settled,
-    events: [],
-    stateHash: stateHashOf(settled),
-  });
-};
+export type { JsonValue, MapDefinition, Ruleset, RulesetVersion } from "@model-war/replay";

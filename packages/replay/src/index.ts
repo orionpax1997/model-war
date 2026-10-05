@@ -27,11 +27,21 @@ export type {
   MapSpawnUnit,
   MapVariantSlot,
   Ruleset,
+  RulesetVersion,
   UnitStats,
 } from "@model-war/schema";
 
 /** 规则集键清单的键序。与 `Ruleset` 类型同源,派生量断言遍历它。 */
 export { RULESET_KEYS, RULESET_UNIT_KEYS } from "@model-war/schema";
+
+/** 规则集版本真源(hld §7.1 三处一致)。经本包中转,理由见文件头。 */
+export { RULESET_VERSION } from "@model-war/schema";
+
+/**
+ * 宿主桥前缀(hld §6.2)。**原样再导出**:沙箱执行器那一侧(票 G)与本仓引擎侧拼同一个桥名,
+ * 两侧各写一个字面量 `__` 就是那套 `__*` 静态禁令漏掉的那一半。
+ */
+export { HOST_BRIDGE_PREFIX } from "@model-war/schema";
 
 /**
  * 回放**文件格式**的版本(hld §7.5 末段)。跨版本兼容性以它为准(FR-9 AC2)。
@@ -40,6 +50,8 @@ export { RULESET_KEYS, RULESET_UNIT_KEYS } from "@model-war/schema";
  * 所有(ADR-0003),本包只做编解码。取值从 1 起,格式发生不兼容变更时递增。
  */
 export const CURRENT_SCHEMA_VERSION = 1;
+
+export { renderReplay } from "./render.js";
 
 /**
  * 对一个 tick 的规范化状态求 SHA-256(hld §4.6):哈希计算只在写出路径上,不参与结算。

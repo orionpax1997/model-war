@@ -88,8 +88,18 @@ export type EventCollector = {
 };
 
 const byOrder = (
-  left: { readonly step: StepNo; readonly subjectId: number; readonly kind: EventKind; readonly seq: number },
-  right: { readonly step: StepNo; readonly subjectId: number; readonly kind: EventKind; readonly seq: number },
+  left: {
+    readonly step: StepNo;
+    readonly subjectId: number;
+    readonly kind: EventKind;
+    readonly seq: number;
+  },
+  right: {
+    readonly step: StepNo;
+    readonly subjectId: number;
+    readonly kind: EventKind;
+    readonly seq: number;
+  },
 ): number =>
   left.step - right.step ||
   left.subjectId - right.subjectId ||
@@ -110,7 +120,6 @@ export const createEventCollector = (): EventCollector => {
     economyDead: (player) => record("economy-dead", player),
     playerEliminated: (player) => record("player-eliminated", player),
     victory: (player) => record("victory", player),
-    events: () =>
-      [...recorded].sort(byOrder).map(({ kind, subjectId }) => ({ kind, subjectId })),
+    events: () => [...recorded].sort(byOrder).map(({ kind, subjectId }) => ({ kind, subjectId })),
   };
 };

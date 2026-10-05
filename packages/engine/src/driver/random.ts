@@ -68,7 +68,10 @@ export const fillVariantWalls = (
   random: Random,
   map: MapDefinition,
 ): { readonly map: MapDefinition; readonly random: Random } => {
-  const rows = map.terrain.map((row) => [...row]);
+  // 逐行拆成字符数组。用 `split("")` 而不是 `[...row]`:地形字符只有 `.` 与 `#` 两个 ASCII,
+  // 两者结果逐字相同,而展开运算符在码点层面拆串,会被类型感知 lint 判成「拆 emoji 拆错了」——
+  // 那条担忧对一份由两个 ASCII 字符构成的字符表不成立。
+  const rows = map.terrain.map((row) => row.split(""));
   let state = random;
   for (const slot of map.variantSlots) {
     const drawn = nextBelow(state, 2);

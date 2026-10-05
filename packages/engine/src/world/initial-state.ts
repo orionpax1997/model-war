@@ -11,7 +11,14 @@
 import type { MapDefinition, Ruleset } from "@model-war/replay";
 import { apply } from "../driver/apply.js";
 import { createIdGen, peekNextId } from "../driver/id-gen.js";
-import { isUnitType, type GameState, type Owner, type PlayerIndex, type Site, type UnitType } from "./state.js";
+import {
+  isUnitType,
+  type GameState,
+  type Owner,
+  type PlayerIndex,
+  type Site,
+  type UnitType,
+} from "./state.js";
 
 const SEATS: readonly PlayerIndex[] = [0, 1, 2, 3];
 
@@ -25,7 +32,8 @@ const toUnitType = (name: string, owner: PlayerIndex): UnitType => {
   return name;
 };
 
-const toOwner = (owner: number | null): Owner => (owner !== null && isPlayerIndex(owner) ? owner : -1);
+const toOwner = (owner: number | null): Owner =>
+  owner !== null && isPlayerIndex(owner) ? owner : -1;
 
 /**
  * 该方的主基地。地图不变量保证每方恰好一个主基地(gdd §4),所以这里缺了就是地图自身不自洽,
