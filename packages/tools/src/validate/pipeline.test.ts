@@ -62,6 +62,19 @@ it("解析失败时体积级也不参与判定,上限给再小也一样", () => 
   expect(violations.map((v) => v.rule)).toEqual(["syntax-error"]);
 });
 
+it("未编译的 TS 源码被拒:独占一条 syntax-error,且一条规则违规都不报", () => {
+  // 判定链的输入是**编译产物**(hld §6.2「四条规则统一跑在编译产物上」)。一份还带着
+  // 类型标注的源码此刻根本无法判定,所以它落在解析失败那一支——与「解析过了但有违规」
+  // 是两件不同的事,后者要等的编译诊断由生成管线的编译步骤透传(hld §6.2「编译」那一行)。
+  const violations = validateScriptSource(
+    "function loop(): void { return Math.floor(1); }\n",
+    OPTS,
+  );
+  expect(violations).toHaveLength(1);
+  expect(violations[0]?.rule).toBe("syntax-error");
+  expect(violations[0]?.blocking).toBe(true);
+});
+
 it("解析失败时只留第一条诊断", () => {
   const violations = validateScriptSource("const a = ;\nconst b = ;\n", OPTS);
   expect(violations).toHaveLength(1);

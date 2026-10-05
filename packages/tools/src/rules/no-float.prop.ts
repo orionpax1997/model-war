@@ -69,9 +69,9 @@ it("只由整数构成的表达式永不合规", () => {
 it("script 模式下同一条命题也成立", () => {
   fc.assert(
     fc.property(integerExpression(3), (expression) => {
-      expect(
-        noFloatViolations(`function loop(): void {\n  v = ${expression};\n}\n`, "script"),
-      ).toEqual([]);
+      expect(noFloatViolations(`function loop() {\n  v = ${expression};\n}\n`, "script")).toEqual(
+        [],
+      );
     }),
     RUN_OPTIONS,
   );

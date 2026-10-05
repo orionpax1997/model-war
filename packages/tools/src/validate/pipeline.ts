@@ -80,9 +80,15 @@ export const validateScriptSource = (
     return [
       {
         rule: "syntax-error",
+        // 这句话是给参赛模型读的(stdout 原样转给它),所以它必须说对病因。
+        // 判定链的输入是**编译产物**,而带类型标注的 TS 源码落进的是同一条分支——最可能的
+        // 病因只有一个:交上来的是源码,没编译。旧文案说的是「单文件、无 import/export 的
+        // script-mode 模块」,那会把模型引向改模块语法:既改不动病因(模块语法归模块系统那一级,
+        // 且那一级对 export/import 照样解析成立),又烧掉一轮迭代预算。
         message:
           `源码无法解析:${first?.message ?? "解析器没有给出原因"}。` +
-          `参赛脚本是单文件、无 import/export 的 script-mode 模块,先修到能解析再谈别的。`,
+          `校验器判的是编译产物(按 tsconfig.scripts.json 编译出来的单文件裸脚本):` +
+          `如果这份源码里还留着类型标注、\`as\` 断言之类的 TS 写法,那是没编译,先编译再校验。`,
         line: first?.line ?? null,
         column: first?.column ?? null,
         blocking: true,
