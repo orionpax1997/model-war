@@ -10,32 +10,45 @@
  * 每条用例都配了**现做现验的反例**:从一份被接受的合法数据出发,加一个字段 / 删一个字段 /
  * 改一个类型,确认判决跟着内容走。坏了的反例比没有反例更坏。
  *
- * 本文件断言两类数据(地图 / 规则集),它们走**同一个校验器**:同一个 Ajv 实例、同一套
- * 「同类合并」渲染、同一种改指。断言风格也共用一份(`bad()` / `reject()` 两种改坏手法)。
+ * 本文件断言四类数据(地图 / 规则集 / 冻结脚本存档 meta / 对局输入 input.json),它们走
+ * **同一个校验器**:同一个 Ajv 实例、同一套「同类合并」渲染、同一种改指、同一个版本三处一致
+ * 判据。断言风格也共用一份(`bad*()` 改坏 / `reject*()` 收下拒绝两种手法)。
  */
 
 import {
+  ARCHIVE_META_JSON_SCHEMA,
   MAP_JSON_SCHEMA,
+  MATCH_INPUT_JSON_SCHEMA,
   RULESET_JSON_SCHEMA,
   RULESET_KEYS,
   RULESET_VERSION,
 } from "@model-war/schema";
 import type {
+  ArchiveMeta,
   JsonValue,
   MapDefinition,
   MapVariantSlot,
+  MatchInput,
+  MatchInputArchive,
   Ruleset,
   UnitStats,
 } from "@model-war/schema";
 import { expect, it } from "vitest";
 
 import {
+  ARCHIVE_FILES_INCOMPLETE_KEYWORD,
+  ARCHIVE_PROTOCOL_ROUNDS_KEYWORD,
   DERIVED_SPAWN_TICKS_KEYWORD,
   RULESET_TOO_NEW_KEYWORD,
   RULESET_VERSION_MISMATCH_KEYWORD,
+  SHA256_MISMATCH_KEYWORD,
   UNKNOWN_RULESET_VERSION_KEYWORD,
+  validateArchiveMeta,
   validateMap,
+  validateMatchInput,
   validateRuleset,
+  type ArchiveMetaProvenance,
+  type MatchInputProvenance,
 } from "./validator.js";
 
 // ── Q4:类型是上游,JSON Schema 手工对齐——漂移由断言兜住,不是靠自觉 ────────────
@@ -688,4 +701,538 @@ it("规则集的两层诊断形状与地图一致(同一个渲染器)", () => {
 it("同一份坏规则集两次校验给出同一份诊断(诊断本身必须稳定)", () => {
   const broken = badRuleset(V1, { tickLimit: "600", scriptSizeLimit: -1 }, ["memoryLimit"]);
   expect(rejectRuleset(broken)).toEqual(rejectRuleset(broken));
+});
+
+// ══ 冻结脚本存档 meta(hld §7.4)与对局输入 input.json(hld §7.4 末条)════════════
+//
+// 走的是**同一条缝、同一个校验器**:上面四份共用一个 Ajv 实例、同一份措辞表、同一种
+// 「同类合并」。这两份的判据分工也与前两份同一条原则——形状归 ajv,跨字段的归装载期断言。
+//
+// **反例逐类齐全**:改哈希 → 红、删必填项 → 红、改版本号 → 红、多一个未声明字段 → 红
+// (顶层与嵌套各一次)、缺档 → 红。十一项必填与五项必填是**逐项**过的,不是抽三项:
+// 「半截字段也会让人以为形状已定」是本文件所在的那条纪律,抽查抓不住它。
+
+// ── 类型级断言:schema 与 TS 类型必须一致,改一边必红 ──────────────────────────
+
+type ArchiveMetaSchemaRequiredKeys = (typeof ARCHIVE_META_JSON_SCHEMA)["required"][number];
+export type ArchiveMetaSchemaRequiredKeysMatchType = Assert<
+  Equals<ArchiveMetaSchemaRequiredKeys, RequiredKeysOf<ArchiveMeta>>
+>;
+
+type MatchInputSchemaRequiredKeys = (typeof MATCH_INPUT_JSON_SCHEMA)["required"][number];
+export type MatchInputSchemaRequiredKeysMatchType = Assert<
+  Equals<MatchInputSchemaRequiredKeys, RequiredKeysOf<MatchInput>>
+>;
+
+/**
+ * 座位数那条:类型是**定长 4 元组**,schema 侧是 `minItems` / `maxItems` 写 4。
+ * 收紧成 3 或放宽成 6 时,两侧都不会自己报错,只有运行时拿着三份存档去撞 `minItems` 才炸。
+ * 这条断言是那条路线上唯一能提前抓到数字漂移的东西(同 `MapVariantSlotArityMatchesSchema`)。
+ */
+type ArchivesSchemaMin = (typeof MATCH_INPUT_JSON_SCHEMA)["properties"]["archives"]["minItems"];
+type ArchivesSchemaMax = (typeof MATCH_INPUT_JSON_SCHEMA)["properties"]["archives"]["maxItems"];
+export type MatchInputSeatCountMatchesSchema = Assert<
+  And<
+    Equals<MatchInput["archives"]["length"], ArchivesSchemaMin>,
+    Equals<MatchInput["archives"]["length"], ArchivesSchemaMax>
+  >
+>;
+
+/**
+ * 「要能赋给 `JsonValue`」那条纪律的机器形态:`JsonValue` 的对象那一支是索引签名,
+ * 而**只有 type 别名拿得到隐式索引签名**(interface 拿不到)。所以下面两条不只是编译期
+ * 的形式检查,它们是「有没有人把这个类型改回 interface」的唯一哨兵——改成 interface
+ * 时它们立刻红,而不是等到某个跨进程的地方报一句「不能赋给 JsonValue」。
+ */
+type AssignableTo<A, B> = [A] extends [B] ? true : false;
+export type ArchiveMetaIsJsonValue = Assert<AssignableTo<ArchiveMeta, JsonValue>>;
+export type MatchInputIsJsonValue = Assert<AssignableTo<MatchInput, JsonValue>>;
+
+// ── fixture ──────────────────────────────────────────────────────────────────
+
+/** 拼一个合法的 sha256:小写十六进制 64 位。 */
+const hash = (tag: string): string => tag.repeat(64);
+
+/**
+ * 十个**互不相同**的合法 sha256。每个座位各取不同的那一个,「哪一座位的哈希错了」才能被
+ * 指针区分出来——四个座位共用同一个哈希时,只校验第一个座位的实现也能全过。
+ */
+const HASH = {
+  script0: hash("a"),
+  script1: hash("b"),
+  script2: hash("c"),
+  script3: hash("d"),
+  meta0: hash("e"),
+  meta1: hash("f"),
+  meta2: hash("0"),
+  meta3: hash("1"),
+  map: hash("2"),
+  /** 不属于任何一个座位的那个,专供「换一个值试试」的反例用。 */
+  other: hash("3"),
+} as const;
+
+const SEAT_SCRIPT_HASHES = [HASH.script0, HASH.script1, HASH.script2, HASH.script3] as const;
+const SEAT_META_HASHES = [HASH.meta0, HASH.meta1, HASH.meta2, HASH.meta3] as const;
+
+/**
+ * 座位号。收成字面量联合而不是 `number`:下标按 `number` 取会多出 `undefined`
+ * (定长元组按变量取下标带未定义),而座位本来就只有 0..3 四个。
+ */
+type Seat = 0 | 1 | 2 | 3;
+
+/** 座位号即数组下标。存档路径与哈希都带座位号,便于从诊断里读出是哪一座。 */
+const seatOf = (seat: Seat): MatchInputArchive => ({
+  archivePath: `archive/model-x/run-000${seat}`,
+  scriptSha256: SEAT_SCRIPT_HASHES[seat],
+  metaSha256: SEAT_META_HASHES[seat],
+});
+
+/** 一份完整的合法 meta。十一项全部有值,形状与四类装载期判据都能过。 */
+const GOOD_META: ArchiveMeta = {
+  model: "model-x",
+  modelVersion: "snap-0001",
+  generatedAt: "2026-10-01T00:00:00Z",
+  // 与 prompts 的长度相等——这条双存由装载期断言判(反例就在下面那条用例里)。
+  protocolRounds: 2,
+  prompts: ["第一轮:协议与初版策略", "第二轮:按复算结果修正"],
+  generationLog: ["tsc script.ts → script.js", "静态校验通过"],
+  ruleset: RULESET_VERSION,
+  validation: { passed: true, errors: [] },
+  tscVersion: "7.0.2",
+  scriptSha256: HASH.script0,
+  sandboxRuntimeHash: HASH.other,
+};
+
+const GOOD_META_PROVENANCE: ArchiveMetaProvenance = {
+  filesPresent: { scriptTs: true, scriptJs: true, metaJson: true },
+  measuredScriptSha256: GOOD_META.scriptSha256,
+  measuredSandboxRuntimeHash: GOOD_META.sandboxRuntimeHash,
+  loadedRulesetVersion: RULESET_VERSION,
+};
+
+/** 一份完整的合法对局输入。五项齐,四个座位,哈希与实测一致。 */
+const GOOD_INPUT: MatchInput = {
+  archives: [seatOf(0), seatOf(1), seatOf(2), seatOf(3)],
+  map: "open-clash",
+  mapSha256: HASH.map,
+  seed: 7,
+  ruleset: RULESET_VERSION,
+};
+
+const measuredSeat = (seat: Seat) => ({
+  scriptSha256: SEAT_SCRIPT_HASHES[seat],
+  metaSha256: SEAT_META_HASHES[seat],
+});
+
+const GOOD_INPUT_PROVENANCE: MatchInputProvenance = {
+  rulesetFileName: `${RULESET_VERSION}.json`,
+  rulesDocDirName: `rules-${RULESET_VERSION}`,
+  measuredArchives: [measuredSeat(0), measuredSeat(1), measuredSeat(2), measuredSeat(3)],
+  measuredMapSha256: GOOD_INPUT.mapSha256,
+};
+
+/** 改坏数据的两种手法,与上面三份同一套(换值 / 删键)。 */
+const badMeta = (
+  base: ArchiveMeta,
+  patch: Record<string, JsonValue> = {},
+  drop: readonly string[] = [],
+): JsonValue =>
+  Object.fromEntries(Object.entries({ ...base, ...patch }).filter(([key]) => !drop.includes(key)));
+
+const badInput = (
+  base: MatchInput,
+  patch: Record<string, JsonValue> = {},
+  drop: readonly string[] = [],
+): JsonValue =>
+  Object.fromEntries(Object.entries({ ...base, ...patch }).filter(([key]) => !drop.includes(key)));
+
+const rejectMeta = (value: JsonValue, provenance: ArchiveMetaProvenance = GOOD_META_PROVENANCE) => {
+  const result = validateArchiveMeta(value, provenance);
+  if (result.ok) {
+    throw new Error(`本该被拒绝,却被接受了:${JSON.stringify(value)}`);
+  }
+  return result;
+};
+
+const rejectInput = (
+  value: JsonValue,
+  provenance: MatchInputProvenance = GOOD_INPUT_PROVENANCE,
+) => {
+  const result = validateMatchInput(value, provenance);
+  if (result.ok) {
+    throw new Error(`本该被拒绝,却被接受了:${JSON.stringify(value)}`);
+  }
+  return result;
+};
+
+const metaKeywords = (result: ReturnType<typeof rejectMeta>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.keyword);
+
+const metaPointers = (result: ReturnType<typeof rejectMeta>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.pointer);
+
+const inputKeywords = (result: ReturnType<typeof rejectInput>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.keyword);
+
+const inputPointers = (result: ReturnType<typeof rejectInput>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.pointer);
+
+// ── 一致性 ────────────────────────────────────────────────────────────────────
+
+it("存档 meta 与对局输入:同一组 fixture 既过 TypeScript 类型(编译期)又过 ajv(运行期)", () => {
+  // 编译期那半由 `: ArchiveMeta` / `: MatchInput` 标注与上面那组类型级断言承担。
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  const input = validateMatchInput(GOOD_INPUT, GOOD_INPUT_PROVENANCE);
+  expect(input.ok).toBe(true);
+  // 收下时交出的是原值,不重写、不裁剪、不补默认值。
+  if (input.ok) {
+    expect(input.input).toEqual(GOOD_INPUT);
+  }
+});
+
+it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,且与 properties 一一对应", () => {
+  // 名单是**抄 hld 的措辞**抄下来的,不是抄 schema 的:抄 schema 的话,少一项时两边一起少,
+  // 这条断言就恒真了。逐项对照的是 hld.md:714-715 的十一项。
+  const required = [...ARCHIVE_META_JSON_SCHEMA.required];
+  expect(required).toEqual([
+    "model",
+    "modelVersion",
+    "generatedAt",
+    "protocolRounds",
+    "prompts",
+    "generationLog",
+    "ruleset",
+    "validation",
+    "tscVersion",
+    "scriptSha256",
+    "sandboxRuntimeHash",
+  ]);
+  expect([...required].sort()).toEqual(Object.keys(ARCHIVE_META_JSON_SCHEMA.properties).sort());
+});
+
+it("input schema 的必填键集合就是 hld §7.4 那一栏的五项,且与 properties 一一对应", () => {
+  // hld.md:721 逐项:4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash。
+  // 「各文件 hash」落在 archives 元素内(两格)与 mapSha256 一格,合计五项。
+  const required = [...MATCH_INPUT_JSON_SCHEMA.required];
+  expect(required).toEqual(["archives", "map", "mapSha256", "seed", "ruleset"]);
+  expect([...required].sort()).toEqual(Object.keys(MATCH_INPUT_JSON_SCHEMA.properties).sort());
+});
+
+it("座位数在类型与 schema 之间是同一个数 4(定长四元组 ↔ minItems/maxItems)", () => {
+  const archives = MATCH_INPUT_JSON_SCHEMA.properties.archives;
+  expect(archives.minItems).toBe(4);
+  expect(archives.maxItems).toBe(4);
+  expect(GOOD_INPUT.archives).toHaveLength(4);
+  // 反例:若哪一侧被写成 3 或 6,上面那圈当场红。
+  expect(GOOD_INPUT.archives).not.toHaveLength(3);
+});
+
+// ── 缺必填项 → 红(十一项与五项逐项过,不是抽三项)────────────────────────────
+
+it("meta:删掉任意一个必填项即被拒,诊断指向那个键(十一项逐项)", () => {
+  // 正例先过一次,证明下面那些红不是因为 fixture 本来就不合法。
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  for (const key of ARCHIVE_META_JSON_SCHEMA.required) {
+    const result = rejectMeta(badMeta(GOOD_META, {}, [key]));
+    expect(metaKeywords(result), `删掉 ${key} 竟不是缺键错`).toEqual(["required"]);
+    expect(metaPointers(result)).toEqual([`/${key}`]);
+  }
+});
+
+it("input:删掉任意一个必填项即被拒,诊断指向那个键;少一个座位同样被拒", () => {
+  expect(validateMatchInput(GOOD_INPUT, GOOD_INPUT_PROVENANCE).ok).toBe(true);
+  for (const key of MATCH_INPUT_JSON_SCHEMA.required) {
+    const result = rejectInput(badInput(GOOD_INPUT, {}, [key]));
+    expect(inputKeywords(result), `删掉 ${key} 竟不是缺键错`).toEqual(["required"]);
+    expect(inputPointers(result)).toEqual([`/${key}`]);
+  }
+  // 座位数:三份存档不是四人对称的一盘棋,不是「少一个也能跑」。
+  const threeSeats = badInput(GOOD_INPUT, {
+    archives: [seatOf(0), seatOf(1), seatOf(2)],
+  });
+  expect(inputKeywords(rejectInput(threeSeats))).toEqual(["minItems"]);
+  const fiveSeats = badInput(GOOD_INPUT, {
+    archives: [seatOf(0), seatOf(1), seatOf(2), seatOf(3), seatOf(0)],
+  });
+  expect(inputKeywords(rejectInput(fiveSeats))).toEqual(["maxItems"]);
+});
+
+// ── 改哈希 → 红 ──────────────────────────────────────────────────────────────
+
+it("meta:产物哈希与实测不符即被拒(记录值改与实测值改两个方向都红)", () => {
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+
+  // 方向一:meta 里记的那个哈希被换了(它仍长得像一个 sha256,只是不是这一个产物)。
+  const recorded = rejectMeta(badMeta(GOOD_META, { scriptSha256: HASH.script3 }));
+  expect(metaKeywords(recorded)).toEqual([SHA256_MISMATCH_KEYWORD]);
+  expect(metaPointers(recorded)).toEqual(["/scriptSha256"]);
+
+  // 方向二:目录里的产物被换了,而 meta 照旧(这正是「用了错误产物」那一条)。
+  const measured = rejectMeta(GOOD_META, {
+    ...GOOD_META_PROVENANCE,
+    measuredScriptSha256: HASH.script3,
+  });
+  expect(metaKeywords(measured)).toEqual([SHA256_MISMATCH_KEYWORD]);
+  expect(metaPointers(measured)).toEqual(["/scriptSha256"]);
+
+  // sandbox-runtime 同理:换一副沙箱跑同一条脚本,结果不保证一致(FR-3),故它也是必检项。
+  const runtime = rejectMeta(badMeta(GOOD_META, { sandboxRuntimeHash: HASH.script0 }));
+  expect(metaPointers(runtime)).toEqual(["/sandboxRuntimeHash"]);
+  expect(metaKeywords(runtime)).toEqual([SHA256_MISMATCH_KEYWORD]);
+});
+
+it("meta:哈希连形状都不对时由 ajv 判(散列的表示归 schema,取值比对归装载期)", () => {
+  for (const broken of ["", "abc", HASH.script0.toUpperCase(), `${HASH.script0}0`]) {
+    const result = rejectMeta(badMeta(GOOD_META, { scriptSha256: broken }));
+    expect(metaKeywords(result), `${broken} 竟不是格式错`).toEqual(["pattern"]);
+    expect(metaPointers(result)).toEqual(["/scriptSha256"]);
+  }
+});
+
+it("input:各文件哈希与实测不符即被拒,诊断指到那一个座位(逐座位各验一次)", () => {
+  expect(validateMatchInput(GOOD_INPUT, GOOD_INPUT_PROVENANCE).ok).toBe(true);
+
+  // 四个座位逐个换掉 script.js 哈希:指针必须指到**那个座位**,不是笼统的根。
+  for (const seat of [0, 1, 2, 3] as const) {
+    const patched = badInput(GOOD_INPUT, {
+      archives: GOOD_INPUT.archives.map((archive, index) =>
+        index === seat ? { ...archive, scriptSha256: HASH.other } : archive,
+      ),
+    });
+    const result = rejectInput(patched);
+    expect(inputPointers(result), `座位 ${seat} 竟没被指出来`).toEqual([
+      `/archives/${seat}/scriptSha256`,
+    ]);
+    expect(inputKeywords(result)).toEqual([SHA256_MISMATCH_KEYWORD]);
+  }
+
+  // meta.json 的哈希同样在位:换一份 meta 就是换一份存档。
+  const metaSwapped = rejectInput(
+    badInput(GOOD_INPUT, {
+      archives: GOOD_INPUT.archives.map((archive, index) =>
+        index === 3 ? { ...archive, metaSha256: HASH.meta0 } : archive,
+      ),
+    }),
+  );
+  expect(inputPointers(metaSwapped)).toEqual(["/archives/3/metaSha256"]);
+
+  // 地图被改过而种子不变,地形就会在另一个形状上落。
+  const mapSwapped = rejectInput(badInput(GOOD_INPUT, {}, []), {
+    ...GOOD_INPUT_PROVENANCE,
+    measuredMapSha256: HASH.other,
+  });
+  expect(inputPointers(mapSwapped)).toEqual(["/mapSha256"]);
+});
+
+// ── 改版本号 → 红(规则集版本三处一致,不静默降级)──────────────────────────────
+
+it("meta:规则集版本错配即被拒(声明值 / 装载方读到的版本两头都红)", () => {
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+
+  const declared = rejectMeta(badMeta(GOOD_META, { ruleset: "v2" }));
+  expect(metaKeywords(declared)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
+  expect(metaPointers(declared)).toEqual(["/ruleset"]);
+
+  // 装载方那一头错同样拒:「三处一致」不是三选二,更不是「内容对就行」。
+  const loaded = rejectMeta(GOOD_META, {
+    ...GOOD_META_PROVENANCE,
+    loadedRulesetVersion: "v2",
+  });
+  expect(metaKeywords(loaded)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
+
+  // 压根不是版本号的由 ajv 判形状,不混进版本比较那一类。
+  expect(metaKeywords(rejectMeta(badMeta(GOOD_META, { ruleset: "latest" })))).toEqual(["pattern"]);
+});
+
+it("input:规则集版本错配即被拒,文件名与规则文档目录名各错一处都红", () => {
+  expect(validateMatchInput(GOOD_INPUT, GOOD_INPUT_PROVENANCE).ok).toBe(true);
+
+  const declared = rejectInput(badInput(GOOD_INPUT, { ruleset: "v2" }));
+  expect(inputKeywords(declared)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
+  expect(inputPointers(declared)).toEqual(["/ruleset"]);
+
+  expect(
+    inputKeywords(
+      rejectInput(GOOD_INPUT, { ...GOOD_INPUT_PROVENANCE, rulesetFileName: "v2.json" }),
+    ),
+  ).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
+  expect(
+    inputKeywords(
+      rejectInput(GOOD_INPUT, { ...GOOD_INPUT_PROVENANCE, rulesDocDirName: "rules-v2" }),
+    ),
+  ).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
+});
+
+// ── 缺档 → 红(hld §7.4:缺档报错退出,不跳过)──────────────────────────────────
+
+it("meta:三件套少一件即被拒,不跳过(缺的是 script.ts / script.js / meta.json 三种)", () => {
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  for (const missing of ["scriptTs", "scriptJs", "metaJson"] as const) {
+    const result = rejectMeta(GOOD_META, {
+      ...GOOD_META_PROVENANCE,
+      filesPresent: { ...GOOD_META_PROVENANCE.filesPresent, [missing]: false },
+    });
+    expect(metaKeywords(result), `缺 ${missing} 竟未被拒`).toEqual([
+      ARCHIVE_FILES_INCOMPLETE_KEYWORD,
+    ]);
+    // 缺的是**目录里的东西**,不是 meta.json 里哪个键不对,故指针写根。
+    expect(metaPointers(result)).toEqual(["/"]);
+  }
+});
+
+it("input:某个座位的存档缺档即被拒,诊断指到那个座位", () => {
+  expect(validateMatchInput(GOOD_INPUT, GOOD_INPUT_PROVENANCE).ok).toBe(true);
+  for (const seat of [0, 2, 3] as const) {
+    const result = rejectInput(GOOD_INPUT, {
+      ...GOOD_INPUT_PROVENANCE,
+      measuredArchives: GOOD_INPUT_PROVENANCE.measuredArchives.map((measured, index) =>
+        index === seat ? null : measured,
+      ),
+    });
+    expect(inputPointers(result), `座位 ${seat} 缺档竟未被指出来`).toEqual([`/archives/${seat}`]);
+    expect(inputKeywords(result)).toEqual([ARCHIVE_FILES_INCOMPLETE_KEYWORD]);
+  }
+});
+
+it("meta:协议迭代轮数与逐轮 prompt 的条数不相等即被拒(双存判自洽)", () => {
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+
+  const rounds = rejectMeta(badMeta(GOOD_META, { protocolRounds: 3 }));
+  expect(metaKeywords(rounds)).toEqual([ARCHIVE_PROTOCOL_ROUNDS_KEYWORD]);
+  expect(metaPointers(rounds)).toEqual(["/prompts"]);
+
+  const prompts = rejectMeta(badMeta(GOOD_META, { prompts: ["只剩一轮"] }));
+  expect(metaKeywords(prompts)).toEqual([ARCHIVE_PROTOCOL_ROUNDS_KEYWORD]);
+});
+
+// ── 额外属性禁令(顶层与嵌套各一次)───────────────────────────────────────────
+
+it("meta:多一个未声明字段即被拒(顶层与 validation 嵌套各一次)", () => {
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  expect(metaPointers(rejectMeta(badMeta(GOOD_META, { season: "2026" })))).toEqual(["/season"]);
+  expect(
+    metaPointers(
+      rejectMeta(
+        badMeta(GOOD_META, { validation: { ...GOOD_META.validation, checkedAt: "2026-10-01" } }),
+      ),
+    ),
+  ).toEqual(["/validation/checkedAt"]);
+  // 嵌套那一层也必须是 `additionalProperties: false`:只关顶层的话,「存档已校验」是假话。
+  expect(ARCHIVE_META_JSON_SCHEMA.properties.validation.additionalProperties).toBe(false);
+});
+
+it("input:多一个未声明字段即被拒(顶层与 archives 元素内各一次)", () => {
+  expect(validateMatchInput(GOOD_INPUT, GOOD_INPUT_PROVENANCE).ok).toBe(true);
+  expect(
+    inputPointers(
+      rejectInput(
+        badInput(GOOD_INPUT, {
+          archives: GOOD_INPUT.archives.map((archive, index) =>
+            index === 1 ? { ...archive, model: "model-x" } : archive,
+          ),
+        }),
+      ),
+    ),
+  ).toEqual(["/archives/1/model"]);
+  expect(MATCH_INPUT_JSON_SCHEMA.properties.archives.items.additionalProperties).toBe(false);
+});
+
+// ── input 不含赛季配置 ───────────────────────────────────────────────────────
+
+it("input:规则集那几项在,赛季那几项不在(一份对局只认自己这一份输入)", () => {
+  // 「在」:五项齐,赛季那几项一个都不在文件里。
+  expect(Object.keys(GOOD_INPUT).sort()).toEqual([
+    "archives",
+    "map",
+    "mapSha256",
+    "ruleset",
+    "seed",
+  ]);
+  // 「不在」:hld §8 的赛季配置(参赛名单 / 地图池 / 种子数 / 并发度 / 名次分)逐个塞进去都被拒。
+  // 塞进去的后果是那份文件长成第二个 season.yaml,而 FR-7 AC3 要的是「凭它复算这一盘」。
+  for (const [key, value] of [
+    ["season", "2026-autumn"],
+    ["seasonConfig", {}],
+    ["players", ["model-x", "model-y", "model-z", "model-w"]],
+    ["mapPool", ["open-clash"]],
+    ["seedCount", 4],
+    ["concurrency", 8],
+    ["rankPoints", [3, 2, 1, 0]],
+  ] as const) {
+    const result = rejectInput(badInput(GOOD_INPUT, { [key]: value }));
+    expect(inputKeywords(result), `${key} 竟未被拒`).toEqual(["additionalProperties"]);
+    expect(inputPointers(result)).toEqual([`/${key}`]);
+  }
+  // 规则集那几项在:规则集版本与规则文档目录名都由装载方交进 provenance,不是赛季参数。
+  expect(GOOD_INPUT.ruleset).toBe(RULESET_VERSION);
+  expect(GOOD_INPUT_PROVENANCE.rulesDocDirName).toBe(`rules-${RULESET_VERSION}`);
+});
+
+// ── 错型 ─────────────────────────────────────────────────────────────────────
+
+it("meta 与 input:错型被拒(顶层与嵌套各一处)", () => {
+  expect(metaKeywords(rejectMeta(badMeta(GOOD_META, { protocolRounds: "2" })))).toContain("type");
+  expect(metaKeywords(rejectMeta(badMeta(GOOD_META, { prompts: "第一轮" })))).toContain("type");
+  expect(
+    metaKeywords(
+      rejectMeta(badMeta(GOOD_META, { validation: { ...GOOD_META.validation, passed: "是" } })),
+    ),
+  ).toContain("type");
+  expect(
+    metaKeywords(rejectMeta(badMeta(GOOD_META, { validation: { passed: true, errors: [1] } }))),
+  ).toContain("type");
+
+  expect(inputKeywords(rejectInput(badInput(GOOD_INPUT, { seed: "7" })))).toContain("type");
+  expect(inputKeywords(rejectInput(badInput(GOOD_INPUT, { seed: 1.5 })))).toContain("type");
+  expect(inputKeywords(rejectInput(badInput(GOOD_INPUT, { seed: -1 })))).toContain("minimum");
+  expect(inputPointers(rejectInput(badInput(GOOD_INPUT, { map: 3 })))).toEqual(["/map"]);
+});
+
+it("根不是对象时被拒,诊断指向根(meta 与 input 各一次)", () => {
+  for (const value of ["meta", 4, null, [], [1, 2]] as const) {
+    expect(metaPointers(rejectMeta(value))).toEqual(["/"]);
+    expect(metaKeywords(rejectMeta(value))).toEqual(["type"]);
+    expect(inputPointers(rejectInput(value))).toEqual(["/"]);
+    expect(inputKeywords(rejectInput(value))).toEqual(["type"]);
+  }
+});
+
+// ── 两层诊断(同一个渲染器)──────────────────────────────────────────────────
+
+it("meta 与 input:机器层透出路径 / 关键字 / 消息三样,面向模型层按类合并成一行", () => {
+  // 四处哈希不符 + 一处缺档:五件事对模型是**两行**——哈希是一类,缺档是另一类
+  // (缺的是东西,不对的是东西,给的建议不同),分开报才说得上话。
+  const broken = rejectInput(GOOD_INPUT, {
+    ...GOOD_INPUT_PROVENANCE,
+    measuredArchives: [null, measuredSeat(1), measuredSeat(2), measuredSeat(3)],
+    measuredMapSha256: HASH.script0,
+  });
+  const pointers = inputPointers(broken);
+  expect(pointers).toContain("/archives/0");
+  expect(pointers).toContain("/mapSha256");
+  for (const diagnostic of broken.machineDiagnostics) {
+    expect(diagnostic.pointer.startsWith("/")).toBe(true);
+    expect(diagnostic.keyword).not.toBe("");
+    expect(diagnostic.message).not.toBe("");
+  }
+  expect([...broken.modelDiagnostics].sort()).toEqual(
+    [
+      "存档缺档(三件套不全或某个座位没有存档):/archives/0",
+      "记录的哈希与实测不符:/mapSha256",
+    ].sort(),
+  );
+
+  // meta 侧同一个渲染器:形状错与缺键各占一行,而缺两个键仍然只占一行(合并仍然生效)。
+  const shape = rejectMeta(badMeta(GOOD_META, { model: 7 }, ["tscVersion", "validation"]));
+  expect([...shape.modelDiagnostics].sort()).toEqual(
+    ["值的类型不对:/model", "缺少必填字段:/validation、/tscVersion"].sort(),
+  );
+});
+
+it("同一份坏数据两次校验给出同一份诊断(诊断本身必须稳定)", () => {
+  const brokenMeta = badMeta(GOOD_META, { scriptSha256: HASH.script3 }, ["tscVersion"]);
+  expect(rejectMeta(brokenMeta)).toEqual(rejectMeta(brokenMeta));
+
+  const brokenInput = badInput(GOOD_INPUT, { ruleset: "v2" });
+  expect(rejectInput(brokenInput)).toEqual(rejectInput(brokenInput));
 });

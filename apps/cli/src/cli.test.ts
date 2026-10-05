@@ -21,14 +21,15 @@ const mapPath = fileURLToPath(new URL("../../../maps/open-clash.json", import.me
 const COMMANDS = ["gen", "run", "match", "replay", "verify", "map-lint"] as const;
 
 /**
- * 尚未落地的子命令。`map-lint` 不在其中:它已实现,被下面那组自己的断言盯着。
+ * 尚未落地的子命令。`map-lint` 与 `replay` 不在其中:两者已实现,被下面各自那组断言盯着。
  * 这张名单会随实现推进缩短——把一条命令搬出这张名单是“它有断言了”的信号。
  */
-const UNIMPLEMENTED = ["gen", "run", "match", "replay", "verify"] as const;
+const UNIMPLEMENTED = ["gen", "run", "match", "verify"] as const;
 
 let bundle = "";
 let scratch = "";
 let poolSeq = 0;
+let seq = 0;
 
 const run = (args: readonly string[]) =>
   spawnSync(process.execPath, [bundle, ...args], { cwd: repoRoot, encoding: "utf8" });
@@ -200,6 +201,51 @@ it("`map-lint` 拿到一个空目录时判失败(而不是静默通过)", () => 
   const result = run(["map-lint", dir]);
   expect(result.status).not.toBe(0);
   expect(result.stdout).toContain("地图池里没有地图");
+});
+
+const writeReplay = (lines: readonly unknown[]): string => {
+  const path = join(scratch, `replay-${String(seq++)}.jsonl`);
+  writeFileSync(path, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+  return path;
+};
+
+it("`replay` 不再走「未实现」那条路径:渲染器住在 replay 包(provider 登记的包)", () => {
+  const path = writeReplay([
+    {
+      type: "meta",
+      schemaVersion: 1,
+      ruleset: "v1",
+      quickjsWasiVersion: null,
+      sandboxRuntimeHash: null,
+      wasiClock: null,
+      wasiRandomFill: null,
+      timezoneOffset: "+08:00",
+      mapHash: "a".repeat(64),
+      seed: 7,
+      players: [{ model: "alpha", archiveRef: "archive/alpha/r1", seat: 0 }],
+      runner: "stub",
+    },
+    {
+      type: "tick",
+      tick: 0,
+      players: [],
+      units: [],
+      sites: [],
+      events: [],
+      stateHash: "c".repeat(64),
+    },
+  ]);
+  const result = run(["replay", path]);
+  expect(result.stderr).not.toContain("未实现");
+  expect(result.status).toBe(0);
+  // 「runner 栏读不出来」的反例:这一条红,而后果是有人拿桩跑的读数当座位轮换的结论。
+  expect(result.stdout).toContain("runner stub");
+});
+
+it("`replay` 读不到文件或缺参时按装载期拒跑退 2,不静默返回成功", () => {
+  // 静默 0 的反例:这两条一起红——自动化流程把「没跑成」读成「跑通了」。
+  expect(run(["replay", join(scratch, "no-such-replay.jsonl")]).status).toBe(2);
+  expect(run(["replay"]).status).toBe(2);
 });
 
 it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
