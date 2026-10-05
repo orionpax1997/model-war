@@ -9,8 +9,15 @@ import { defineConfig } from "vitest/config";
  * 因此下面两处(此处、unit 的 exclude)必须引用同一个常量:谁把它改成字面量,
  * 两边就可能悄悄分叉,而分叉的后果是 `check` 把机器跑挂。
  * gates.test.ts 自身有一条用例(`gates 不在 unit 的拾取范围里`)盯着这条不变量。
+ *
+ * `gates-slow.test.ts` 拿的是同一张牌:它同样 spawn `check`,所以同样必须被 unit 排除
+ * (SLOW_TEST 常量),只不过它多一层理由——它要 ~6 分钟,连默认 `test` 也不该带上它。
+ * 那一条不变量由 `慢的那一半(slow project)不被任何常跑入口拾取` 盯着。
  */
 const GATES_TEST = "packages/tools/src/gates.test.ts";
+
+/** 门禁自测里慢的那一半:契约自证的四问与三个反例。见该文件的头注。 */
+const SLOW_TEST = "packages/tools/src/gates-slow.test.ts";
 
 /** 各 project 通用的排除项:`tsc -b` 会把测试一并编译进各包的 dist,产物绝不能被二次拾取。 */
 const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
@@ -28,7 +35,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
-          exclude: [...NEVER_TEST, GATES_TEST],
+          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST],
         },
       },
       {
@@ -52,6 +59,18 @@ export default defineConfig({
           // 超时定得太紧的后果是「门禁跑不完」被报成「门禁失败」,两件事的处方完全不同,所以留足。
           testTimeout: 600_000,
           hookTimeout: 600_000,
+        },
+      },
+      {
+        // 门禁自测里慢的那一半。按需跑(`pnpm run test:slow`),默认 `test` 不含它。
+        // 超时给到 15 分钟:其中一条要连跑两遍全矩阵(红一次 + 还原后绿一次),单条已实测 220s,
+        // 而它 220s 的那个数字还是在这台机器上不 competing 的情况下取的。
+        test: {
+          name: "slow",
+          include: [SLOW_TEST],
+          exclude: NEVER_TEST,
+          testTimeout: 900_000,
+          hookTimeout: 900_000,
         },
       },
     ],

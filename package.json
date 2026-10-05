@@ -13,9 +13,10 @@
     "clean": "tsc -b --clean",
     "typecheck": "tsc -b --pretty false",
     "generate": "tsc -b packages/schema && node packages/tools/src/generate/run-generate.ts && tsc -b",
-    "test": "pnpm run typecheck && vitest run",
+    "test": "pnpm run typecheck && vitest run --project unit --project property --project gates",
     "test:props": "vitest run --project property",
     "test:gates": "vitest run --project gates",
+    "test:slow": "vitest run --project slow",
     "bench:build": "node packages/tools/src/benchmarks/build-benchmarks.ts",
     "setup:hooks": "git config core.hooksPath .githooks",
     "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
@@ -31,7 +32,7 @@
     "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run check:no-float",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
     "check:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
-    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:selfproof"
+    "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
