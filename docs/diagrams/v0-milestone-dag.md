@@ -32,7 +32,7 @@
 | C | ✅ | schema 真源与生成物 | 同上,6 票全部落地 | `packages/schema` 类型 / `JsonValue` / 21 键清单 / JSON Schema + ajv 读入端校验 + 生成器与漂移检查 |
 | A | ✅ | 地图池与种子变体 | 同上,7 票 **resolved** | `maps/` 三张四重对称真图 + `modelwar map-lint` 两层判据 + `variantSlots` 定稿 + gdd #2/#6 收口 |
 
-**基线的性质**:两张 wayfinder map 都只出决策与 throwaway 证据,没有一份出落库;三个交付节点(C、D、A)中 C 与 A 已落库。磁盘现状——
+**基线的性质**:两张 wayfinder map 都只出决策与 throwaway 证据,没有一份出落库;交付层的四格 **C、D、E、A 现已全部落库**(D 于 2026-10-05 随 08 收口,至此九票 resolved)。磁盘现状——
 
 ```
 maps/        corridor-split.json · fortress-core.json · open-clash.json
@@ -42,7 +42,7 @@ benchmarks/  cell-a-melee-pressure/ · cell-b-expansion-economy/ · cell-c-claim
 prompts/     仍是 .gitkeep
 ```
 
-——**当前位置:五格基线已落,M1 交付物已交齐**(`rulesets/`、`docs/rules-v1/`、`benchmarks/` 三件归 E),`prompts/` 仍归 H。
+——**当前位置:基线五格(D1 D2 D3 C A)之上,交付层的 D 与 E 也已落库,M1 交付物已交齐**(`rulesets/`、`docs/rules-v1/`、`benchmarks/` 三件归 E),`prompts/` 仍归 H。
 
 ## 3. 主图
 
@@ -67,7 +67,7 @@ flowchart TB
   subgraph build["交付层 · 每格 = 一个 .scratch/&lt;feature&gt;/"]
     D["D 参赛脚本静态校验器 ✅"]
     E["E 规则集与契约落库 ✅"]
-    F["F 对局内核 · StubRunner 驱动"]
+    F["F 对局内核 · StubRunner 驱动<br/>spec 已就绪"]
     G["G 沙箱执行器与预算裁决"]
     H["H 生成管线"]
     I["I 赛季调度 · 排名与报告"]
@@ -131,9 +131,7 @@ flowchart TB
   L --> V0
 
   classDef done fill:#e6f4ea,stroke:#34a853,color:#0b3d20
-  classDef doing fill:#fef7e0,stroke:#f9ab00,color:#5c3b00
-  class D1,D2,D3,C,A,J,E done
-  class D doing
+  class D1,D2,D3,C,A,D,E,J done
 ```
 
 ## 4. 节点表
@@ -156,7 +154,7 @@ flowchart TB
 | **A 地图池与种子变体** | ✅ 已完成([spec](../../.scratch/map-pool/spec.md) · 7 票 **resolved**) | `maps/` 三张四重对称真图(点位布局三图共用,风格 100% 由墙承载)+ `modelwar map-lint` 的两层判据(阈值归校验器常量)+ `variantSlots` 定稿为静态候选轨道清单 + gdd #2/#6 的文档收口 | C(已解除)、D1 | **M2★**(与 F 合) | 已收口。两条等效命题在带墙真图上的复验结论(② 过、① 无法判定待重推)与种子数 K=4 的推导链都归 gdd,本表只带指针。**留在图外的两笔交办账见 §7**,不随节点收口一起销账 |
 | **D 参赛脚本静态校验器** | ✅ 已完成([spec](../../.scratch/script-validator/spec.md) · 9 票 **全部 resolved**) | `tools` 校验器入口、禁列全局名、模块系统、宿主桥前缀、脚本体积上限、内置全局白名单判据、四份盲写脚本的不误伤验收、**解析层源形态收紧到编译产物**(拒未编译的 TS 源码、两侧对称钉住) | C ✅ | — | 收口时把源形态裁在**解析层**而非校验入口(hld §6.2),四个调用点一起受益且绕不开;附四条 2026-10-04 的 oxc 实测进 hld 同节的表。已裁的三笔:①全局白名单反转**由编译器名字解析承担**(实测推翻 hld §2.2.3/§6.2 的「tools 自建分析器」承载条款,理由:自建分析器的失败模式是误伤合规脚本);②脚本 API 的 `.d.ts` 家定在 `schema`、内容由 F/G 回填;③参赛脚本写 `Math.sqrt` 无人拦 → gdd §8 #11 |
 | **E 规则集与契约落库** | ✅ 已完成([spec](../../.scratch/rules-landing/spec.md) · 15 票 **全部 resolved**) | `rulesets/v1.json` 21 键(13 定稿 + 8 预算未定值占位)+ `docs/rules-v1/{rules.md,api.md}`(散文分批落地,数值表/API 表由真源包生成)+ 参赛脚本编译配置(家定在 E,实现归 H)+ 用**终稿**契约重跑盲写三舱 + `benchmarks/` 落库 + 契约自证与 ② 的复验 | C ✅、D ✅、D1 ✅ | **M1★** | 入口那一轮 grilling **只钉了一条**:终稿 API 面与 D 的实现形状同源——裁法是符号表的回填时点从 G 提前到 E(否则「同源」只剩一句人话),并给生成器加一种**区块形态**让混合的散文文档也能挂生成表格;取舍见 `docs/adr/0004`。其余 21 条裁决未重开。**A 与 D1 交办的两笔账在这里销掉**:gdd §8 #8/#13 的等效命题在终稿契约下复验一次,**② 已过**(证据 `.scratch/rules-landing/selfproof/report.md`,门禁 `check:selfproof`)、**① 仍未排期**(窗口重推是规则侧后续工作,归独立小图,指针留在 gdd §8 记录 #13)。**收尾对账带出的一件**:契约面 `docs/rules-v1/rules.md` 的 §1 / §2 / §5 / §9 四节仍是占位,其中 §5 占领是本轮唯一的真卡点(该节正文**已指派归 gdd《占领机制》**,缺的是面向模型那一节的散文,归下一轮),不在本节点 |
-| **F 对局内核** | ○ 未开 | `world` + `driver`(状态模型、id 升序不变量、整数 LCG + `IdGen`、`apply()` 唯一写入口)、`processor` 七步结算管线 + `intents/*.ts` 的 `check()`/`run()`、`snapshot`(深拷贝 + 只读封存)、`Runner` 缝 + `StubRunner`、`replay` 包全行格式与解析、`replay-writer`;`modelwar replay` 的 ASCII 查看器 | C ✅、E、A ✅ | **M2★**(与 G 合) | `codebase-design` 定 `processor` 与 `intents` 的缝、host 侧 `check()` 与 VM 内 dual validation 的共享方式。**A 的地图已落库,这条边已解除**。**用 StubRunner 先打通,让「跑一个完整对局」的闸门提前开**;G 落地后换 QuickJsRunner,结算管线一行不改。**接住 A 交办的首触实测复核**(见 §7) |
+| **F 对局内核** | ○ 未开(**spec 已就绪** · 待 `/to-tickets`) | `world` + `driver`(状态模型、id 升序不变量、整数 LCG + `IdGen`、`apply()` 唯一写入口)、`processor` 七步结算管线 + `intents/*.ts` 的 `check()`/`run()`、`snapshot`(深拷贝 + 只读封存)、`Runner` 缝 + `StubRunner`、`replay` 包全行格式与解析、`replay-writer`;`modelwar replay` 的 ASCII 查看器 | C ✅、E ✅、A ✅ | **M2★**(与 G 合) | spec 在 [`.scratch/engine-core/spec.md`](../../.scratch/engine-core/spec.md)(2026-10-05 入口 grilling 收口,16 条裁決)。**四笔没人认领的账已在 spec 里定死落点**:①规则集装载期校验接线(hld §7.1 差的是接线不是设计)②脚本 API 类型面归 F([`adr/0006`](../../docs/adr/0006-script-api-type-surface-lands-in-engine.md))③产线形状冲突(hld 的 `productions[]` 对契约面的 `site.producing`)④`match-result` / `replay-line` / `archive-meta` 三笔形状回填。**另裁两件与本表原先记载不同的事**:外部缝**唯一**是 `runMatch`,`processTick` 是私有内部缝不进导出面([`adr/0005`](../../docs/adr/0005-runner-seam-is-the-two-bridge-calls.md));`modelwar verify` **归 G**(它要重新执行真脚本)。**接住 A 交办的首触实测复核**(见 §7),读数落 gdd §4 那段末尾 |
 | **G 沙箱执行器与预算裁决** | ○ 未开 | `QuickJsRunner` + `engine/sandbox-runtime`(TS→IIFE bundle)+ WASI 三件套常量 + 桥函数删除 + 四类异常轨 + 双计数 + 内存三层 + `exceptionTicks` 续算;`modelwar match` / `verify` 子进程 | D2 ✅、C ✅、F | **M2★** | **本节点第一条验收就是 hld #5 五条复验写回文档并关掉 hld #8**(升级条款在 G 落地前是空头承诺)。`prototype` 只用在一处:hld §2.2.2 把 runtime bundle 的**打包方式**留给实现期,选之前先跑一下 |
 | **H 生成管线** | ○ 未开 | `prompts/` 模板数据文件、模型 API 客户端 + 厂商适配 + 退避限流、`models.yaml`、≤5 轮只回喂校验错误、tsc 预编译为 script-mode JS、`archive/<model>/<runId>/` 三件套、meta 完整性校验与缺档拒跑 | E ✅、D ✅、**J(凭证)** | **M3★** | **与 F/G 零依赖边,可完全并行**。凭证由 `wizard` 提前办 |
 | **I 赛季调度、排名与报告** | ○ 未开 | 组合×地图×种子枚举 + `(mapIndex+seedIndex) mod 4` 座位轮换 + `M×K ≡ 0 (mod 4)` 均摊断言、对局子进程池 + `engine-crash`/`nondeterministic-timeout` 重跑与剔除、`input.json` 输入物化、`ranker` 名次积分纯函数、`report.md`/`report.json`/叙事战报 + 校验失败名单 + 规则版本隔离、六个子命令接线 | E、G、H、A ✅、K | **M4★** | `research` 用来选 ≥4 个真实模型(可用性 / 端点 / 定价 / 上下文长度是否够读两份契约)——这是 M4 唯一需要外部一手资料的地方。`ranker` 是纯函数无依赖,可以在 H 还在跑的时候顺手做掉。枚举规模已由 A 的 K=4 定死 |
@@ -193,10 +191,10 @@ C ✅ → D ✅ → E 规则落库 ✅(M1★) → F 对局内核 → G 沙箱(M2
 
 | 可开的东西 | 类型 | 前置 |
 |---|---|---|
-| **F 对局内核** | 交付节点,进 `grill-with-docs` | **前置全在图上且已解除**:C ✅、A ✅、D ✅、E ✅(E 的 15 票全部落地,M1 交付物已交齐) |
+| **F 对局内核** | 交付节点,spec 已就绪,**下一格动作是 `/to-tickets`** | **前置全在图上且已解除**:C ✅、A ✅、D ✅、E ✅。入口 grilling 已收口(2026-10-05),16 条裁決与两份 ADR 落在 [`.scratch/engine-core/spec.md`](../../.scratch/engine-core/spec.md) 与 [`docs/adr/`](../../docs/adr/) |
 | **H 生成管线** | 交付节点,与 F 零依赖边,可并行 | E ✅、D ✅、J ✅ 三条前置全在图上且已解除 |
 
-**D 与 E 的遗留都已销掉**:D-08 那道「等 E 的参赛脚本编译配置」的阻塞随 **E 的 06 号票**解除,票本身已于 2026-10-04 收口(答案在票的 `## Answer`),**H 因此从「等 D」变成「零阻塞可开」**。
+**D 与 E 的遗留都已销掉**:D-08 那道「等 E 的参赛脚本编译配置」的阻塞随 **E 的 06 号票**解除,票本身已于 2026-10-05 收口(答案在票的 `## Answer`),**H 因此从「等 D」变成「零阻塞可开」**。
 
 **可并行批次**:
 
