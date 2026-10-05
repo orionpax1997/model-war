@@ -175,17 +175,20 @@
 | `check:declared-deps` | `node packages/tools/src/gate/run-declared-deps-gate.ts` | 挂在 `check` 末尾:工具包运行时源码里 import 的第三方包必须在它自己的 `package.json` 里声明(§3.2);**零构建**,与读 `dist` 的 `check:deps` 互补 |
 | `check:drift` | `node packages/tools/src/generate/run-drift-gate.ts`(生成物漂移检查) | 挂在 `check` 末尾,**不进 `check:quick`**:它需要一次 `tsc -b`(生产函数 import 真源包),而 `check:types` 里已经有,快门禁的零构建性质因此不受影响 |
 | `check:bench` | `node packages/tools/src/benchmarks/run-benchmarks-gate.ts`(基准产物门禁) | 挂在 `check` 末尾:入库的基准产物必须是 `tsconfig.scripts.json` 真跑出来的那一份(逐字节判);**不进 `check:quick`**:它要 spawn 一次 `tsc` |
-| `check:selfproof` | `node packages/tools/src/selfproof/run-selfproof-gate.ts`(契约自证门禁) | 挂在 `check` 末尾(最后一道):拿终稿契约把 `benchmarks/` 的三份产物**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同);srs §4 第 2 条的机器防线;**不进 `check:quick`**:它要跑 64 场对局 |
+| `check:selfproof` | `node packages/tools/src/selfproof/run-selfproof-gate.ts`(契约自证门禁) | **按需跑,不在 `check` 里**:拿终稿契约把 `benchmarks/` 的三份产物**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同);改契约、改 `rulesets/`、改自证桩时手工敲;反例在 `test:slow` |
 | `check:types` | `check:quick` + `tsc -b` + `oxlint --type-aware` | 改完一个 issue 跑一次 |
 | `check:deps` | `tsc -b` + dependency-cruiser(巡航 `dist` 而非 `src`,§2.2.10) | 依赖方向 |
-| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` + `check:selfproof` | 全量 |
+| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` | 全量(约 9s) |
 | `test:props` | `vitest run --project property` | 长时属性测试,单独跑 |
-| `test:gates` | `vitest run --project gates`(门禁自测:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
+| `test:gates` | `vitest run --project gates`(门禁自测的快的一半:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
+| `test:slow` | `vitest run --project slow`(门禁自测里慢的一半:契约自证四问 + 三个反例 + 会 spawn `check` 的那一条) | 按需手工跑;**不进 `check`,也不进默认 `test`**(同套娃理由 + 耗时理由,见下) |
 | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 | — |
 
 **参赛脚本静态校验器(§6.2 那个工具)不是本仓库的门禁**:`package.json` 里没有它的 `check:*` 脚本,它也不巡航本仓库源码——它服务于生成管线,调用方式是 gen 管线以子进程 spawn 它的入口(§6.2)。**要说清的是「不进 `check`」这句限定只到「它不是一道仓库门禁」为止,不是说它的测试不跑**:`check` 含 `vitest run --project unit`,而该工具的规则与入口自测落在 `unit` 的拾取范围(`packages/*/src/**/*.test.ts`)内,所以每次 `check` 都会跑到它们。真把它们抽出去只能像 `gates` 那样单开一个 project,而那会让这些反例失去常态覆盖。
 
 > 快慢分离是关键:agent 走 `check:quick`,需要类型感知 lint 时跑 `check:types`,全量走 `check`。类型感知 lint 超过 ~10s,agent 就会"写完一起跑",反馈回路断掉。
+
+> **上表 `check` 那一行的 5.65s 是自证门禁摘出去之前的数**。摘出之后同机单次实测 **8.95s**——**它反而变慢了**,因为多了 `vitest run --project unit --project property` 的 5.2s(早先那张表的 17 个测试文件只覆盖到一部分)。不重取 5 次是因为**基线换了**:拿旧口径的中位数与新口径的单次数字相比没有意义,重测请连同下面「契约自证门禁按需跑」那一节一起当作新基线。
 
 **门禁耗时(实测;观测项,不是承诺)**。测量方法:在合并后的仓库树上先跑一次 `pnpm run build`,随后**连续 5 次**取该门禁的墙钟(`/usr/bin/time` 墙钟),**报中位数**(不报单次最好成绩);环境 Node v24.15.0 / Linux x64。
 
@@ -201,19 +204,47 @@
 
 > 上一版这里写的是「`check:quick` 目标 < 5s」,那是一个没有实测支撑的许愿。现在有数字了,但**它不能变成承诺**:`< 5s` 若写成硬约束,后来者为了凑数字能改门禁的覆盖面(少查几个包、把类型感知挪出快门),而那比慢 5s 坏得多。**正确用法是把它当基线**:仓库长大后用同一方法(同机、5 次取样、报中位数)重测一次;只有重测出来的中位数显著上升,才谈是否再加一层分层。先前那条未经验证的许愿到此作废。
 
-**票 14 之后全量门禁离开秒级(观测项,不是承诺)**。`check` 的末尾多了一道 `check:selfproof`,它要真跑
-64 场对局(标定环那个桩、6 路并行):同机单次实测**墙钟 95s**,其中这道门禁自己 **82s**——**全量门禁
-的时间几乎全在它身上**,而上一表里 `check` 的中位数是 5.65s。**快门禁不受影响**——`check:quick` 那四项
-一项没动,契约自证按位置纪律不进快门禁,与漂移检查、基准产物门禁同一理由(要跑真实命令,不是零构建)。
-这一条同样不作承诺:该做的分层取舍是「反馈回路归快门禁、提交前的复核归全量」,哪一道该进哪一层由它的
+**契约自证门禁按需跑(决策记录,不是承诺)**。它曾挂在 `check` 末尾,单次实测墙钟 95s、其中它自己 82s
+(64 场对局、标定环那个桩、6 路并行;8 核机上并发上限是 `min(6, cpus-2)`,提到 8 最多省 20s,
+**并发这条路没有肉**)。同机实测 `check` 各步:selfproof 80.6s / vitest unit+property 5.2s /
+`check:types` 1.9s / 其余四道 1.9s——**它占全量门禁的 89%**。于是它被摘出 `check`,`check` 回到约 9s。
+
+**理由不是「它慢」,是「命令名与它的时间代价对不上」**:`check` 的名义是「提交前跑一遍」,挂着它之后
+八成时间花在一道与提交内容无关的重测算上,于是人开始跳过它或者每次都无脑等它——**两种都等价于没有
+这道门禁**,而且比没有更坏:没挂的时候至少知道自己没跑。诚实的位置就是按需。
+
+**代价要说清楚**:它从「每次 `check` 都拦」退化成「想跑才拦」,而它是那条机器防线的唯一执行者。
+**这个退化是自觉换来的**,换回来的是一道跑得起的门禁。两条断言(`gates.test.ts` 的
+`契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`)同时盯着两半——「不在 `check` 里」与
+「有独立脚本 + `test:slow` 里的三个反例」,少任何一半,这个决定就没有代价交换。
+
+**快门禁与末尾复核不受影响**:`check:quick` 那四项一项没动;`check` 末尾的提交内容复核仍是
+`check:drift` + `check:bench`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`)。哪一道该进哪一层由它的
 耗时与覆盖面决定,不由它在表里的位置决定。
 
-**`test:gates` 自己也有量(观测项,不是承诺)**:它是**门禁自测**,每道门禁的真跑加反向用例,墙钟
-**约 517s**(2026-10-05,基线提交 `f801bcb` 之后)。它比 `check` 长得多,因为它把末尾那几道要 spawn
-真实命令的门禁(含契约自证)反复跑成反例。同一次改动里它从 894s 降到 517s,改的是**反例的矩阵规模**:
-反例要证的是「改这一项会红」,不是四问的取值,于是反例改用缩矩阵,判不出红时断言当场红;唯一一条
-关于指标的论断(`--same-script` 要证三对都掉到 0/9)保留全矩阵,因为采样噪声会混进来。**这两个数字不
-构成承诺,只说明一件事**:门禁自测贵的原因是它在跑真命令,不是判据写得糙。
+**`test:gates` 也有量(观测项,不是承诺)**:它是**门禁自测**,每道门禁的真跑加反向用例。它比 `check`
+长得多,因为它把末尾那几道要 spawn 真实命令的门禁(含契约自证)反复跑成反例。**它按墙钟拆成了两个
+project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自证的四问与三个反例、
+以及会 spawn 全量 `check` 的那一条;`gates.test.ts`(`gates` project,`pnpm run test:gates`)装剩下
+那些秒级的。拆的根据是实测:慢的一半约 **425s**(其中 `--same-script` 那一条自己就 220s——它要证
+「三份同源后三对都掉到 0/9」,一个关于指标的论断,不能用缩矩阵判,于是它连同还原那一次跑两遍全矩阵),
+快的一半约 **41s**,10:1。**不拆的代价不是「慢一点」,是那个 41s 的东西没人跑**:捆在一起之后,
+想跑快的那一半要付慢的那一半的价钱,于是两个后果二选一——要么整个门禁自测没人跑,要么它每天都跑,
+于是没人看结果。拆开的代价只是「想跑全的要敲两条命令」。
+两个文件共用的那一层观察手段(`script` / `withProbeFile` / 末尾复核清单)在 `gates-harness.ts`:
+清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。（早于这次拆分,
+它已经从 894s 降到 517s,改的是**反例的矩阵规模**:反例要证的是「改这一项会红」,不是四问的取值,
+于是反例改用缩矩阵,判不出红时断言当场红;唯一一条关于指标的论断保留全矩阵。**这三个数字不构成
+承诺,只说明一件事**:门禁自测贵的原因是它在跑真命令,不是判据写得糙。）
+
+**慢的一半为什么连默认 `test` 也不进**:`test` 显式列举 `--project unit --project property --project
+gates` 三个 project,所以 `slow` 不在其中。理由与位置纪律分开算:套娃的理由由 unit 的 `exclude` 承担
+(那条与 `GATES_TEST` 同源,同一个文件被 `check` 里的 vitest 收进去就会 `check → slow → check`);
+**不进 `test` 是耗时理由**——它要 ~7 分钟,而 `test` 是「跑一遍测试」的日常入口。**这不是说它可以不跑**:
+它由 `test:slow` 落成可手工调用的入口,`gates.test.ts` 里有两条不变量盯着它(不被 unit/property/gates
+任何一个 project 拾取、默认 `test` 不含它且三个 project 一个不缺),另有 `afterAll` 兜底清理探针。
+**要跑全套的那道对局门禁**(`check:selfproof` 与它的反例)时敲两条:`pnpm run check:selfproof` 与
+`pnpm run test:slow`——现在这两样都不在 `check` 与 `test` 里,这是决策不是遗漏(上一节)。
 
 **主流水线**(每次 PR 与主干 push,全部通过才可合并;**尚未建成**,当前全部以命名脚本手工触发):
 
