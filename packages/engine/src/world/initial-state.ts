@@ -1,0 +1,87 @@
+/**
+ * 开局状态:把地图与规则集物化成一份 `GameState`(hld §4.1、gdd §5 初始条件)。
+ *
+ * 它**只经 `apply()` 造对象**,不直接拼状态:开局这一步与对局中出生一个单位是同一件事,
+ * 走两条路就意味着「出生」有两条实现,而 HP、id 升序、携带量的默认值要各写一遍。
+ *
+ * 初始单位由地图声明(`spawnUnits`),引擎不硬编码:gdd §4 的点位与开局条件由地图承载,
+ * 引擎只做「地图说了什么就摆什么」。
+ */
+
+import type { MapDefinition, Ruleset } from "@model-war/replay";
+import { apply } from "../driver/apply.js";
+import { createIdGen, peekNextId } from "../driver/id-gen.js";
+import { isUnitType, type GameState, type Owner, type PlayerIndex, type Site, type UnitType } from "./state.js";
+
+const SEATS: readonly PlayerIndex[] = [0, 1, 2, 3];
+
+const isPlayerIndex = (value: number): value is PlayerIndex => SEATS.includes(value as PlayerIndex);
+
+/** 地图声明的初始兵种名必须落在四条线之内。 */
+const toUnitType = (name: string, owner: PlayerIndex): UnitType => {
+  if (!isUnitType(name)) {
+    throw new Error(`地图声明的初始兵种名 ${name} 不在四条兵种线之内(座位 ${String(owner)})`);
+  }
+  return name;
+};
+
+const toOwner = (owner: number | null): Owner => (owner !== null && isPlayerIndex(owner) ? owner : -1);
+
+/**
+ * 该方的主基地。地图不变量保证每方恰好一个主基地(gdd §4),所以这里缺了就是地图自身不自洽,
+ * 而跨字段判据归 map-lint;本函数只做取用,不做校验。
+ */
+const mainBaseOf = (sites: readonly Site[], owner: PlayerIndex): Site => {
+  const base = sites.find((site) => site.kind === "base" && site.owner === owner);
+  if (base === undefined) {
+    throw new Error(`地图没有为座位 ${String(owner)} 声明主基地`);
+  }
+  return base;
+};
+
+/**
+ * 造开局状态。`units`/`sites` 已按数值 id 升序(由 `apply()` 维持,不是这里排的)。
+ *
+ * 四方开局条件严格对等(gdd §3.3):资金一律取规则集的 `initialResources`,不按座位打折——
+ * 对等是地图几何的事,不是初始资金的事。
+ */
+export const createInitialState = (ruleset: Ruleset, map: MapDefinition): GameState => {
+  let state: GameState = {
+    tick: 0,
+    players: SEATS.map((index) => ({
+      index,
+      resources: ruleset.initialResources,
+      alive: true,
+      exceptionTicks: 0,
+    })),
+    units: [],
+    sites: [],
+    nextId: peekNextId(createIdGen()),
+    outcome: null,
+  };
+  for (const site of map.sites) {
+    state = apply(state, ruleset, {
+      kind: "create-site",
+      id: site.id,
+      siteKind: site.kind,
+      x: site.x,
+      y: site.y,
+      owner: toOwner(site.initialOwner),
+    });
+  }
+  for (const spawn of map.spawnUnits) {
+    const owner = toOwner(spawn.owner);
+    if (!isPlayerIndex(owner)) {
+      throw new Error(`地图声明的初始单位属主 ${String(spawn.owner)} 不是座位号`);
+    }
+    const base = mainBaseOf(state.sites, owner);
+    state = apply(state, ruleset, {
+      kind: "create-unit",
+      owner,
+      unitType: toUnitType(spawn.type, owner),
+      x: base.x + spawn.offset[0],
+      y: base.y + spawn.offset[1],
+    });
+  }
+  return state;
+};
