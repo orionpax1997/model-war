@@ -43,7 +43,7 @@
  * 以及本文件末尾那条盯着该不变量的用例。
  *
  * **这里只放快的那一半**(同机实测:本文件 29 条合计约 40s)。契约自证门禁的四问与三个反例、
- * 以及会 spawn 全量 `check` 的那一条在 `gates-slow.test.ts`(约 425s),由 `pnpm run test:slow` 跑。
+ * 以及会 spawn 全量 `check` 的那一条在 `gates-slow.test.ts`(约 350s),由 `pnpm run test:slow` 跑。
  * 拆分的理由、与「为什么它也不进默认 `test`」的纪律都写在那个文件的头注里。
  * 两个文件共用的那一层观察手段(`script` / `withProbeFile` / 末尾复核清单)在 `gates-harness.ts`,
  * 清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。
@@ -1106,7 +1106,7 @@ it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
 
 // ── 契约自证门禁:按需,不在 check 里 ────────────────────────────────────────
 //
-// 四问的退出码与三个反例在 `gates-slow.test.ts`(要跑矩阵,单次约 85s,合计约 425s)。
+// 四问的退出码与三个反例在 `gates-slow.test.ts`(要跑矩阵,单次约 85s,合计约 350s)。
 // 留在这一份文件里的只有它的**位置纪律**——那一条不跑任何命令,只读 manifest,耗时可忽略。
 //
 // 为什么它**不进 `check`**:它要真跑 64 场对局(6 路并行,8 核机上墙钟约 80s),
@@ -1173,7 +1173,7 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
   expect(slowListed.status, slowListed.output).toBe(0);
   expect(slowListed.output, slowListed.output).toContain("gates-slow.test.ts");
 
-  // 默认 `test` 也不含它:它要 ~7 分钟,而 `test` 是「跑一遍测试」的日常入口。
+  // 默认 `test` 也不含它:它要 ~6 分钟,而 `test` 是「跑一遍测试」的日常入口。
   // 用显式 `--project` 列举而不是靠某个默认排除项,所以这里断言列举本身。
   const test = manifest().scripts["test"] ?? "";
   expect(test, "默认 test 不该跑 slow project").not.toContain("--project slow");

@@ -11,7 +11,7 @@ import { defineConfig } from "vitest/config";
  * gates.test.ts 自身有一条用例(`gates 不在 unit 的拾取范围里`)盯着这条不变量。
  *
  * `gates-slow.test.ts` 拿的是同一张牌:它同样 spawn `check`,所以同样必须被 unit 排除
- * (SLOW_TEST 常量),只不过它多一层理由——它要 ~7 分钟,连默认 `test` 也不该带上它。
+ * (SLOW_TEST 常量),只不过它多一层理由——它要 ~6 分钟,连默认 `test` 也不该带上它。
  * 那一条不变量由 `慢的那一半(slow project)不被任何常跑入口拾取` 盯着。
  */
 const GATES_TEST = "packages/tools/src/gates.test.ts";
