@@ -2,6 +2,10 @@
 
 This repository uses Matt Pocock's engineering skills (installed under `.pi/skills/`).
 
+## Git
+
+- **提交信息里禁止出现 `Co-Authored-By`(以及任何 `co-authored-by`)。** 本仓库只有一个作者;带上它会让 GitHub 把那个邮箱算成 contributor。历史上 agent 手写过 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`(那几次跑的模型并不是 Claude,是照抄的串),已在 2026-10 用 filter-repo 剥掉。`.githooks/commit-msg` 负责拦住,新 clone 需要 `pnpm run setup:hooks` 装上(装包时 `prepare` 也会自动装)。
+
 ## Agent skills
 
 ### Issue tracker

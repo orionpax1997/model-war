@@ -1,0 +1,52 @@
+#!/bin/sh
+# 提交信息门禁:禁止 `Co-Authored-By` trailer。
+#
+# 为什么有这道门禁:2026-10 之前的 27 个提交里,agent 在 `git commit -m` 的
+# 文本中手写了 `Co-Authored-By: Claude Opus 4.8 (1M context)
+# <noreply@anthropic.com>`(那几次会话实际跑的模型并不是 Claude,这串是照抄
+# 来的)。GitHub 把 trailer 里的邮箱算作 contributor,于是仓库页面多出一个
+# 叫 claude 的贡献者。历史已于同日用 git-filter-repo 剥掉,本钩子负责不让它
+# 再回来。
+#
+# 行为:两种模式,默认剥离后放行并把改写结果打到 stderr。
+#   COMMIT_MSG_MODE=strip(默认)  剥离并警告,提交继续
+#   COMMIT_MSG_MODE=fail         判红退出 1,提交中止
+# 绕过:--no-verify。门禁的价值就在于拦得住,所以不建议用。
+#
+# 只管 trailer。标题风格之类的事这里不管——本仓库没有 commitlint,
+# 不在这一道钩子里顺手加规则,免得钩子的职责说不清。
+
+set -eu
+
+MODE="${COMMIT_MSG_MODE:-strip}"
+MSG_FILE="$1"
+
+# 可移植写法:不用 awk 的 IGNORECASE(mawk 没有这个扩展)。
+FORBIDDEN='^[Cc]o-[Aa]uthored-[Bb]y[ 	]*:'
+
+if ! grep -qE "$FORBIDDEN" "$MSG_FILE"; then
+	exit 0
+fi
+
+echo "提交信息含 Co-Authored-By trailer:" >&2
+grep -nE "$FORBIDDEN" "$MSG_FILE" >&2
+
+if [ "$MODE" = "fail" ]; then
+	echo "判红。删掉上面那几行再提交;或本次用 COMMIT_MSG_MODE=strip 临时自动剥离。" >&2
+	exit 1
+fi
+
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+
+# 先滤掉违规行,再去掉尾部空行(git 要求提交信息以单个换行结尾)。
+awk '!/^[Cc]o-[Aa]uthored-[Bb]y[ 	]*:/' "$MSG_FILE" |
+	awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] ~ /^[ 	]*$/) n--; for (i = 1; i <= n; i++) print l[i] }' \
+	>"$TMP"
+
+echo "已剥离,剥离后的提交信息如下:" >&2
+sed 's/^/  | /' "$TMP" >&2
+
+mv "$TMP" "$MSG_FILE"
+trap - EXIT
+exit 0
