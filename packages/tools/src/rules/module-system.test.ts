@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { moduleSystemViolations } from "../index.ts";
+import { moduleSystemViolations, parseSource } from "../index.ts";
 
 /**
  * 断言对象只有一件事:一段源码进,一组带行列的违规出。
@@ -70,10 +70,31 @@ it.each([
     "function loop() {\n  export const a = 1;\n}\n",
     "module-system @ 2:3",
   ],
-  ["TS 的 import x = require(...)", 'import fs = require("fs");\n', "module-system @ 1:1"],
-  ["TS 的 export = x", "const a = 1;\nexport = a;\n", "module-system @ 2:1"],
 ])("五种形态判违规:%s", (_case, source, expected) => {
   expect(where(source)).toEqual([expected]);
+});
+
+/**
+ * 两种 **TS 专有**的模块写法(`import x = require(...)` 与 `export = x`)不再由本规则判。
+ * 它们在产物里不存在,而它们各有一个家:
+ *
+ * - `tsconfig.scripts.json` 的 `module: esnext` 让 `tsc` 直接判红(实测 2026-10-04,TypeScript 7.0.2:
+ *   TS1202 / TS1203),诊断由生成管线的编译步骤原样透传给模型(hld §6.2「编译」那一行);
+ * - 解析层按 script 源形态(编译产物)解析,这两种写法在产物形态下是解析错误,
+ *   归判定链独占的 `syntax-error`。
+ *
+ * 它们曾列在本规则的五形态表里,那是「源形态比入口契约宽」那阵的遗留:当时 script 形态按
+ * `lang: "ts"` 解析,未经编译的 TS 源码能一路走到本规则面前。源形态收紧后本规则只看产物,
+ * 这两条随源形态一起消失——但**不是**因为它们变得合法,而是没有产品能带着它们走到这里。
+ * 所以本条钉的是「它们不再由本规则判」这个事实本身:改回去等于让一条规则去判一种产物里
+ * 不存在的语法,而那正是票 08 要消除的方向。
+ */
+it.each([
+  ["TS 的 import x = require(...)", 'import fs = require("fs");\n'],
+  ["TS 的 export = x", "const a = 1;\nexport = a;\n"],
+])("TS 专有的模块写法不在本规则域内:产物形态下它们是解析错误", (_case, source) => {
+  expect(moduleSystemViolations(source)).toEqual([]);
+  expect(parseSource(source, "script").ok).toBe(false);
 });
 
 it.each([
@@ -125,9 +146,12 @@ it("裁决可读:动态 eval 的诊断里说清静态形式为何不拦", () => 
 });
 
 it("同源:同一个位置的多种形态各报各的,判定链那一层负责全序", () => {
-  // 一个 `export` 里同时列两个名字,只报一条(判据是**节点**不是**名字`);
+  // 一个 `export` 里同时列两个名字,只报一条(判据是**节点**不是**名字**);
   // 逐条报出来会让同一处笔误占掉渲染层的一整行位置列表。
-  expect(where("const a = 1;\nexport { a, a };\n")).toEqual(["module-system @ 2:1"]);
+  // 两个名字刻意取不同:重复导出名(`export { a, a }`)在 JS 形态下是解析错误
+  // (TS 形态下 oxc 放行,实测 2026-10-04,oxc-parser 0.152.0),拿它当样本会在源形态收紧后
+  // 整条落进 `syntax-error`,钉的就不再是「一个节点报一条」而是「解析失败独占结果」了。
+  expect(where("const a = 1;\nconst b = 2;\nexport { a, b };\n")).toEqual(["module-system @ 3:1"]);
 });
 
 it("解析不过时本规则不报违规:那条结论归判定链独占", () => {

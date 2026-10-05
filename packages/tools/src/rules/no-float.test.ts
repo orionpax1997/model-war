@@ -164,9 +164,11 @@ it("解析不过的源码不跑规则:残树上的结论不可复现", () => {
 });
 
 it("script 模式的参赛脚本走同一条规则", () => {
-  const clean = noFloatViolations("function loop(): void {\n  const n = 1 + 2;\n}\n", "script");
+  // 样本写成编译产物的形态(入口返回类型不写):script 源形态只吃编译后的 JS,
+  // 带类型标注的样本会在解析层就落成 `syntax-error`,钉不到本规则(票 08 收紧源形态)。
+  const clean = noFloatViolations("function loop() {\n  const n = 1 + 2;\n}\n", "script");
   expect(clean).toEqual([]);
-  const dirty = noFloatViolations("function loop(): void {\n  const n = 0.5;\n}\n", "script");
+  const dirty = noFloatViolations("function loop() {\n  const n = 0.5;\n}\n", "script");
   expect(dirty).toHaveLength(1);
   expect(dirty[0]?.rule).toBe("float-literal");
   expect(dirty[0]?.line).toBe(2);

@@ -107,6 +107,23 @@ it("解析不过:退出码 1,且只报一条解析失败", () => {
   expect(outcome.stdout).not.toContain("禁列全局名");
 });
 
+/**
+ * 未编译的 TS 源码被拒时,那一条诊断必须说「去编译」,不能说「去掉 import/export」。
+ *
+ * 这一条钉的是**文案会不会说谎**:解析层按 script 源形态(编译产物)判定,所以带 `as` 断言的
+ * 源码落进的是解析失败那一支。而此刻最可能的原因只有一个——交上来的东西还没编译。
+ * 文案若沿用旧的「单文件、无 import/export 的 script-mode 模块」,模型会去改模块语法:
+ * 那既改不动真正的病因(hld §6.2「编译」那一行:入口形态由编译步骤判),又烧掉一轮迭代预算。
+ * stdout 是面向模型的文本(本文件头注),所以这句要说对的地方就在这里。
+ */
+it("未编译的 TS 源码:诊断指向「先编译」,不指向「改模块语法」", () => {
+  const outcome = run(artifact("function loop(): void {\n  return Math.floor(1);\n}\n"));
+  expect(outcome.status).toBe(1);
+  expect(outcome.stdout).toContain("编译");
+  expect(outcome.stdout).not.toContain("script-mode");
+  expect(outcome.stdout).not.toContain("import/export");
+});
+
 it("缺少必填的 --max-bytes:退出码 1 + 用法说明", () => {
   // 校验器**不给默认值**:写一个默认值就是给一个未定值编答案(取值归规则集文件)。
   const result = spawnSync(process.execPath, [entry, artifact(CLEAN), "--phase", "freeze"], {

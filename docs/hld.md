@@ -634,12 +634,22 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 **四条规则统一跑在编译产物上,不在原始 TS 上跑**:模块语法、桥前缀、禁列在编译后仍逐条可判定,而在原始 TS 上跑会漏掉类型断言与类型标注这类 TS 特有形态,等于为它们再写一套判据;顺带消掉了「模块源码 / 脚本源码」两种源形态的分支。
 
-**实测结论(只对所记版本组合成立,换版本即失效)**。以下两条来自 2026-10-03 的一次探针,环境 **`oxc-parser` 0.152.0**(native binding `linux-x64-gnu`)+ Node v24.15.0 / Linux x64,**探针不落库**(与 §5.0 五条沙箱实测同一处置):
+**这条不只是「怎么跑」,也是「收在哪」——静态校验器的源形态只有一种,且由解析层独占地兑现**。解析层(`packages/tools/src/parse-source.ts`)对 `script` 源形态用 `lang: "js"` 与 `.js` 文件名(`module` 那侧是 `lang: "ts"` 与 `.ts`,仓库自身源码照旧按 TS 解析),所以一份**未经编译**的参赛脚本(入口带返回类型标注、写着泛型实参或 `as` 断言)落进的是 `syntax-error` 那一支,而不是被几条规则放过。入口签名本身的形态归契约面(同节表格「编译」那一行已留指针)。
+
+**落点选在解析层而不是校验入口**,理由是绕不开:规则层的禁列 / 桥前缀 / 模块系统三条各自独立调解析层,入口声明源形态的话要在四个调用点各传一次,任何一处漏传就静默回到「判据更宽」——而更宽正是这条要消除的方向。文件名的另一半是**自述**不是行为开关(实测见下表第 3 条)。
+
+**「未编译」不是误伤,两个方向不能一起处置**:误伤是「合规产物被拒」,这里是「判据比契约宽、放行了不该由本工具判的东西」。收紧因此**两侧都钉**:拒 TS 注解源码的那半在 `parse-source.test.ts`,放行编译产物的那半拿 `benchmarks/*/script.js` 三份真产物在 `benchmarks.test.ts`——只钉前者的话,把 script 形态整个判死(连真产物一起拒)同样能变绿。**TS 专有的模块写法(`import x = require(…)`、`export = x`)不归静态校验器**:`tsconfig.scripts.json` 的 `module: esnext` 让 `tsc` 先判红(实测 TS1202 / TS1203,诊断由编译步骤透传,见上表「编译」那一行)。
+
+**实测结论(只对所记版本组合成立,换版本即失效)**。以下前两条来自 2026-10-03 的一次探针,第 3–6 条来自 2026-10-04 的收源形态探针,环境均为 **`oxc-parser` 0.152.0**(native binding `linux-x64-gnu`)+ Node v24.15.0 / Linux x64,**探针不落库**(与 §5.0 五条沙箱实测同一处置):
 
 | # | 行为 | 结论 |
 |---|---|---|
 | 1 | 解析结果的可见面 | `ParseResult` 只有 `program` / `module` / `comments` / `errors` 四个 getter,`module` 只有 `hasModuleSyntax` / `staticImports` / `staticExports` / `dynamicImports` / `importMetas`;**没有符号表、没有引用解析、没有「这个名字是不是自由变量」的任何 API**,包的全部导出(含 `raw-transfer/*` 子路径)里也没有 symbol/scope 相关入口 |
 | 2 | 标识符不区分引用位与声明位 | 声明位置与引用位置的标识符反序列化后是**同一个 `type` 字符串 `"Identifier"`、同一组字段**,逐字段深比较只差 `start`/`end`。判「引用还是声明」只能靠**父节点字段位置**(实测:`…declarations[0].id` vs `…argument.left`),而哪些父节点字段算声明位(变量/函数/参数/解构简写/`catch` 参数/`for-of` 绑定/class 方法名/对象字面量键)得自己维护 |
+| 3 | `lang` 是开关,文件名是自述 | 同一段源码下,文件名给 `script.js` 或 `script.ts` 配 `lang: "js"` **逐条行为相同**(TS 注解的八种写法全被拒、纯 JS 全放行、行列口径一致);oxc 只在**缺** `lang` 时才看扩展名。`astType` 随 `lang` 变(`js` 形态下不返 TS 专属属性),而三条规则读的那几个字段(`Literal` 的 `raw`、`MemberExpression` 的 object/property)两种取值下形状相同 |
+| 4 | 收紧只动 TS 注解,不动模块语法 | `lang: "js"` + `sourceType: "script"` 下,`export const a = 1` / `import x from "std"` / `import("std")` / `require("std")` 四种**一律零解析错误**(静态 `import` / `export` 另置 `module.hasModuleSyntax`,动态 `import()` / `require()` 不置——而规则层读的是 AST 节点不是那个标志,两种口径对本条结论无影响)——所以**模块系统必须仍是独立一级**,不能靠解析层挡。同形态下 `import.meta` 才由 oxc 直接判解析失败(`Unexpected import.meta expression`),归 `syntax-error` |
+| 5 | 重复导出名在 JS 形态下是解析错误 | `export { a, a }` 在 `lang: "ts"` 下放行、在 `lang: "js"` 下报 `Duplicated export 'a'`。判据取样必须避开它:拿它当「一个 export 节点报一条违规」的样本,收紧后整条落进 `syntax-error`,钉的就不再是原来那件事 |
+| 6 | 注释的可见面两种 `lang` 下逐字相同 | `comments` getter 在 `lang: "js"` 与 `lang: "ts"` 下都给同样的条目与同样的 `type`(`Line` / `Block`),`/// <reference …>` 与 JSDoc `@type` 均在其中。所以「注释算不算源码」不是这次收紧的变量——这条曾被列为两种候选收紧方式的差别,实测排除 |
 
 **承载权因此从静态校验器移到编译器**:白名单反转的本质是自由变量判定,而这一层解析不提供作用域;自建分析器的失败模式是**漏掉任何一处声明位置 = 误伤一份合规脚本**,而误报在五轮迭代预算里不对称地致命(模型拿到一条改不掉的违规,五轮耗尽,这一轮生成作废),漏报的代价只是回到现状。编译器的名字解析对这种不对称性零成本,且已在流水线上。
 

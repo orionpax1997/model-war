@@ -34,6 +34,7 @@ import {
   benchmarkFile,
   compileBenchmarkSource,
 } from "./benchmarks/compile.ts";
+import { validateScriptSource } from "./validate/pipeline.ts";
 
 /** 说明表(基准目录里唯一的那份 Markdown)。 */
 const README = `${BENCHMARK_ROOT}/README.md`;
@@ -227,5 +228,30 @@ it("三份脚本的编译诊断只有那三类,且「名字未声明」逐个在
           "那不是「类型面没回填」而是脚本用了运行时不存在的 API",
       ).toContain(unresolved);
     }
+  }
+});
+
+/**
+ * 三份入库产物过**静态校验判定链**,零违规。
+ *
+ * 这是「源形态收紧」那一侧的对称钉子。收紧的目的是拒掉未经编译的 TS 源码(hld §6.2
+ * 「四条规则统一跑在编译产物上」),而这一条钉的是**收紧的另一侧**:产物必须仍然放行。
+ * 只钉拒绝侧的话,把 script 源形态整个判死——连这 5–8 KB 的真产物一起拒——同样能变绿,
+ * 那是误伤,而两种失效方向相反,处方也相反。
+ *
+ * 用入库产物而不是现造的最小样本,是因为最小样本证明不了「真实规模与真实写法的产物不受影响」。
+ * 产物逐字节由 `check:bench` 钉住(真的是 `tsconfig.scripts.json` 跑出来的),
+ * 于是本条与那一条合起来给出的结论是:「由基座编译出来的产物,判定链放行」。
+ *
+ * 上限给足,让体积级不参与:体积的取值归 `rulesets/*.json`(未定值),拿它当判据会让本条
+ * 在取值落地那天红,而那时候红的原因与源形态无关。
+ */
+it("三份入库产物过静态校验判定链,零违规(源形态收紧不得误伤产物)", () => {
+  for (const name of BENCHMARK_NAMES) {
+    const product = readFileSync(benchmarkFile(name, PRODUCT_FILE), "utf8");
+    expect(
+      validateScriptSource(product, { maxBytes: Number.MAX_SAFE_INTEGER, phase: "freeze" }),
+      `${name} 的产物被判定链判违规`,
+    ).toEqual([]);
   }
 });
