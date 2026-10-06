@@ -148,7 +148,9 @@
 | hash | `node:crypto` SHA-256(标准库) | stateHash、地图 hash、存档完整性校验,零第三方依赖 |
 | 随机数与 ID | **归 `driver` 所有**:整数 LCG + `IdGen`;RNG 消费顺序写入 rules-vN | 确定性原语不散落;消费顺序是回放断裂的经典成因(§4.6) |
 
-**「读入端强制校验」的覆盖面当前只有两类,是刻意的不完整,不是半成品**。本仓现在真正被校验的只有**规则集与地图**;存档 meta / result / 回放行三类的**家已经定在真源包**(见上表第一行),但**字段尚未回填**,因此真源包里只有它们的占位清单(标记 + 回填触发条件),没有 schema。另有一件要说清:规则集与地图两类的**校验通路已交付**(唯一一份 ajv 校验器、两个纯函数、两层诊断、装载期版本与派生量断言),但**接进子命令装载路径的只有地图那一半**——`modelwar map-lint <maps/>` 已经跑通「读文件 → 校验 → 带定位诊断拒跑 → 非零退出」这条通路;规则集那一侧的调用点随 runner 落地。规则集侧现在多了一份东西但仍然不是接线:`rulesets/v1.json` 已落库(21 个键 = 13 定稿 + 8 未定值占位,§7.1),并有单元用例**读那份真文件**逐条过 `validateRuleset`(键集与键清单两个方向都比、诊断带 JSON 指针)——**被校验过不等于被装载时校验过**:今天仍然没有任何生产路径读它。因此 **FR-10 AC2 的「错配拒跑」与「读入端强制校验」仍按尚未兑现记**:地图侧机制、家与诊断形态已定死并跑通,规则集侧差的是接线,不是设计。**写在这里是为了不让后来者以为它已经兑现**,也为了说明为什么不写半截 schema:放行额外属性的空 schema 等于不校验,却会让人以为「存档 meta 已校验」,比不写更坏。
+**「读入端强制校验」的覆盖面现在是六类,其中四类由对局内核这一格新接线;它仍然不完整,但「为什么不完整」的理由与上一版不同**。本仓有 JSON Schema 且**家都在真源包**(见上表第一行)的六类数据是:**规则集、地图、存档元数据(`archive-meta`)、对局输入(`input.json`)、回放行(`meta` / `tick`)、终局结果(`result` 行)**——六类全部落库(规则集与地图早于此;存档元数据 / 对局输入 / 回放行 / 终局结果由本 feature 的 01、02b、09 三票落库)。**逐类说清接线在哪一层**:① **规则集**与② **地图**走唯一一份 ajv 校验器(`apps/cli/src/validator.ts` 的 `validateRuleset` / `validateMap`,后者另有 `modelwar map-lint` 那条通路);本 feature 把规则集那一侧的调用点接进了 `modelwar match` 的装载段,`rulesets/v1.json` 的版本号三处(文件名 / 目录名 / 版本常量)对不上即拒跑(FR-10 AC2 的错配拒跑)。③ **存档元数据**与④ **对局输入**也在本 feature 接进 `modelwar match`:`validateMatchInput` 判版本三处一致、四个座位存档在不在、各文件哈希与实测是否相等;`validateArchiveMeta` 逐座位判缺档与元数据完整性。⑤ **回放行**(`meta` / `tick` 两行的形状与 JSON Schema 都在真源包)**尚未接进任何生产路径**,读盘渲染器(住 `@model-war/replay`)只 `JSON.parse` 后防御式读栏,不做 schema 校验;⑥ **终局结果**同理:`validateReplayResultLine` 已交付(纯函数 + 用例),但没有生产调用点。
+
+**为什么仍然不完整,与上一版的理由不同**:上一版缺的是「字段未回填」,本 feature 之后字段全已落库,缺的只剩两处接线与一处的**值**。⑤⑥ 两类的形状与 JSON Schema 都已生成,缺的只是**读入端调用点**——那要在回放的**读入端**才落地,而读盘渲染器住 `@model-war/replay`(依赖方向 `schema ← replay`),不能反向依赖持有唯一 ajv 实例的 `apps/cli`(§3.2),接线归「回放读入端校验归哪一层」那次有意的裁定,等**赛季调度(`I`)**那一格(它才是回放的正式消费者与报告路径)。③ 存档元数据那一路虽然形状与读入端校验都已到位,但它记的**字段值**由**生成管线(`H`)**写出:H 落地前读入端只能校验到形状与实测哈希一致,H 落地后才第一次校验到真实存档产物。**写在这里是为了不让后来者以为六类都已兑现**,也为了说明为什么不写半截 schema:放行额外属性的空 schema 等于不校验,却会让人以为「存档 meta 已校验」,比不写更坏。
 
 **漂移检查的实现是三段判定,不是裸的 `git diff --exit-code`**:① 内容一致性——真源现在会产出的东西与工作树里那个文件是不是同一份,**按形态分两种口径**(抓「改了真源没重跑」与「生成物被手改 / 被删」);② 对 `HEAD` 的差异检查,**限定在生成物路径上**(`git diff --quiet HEAD -- <生成物路径>`,抓「生成了但没提交」)——限定是为了不把开发者工作树里别的未提交内容报出来,把报错指向错误的地方;③ 按生成物路径的状态检查(`git ls-files`,未被索引跟踪即失败,抓「新增生成物没进版本库」)。后两刀是分开的:裸 `git diff` 看不见未跟踪文件,而新增生成物恰恰是漂移检查最该抓住的情形。路径清单从生成物注册表本身取,不另存一份(§3.1)。
 
@@ -411,12 +413,11 @@ interface GameState {
   players: Player[4];            // index 0..3,固定
   units: Unit[];                // 按数值 id 升序维护
   sites: Site[];                // 按数值 id 升序维护(基地 + 资源点)
-  productions: Production[];     // 各基地独立队列,单条
   nextId: number;               // 全局单调递增,对象创建时分配
   outcome: Outcome | null;      // 终局:排名 + 原因
 }
 
-// Outcome:{ rankings: number[]; reason: 'victory' | 'shortcut' | 'timeout'; territoryScores: number[] }
+// Outcome:{ rankings: number[]; reason: 'victory' | 'shortcut' | 'timeout' | 'all-eliminated'; territoryScores: number[] }
 // rankings[i] = 玩家 i 的名次(1 起,可并列),由 gdd《胜利与淘汰》的排序规则产生
 
 interface Player {
@@ -443,9 +444,8 @@ interface Site {
   progressOwner: -1 | 0|1|2|3;
   progress: number;
   remaining?: number;           // 仅资源点
+  producing: { type: UnitType; remainingTicks: number } | null;  // 产线订单,挂在基地上;无订单为 null
 }
-
-interface Production { baseId: number; type: UnitType; ticksLeft: number }
 ```
 
 - **id 全局单调递增**(含被销毁对象),一切"按对象处理"的阶段按**数值 id 升序**迭代。数值升序是唯一被声明的定序语义,写入 rules-vN。
@@ -629,7 +629,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 | 全局白名单 | **承载方是编译器的名字解析**:脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types`、只额外引入脚本 API 类型声明的环境里编译,「找不到这个名字」就是精确的白名单反转。**静态校验器不做反转**,也不为它自建作用域分析(实测与理由见本节末)。名字级别的禁令(`__*` 前缀全禁、确定性污染源)仍由它承担。内置全局表与注入符号表的真源在 `schema`,本包经生成器读生成物(§3.2),与沙箱 runtime 暴露的 API 面同源;**名单取值不在本文档复制**(见下一行与 `packages/schema/src/builtin-globals.ts`) |
 | 内置全局白名单的收录判据 | **这一格放的是一条收录准则(一整句话的判据),不是名单的取值**:判据原文、判据的边界(什么算这一格里的名字)与逐个名字的「为什么收/不收」都在 `packages/schema/src/builtin-globals.ts` 的头注,那是它们的家,本文档只留指针。**这张表的消费者是面向模型的规则文档,不参与白名单反转的判定**;两侧不得互相引用为依据 |
 | 确定性污染源 | 禁 `Date`、`Math.random`、`performance`、`queueMicrotask` 及其他非确定源(运行时 WASI 时钟已定格,本行为纵深防御)。静态校验器承担 |
-| API 误用 | **依赖真源包的类型面(公开 `.d.ts`),不是符号表**:符号表是一张名字数组,给不出签名与结构化 intent 类型,判「用错」靠的是类型面。类型面**尚未回填**(家已定、字段未交付,§2.2.5 那条纪律),内容由对局内核与沙箱执行器回填;不补的话「编译步骤放行但运行时报未定义」在结构上仍可能发生——放行的是编译器,静态校验器在这条上从不是裁判 |
+| API 误用 | **依赖真源包的类型面(公开 `.d.ts`),不是符号表**:符号表是一张名字数组,给不出签名与结构化 intent 类型,判「用错」靠的是类型面。**承载方即类型面本身**(家是 `packages/schema/script-api/index.d.ts`,`tsconfig.scripts.json` 的 `types` 经它引入,见 [ADR-0006](./adr/0006-script-api-type-surface-lands-in-engine.md)),由对局内核这一格回填。类型面落地后「编译步骤放行但运行时报未定义」在结构上不再发生——放行的是编译器,而编译器现在有一份可校验的名字与签名;静态校验器在这条上从不是裁判 |
 | 脚本体积 | 顶层脚本体积上限——封"直线代码不计量、大循环体放大每格工作量"的计数盲区。**量测对象是编译后产物的字节数**(不是原始 TS 源码,也不是字符数);取值入 `rulesets/v1.json`,由生成管线作为参数传入、校验器不给默认值;**检查时机:每轮迭代都查,迭代期只提示不拦,冻结期才拦** |
 
 **四条规则统一跑在编译产物上,不在原始 TS 上跑**:模块语法、桥前缀、禁列在编译后仍逐条可判定,而在原始 TS 上跑会漏掉类型断言与类型标注这类 TS 特有形态,等于为它们再写一套判据;顺带消掉了「模块源码 / 脚本源码」两种源形态的分支。
@@ -716,22 +716,24 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ```
 
 - 编译责任在 gen 包(定版前完成),engine 不引入 tsc(§2.2.8)。
-- `meta.json` 的**形状家归真源包**(§2.2.5),字段随生成管线那一票回填;在此之前本仓没有它的 JSON Schema,读入端不校验它(这是刻意的,不是漏做)。
-- runner 启动即校验元数据完整性,缺档**报错退出**(FR-6 AC2,不跳过)。
-- 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。
+- `meta.json` 的**形状家归真源包**(§2.2.5),十一项字段已由本 feature 的 01 票定死(`packages/schema/src/archive-meta.ts` 的类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。
+- **runner 启动即校验元数据完整性**,缺档**报错退出**(FR-6 AC2,不跳过)。**这里的「runner」指本 feature 的那个进程——第一个执行脚本的进程**(即 `modelwar match` 的装载段),不是赛季调度器 `runner` 那个包;赛季调度复用同一条校验路径,不复写。不消歧的话「runner」两个包都算。
+- 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。哈希取每座存档的 `script.js` / `meta.json` 各一份与地图一份,**不含 `script.ts`**(复算认编译产物,定版源码的不可变由 gen 保证,FR-6 AC1);**座位由 `archives` 的下标承载**(下标即 `playerIndex`),轮换算法归赛季调度物化期,不进这份文件。
 
 ### 7.5 回放 JSONL(`matches/<...>/replay.jsonl`)
 
 ```
-第 1 行   {"type":"meta", schemaVersion, ruleset, quickjsWasiVersion, sandboxRuntimeHash,
+第 1 行   {"type":"meta", schemaVersion, ruleset, runner, quickjsWasiVersion, sandboxRuntimeHash,
            wasiClock, wasiRandomFill, timezoneOffset, mapHash, seed, players:[{model, archiveRef, seat}]}
-第 n 行   {"type":"tick", tick, players, units, sites, productions, events:[...], stateHash}
+第 n 行   {"type":"tick", tick, players, units, sites, events:[...], stateHash}
 末 行    {"type":"result", rankings, reason, territoryScores}
 ```
 
 - `schemaVersion` 由 `replay` 包 `CURRENT_SCHEMA_VERSION` 常量承担,跨版本兼容性以它为准(FR-9 AC2)。**它是回放文件格式的版本,不是行的形状**:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包,`replay` 包只做编解码、不再声明行的类型(§2.2.5、§3.1)。这一格曾经有两个家(§2.2.5 说形状在真源包、§3.1 说行格式取自 `replay` 包),按「每个事实只有一个家」留在真源包。
+- **meta 行共十二栏,`runner` 是判别式**(取值 `"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,缺这一栏就把可读性押在「四个沙箱栏同时为空」这个约定上。**`runner === "stub"` 时四个沙箱栏(`quickjsWasiVersion` / `sandboxRuntimeHash` / `wasiClock` / `wasiRandomFill`)全为 `null`**(不是空串、不是 `0`——「未发生」与「恰好是空串」要能区分),本 feature 只有 `StubRunner`,故桩回放四栏皆 `null`;`runner === "quickjs"` 时四栏都是非空字符串,填错在类型上编译不过(判别联合)。
 - 每 tick 记录足以绘制完整画面的状态:点位归属、占领进度条、单位位置血量携带、玩家资源。
 - **events 事件流**(叙事战报的统一来源):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`budget-soft-warning`、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态。
+- **`first-contact` 的判据是观测量,不是规则参数**:任意敌对单位 Chebyshev ≤ 2、**整局第一次**一条,故不进 `rulesets/v1.json`(它不判胜负、不判合法、不影响移动,只给事件流标一个时刻)。判据的定性半句在 gdd 首触那一段(「首触判据吃的是接近度」),**给予它的精确定义是 gdd 那一侧的欠账**;引擎按该口径实现并在 `packages/engine/src/processor/steps/step2-movement.ts` 的注释里注明出处。
 
 ## 8. runner 与排名概要设计
 
@@ -817,6 +819,6 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 5a | TypeScript 7.0 GA 时点 | **已收口**:7.0.2(2026-07-08 GA,Go 实现,`tsgo` 名已取消)为精确锁版,见 ADR-0002 锁定版本表。本项关闭。 |
 | 5b | 类型感知 lint 的可用性与耗时 | **已收口**:oxlint-tsgolint 已 stable(oxlint 1.86.0 `--help` 无 experimental 标记),进 `check:types` 不再并行试跑;版本耦合形状 `7.0.<tsPatch><golintPatch>` 由 `coupling` 断言脚本强制(§2.2.3)。耗时见 §2.2.7 实测表(只此一处,不在此复述)。本项关闭,后续只剩随仓库规模重测。 |
 | 5c | oxfmt 0.x 风险 | **已收口为接受风险**:官方称 JS/TS 已 100% 通过 Prettier conformance,未兑现的只是 1.0 发布;由 caret + lockfile + `oxfmt --check` 门禁兜住(ADR-0002)。**不设降级到 Prettier 的退路**。本项关闭。 |
-| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化 |
-| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估 |
+| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**观测项不是承诺**,不裁「优化到什么程度算完」——停止条件归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
+| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**观测项不是承诺**,不裁方案——存储/IO 方案归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
 | 8 | 沙箱行为五条结论的复验 | §5 上表五条只对 `quickjs-wasi@3.6.2` 成立;实现真实沙箱执行器的 ticket 落地时第一条验收即按当时版本组合重跑五条并写回 §5。在那之前升级条款为空头承诺(§5.0 “升级条款”段)。 |

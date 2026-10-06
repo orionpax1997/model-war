@@ -79,12 +79,15 @@ const IGNORED_ARTIFACT_PATH = "packages/tools/dist/__drift-probe.ts";
 const UNRELATED_NOISE_PATH = "docs/__drift-noise-probe.md";
 const SECTION_PROBE_PATH = "docs/__section-probe.md";
 
+/** 禁浮点反例用的探针路径:落在 engine 的运行时代码里,这道门禁才看得见它。 */
+const NO_FLOAT_PROBE = "packages/engine/src/__nofloat-probe.ts";
+
 /** 本文件用过的全部探针路径(`gates-slow.test.ts` 用它自己的那一条,各自兜底)。 */
 const PROBES = [
   "packages/schema/src/__fmt-probe.js",
   "packages/schema/src/__lint-probe.js",
   "packages/schema/src/__lint-probe.ts",
-  "packages/engine/src/__nofloat-probe.ts",
+  NO_FLOAT_PROBE,
   "packages/tools/src/__declared-deps-probe.ts",
   "packages/runner/dist/__gate-probe.js",
   "packages/engine/dist/__gate-probe.js",
@@ -180,19 +183,15 @@ it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", (
   // 探针落在 engine 的运行时代码里,而且是 .ts 而非 .js:这道门禁读的是**源码**
   // (自建校验器建在 oxc-parser 上,不经 tsc 产物),所以在 dist 里丢文件它根本看不见。
   // 位置与扩展名合起来才是「它真的在读该读的那片源码」的证据。
-  const violated = withProbeFile(
-    "packages/engine/src/__nofloat-probe.ts",
-    "export const speed = 1.5;\n",
-    () => script("check:no-float"),
+  const violated = withProbeFile(NO_FLOAT_PROBE, "export const speed = 1.5;\n", () =>
+    script("check:no-float"),
   );
   expect(violated.status, "浮点字面量必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("__nofloat-probe.ts");
 
   // 同一路径换成整数:判决跟着内容走,不是跟着文件名走。
-  const fixed = withProbeFile(
-    "packages/engine/src/__nofloat-probe.ts",
-    "export const speed = 3;\n",
-    () => script("check:no-float"),
+  const fixed = withProbeFile(NO_FLOAT_PROBE, "export const speed = 3;\n", () =>
+    script("check:no-float"),
   );
   expect(fixed.status, `整数仍被拦下:\n${fixed.output}`).toBe(0);
 
@@ -206,8 +205,35 @@ const SCHEMA_ALLOWLIST = "packages/schema/src/builtin-globals.ts";
 const GENERATED_ALLOWLIST = "packages/tools/src/generated/builtin-globals.ts";
 const GENERATED_SCRIPT_SURFACE = "packages/tools/src/generated/script-surface.ts";
 
-/** 探针:一条用到 `Math.abs` 的运行时代码。 */
-const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
+/**
+ * 反例里被从真源摘掉的那个成员。
+ *
+ * 选它而不是 `abs`,是因为必须摘一个 engine 源码**一处都不用**的成员:摘掉它只让「用它的探针」
+ * 变红,engine 自己的代码一处都不被牵连,末一条断言(仍在名单里的成员照旧放行 → 整道门禁退 0)
+ * 才成立。换成 engine 正在用的成员(如 `abs`),那些调用会一起被判违规,门禁无论如何都退非零,
+ * 那条断言就变成了在测一个不存在的状态(票 12 修掉的那条红)。这个前提由下面那条前置自证盯着。
+ */
+const REMOVED_MEMBER = "clz32";
+/** 探针:一条用到 `REMOVED_MEMBER` 的运行时代码。它在名单里时放行,摘掉后必被拒。 */
+const REMOVED_MEMBER_PROBE = `export const probe = Math.${REMOVED_MEMBER}(-1);\n`;
+/** 探针:一条用到另一个成员的运行时代码。`sign` 与 `clz32` 一样,engine 源码一处不用。 */
+const STILL_ALLOWED_MEMBER_PROBE = "export const probe = Math.sign(-1);\n";
+
+/**
+ * 从禁浮点门禁的输出里取出被判违规的文件路径(去重)。
+ *
+ * 违规行形如 `<仓库根相对路径>:<行>:<列>  <规则>  <说明>`;末尾那行汇总
+ * (`禁浮点门禁:检查 N 个文件,M 处违规。`)不含 `:行:列` 前缀,天然被滤掉。
+ * 用它把「违规只来自探针文件」从一句注释变成一条机器可判的前提。
+ */
+const violatingFiles = (output: string): readonly string[] => [
+  ...new Set(
+    output
+      .split("\n")
+      .map((line) => /^(\S+?):\d+:\d+ /.exec(line)?.[1])
+      .filter((path) => path !== undefined),
+  ),
+];
 
 /**
  * 一次真源改动的两端:改哪个真源、重跑生成器会重写哪些落点。
@@ -288,38 +314,46 @@ const withRegeneratedAllowlist = (
 ): Outcome => withPatchedTruth(ALLOWLIST_TARGET, patch, { regenerate: true }, body);
 
 it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变", () => {
-  // 基线:`abs` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
-  const allowed = withProbeFile("packages/engine/src/__nofloat-probe.ts", MATH_ABS_PROBE, () =>
+  // 基线:`clz32` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
+  const allowed = withProbeFile(NO_FLOAT_PROBE, REMOVED_MEMBER_PROBE, () =>
     script("check:no-float"),
   );
   expect(allowed.status, `名单内的成员被拦下:\n${allowed.output}`).toBe(0);
 
-  // 从真源里摘掉 `abs` 并重跑生成器:同一条探针,从通过变拒绝。这就是「改真源 → 门禁行为改变」
-  // 这条链的正面证据,断言落在门禁的退出码与报告文本上,不碰任何内部函数。
+  // 从真源里摘掉 `REMOVED_MEMBER` 并重跑生成器:同一条探针,从通过变拒绝。这就是「改真源 →
+  // 门禁行为改变」这条链的正面证据,断言落在门禁的退出码与报告文本上,不碰任何内部函数。
   const removed = withRegeneratedAllowlist(
-    (source) => source.replace('  "abs",\n', ""),
-    () =>
-      withProbeFile("packages/engine/src/__nofloat-probe.ts", MATH_ABS_PROBE, () =>
-        script("check:no-float"),
-      ),
+    (source) => source.replace(`  "${REMOVED_MEMBER}",\n`, ""),
+    () => withProbeFile(NO_FLOAT_PROBE, REMOVED_MEMBER_PROBE, () => script("check:no-float")),
   );
   expect(removed.status, "真源摘掉成员后,用到它的脚本必须被拒绝").toBe(1);
-  expect(removed.output, removed.output).toContain("Math.abs");
+  expect(removed.output, removed.output).toContain(`Math.${REMOVED_MEMBER}`);
+
+  // 前置自证:被摘掉的成员此刻必须**只在探针里**被用到。若 engine 源码哪天开始使用它,
+  // 这里的违规文件就不再只有探针——那种红会以「名单内的其他成员被连坐」的旧文案误导后来者
+  // (正是票 12 修掉的那一条)。所以断言「违规恰好只来自探针文件」,并把处方写进报错。
+  const files = violatingFiles(removed.output);
+  expect(files.length, `探针没有被判违规,这条反例不成立:\n${removed.output}`).toBeGreaterThan(0);
+  expect(
+    files,
+    `engine 源码里已经用上了 \`Math.${REMOVED_MEMBER}\`,这条反例该换成员了:` +
+      "摘掉它会把 engine 自己的代码一起弄红,违规不该只留在探针文件里。" +
+      `\n${removed.output}`,
+  ).toEqual([NO_FLOAT_PROBE]);
 
   // 同一时刻仍在名单里的成员照旧放行:变红的是「白名单」,不是整道门禁——
   // 少了这一条,「生成器把规则层弄坏了」也会被算作通过。
   const stillAllowed = withRegeneratedAllowlist(
-    (source) => source.replace('  "abs",\n', ""),
-    () =>
-      withProbeFile(
-        "packages/engine/src/__nofloat-probe.ts",
-        "export const probe = Math.sign(-1);\n",
-        () => script("check:no-float"),
-      ),
+    (source) => source.replace(`  "${REMOVED_MEMBER}",\n`, ""),
+    () => withProbeFile(NO_FLOAT_PROBE, STILL_ALLOWED_MEMBER_PROBE, () => script("check:no-float")),
   );
-  expect(stillAllowed.status, `名单内的其他成员被连坐:\n${stillAllowed.output}`).toBe(0);
+  expect(
+    stillAllowed.status,
+    `仍在名单里的成员被连坐:摘掉的是 \`${REMOVED_MEMBER}\`,而 \`sign\` 没动,` +
+      `整道门禁不该退非零(engine 源码零使用 \`${REMOVED_MEMBER}\` 是本条的前提):\n${stillAllowed.output}`,
+  ).toBe(0);
 
-  // 链路的另一头:还原后门禁回到绿。少了它,一条「红到底」的假实现也能满足上面三条。
+  // 链路的另一头:还原后门禁回到绿。少了它,一条「红到底」的假实现也能满足上面四条。
   expect(script("check:no-float").status, "还原后禁浮点门禁没有回到绿").toBe(0);
 });
 

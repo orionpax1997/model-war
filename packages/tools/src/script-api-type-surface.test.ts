@@ -230,8 +230,12 @@ function loop(): void {
   // 那样这一条就只证明「有个叫 type / kind 的字段」,证不出它的取值域。
   const unitType: "worker" | "melee" | "ranged" | "cavalry" = snap.units[0]!.type;
   const siteKind: "base" | "resource" = snap.sites[0]!.kind;
+  // 产线订单的 type 也是契约面逐字段承诺的一栏(type 与 remainingTicks),单独读一次。
+  const producedType: "worker" | "melee" | "ranged" | "cavalry" | null =
+    snap.sites[0]!.producing?.type ?? null;
   void unitType;
   void siteKind;
+  void producedType;
 }
 `;
   const result = compile(probe);

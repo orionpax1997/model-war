@@ -86,7 +86,7 @@ it("载荷含 events:同一份状态、不同的事件流,哈希不同", () => {
   const state = makeState();
   const quiet = buildTickLine(state, NO_EVENTS);
   const noisy = buildTickLine(state, [{ kind: "unit-destroyed", subjectId: 1 }]);
-  // 「events 不进载荷」的反例:去掉 events 栏,这一条红——而战报只消费 events,
+  // 「events 不进载荷」的反例:去掉 events 栏,这一条红——而叙事战报只消费 events,
   // 事件流不进哈希等于「同一状态的两份回放无法区分」。
   expect(quiet.stateHash).not.toBe(noisy.stateHash);
 });
