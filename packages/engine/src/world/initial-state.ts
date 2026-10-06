@@ -10,7 +10,7 @@
 
 import type { MapDefinition, Ruleset } from "@model-war/replay";
 import { apply } from "../driver/apply.js";
-import { createIdGen, peekNextId } from "../driver/id-gen.js";
+import { ID_START } from "../driver/id-gen.js";
 import {
   isUnitType,
   type GameState,
@@ -67,6 +67,35 @@ const mainBaseOf = (sites: readonly Site[], owner: PlayerIndex): Site => {
 };
 
 /**
+ * 初始单位的取号起点:地图里所有点位号之上的第一个号,且不低于 `ID_START`。
+ *
+ * ── 为什么必须抬到地图号之上 ──
+ * 契约要求**一个全局 id 空间**:`getObjectById(id: number): Unit | Site | null`
+ * (`docs/rules-v1/api.md`,类型面真源与其一致),一个 id 查出来要么是单位要么是点位。
+ * 而点位号来自地图(`create-site` 用 `change.id`、引擎不重编号),单位号从 `nextId` 起;
+ * 两边各占一段**互不相交**的号段,这个输入返回值才有意义。不抬高,开局的 8 个单位就会拿到
+ * 1..8、与点位号 1..8 撞个正着,同号的点位会把单位遮住——`attack` 的 `targetId`、`harvest` 的
+ * `siteId`、`spawnUnit` 的 `baseId` 都按 id 在同两个数组里查,于是那些单位一个都用不到。
+ *
+ * ── 为什么不在 `create-unit` 里「跳号避开点位」 ──
+ * 号段要由**开局一次**定下,而不是依赖「当前谁活着」或「地图此刻有几个点位」:id 语义是
+ * 全局单调递增、含被销毁对象(hld §4.1)。开局把起点抬到所有地图号之上以后,对局中
+ * `allocateId` 照旧只做「取号、号 + 1」,号段永远不会再落回地图号区间。
+ *
+ * ── 为什么落在这份初始字面量里而不是一条 `apply()` 变更 ──
+ * 「抬高号段」是状态出生的一部分,不是对局中的一次写操作:它没有前一个状态可写,
+ * 而给 `Change` 加一条只有开局用得上的登记,只会让「唯一写入口」那张表多一条噪声。
+ */
+const firstUnitId = (sites: readonly { readonly id: number }[]): number => {
+  // 以 `ID_START - 1` 起手,于是没有点位的地图仍从 `ID_START` 起(地板,不塌陷)。
+  let highest = ID_START - 1;
+  for (const site of sites) {
+    highest = Math.max(highest, site.id);
+  }
+  return highest + 1;
+};
+
+/**
  * 造开局状态。`units`/`sites` 已按数值 id 升序(由 `apply()` 维持,不是这里排的)。
  *
  * 四方开局条件严格对等(gdd §3.3):资金一律取规则集的 `initialResources`,不按座位打折——
@@ -85,7 +114,7 @@ export const createInitialState = (ruleset: Ruleset, map: MapDefinition): GameSt
     })),
     units: [],
     sites: [],
-    nextId: peekNextId(createIdGen()),
+    nextId: firstUnitId(map.sites),
     outcome: null,
     firstContactTick: null,
   };
