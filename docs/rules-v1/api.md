@@ -263,6 +263,8 @@ function loop() {
 <!-- generated:api-v1-api-surface:begin -->
 > 本节三张表是**生成物**,勿手改:由 `packages/tools/src/generate/api-surface.ts` 从
 > `packages/schema/src/script-surface.ts`(注入面符号表)与 `packages/schema/src/script-outcome.ts`(后果行)产出。
+> **API 表的「签名」那一栏投影自类型面**
+> `packages/schema/script-api/index.d.ts`,它才是签名的家(符号表不再自己写一份)。
 > 改真源后跑 `pnpm run generate`;手改会在下一次生成时被原样覆盖,并被生成物漂移检查
 > (`check:drift`)判红。
 
@@ -274,16 +276,16 @@ function loop() {
 | --- | --- | --- |
 | `getTick` | `getTick(): number` | 当前 tick 号;脚本每 tick 都要读一次时间轴,读出来是个数值。 |
 | `getObjectById` | `getObjectById(id: number): Unit \| Site \| null` | 按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。 |
-| `getObjectsByType` | `getObjectsByType(kind: 'unit' \| 'site' \| 'player', filter?: { owner?: -1\|0\|1\|2\|3; type?: UnitType; kind?: 'base' \| 'resource' }): (Unit \| Site \| Player)[]` | 按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的批量入口。四个座位的资源、存活与异常计数也从这里读,不必在脚本里另记一份。 |
+| `getObjectsByType` | `getObjectsByType(kind: "unit", filter?: UnitFilter): Unit[] / getObjectsByType(kind: "site", filter?: SiteFilter): Site[] / getObjectsByType(kind: "player", filter?: PlayerFilter): Player[]` | 按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的批量入口。四个座位的资源、存活与异常计数也从这里读,不必在脚本里另记一份。 |
 | `getRange` | `getRange(ax: number, ay: number, bx: number, by: number): number` | 两点间 Chebyshev 距离;射程心算要读它算出来的那个数值。 |
-| `getTerrainAt` | `getTerrainAt(x: number, y: number): 'plain' \| 'wall' \| 'out'` | 某格地形(`plain`/`wall`/`out`);绕墙寻路之前先读它。 |
-| `findPath` | `findPath(sx: number, sy: number, tx: number, ty: number): { x: number; y: number }[] \| null` | 寻路路径是一串坐标点,读得到的就是值;它计入 API 调用预算,而预算值不归这张表。 |
+| `getTerrainAt` | `getTerrainAt(x: number, y: number): "plain" \| "wall" \| "out"` | 某格地形(`plain`/`wall`/`out`);绕墙寻路之前先读它。 |
+| `findPath` | `findPath(sx: number, sy: number, tx: number, ty: number): { readonly x: number; readonly y: number }[] \| null` | 寻路路径是一串坐标点,读得到的就是值;它计入 API 调用预算,而预算值不归这张表。 |
 
 **动作函数**——收集一条意图 + 参数界检查,不直写引擎。
 
 | 函数 | 签名 | 一句语义 |
 | --- | --- | --- |
-| `move` | `move(unitId: number, dx: -1\|0\|1, dy: -1\|0\|1): void \| ErrResult` | 走一步(含对角),提交一条单位级意图。 |
+| `move` | `move(unitId: number, dx: -1 \| 0 \| 1, dy: -1 \| 0 \| 1): void \| ErrResult` | 走一步(含对角),提交一条单位级意图。 |
 | `moveTo` | `moveTo(unitId: number, x: number, y: number): void \| ErrResult` | 朝目标点走一步,提交一条单位级意图;路径由引擎沿 `findPath` 走。 |
 | `attack` | `attack(unitId: number, targetId: number): void \| ErrResult` | 攻击敌方单位,提交一条单位级意图。 |
 | `harvest` | `harvest(unitId: number, siteId: number): void \| ErrResult` | 在己方资源点采集,提交一条单位级意图。 |
@@ -294,7 +296,7 @@ function loop() {
 
 | 函数 | 签名 | 一句语义 |
 | --- | --- | --- |
-| `getMyIndex` | `getMyIndex(): 0\|1\|2\|3` | 座位自认的唯一正式入口;快照里没有 `you`/`isSelf` 标记,别靠单位位置反推座位。 |
+| `getMyIndex` | `getMyIndex(): 0 \| 1 \| 2 \| 3` | 座位自认的唯一正式入口;快照里没有 `you`/`isSelf` 标记,别靠单位位置反推座位。 |
 
 **错误判别 helper**——把动作函数的返回值拆成可判的两步。
 
@@ -457,6 +459,10 @@ function loop() {
 
   for (let i = 0; i < mine.length; i += 1) {
     const unit = mine[i];
+    if (unit === undefined) {
+      // 数组下标可能取不到元素，判一下再用。
+      continue;
+    }
     const enemy = nearestEnemyId(unit, foes);
     if (enemy === null) {
       continue;
