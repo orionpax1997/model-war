@@ -1,10 +1,16 @@
 /**
- * **形状的行格式已定、取值域与语义未交付**的一类数据(ADR-0003、spec《Out of Scope》第 1 条)。
+ * **「形状的行格式已定、取值域与语义未交付」那类数据的清单(现已清空)**。
  *
- * 五类数据的家都在真源包(规则集 / 地图 / 存档 meta / result / 回放行)。**已落库四类**:
- * 规则集(`ruleset.ts`)、地图(`map.ts`)、存档 meta(`archive-meta.ts`,本 feature 提前定死,
- * 见下面 `archive-meta` 那条销账说明)、对局输入 `input.json`(`match-input.ts`)与回放行
- * (`replay-line.ts`,本 feature 的 02b 落)。**仍挂着的只有 `result`**。
+ * 五类数据的家都在真源包(规则集 / 地图 / 存档 meta / result / 回放行),现在**五类全部落库**:
+ * 规则集(`ruleset.ts`)、地图(`map.ts`)、存档 meta(`archive-meta.ts`)、对局输入 `input.json`
+ * (`match-input.ts`)与回放行(`replay-line.ts`,含末行 `result` 的终局原因取值域)。
+ *
+ * ── 本文件为什么还留着 ──
+ * 它曾经挂着 `match-result`(末行 `result` 的终局原因取值域与名次语义),由本 feature 的 **09 票**
+ * 销账:四个取值收成封闭联合、写进 `replay-line.ts` 的 `ReplayOutcomeReason`,JSON Schema 收成
+ * `enum`,读入端校验落在 `apps/cli/src/validator.ts` 的 `validateReplayResultLine`。文件名与文件头
+ * 保留,是为了让「有没有一条还没定稿的形状」这个问题**有一个固定的落点**——而不是让它散在
+ * 各域文件里靠人记。将来真出现一条尚未定稿的形状,在这里加回一个取值并写清回填触发条件即可。
  *
  * - 刻意**不**给它写一份 `additionalProperties: true` 的空 schema 充数。放行额外属性
  *   等于不校验,却会让人以为「存档 meta 已校验」——比不写更坏(FR-10 AC2 的覆盖范围
@@ -17,7 +23,14 @@
  * 每个条目的回填触发条件写在各自的注释里;它们是**人读的约定**,不是机器判定的依据。
  */
 
-export type PendingShapeId = "match-result";
+/**
+ * 待回填形状的取值集合。**现在是空集(`never`)**——所有形状已销账。
+ *
+ * 用 `never` 而不是留一个空数组:空数组的类型仍是「某个取值联合的数组」,读起来像「还有几条
+ * 只是没列出来」;`never` 是一句能让编译器复核的话——「没有待回填的形状」。加回一条时,
+ * 这里写回那个取值,`PENDING_SHAPES` 的数组字面量才编得过。
+ */
+export type PendingShapeId = never;
 
 /**
  * **`archive-meta` 已销账(本 feature 的 01 票)**:形状由 `archive-meta.ts` 定死,
@@ -35,13 +48,14 @@ export type PendingShapeId = "match-result";
  * 要么跳过读入端校验,两条都是那条纪律点名要拒的——而 `modelwar match` 的第一件事就是装载
  * 输入,拖到脊柱那张票之后等于让脊柱带着一个它被禁止自己用的东西往前走。
  *
- * - `match-result`:回放末行 `result` 的**终局原因取值域与名次语义**(hld §7.5)。回填归 engine 侧;
- *   那个枚举要靠判别联合拿穷尽性(NFR-1)。注意边界:**行格式**(三栏的名字与类型)已随
- *   `replay-line.ts` 定死,留在这里的只是「`reason` 收哪几个取值」与「名次怎么算」;
- *   在它定稿之前不把四个取值抄进 `replay-line.ts`,就是给一个还没定稿的事实写第二个家。
+ * - `match-result`:**已销账(本 feature 的 09 票)**:末行 `result` 的终局原因取值域由
+ *   `replay-line.ts` 的 `ReplayOutcomeReason` 与它旁边的 `enum` 定死,名次语义由
+ *   `packages/engine/src/processor/outcome.ts` 按 gdd《胜利与淘汰》四条实现,读入端校验由
+ *   `apps/cli/src/validator.ts` 的 `validateReplayResultLine` 提供。那四条取值不再有第二个家:
+ *   engine 侧是从本包派生的**别名**。
  * - `replay-line`:**已销账(本 feature 的 02b 票)**:三行的形状由 `replay-line.ts` 定死
  *   (`type` 与 `additionalProperties: false` 的判别读入、逐字逐栏的类型与 JSON Schema),
  *   `pending.ts` 原来记着的理由是「字段随那一票的实现才确定」——而写出侧早就在写它了,
  *   所以「字段还可能变」这件事已经不成立,剩下没落的只是「没落库」。
  */
-export const PENDING_SHAPES: readonly PendingShapeId[] = ["match-result"];
+export const PENDING_SHAPES: readonly PendingShapeId[] = [];

@@ -19,6 +19,7 @@ import {
   ARCHIVE_META_JSON_SCHEMA,
   MAP_JSON_SCHEMA,
   MATCH_INPUT_JSON_SCHEMA,
+  REPLAY_RESULT_LINE_JSON_SCHEMA,
   RULESET_JSON_SCHEMA,
   RULESET_KEYS,
   RULESET_VERSION,
@@ -30,6 +31,8 @@ import type {
   MapVariantSlot,
   MatchInput,
   MatchInputArchive,
+  ReplayOutcomeReason,
+  ReplayResultLine,
   Ruleset,
   UnitStats,
 } from "@model-war/schema";
@@ -46,6 +49,7 @@ import {
   validateArchiveMeta,
   validateMap,
   validateMatchInput,
+  validateReplayResultLine,
   validateRuleset,
   type ArchiveMetaProvenance,
   type MatchInputProvenance,
@@ -1235,4 +1239,101 @@ it("同一份坏数据两次校验给出同一份诊断(诊断本身必须稳定
 
   const brokenInput = badInput(GOOD_INPUT, { ruleset: "v2" });
   expect(rejectInput(brokenInput)).toEqual(rejectInput(brokenInput));
+});
+
+// ── 回放末行 result(09 票:类型 / JSON Schema / 读入端三层里的第三层)───────────
+
+/**
+ * 类型级断言:JSON Schema 里 `reason` 的枚举与类型侧的 `ReplayOutcomeReason` 逐字相同。
+ * 两侧各改一个值而只改一边时,`tsc -b` 非零退出——这是「类型是上游、schema 手工对齐」这条
+ * 路线上唯一能提前抓住漂移的东西(与本文件顶部那两条键集合断言同源)。
+ */
+type ResultReasonEnum =
+  (typeof REPLAY_RESULT_LINE_JSON_SCHEMA)["properties"]["reason"]["enum"][number];
+export type ResultReasonEnumMatchesType = Assert<Equals<ResultReasonEnum, ReplayOutcomeReason>>;
+
+/** 一份完整的合法末行。名次可并列、领土分非负、`reason` 在枚举内。 */
+const GOOD_RESULT: ReplayResultLine = {
+  type: "result",
+  rankings: [1, 2, 2, 4],
+  reason: "victory",
+  territoryScores: [12, 4, 4, 0],
+};
+
+/** 改坏数据:换值 / 删键,与上面几份同一套手法。 */
+const badResult = (
+  patch: Record<string, JsonValue> = {},
+  drop: readonly string[] = [],
+): JsonValue =>
+  Object.fromEntries(
+    Object.entries({ ...GOOD_RESULT, ...patch }).filter(([key]) => !drop.includes(key)),
+  );
+
+const rejectResult = (value: JsonValue) => {
+  const result = validateReplayResultLine(value);
+  if (result.ok) {
+    throw new Error(`本该被拒绝,却被接受了:${JSON.stringify(value)}`);
+  }
+  return result;
+};
+
+const resultKeywords = (result: ReturnType<typeof rejectResult>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.keyword);
+
+const resultPointers = (result: ReturnType<typeof rejectResult>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.pointer);
+
+it("回放 result:合法行被接受,并把原值交出来(不重写、不裁剪)", () => {
+  const result = validateReplayResultLine(GOOD_RESULT);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.result).toEqual(GOOD_RESULT);
+  }
+});
+
+it("回放 result schema 的必填键就是四栏,且与 properties 一一对应", () => {
+  const required = [...REPLAY_RESULT_LINE_JSON_SCHEMA.required];
+  expect(required).toEqual(["type", "rankings", "reason", "territoryScores"]);
+  expect([...required].sort()).toEqual(
+    Object.keys(REPLAY_RESULT_LINE_JSON_SCHEMA.properties).sort(),
+  );
+});
+
+it("回放 result:删掉任意一个必填项即被拒,诊断指向那个键(四栏逐项)", () => {
+  for (const key of REPLAY_RESULT_LINE_JSON_SCHEMA.required) {
+    const result = rejectResult(badResult({}, [key]));
+    expect(resultKeywords(result), `删掉 ${key} 竟不是缺键错`).toEqual(["required"]);
+    expect(resultPointers(result)).toEqual([`/${key}`]);
+  }
+});
+
+it("回放 result:多一个未声明的栏即被拒", () => {
+  const result = rejectResult(badResult({ mystery: 1 }));
+  expect(resultKeywords(result)).toEqual(["additionalProperties"]);
+  expect(resultPointers(result)).toEqual(["/mystery"]);
+});
+
+it("回放 result:reason 取值不在四值枚举内即被拒(封闭联合在读入端的形状)", () => {
+  const result = rejectResult(badResult({ reason: "surrender" }));
+  expect(resultKeywords(result)).toEqual(["enum"]);
+  expect(resultPointers(result)).toEqual(["/reason"]);
+});
+
+it("回放 result:名次与领土分都是定长四元组,长度不对即被拒", () => {
+  expect(resultKeywords(rejectResult(badResult({ rankings: [1, 2, 3] })))).toEqual(["minItems"]);
+  expect(resultKeywords(rejectResult(badResult({ rankings: [1, 2, 3, 4, 5] })))).toEqual([
+    "maxItems",
+  ]);
+  expect(resultKeywords(rejectResult(badResult({ territoryScores: [0, 0, 0] })))).toEqual([
+    "minItems",
+  ]);
+});
+
+it("回放 result:名次低于 1、领土分为负、类型不对都被拒", () => {
+  expect(resultKeywords(rejectResult(badResult({ rankings: [0, 1, 2, 3] })))).toEqual(["minimum"]);
+  expect(resultKeywords(rejectResult(badResult({ territoryScores: [-1, 0, 0, 0] })))).toEqual([
+    "minimum",
+  ]);
+  expect(resultKeywords(rejectResult(badResult({ type: "tick" })))).toEqual(["enum"]);
+  expect(resultKeywords(rejectResult(badResult({ rankings: "1,2,3,4" })))).toEqual(["type"]);
 });

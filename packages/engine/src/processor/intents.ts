@@ -71,10 +71,28 @@ type KeyedIntent = {
   readonly intent: Intent;
 };
 
+/**
+ * 带上「谁下的」的 intent。
+ *
+ * ── 为什么座位要跟着 intent 走到步 2 ──
+ * 两条事实都要 `playerIndex`:移动裁决的轮转优先值 `(tick + playerIndex) mod 4`,以及 `check()`
+ * 的「属主正确」(一个座位不能移动另一个座位的单位)。把座位在分组时丢掉,这两件事就只能靠
+ * 「单位自己的 owner」反推——而反推恰好把「属主正确」弄成恒真:「seat 0 挪 seat 1 的单位」
+ * 会被静默当成 seat 1 下的单。分组时就带上座位,两件事都答得对。
+ */
+export type IssuedIntent = {
+  readonly seat: PlayerIndex;
+  readonly intent: Intent;
+};
+
 const bySeatThenId = (left: KeyedIntent, right: KeyedIntent): number =>
   left.seat - right.seat || orderOf(left.intent) - orderOf(right.intent);
 
-export const groupIntents = (drained: readonly DrainedIntents[]): readonly Intent[] => {
+/**
+ * 分组 + 定序的**实现**,并保留了座位。步 1 直接用它(它要判属主、要用轮转优先)。
+ * 上面那段「一次排序把两类 intent 一起排」的理由适用于本函数,不再重述。
+ */
+export const groupIssuedIntents = (drained: readonly DrainedIntents[]): readonly IssuedIntent[] => {
   // 键带上座位:「按单位分组」是**每座位各自**分组(hld §4.3 第 1 步按 playerIndex 0..3 串行),
   // 即使单位 id 全局唯一,也不让两席位的同号单位互相顶替。
   const keptPerUnit = new Map<string, KeyedIntent>();
@@ -90,5 +108,9 @@ export const groupIntents = (drained: readonly DrainedIntents[]): readonly Inten
     }
   }
   // 一次排序把两类 intent 一起排掉,而不是各自排完再前后拼接(理由见头注)。
-  return [...keptPerUnit.values(), ...playerLevel].sort(bySeatThenId).map(({ intent }) => intent);
+  return [...keptPerUnit.values(), ...playerLevel].sort(bySeatThenId);
 };
+
+/** 分组 + 定序,丢掉座位。保留它是为了不把「只要一批有序 intent」的调用方卷进座位那一栏。 */
+export const groupIntents = (drained: readonly DrainedIntents[]): readonly Intent[] =>
+  groupIssuedIntents(drained).map(({ intent }) => intent);

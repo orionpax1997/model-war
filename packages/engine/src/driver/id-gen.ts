@@ -16,7 +16,14 @@ export type IdGen = {
   readonly next: number;
 };
 
-/** 起始号。对象号从 1 起,0 留空——「0 号」在本仓不作任何有意义的对象。 */
+/**
+ * 分配器的起点,也是**没有地图号时的地板**。
+ *
+ * 号空间自 0 起稠密,而**地图声明的那批点位号占据低端**——本仓三张真图的点位号是 0..27,
+ * 其中就有 0 号点位。所以「0 是留空的、不作对象号」是句假话;0 在本仓是一个合法的点位号。
+ * `ID_START` 只是单位分配器在「地图一个点位都没有」时从哪个号起,不是「号空间的下界」。
+ * 开局时 `createInitialState` 会把它抬到所有地图号之上(见 `world/initial-state.ts`)。
+ */
 export const ID_START = 1;
 
 export const createIdGen = (): IdGen => ({ next: ID_START });

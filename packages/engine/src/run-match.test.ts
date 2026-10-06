@@ -85,7 +85,8 @@ it("末行 result:空转对局按 gdd 是全部并列的超时(不是空排名�
   expect(result.reason).toBe("timeout");
   // 全部并列是空转对局的**诚实答案**(四方领土分相同),而空数组会被战报读成「打完了」。
   expect(result.rankings).toEqual([1, 1, 1, 1]);
-  expect(result.territoryScores).toEqual([0, 0, 0, 0]);
+  // 领土分不再是占位的 0:每人 1 基地(4) + 1 资源(1) + 2 农民(造价 4×2=8,⌊8/6⌋=1) = 6。
+  expect(result.territoryScores).toEqual([6, 6, 6, 6]);
   // 写出的末行与返回的终局一致(两者是同一件事的两条读法)。
   expect(JSON.parse(lines.at(-1) ?? "{}")).toEqual(result);
 });

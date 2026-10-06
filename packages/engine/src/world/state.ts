@@ -18,8 +18,24 @@
  * 类型一律用 `type` 而非 `interface`:进回放的形状必须可赋给 `JsonValue`,而只有类型别名拿得到隐式索引签名。
  */
 
+import type { ReplayOutcomeReason } from "@model-war/replay";
+
 /** 座位下标。固定 0..3,顺序即 playerIndex 串行执行顺序(hld §2.3)。 */
 export type PlayerIndex = 0 | 1 | 2 | 3;
+
+/**
+ * 地形:整局静态的板面(hld §7.3「地图 + 种子 → 地形是纯函数」)。
+ *
+ * ── 为什么是布尔格而不是行字符串 ──
+ * 地形进状态之后,引擎侧**唯一**会问它的问题是「(x, y) 是不是墙」(移动裁决与寻路两处),
+ * 而脚本侧的 `getTerrainAt` 要的也正是这一个答案。行字符串(`"."`/`"#"`)每次查询都要
+ * 先切片再比字符,等于把地图的**书写格式**带进状态的读取路径;布尔格让那个问题退化成一次下标。
+ * 地图那一侧仍旧以行字符串书写(`MapDefinition.terrain`,由地图图的作者编辑),转换只在
+ * `createInitialState` 那一次发生。
+ *
+ * `true` = 墙(不可通行),`false` = 平原。越界由读取方判,不在这里表达。
+ */
+export type Terrain = readonly (readonly boolean[])[];
 
 /** 中立。点位属主的取值域比座位号宽一格(hld §4.1)。 */
 export type NeutralOwner = -1;
@@ -88,8 +104,12 @@ export type Site = {
   readonly producing: SiteProduction | null;
 };
 
-/** 终局原因。四个值,判别联合的穷尽性由 `satisfies never` 一类断言兜住(见 outcome.test)。 */
-export type OutcomeReason = "victory" | "shortcut" | "timeout" | "all-eliminated";
+/**
+ * 终局原因。**它是契约面那份的别名**——取值域的家在 `packages/schema` 的 `ReplayOutcomeReason`
+ * (末行 `result.reason` 的那四个值),这里不再重列第二份取值表(先例见 `replay-writer/tick-line.ts`
+ * 的 `TickPayload = ReplayTickPayload`)。判别联合的穷尽性由 `processor/outcome.ts` 的 `never` 兜住。
+ */
+export type OutcomeReason = ReplayOutcomeReason;
 
 export type Outcome = {
   /** rankings[i] = 玩家 i 的名次(1 起,可并列),由 gdd《胜利与淘汰》的排序规则产生。 */
@@ -108,12 +128,72 @@ export type Outcome = {
 export type GameState = {
   /** 唯一时间单位。 */
   readonly tick: number;
+  /**
+   * 网格边长。
+   *
+   * ── 为什么地形与尺寸进状态,而不是留在开局输入里 ──
+   * hld §4.5 的脚本查询面里有 `getTerrainAt`,而脚本看到的**只有快照**;快照已定稿为
+   * 「`GameState` 的深拷贝」(02a)。地形不进状态,`getTerrainAt` 就没有来源——给快照开一条
+   * 「除状态之外再传一份板面」的第二条路,等于让「快照 = 状态的深拷贝」这句话不再成立。
+   * 移动裁决也要判「目标格是不是墙」,同样只能从这里读。
+   */
+  readonly size: number;
+  /** 地形。整局静态、随状态走;不进 tick 行、不进 `stateHash`(理由见 `replay-writer/tick-line.ts`)。 */
+  readonly terrain: Terrain;
   readonly players: readonly Player[];
   readonly units: readonly Unit[];
   readonly sites: readonly Site[];
   /** 全局单调递增,对象创建时分配;被销毁对象的号不回收。 */
   readonly nextId: number;
   readonly outcome: Outcome | null;
+  /**
+   * 每个座位的淘汰 tick;下标即座位号,`null` = 尚未淘汰、值 = 被淘汰的那个 tick。
+   *
+   * ── 为什么它是一栏独立的、而不挂在 `Player` 上 ──
+   * 名次第三条要「已淘汰者按淘汰时间倒序」,所以每个座位的淘汰时刻必须是一份可读的状态。
+   * 但**不能加在 `Player` 上**:`Snapshot.players` 的类型就是 `Player[]`,而 `Player` 的形状是
+   * **已冻结的契约面**(`docs/rules-v1/api.md` 只有 `index` / `resources` / `alive` / `exceptionTicks`
+   * 四栏,脚本类型面与之逐字对应)。给 `Player` 加一栏会**静默**把它塞进脚本可见面,
+   * 同时让契约面失真。淘汰时刻是引擎内部的记账,与 `nextId` / `outcome` / `firstContactTick`
+   * 同列——**不进 `Snapshot`**(`Snapshot` 是逐字列出的形状,不是 `Pick<GameState>`)。
+   *
+   * 长度恒为四(下标即座位号):它是「四个座位各一份淘汰时刻」,不是一张随淘汰增长的表。
+   */
+  readonly eliminatedAtTick: readonly (number | null)[];
+  /**
+   * 首触(任意敌对单位 Chebyshev ≤ 2)发生的那一 tick;**整局一条**,未发生为 `null`。
+   *
+   * ── 为什么是一个「时刻」而不是一个布尔 ──
+   * 收集器每 tick 新建,而「全局一条」要求跨 tick 记忆——能跨 tick 的只有 `GameState`。
+   * 回放也必须能复现「这是第一次」,所以记忆不能藏在收集器或某处模块级变量里。
+   * 记**时刻**而不是布尔:hld §8.3 的叙事时间线上,首触是要标一个时间点的那件事,
+   * 而布尔的读法 `true` 会把这个时刻丢掉;`null` 与数字的区分同时承担了「有没有发生过」。
+   * 它**不进快照**(脚本不该读到引擎的内部记账,先例是 `nextId` 与 `outcome`)。
+   */
+  readonly firstContactTick: number | null;
+  /**
+   * 每个座位的 `economy-dead` **事件**已发的 tick;下标即座位号,`null` = 这条事件还没发过。
+   *
+   * ── 它为什么不是「经济死亡状态字段」 ──
+   *
+   * 票面明令「状态模型里没有经济死亡字段」。理由是:经济死亡的形式定义是「无任何农民单位且
+   * `resources` < 农民造价」——两个谓词的与,任何人拿 `players[].resources` 与 `units` 一眼能算
+   * (与 `alive` 不同:后者的判定链要重跑整条 evaluate 步,所以配得上字段)。
+   * 本栏记的**不是**那个可算事实,而是「`economy-dead` 这条**事件**在哪一 tick 发过」——
+   * 与 `firstContactTick` 同性质的一份跨 tick 记忆。事件必须**每局每席至多一条**,而收集器每
+   * tick 新建,能跨 tick 的只有状态;回放也必须能复现「这是第一次」。
+   *
+   * 为什么不能用一个 `Player.economicallyDead` 布尔替代:它会是那个可算事实的第二个家,并且会
+   * **撒谎**——玩家可能靠退款(基地易主的全额退款)重新有钱,布尔却停在 `true`。本栏不参与任何
+   * 判据:判据是 `processor/economy.ts` 的纯函数 `isEconomyDead(view, seat, ruleset)`,只读单位表、
+   * 玩家资源与规则集的 `worker.cost`。所以「不可逆」只对**事件**成立(发过不再发),不对玩家的
+   * 实际经济状态成立。反向用例钉住这三件事(见 `processor/economy.test.ts`):
+   * `Player` 键集恰好四栏、快照键集无 `economy*` 栏、判据不读本栏。
+   *
+   * 它**不进 `Snapshot`**(与 `nextId` / `outcome` / `eliminatedAtTick` / `firstContactTick` 同列):
+   * 脚本可见面里没有任何一栏断言玩家的经济状态。长度恒为四(下标即座位号)。
+   */
+  readonly economyDeadAtTick: readonly (number | null)[];
 };
 
 /**
@@ -123,11 +203,18 @@ export type GameState = {
  * 契约面对模型承诺了字段名,「字段名在这段声明期间不改」,于是这份清单只能被显式地写出来,
  * 靠一个 `Pick` 隐式跟着状态走的话,给状态加一栏会**静默**把那一栏塞进脚本可见面。
  *
- * 少掉的两栏是有理由的:对象 id 的分配器(`nextId`)与终局结果(`outcome`)是引擎内部的,
- * 契约面点名它们「不在快照里,别去找」。
+ * 少掉的几栏是有理由的:对象 id 的分配器(`nextId`)、终局结果(`outcome`)、淘汰时刻
+ * (`eliminatedAtTick`)、首触记账(`firstContactTick`)与经济死亡**事件**的闩
+ * (`economyDeadAtTick`)是引擎内部的,契约面点名它们「不在快照里,别去找」。脚本可见面里
+ * **没有**任何一栏断言玩家的经济状态。
+ *
+ * `size` / `terrain` 在快照里**是为了 `getTerrainAt`**,不是因为「顺手多带一路板面」:
+ * hld §4.5 的脚本查询面需要它,而快照是脚本唯一能看到的世界。
  */
 export type Snapshot = {
   readonly tick: number;
+  readonly size: number;
+  readonly terrain: Terrain;
   readonly players: readonly Player[];
   readonly units: readonly Unit[];
   readonly sites: readonly Site[];

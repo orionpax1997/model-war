@@ -12,7 +12,14 @@ import { HOST_BRIDGE_DRAIN_INTENTS, HOST_BRIDGE_SET_SNAPSHOT, type SeatRunner } 
 import { stubRunner } from "./stub.js";
 import type { Snapshot } from "../world/state.js";
 
-const snapshotOf = (tick: number): Snapshot => ({ tick, players: [], units: [], sites: [] });
+const snapshotOf = (tick: number): Snapshot => ({
+  tick,
+  size: 0,
+  terrain: [],
+  players: [],
+  units: [],
+  sites: [],
+});
 
 it("两个桥名由真源包的宿主桥前缀拼出,与静态校验器那条 `__*` 禁令是同一道纪律", () => {
   // 手写字面量 "__setSnapshot" 的反例:改这里的实现让名字脱离前缀常量,这一条红,

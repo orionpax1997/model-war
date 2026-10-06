@@ -30,11 +30,13 @@
  * 状态模型多一栏、少一栏或改一栏型,那条用例当场红。「两份」在这一格是**由编译器兜住的
  * 两份**,不是靠自觉同步的两份。
  *
- * ── 末行 `result` 的 `reason` 刻意只约束成字符串 ───────────────────────────────
+ * ── 末行 `result` 的 `reason` 是一个封闭的判别联合 ─────────────────────────────
  *
  * `rankings` / `reason` / `territoryScores` 三栏是 hld §7.5 逐字列出的,故本文件把它们定死;
- * 而**终局原因的取值域与名次语义**归 `match-result`(pending 那一条,留给 09 票定稿)。
- * 在它定稿之前把四个取值抄进本文件,就是给一个还没定稿的事实写第二个家。
+ * 而**终局原因的取值域**原来挂在 `match-result`(pending 那一条),留待 09 票定稿——本票(09)
+ * 把它销掉:四个取值(`ReplayOutcomeReason`)在这里定死,与 gdd《胜利与淘汰》一一对应。
+ * engine 侧的 `OutcomeReason` 是**本类型的别名**(不重列第二份取值表,理由见 `replay/index.ts`
+ * 的 `TickPayload = ReplayTickPayload` 那条先例),于是「原因取值域」只有一个家。
  */
 
 import type { RulesetVersion } from "./index.js";
@@ -173,15 +175,29 @@ export type ReplayTickLine = ReplayTickPayload & {
 };
 
 /**
+ * 终局原因。四个取值,gdd《胜利与淘汰》逐条对应:
+ *
+ * - `victory`:单一玩家控制地图上全部点位(含敌方主基地)的瞬间获胜;
+ * - `shortcut`:其余三方全部被淘汰时,仅剩玩家立即获胜;
+ * - `timeout`:tick 达 `tickLimit`,无人胜出;
+ * - `all-eliminated`:同一 tick 四方全部出局,无胜者(名次按淘汰时间倒序,首名是最后出局者)。
+ *
+ * 它是**契约面的那一份**(末行 `result.reason` 的取值域),engine 的 `OutcomeReason` 是它的别名。
+ * 判别联合的穷尽性由 engine 侧的 `never` 兜住(见 `processor/outcome.ts` 的 `winnerSeatOf`)。
+ */
+export type ReplayOutcomeReason = "victory" | "shortcut" | "timeout" | "all-eliminated";
+
+/**
  * 末行 `result`。三栏逐字来自 hld §7.5。
  *
- * `reason` 的**取值域**归 `match-result`(pending 那一条),本票只落「有这一栏、它是字符串」。
- * `rankings[i]` 是玩家 i 的名次(1 起、可并列)。
+ * `reason` 的取值域由 `ReplayOutcomeReason` 定死(09 票销掉 `match-result` 那条 pending);
+ * `rankings[i]` 是玩家 i 的名次(1 起、可并列),由 gdd《胜利与淘汰》的名次四条产生;
+ * `territoryScores[i]` 是玩家 i 的领土分,已淘汰者恒为 0(是那条公式的推论)。
  */
 export type ReplayResultLine = {
   readonly type: "result";
   readonly rankings: readonly number[];
-  readonly reason: string;
+  readonly reason: ReplayOutcomeReason;
   readonly territoryScores: readonly number[];
 };
 
@@ -467,15 +483,16 @@ export const REPLAY_TICK_LINE_JSON_SCHEMA = {
 /**
  * 末行 `result` 的 JSON Schema(hld §7.5)。
  *
- * `rankings` 与 `territoryScores` 定长四元组(下标即座位);`reason` 只约束成字符串——
- * **取值域归 `match-result`**(pending 那一条),在它定稿之前不把四个取值抄进来。
+ * `rankings` 与 `territoryScores` 定长四元组(下标即座位);`reason` 收成 `enum`——四个取值与
+ * 类型侧的 `ReplayOutcomeReason` 逐字相同,两侧漂移由 `validator.test.ts` 的枚举断言与
+ * `replay-line.test.ts` 的双向断言盯着。
  */
 export const REPLAY_RESULT_LINE_JSON_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   title: "model-war 回放 result 行",
   description:
-    "回放 JSONL 的末行(hld §7.5):名次、终局原因、领土分。reason 的取值域与名次语义归 " +
-    "match-result(尚未定稿),本 schema 只落行格式。",
+    "回放 JSONL 的末行(hld §7.5):名次、终局原因、领土分。reason 是四值判别联合" +
+    "(victory/shortcut/timeout/all-eliminated),名次按 gdd《胜利与淘汰》的四条产生。",
   type: "object",
   additionalProperties: false,
   required: RESULT_REQUIRED_KEYS,
@@ -488,12 +505,15 @@ export const REPLAY_RESULT_LINE_JSON_SCHEMA = {
       description: "名次,下标即座位号,取值 1 起、可并列(gdd《胜利与淘汰》)。",
       items: { type: "integer", minimum: 1 },
     },
-    reason: { type: "string", minLength: 1, description: "终局原因;取值域见 match-result。" },
+    reason: {
+      enum: ["victory", "shortcut", "timeout", "all-eliminated"],
+      description: "终局原因;取值域与类型侧的 ReplayOutcomeReason 逐字相同。",
+    },
     territoryScores: {
       type: "array",
       minItems: 4,
       maxItems: 4,
-      description: "领土分,下标即座位号(gdd《胜利与淘汰》的那条公式)。",
+      description: "领土分,下标即座位号(gdd《胜利与淘汰》的那条公式);已淘汰者恒为 0。",
       items: { type: "integer", minimum: 0 },
     },
   },
