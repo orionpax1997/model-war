@@ -27,7 +27,7 @@ spike 落在 `.scratch/sandbox-budget/spike/`(`run-all.sh` 一键复现,原始�
 5. **确定性冻结**:冻钟+tz 0+固定 random 后,tick/VM/重跑三维度全部一致(含 PRNG 同种子同序列,重跑 digest `648fc882a638db3a`);`performance.now()` 同被冻结但 `performance`/`eval`/`queueMicrotask` 在场 → 进 validator 污染源名单。
 6. **跨边界开销**:载荷型桥 ≈5µs+2.6µs/KB(1KB≈12–25µs / 16KB≈54–67µs / 64KB≈173–186µs 每 tick);逐函数注入 ≈0.85µs/次(密度无关);~60 次调用/tick 是两形态交叉点;空 tick 蹦床 0.7–0.9µs。供票「跨边界调用形态对比」。
 
-§5 断言 11 条判定(✅7 / ❌4 / ⚠️1)见 FINDINGS §7;M7 顺带补测了票「quickjs-wasi 语义核查」的第 6 项(无 loader 时 import 行为、默认全局面盘点),可直接并入该票。
+§5 断言 11 条判定(✅6 / ❌4 / ⚠️1)见 FINDINGS §7;M7 顺带补测了票「quickjs-wasi 语义核查」的第 6 项(无 loader 时 import 行为、默认全局面盘点),可直接并入该票。
 
 ## Comments
 

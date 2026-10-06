@@ -358,7 +358,7 @@ model-war/
 | engine:processor | 结算管线(顺序为数据)+ `intents/*.ts` 的 `check()`/`run()` 注册表 | FR-1、FR-3 AC3 |
 | engine:world | 状态模型、对象系统、只读查询 | FR-1 |
 | engine:snapshot | 只读快照构建与只读封存 | FR-3 AC1 |
-| engine:runner | 执行器缝:`Runner` 接口 + `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身) | FR-4、§5.2 |
+| engine:runner | 执行器缝:`SeatRunner` 接口 + `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身) | FR-4、§5.2 |
 | engine:sandbox-runtime | 沙箱内 API 面(TS → IIFE bundle,版本 + hash 入 meta) | FR-4 |
 | engine:replay-writer | JSONL 写出(行格式取自 `schema` 包,§2.2.5;写向注入的输出 sink,不直接碰 `fs`) | FR-2 AC2 |
 | engine:ruleset-loader | 参数装载与版本比对 | NFR-4 AC1、FR-10 AC2 |
@@ -392,7 +392,7 @@ packages/tools ──→ @model-war/schema   依赖图的根,本包唯一允许�
 - `runner` 与报告/叙事代码**不得 import `engine`**:只以子进程 + 文件消费。`apps/cli` 通过 engine 公共 API 调用 match / verify,而 map-lint 是 CLI 自己的模块(§3.1、§9)。
 - `engine` 不 import `runner`/`gen`;`gen ⇎ engine`,且 `gen` 禁 import 任何 result 类型(FR-5 AC1)。
 - `engine` 内除 `node:crypto` 外禁一切 `node:*`。
-- `engine` 内部单向:`world → driver → processor → replay-writer`;`world → snapshot → runner(Runner 缝 → sandbox-runtime)`。`sandbox-runtime` 不 import 宿主代码,只消费 `schema` 生成的常量/API 名表。
+- `engine` 内部单向:`world → driver → processor → replay-writer`;`world → snapshot → runner(SeatRunner 缝 → sandbox-runtime)`。`sandbox-runtime` 不 import 宿主代码,只消费 `schema` 生成的常量/API 名表。
 - 上述规则全部由 dependency-cruiser 强制(§2.2.10),违规直接导致全量门禁失败。
 - **工具包只允许 import 真源包这一个根包**,不得 import `replay` / `engine` / `runner` / `gen` / `apps/cli`(ADR-0003 的混合传输:名单类数据的真源在 `schema`,工具包经生成器拿生成物)。这条边指向依赖图的根,方向合法;**但它没有机器守护**,见下面那段缺口说明。
 - **作用域:本节全部规则只作用于运行时代码,测试代码豁免。理由**:门禁约束的是运行时行为——进对局进程的代码路径;测试代码不进对局进程(测试与属性测试必然要读盘、spawn 进程、依赖 vitest),不构成隔离风险(§2.2.10 第 1 条)。
@@ -548,7 +548,7 @@ type Intent =
 
 每方脚本运行在一个独立 QuickJS VM(WASM 实例)中,同对局进程、每 tick 按 playerIndex 串行执行。
 
-**边界说明**:不为"未来换 VM"保留抽象层(那是投机抽象);§5.0 的 `Runner` 缝**只为可测性**存在。
+**边界说明**:不为"未来换 VM"保留抽象层(那是投机抽象);§5.0 的 `SeatRunner` 缝**只为可测性**存在。
 
 ### 5.0 选型结论
 
@@ -570,7 +570,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 - **预算可复现**:`interruptHandler` 每 5000 次控制流事件(循环回边/调用/返回)触发一次(回调内自乘计数),与 API 调用计数构成双主判据——实测口径是**控制流事件计数**而非指令计数(直线代码不计量,由 §6.2 脚本体积上限封盲区);`memoryLimit` 超限(≥3.5.0)表现为**可捕获的 JS 异常**(`InternalError: out of memory`),内存判据锚定 tick 末存活堆读数(§5.3)——均不依赖墙钟。回调开销与粒度已实测校对(纯计数 handler 对比无 handler 拖慢 −2.5%~+2.4%,即 ≤~3%;回调摊销 1–4µs/次,故**回调内绝不能放墙钟或重活**)。
 - **崩溃语义**:WASM 执行无进程崩溃概念;死循环由中断计数截停;**深递归栈溢出实测为 host 侧 `RangeError`(`isJSException: false`),既不是 WASM RuntimeError trap 也不是 JSException,guest 吞不掉,VM 溢出后仍可续用**——所以栈溢出**不需要**防御性重建(§5.2);WASM trap 只剩引擎故障级可能,FR-4 AC3 的"一方崩溃不影响他方"降级为"一方失控只计异常分,不污染引擎与他方 VM"。
 - **记忆能力**:VM 常驻对局全程,模块级变量天然跨 tick 保留(FR-3);snapshot/restore 能力暂不用(状态以 GameState + JSONL 为准)。
-- **执行器缝**:host 侧 `Runner` 接口(`init/tick/dispose`)+ `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身:回放预置 intent、抛异常、触发 trap、超预算)。**在出现第二个真实 VM 实现之前不新增抽象层**——这条缝只让 §5.2 的四类裁决与结算管线可脱离 WASM 穷举测试。
+- **执行器缝**:host 侧 `SeatRunner` 接口(**两个方法** `setSnapshot` / `drainIntents`,见 `docs/adr/0005`;执行器不持生命周期,建 VM 与 `dispose` 归组装层)+ `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身:回放预置 intent、抛异常、触发 trap、超预算)。**在出现第二个真实 VM 实现之前不新增抽象层**——这条缝只让 §5.2 的四类裁决与结算管线可脱离 WASM 穷举测试。
 - **代价**:Node ≥ 22.18(**下限的成因是我们自己的代码,不是本库**,§2.2.1);`moduleLoader` 不配置(`import` 在静态校验期即拒绝,运行时 script-mode 同样把它当 `SyntaxError`);**`maxStackSize` 选项确实存在**(3.6.2 有;`0` = 关守卫,显式设值 ≤512KB),v0 **不启用**——启用会把栈溢出变成 guest 可捕获异常、可被脚本吞掉;不启用(默认或显式 `0`)则溢出为 host `RangeError`,host 必见。**上一版这里写的“无 `maxStackSize`、栈溢出表现为 WASM trap”两句都不成立**,已按实测改正。
 
 **升级条款当前是空头承诺,须写明**:"升级 `quickjs-wasi` 需重跑重放一致性测试与沙箱行为复测"这条既有条款,在**沙箱执行器落地之前没有任何可执行的东西支撑它**——重放一致性要有一个真实的对局可重跑,行为复测要有一个真实的 VM 宿主来驱动,而两者都还不存在(骨架里 `engine` 只有导出符号,没有 `QuickJsRunner`)。**复验责任挂在“实现真实沙箱执行器”那张票上**:它落地时的**第一条验收**就是按当时的版本组合把上表五条重跑一遍,并把新数字写回本节(§12 #8 记着这件事)。在那之前,本节的数字只对 3.6.2 成立,且**没有任何机器会提醒后来者它们已经过期**。

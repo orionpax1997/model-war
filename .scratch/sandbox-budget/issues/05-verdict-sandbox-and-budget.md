@@ -18,7 +18,7 @@ Blocked by: 02, 03, 04
 **汇总裁决落定,8 项决策可直接对表 hld §5 / §12;文档已同步执行。** 每项一行 gist,细节各归其家:
 
 1. **双计数预算成立,口径定案**:主判据 = **控制流事件计数**(每 5000 次控制流事件一格,`interruptHandler` 回调自乘计数;不称"指令计数"——直线代码不计量)+ API 调用计数;盲区由 §6.2 **脚本体积上限**封堵(取值随预算参数标定)。实测支撑见 [沙箱行为实测 harness](02-sandbox-spike-harness.md)(回调拖慢 ≤3%、纯计数可复现)。
-2. **沙箱留任 quickjs-wasi**:锁版 **3.6.2**(基线 ≥3.5.0);升级须重跑重放一致性测试 + 沙箱行为复测。11 条断言判定(7 成立 / 4 不成立均有封堵 / 1 已补机制)见 [沙箱行为实测 harness](02-sandbox-spike-harness.md)。
+2. **沙箱留任 quickjs-wasi**:锁版 **3.6.2**(基线 ≥3.5.0);升级须重跑重放一致性测试 + 沙箱行为复测。11 条断言判定(6 成立 / 4 不成立均有封堵 / 1 已补机制)见 [沙箱行为实测 harness](02-sandbox-spike-harness.md)。
 3. **注入形态 = runtime bundle**:维持 hld §4.5,不回退逐函数注入——[跨边界调用形态对比](03-runtime-bundle-vs-injection.md)已决,汇入确认。
 4. **trap 约束整包采纳**:[WASM trap 滥用的约束设计](04-trap-abuse-countermeasures.md)的 A–D 全部执行(§5.2 裁决表重写、§5.0 两处措辞、gdd 补两行、`exceptionTickLimit` 判"足"不加新机制);`exceptionTicks` 随 JSONL 续算不清零,维持现状。
 5. **内存判据 = 读数判据制**:每 tick 末 `runGC()` 后取 `getMemoryUsage().mallocSize` 与 `memoryTickCeiling`(ruleset 参数)比较,超线视同 §5.2 第一行异常;软阈值 0.8×硬仅披露 `memory-pressure`;判据锚定读数——guest 吞 OOM 同罪、不因"吞"加刑;残余"瞬时借满即还"型不判罚、不 patch 宿主,留升级条款——整包采纳 [OOM 异常被 guest 吞掉的 host 检测兜底](06-oom-swallow-detection.md)的 A–E。
