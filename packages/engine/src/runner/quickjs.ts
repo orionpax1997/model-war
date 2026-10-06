@@ -33,13 +33,42 @@
  * 不排空,这条意图就会留到下一 tick 才被交回——**意图跨 tick 残留**。`runLoop` 与
  * `pumpJobs` 分成两步暴露(而非在 `drainIntents` 里一把梭),正是为了给这条反例留一个
  * 能弄红的入口:见 `quickjs.test.ts`。
+ *
+ * ── 内存判据(票 08):读数,不是异常 ──
+ *
+ * 判据锚定在宿主**可直接测量**的量上,与 guest 的异常可见性无关:guest 可以把内存超限转成的
+ * 异常 `try/catch` 吞掉,那时宿主全程无感知——靠异常披露那条路是死的。所以每 tick 的次序是
+ * `loop()` → `pumpJobs()` → **强制 `runGC()` 之后**读 `getMemoryUsage().mallocSize`
+ * (存活堆口径,与 `memoryLimit` 同一记账口径;不是更低的 `memoryUsedSize`、也不是 `objCount`)
+ * → 组装观测 → `__drainIntents()`。
+ *
+ * 三层阈值:
+ * - **分配上限**(硬):`memoryLimit`,VM 构造选项,超限转成 guest 可见的 `InternalError`;
+ * - **判罚线**(硬):`memoryTickCeiling`,读数**达**它即一条 `tripped` 观测(经步 0 累加
+ *   `exceptionTicks`);
+ * - **软阈值**(观测):`MEMORY_SOFT_THRESHOLD_RATIO × memoryTickCeiling`,只发一条
+ *   `memory-pressure` 观测、不判罚。它是判罚线的**推导项**,不是独立参数键。
+ *
+ * **已接受的残余**:tick 内瞬时借满分配上限、随即自行释放的分配**不触发判据**。这不是漏判——
+ * 读的是 tick 末强制回收**之后**的存活堆,那一刻它已不可达。契约面同一条陈述见
+ * `packages/schema/src/script-outcome.ts`「tick 内瞬时触顶后自行释放的分配不判」。
+ *
+ * **强制回收不是免费动作**:它每 tick 一次,顶替的正是「靠自动 GC 恰好在读数前回收」那条
+ * 不可靠的路(自动 `gcThreshold` 保留默认,不动它——关了它只会把读数推高、更容易误踩判罚线)。
+ * 这条开销进性能标定的考量,它的读数由 `quickjs.test.ts` 里那条「强制回收开销」用例记录在案。
  */
 
-import { QuickJS, type JSValueHandle } from "quickjs-wasi";
+import { QuickJS, type JSValueHandle, type MemoryUsage } from "quickjs-wasi";
+import { MEMORY_SOFT_THRESHOLD_RATIO } from "@model-war/replay";
 
 import type { Intent } from "../processor/intents.js";
 import type { PlayerIndex, Snapshot } from "../world/state.js";
-import { HOST_BRIDGE_DRAIN_INTENTS, HOST_BRIDGE_SET_SNAPSHOT, type SeatRunner } from "./index.js";
+import {
+  HOST_BRIDGE_DRAIN_INTENTS,
+  HOST_BRIDGE_SET_SNAPSHOT,
+  type Observation,
+  type SeatRunner,
+} from "./index.js";
 
 /** 冻钟的固定读数:十进制毫秒。三件套之一,取值是工程常量(见 spec《WASI 三件套与回放 meta》)。 */
 export const WASI_CLOCK_MS = 1_700_000_000_000;
@@ -80,7 +109,15 @@ export const createSandboxVm = (options: QuickJsVmOptions): Promise<QuickJS> => 
   });
 };
 
-/** 一次 VM 会话的操作面:`createQuickJsRunner` 是它在 `SeatRunner` 上的适配。 */
+/** 内存判据的轨名。观测的 `track` 用它,与规则集里的预算键同名。 */
+export const MEMORY_TRACK = "memoryTickCeiling";
+
+/**
+ * 一次 VM 会话的操作面:`createQuickJsRunner` 是它在 `SeatRunner` 上的适配。
+ *
+ * 生命周期(`dispose`)归工厂,VM 的**读数与回收**进这两条方法:`runGC` / `memoryUsage` 是宿主
+ * 侧的动作,不经过 guest、不改 guest 可见状态。
+ */
 export type SandboxSession = {
   /** 把这一 tick 的快照交进 guest(经 `__setSnapshot`)。 */
   readonly setSnapshot: (snapshot: Snapshot) => void;
@@ -90,6 +127,10 @@ export type SandboxSession = {
   readonly pumpJobs: () => number;
   /** 经 `__drainIntents()` 取回这一 tick 的意图。 */
   readonly drainIntents: () => readonly Intent[];
+  /** 强制一次垃圾回收。判据读数取在它**之后**(见本模块头注《内存判据》)。 */
+  readonly runGC: () => void;
+  /** 读 VM 当前的内存占用快照。字段见 `MemoryUsage`;判据用的是 `mallocSize`(存活堆口径)。 */
+  readonly memoryUsage: () => MemoryUsage;
   /** 释放 VM 与所有保留的 handle。 */
   readonly dispose: () => void;
 };
@@ -154,6 +195,8 @@ export const openSandbox = async (options: QuickJsSessionOptions): Promise<Sandb
         vm.callFunction(loopHandle, vm.undefined).dispose();
       },
       pumpJobs: () => vm.executePendingJobs(),
+      runGC: () => vm.runGC(),
+      memoryUsage: () => vm.getMemoryUsage(),
       drainIntents: () =>
         vm
           .callFunction(drainIntentsHandle, vm.undefined)
@@ -166,8 +209,21 @@ export const openSandbox = async (options: QuickJsSessionOptions): Promise<Sandb
   }
 };
 
-/** `createQuickJsRunner` 的输入:在会话输入上原样透传。 */
-export type QuickJsRunnerOptions = QuickJsSessionOptions;
+/** `createQuickJsRunner` 的输入:在会话输入上加上内存判据的阈值。 */
+export type QuickJsRunnerOptions = QuickJsSessionOptions & {
+  /**
+   * 内存判据的判罚线(bytes,tick 末存活堆读数)。**缺席即本轨不启用**:`loop()` 之外不强制回收、
+   * 不产观测、不判负。组装层读键清单的 `calibration.state`,未定值就不传这个字段——引擎不认识
+   * 「未定值」这个概念(spec《未定值与预算配置》)。
+   */
+  readonly memoryTickCeiling?: number;
+  /**
+   * 软阈系数:软阈 = 该系数 × `memoryTickCeiling`,只发 `memory-pressure` 观测、不判罚。
+   * 缺席取真源包的 `MEMORY_SOFT_THRESHOLD_RATIO`。它是**推导项、不是规则集参数键**,这一栏
+   * 存在的唯一理由是给组装层一个显式覆写点,不是为了把它变成第二个要标定的数。
+   */
+  readonly softThresholdRatio?: number;
+};
 
 /** 工厂的交回:缝上的执行器 + 它的释放。**建与释放都归调用方**(组装层)。 */
 export type QuickJsRunnerHandle = {
@@ -178,19 +234,45 @@ export type QuickJsRunnerHandle = {
 /**
  * 造一个由真 VM 服务的座位执行器。
  *
- * 每 tick 的次序由 `drainIntents` 一次走完:`loop()` → 排空到不动点 → `__drainIntents()`。
- * 本票没有观测事实可报,`observations` 恒为空数组(观测通道归票 09)。
+ * 每 tick 的次序由 `drainIntents` 一次走完:`loop()` → 排空到不动点 → (**本轨启用时**)
+ * 强制回收后读存活堆、组装内存观测 → `__drainIntents()`。阈值判定不在 guest 侧,guest 吞不吞异常
+ * 都改不了读数。
  */
 export const createQuickJsRunner = async (
   options: QuickJsRunnerOptions,
 ): Promise<QuickJsRunnerHandle> => {
   const session = await openSandbox(options);
+  const ceiling = options.memoryTickCeiling;
+  // 软阈是判罚线的派生量(向下取整到字节),不是独立参数:系数缺席取真源常数。
+  const softThreshold =
+    ceiling === undefined
+      ? undefined
+      : Math.floor((options.softThresholdRatio ?? MEMORY_SOFT_THRESHOLD_RATIO) * ceiling);
+
   const runner: SeatRunner = {
     setSnapshot: session.setSnapshot,
     drainIntents: () => {
       session.runLoop();
       session.pumpJobs();
-      return { intents: session.drainIntents(), observations: [] };
+      const observations: Observation[] = [];
+      if (ceiling !== undefined && softThreshold !== undefined) {
+        // 读数取在「本 tick 的脚本执行结束处」:排空到不动点之后、`__drainIntents()` 之前,
+        // 且必须先强制回收——读的是**存活堆**(`mallocSize`),与分配上限同一记账口径。
+        // tick 内瞬时借满后已释放的分配在这里已不可达,因此不判(已接受的残余,不是漏判)。
+        session.runGC();
+        const value = session.memoryUsage().mallocSize;
+        if (value >= ceiling) {
+          observations.push({ kind: "tripped", track: MEMORY_TRACK, value, limit: ceiling });
+        } else if (value >= softThreshold) {
+          observations.push({
+            kind: "memory-pressure",
+            track: MEMORY_TRACK,
+            value,
+            limit: softThreshold,
+          });
+        }
+      }
+      return { intents: session.drainIntents(), observations };
     },
   };
   return { runner, dispose: session.dispose };
