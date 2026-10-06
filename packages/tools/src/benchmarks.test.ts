@@ -24,7 +24,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { RULESET_VERSION, SANDBOX_INJECTED_API_SYMBOLS } from "@model-war/schema";
+import { RULESET_VERSION } from "@model-war/schema";
 
 import {
   BENCHMARK_NAMES,
@@ -202,14 +202,23 @@ it("说明表带着「不可与旧四舱互比」的口径,以及换契约版本
   expect(readme).toContain("生成管线那一格");
 });
 
-it("三份脚本的编译诊断只有那三类,且「名字未声明」逐个在注入面符号表里", () => {
+/**
+ * 三份脚本的编译诊断:**「名字未声明」一条都不许有**,而另外两类(脚本自身的写法账)仍在。
+ *
+ * 这一条是类型面回填的验收信号,方向是反过来的:类型面回填之前三份脚本分别报 40 / 25 / 17 个
+ * 「名字未声明」,而那些名字**逐个都在注入面符号表里**——也就是说它们全都是「类型面还没来」这一件事
+ * 的账,不是脚本用了运行时不存在的 API。回填之后这个数必须归零:它归零意味着「脚本写错 API 名字」
+ * 这类错误从此在编译期就红,而不是跑到沙箱里才炸。
+ *
+ * **退出码不再是判据**:归零之后剩下的诊断是脚本**自身**在 `strict` 与 `noUncheckedIndexedAccess`
+ * 下的写法账(形参没标注、下标取值可能取不到),与类型面无关,它们仍在,所以非零退出还会继续出现。
+ * 拿退出码当类型面的判据,迟早会因为「谁把脚本里那几处写法改了」而假红。
+ */
+it("三份脚本的编译诊断里「名字未声明」归零,剩下的只有脚本自身那两类", () => {
   for (const name of BENCHMARK_NAMES) {
     const source = readFileSync(benchmarkFile(name, SOURCE_FILE), "utf8");
     const compiled = compileBenchmarkSource(source);
     const where = `${name} 的编译诊断`;
-
-    // 零退出在这里是**坏消息**:类型面还没回填,零退出意味着某个东西替 API 填上了声明。
-    expect(compiled.status, `${where} 编译通过了,类型面却还没回填`).not.toBe(0);
 
     const unexpected = compiled.diagnostics.filter((d) => d.cls === "unexpected");
     expect(
@@ -220,14 +229,11 @@ it("三份脚本的编译诊断只有那三类,且「名字未声明」逐个在
     const names = compiled.diagnostics
       .filter((d) => d.cls === "unresolved-name")
       .map((d) => d.name ?? "");
-    expect(names.length, `${where} 一个「名字未声明」都没有,那它压根没用注入面`).toBeGreaterThan(0);
-    for (const unresolved of names) {
-      expect(
-        SANDBOX_INJECTED_API_SYMBOLS,
-        `${where} 用到了注入面符号表里没有的名字 \`${unresolved}\`,` +
-          "那不是「类型面没回填」而是脚本用了运行时不存在的 API",
-      ).toContain(unresolved);
-    }
+    expect(
+      names,
+      `${where} 还有「名字未声明」。类型面已回填,这类诊断必须归零——` +
+        "留着它就意味着写错 API 名字的脚本照样能编译过去。",
+    ).toEqual([]);
   }
 });
 

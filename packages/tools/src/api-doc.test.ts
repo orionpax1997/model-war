@@ -37,9 +37,11 @@ import { SANDBOX_INJECTED_API_SYMBOL_CATALOG, SCRIPT_OUTCOME_CATALOG } from "@mo
 
 import { BENCHMARK_NAMES, benchmarkFile, compileBenchmarkSource } from "./benchmarks/compile.ts";
 import { readSection, sectionMarker } from "./generate/section.ts";
+import { SCRIPT_API_DECLARATION, readScriptApiDeclarations } from "./script-api/declarations.ts";
 
 /** 契约文档里 API 面那一份。仓库根起的相对路径,与生成物落点同一记法。 */
 const API_DOC = resolve(import.meta.dirname, "../../../docs/rules-v1/api.md");
+const TYPE_FACE = resolve(import.meta.dirname, "../../../", SCRIPT_API_DECLARATION);
 
 /** 符号表里的 22 个名字,以及那一档的错误码。**投影**而来,与生成器取的是同一份数据。 */
 const SYMBOLS: readonly string[] = SANDBOX_INJECTED_API_SYMBOL_CATALOG.map((e) => e.symbol);
@@ -116,21 +118,61 @@ it("注入面符号表里的每个名字都在 API 文档里披露", () => {
  * 于是基准脚本这一侧与文档那一侧用的是同一套机械:文档里的名字要能被运行时铺出来,
  * 脚本里的名字要能在文档里查到。两侧交叉的那一格就是双向断言的第三个方向。
  *
- * 判据为什么落在「未声明的名字」上:脚本 API 的类型声明面尚未回填,于是脚本调用的每一个
- * API 名字对 `tsc` 都是未声明的;而脚本自己声明的名字(变量、辅助函数)不会落进这批诊断。
- * 类型面回填那天这批诊断会归零,那时这条断言改读类型面(与 §3 里那个开关同一件事)。
+ * 判据为什么落在「未声明的名字」上、后来又为什么换掉:类型面回填之前,脚本调用的每一个
+ * API 名字对 `tsc` 都是未声明的,而脚本自己声明的名字(变量、辅助函数)不会落进那批诊断——
+ * 于是那批诊断**恰好**就是「脚本用到的注入面名字」这一份可机械取出的名单。
+ * **类型面回填之后(票 03)这批诊断归零**,那条取名单的路随之失效:零个未声明名字既可能是
+ * 「脚本用满了注入面」,也可能是「脚本压根没用」,两者在空集上无法区分。
  *
- * 反例:在基准脚本里写一句 `getResources()`(不在注入面里),或从真源里删掉 `getRange`
- * 而文档不动,本条红。
+ * 换掉之后判据落在两个仍然可机械取出的事实上:
+ * 1. **「名字未声明」这一类归零**——注入面之外的名字压根调不动(名字解析由编译器承担,
+ *    不是任何一张自建名单,hld §6.2)。这条取代了原先「靠未声明名单兜住拼错的名字」。
+ *    注意**只断言这一类**:基准脚本自身那两类(`implicit-any-parameter` /
+ *    `possibly-undefined`)是脚本自己的写法问题,`benchmarks.test.ts` 另有断言钉住它们
+ *    的条数——把「零诊断」当判据会把那些诊断一并拖进来,而它们与白名单反转毫无关系。
+ * 2. **声明面的值名 ∩ 脚本源文本**——脚本真的用到了注入面,且用到的那几个名字都在符号表与
+ *    契约文档里。这条取代了原先的 `used.length > 0` 空集护栏。
+ *
+ * 反例:在基准脚本里写一句 `getResources()`(不在注入面里)→ 诊断多出一条,红;
+ * 或从真源里删掉 `getRange` 而文档不动 → 符号表 ⊆ 文档那条红。
  */
-it("基准脚本里用到的每个 API 名字都在符号表里、且都在契约文档的表里披露", () => {
-  const documented = nameCells(sectionContent("api-v1-api-surface"));
+it("基准脚本的「名字未声明」诊断归零:注入面之外的名字压根调不动", () => {
   for (const name of BENCHMARK_NAMES) {
     const source = readFileSync(benchmarkFile(name, "script.ts"), "utf8");
-    const used = compileBenchmarkSource(source)
+    const unresolved = compileBenchmarkSource(source)
       .diagnostics.filter((diagnostic) => diagnostic.cls === "unresolved-name")
-      .map((diagnostic) => diagnostic.name ?? "");
-    expect(used.length, `${name} 一个未声明的名字都没有,那它压根没用注入面`).toBeGreaterThan(0);
+      .map((diagnostic) => diagnostic.line);
+    expect(unresolved, `${name} 还有编译不出来的名字`).toStrictEqual([]);
+  }
+});
+
+/**
+ * 同一件事实的**反例**:往一份基准脚本里插一句注入面之外的名字,诊断立刻多出一条。
+ *
+ * 没有这条,上面那条断言可能是恒真的——如果名字解析那一步本来就不产出诊断(配置错了、
+ * 诊断被吞了),「归零」就恒绿。这条把编译器的名字解析钉成**真的会响**:多写一个字符就红。
+ */
+it("反例:基准脚本里插一个注入面之外的名字 → 编译期红,且红在那个名字上", () => {
+  const source = readFileSync(benchmarkFile(BENCHMARK_NAMES[0], "script.ts"), "utf8");
+  const clean = compileBenchmarkSource(source).diagnostics.length;
+  const injected = `${source}\ndeclare const probe: Snapshot;\nprobe.getResources();\n`;
+  const diagnostics = compileBenchmarkSource(injected).diagnostics;
+  expect(diagnostics.length, "注入面之外的名字竟然编译过了").toBeGreaterThan(clean);
+  expect(diagnostics.map((diagnostic) => diagnostic.line).join("\n")).toContain("getResources");
+});
+
+it("基准脚本里用到的每个 API 名字都在符号表里、且都在契约文档的表里披露", () => {
+  const documented = nameCells(sectionContent("api-v1-api-surface"));
+  const declared = new Set(
+    readScriptApiDeclarations(SCRIPT_API_DECLARATION, readFileSync(TYPE_FACE, "utf8")).valueNames,
+  );
+
+  for (const name of BENCHMARK_NAMES) {
+    const source = readFileSync(benchmarkFile(name, "script.ts"), "utf8");
+    const identifiers = new Set(source.match(/[A-Za-z_$][\w$]*/g) ?? []);
+    const used = [...identifiers].filter((identifier) => declared.has(identifier)).sort();
+
+    expect(used.length, `${name} 一个注入面的名字都没用到,那它压根没用注入面`).toBeGreaterThan(0);
 
     for (const api of used) {
       expect(SYMBOLS, `${name} 用到了符号表里没有的名字 \`${api}\``).toContain(api);

@@ -19,28 +19,28 @@
  * 战报只消费 `events`,不重新解析状态(事件流是「叙事战报的统一来源」)。于是事件序列与状态
  * 共同构成这一 tick 的事实;两者不同序或不同内容,回放就该算出不同的哈希。
  *
- * 形状的家在 `packages/schema`(02b),见 `meta-line.ts` 文件头同一条纪律。
+ * 形状的家在 `packages/schema` 的 `replay-line.ts`(02b),见 `meta-line.ts` 文件头同一条纪律。
  */
 
-import { stateHashOf } from "@model-war/replay";
+import { stateHashOf, type ReplayTickLine, type ReplayTickPayload } from "@model-war/replay";
 import type { Event } from "../processor/events.js";
-import type { GameState, Player, Site, Unit } from "../world/state.js";
+import type { GameState } from "../world/state.js";
 
-/** tick 行的载荷 = 行内容的自摘要。**加一栏只需把它写进 `TickPayload`**,它自动进哈希。 */
-export type TickPayload = {
-  readonly type: "tick";
-  readonly tick: number;
-  readonly players: readonly Player[];
-  readonly units: readonly Unit[];
-  readonly sites: readonly Site[];
-  readonly events: readonly Event[];
-};
+/**
+ * tick 行的载荷 = 行内容的自摘要。**加一栏只需把它写进真源包那份形状**,它自动进哈希。
+ *
+ * 它是真源包那份形状的**别名**,不是第二次声明:一条 `= ReplayTickPayload` 就把两份读法绑成
+ * 同一个事实。曾经这里逐栏重列过一份本地类型,那在形状落库之后就是同一份栏位清单的第二次书写,
+ * 而两次书写里总有一次不更新——加一栏只改一处、另一处静默旧着,正是本仓明令要避的那种漂移。
+ *
+ * 引擎状态(`GameState` 里的 `Player` / `Unit` / `Site` 与 `Event`)到这几份跨进程形状的
+ * **可赋值性**由 `buildTickLine` 的返回值与 `replay-line.test.ts` 的双向断言当场盯着:
+ * 两边一旦岔开就是编译期红,而不是等到读盘端把一栏读成 `undefined`。
+ */
+export type TickPayload = ReplayTickPayload;
 
-/** tick 行的组装面。`stateHash` 是**最后**一栏,因为它是「前头所有栏的摘要」这件事的字面顺序。 */
-export type TickLine = TickPayload & {
-  /** 载荷的摘要。载荷 = 本行去掉这一栏。 */
-  readonly stateHash: string;
-};
+/** tick 行的组装面 = 真源包那一份。`stateHash` 是**最后一栏**,因为它是「前头所有栏的摘要」这件事的字面顺序。 */
+export type TickLine = ReplayTickLine;
 
 const TICK_LINE_TYPE = "tick";
 

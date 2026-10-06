@@ -1,0 +1,7 @@
+{
+  "name": "script-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "参赛脚本的类型面(见 index.d.ts 的头注):tsconfig.scripts.json 的 typeRoots/types 经它引入",
+  "types": "./index.d.ts"
+}

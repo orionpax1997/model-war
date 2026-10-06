@@ -14,6 +14,18 @@
  *     于是「模块解析面被清空」这条在测试里是真的,而不是被测试环境偷偷兜住;
  *   - 每次编译派生一份只覆盖 `files` 与 `outDir` 的运行配置,这正是生成管线将来要做的形态
  *     (`tsc -p` 不能与源文件同命令行出现,TS5042),所以这里跑的路径与将来的管线同形。
+ *
+ * ── 唯一一处断言配置的字段形状,以及为什么这里破了这个惯例 ──────────────────
+ * 上面说的「不断言字段形状」对**那些能被现象看见的取舍**成立(Node 名字红、DOM 名字红、import 红、
+ * 产物形态),而「类型环境只引入了脚本 API 的那一份声明」这一条恰好有一半是看不见的:
+ * 现象那一半是 Node 名字红(少引一个包时它红),多引的那一半——`types` 里悄悄长出第二项、
+ * `typeRoots` 里悄悄长出一条 `node_modules/@types`——**没有任何一条脚本会因此变红**。
+ * 而它的失效形态正是本文件存在的理由被架空:引了 `@types/node` 就等于把宿主能力带进沙箱,
+ * 白名单反转当场漏,而漏的那天没有任何用例会说话。所以这一条断言的是**配置里那两栏的取值**。
+ *
+ * 它守的不是「必须是某个字面量」,而是三条不变量:`types` 恰好一项、`typeRoots` 恰好一项且
+ * 指向仓库内不碰 `node_modules`、两者都不许出现 `@types` 或 `node`。真源换了位置(比如真源包搬了家)
+ * 时改的是配置里那一处,不是这里的断言——断言问的是「只有一份、且不是 @types」。
  */
 
 import { spawnSync } from "node:child_process";
@@ -155,6 +167,39 @@ function loop() {
   expect(imported.products, "编译没过却留下了产物").toBe("");
 
   expect(compile(COMPLIANT_SCRIPT).status, "撤掉探针后没有回到绿").toBe(0);
+});
+
+// ── 类型环境:只有脚本 API 的那一份声明 ─────────────────────────────────────
+
+it("类型环境只引入脚本 API 的那一份声明:types 恰好一项,typeRoots 不碰 @types", () => {
+  // 读的是 `tsc --showConfig` 给出的**解析后**那份,不是配置文件的文本:那份输出是纯 JSON,
+  // 而配置文件里有注释与行尾逗号(`JSON.parse` 读不了),手写一个去注释的正则去读它就成了
+  // 「解析一份文档抽东西」——那份做法在 adr/0004 里已经逐条驳过,不在这里重开一次。
+  // 问编译器自己「你最后看到的类型环境是什么」也没有第二份答案可说。
+  const shown = spawnSync(TSC, ["--showConfig", "-p", SCRIPT_CONFIG], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  if (shown.error !== undefined) {
+    throw shown.error;
+  }
+  const config = JSON.parse(shown.stdout) as {
+    compilerOptions: { readonly types?: readonly string[]; readonly typeRoots?: readonly string[] };
+  };
+  const types = config.compilerOptions.types ?? [];
+  const typeRoots = config.compilerOptions.typeRoots ?? [];
+
+  expect(types, "脚本的类型环境必须恰好只有一份声明").toHaveLength(1);
+  expect(types[0], "引进来的是 Node 类型的话,宿主能力就跟着进沙箱了").not.toContain("@types");
+  expect(types, "不许把 node 类型引进沙箱").not.toContain("node");
+
+  expect(typeRoots, "typeRoots 同样只该有一条:多一条就多一条能塞 @types 的口子").toHaveLength(1);
+  for (const root of typeRoots) {
+    expect(root, "typeRoots 指向 node_modules 就等于把 @types 重新放进了口子里").not.toContain(
+      "node_modules",
+    );
+    expect(root, "typeRoots 指向仓库外就与真源包无关了").not.toMatch(/^(\.\.|\/)/);
+  }
 });
 
 // ── 产物形态:裸脚本,入口调得动 ─────────────────────────────────────────────

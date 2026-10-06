@@ -1,5 +1,5 @@
 {
-  "//": "参赛脚本的编译配置(hld §6.2「编译」那一行)。它的身份是**编译器的输入**,不是任何仓库代码的依赖:所以它不落进包目录、不做成真源包的生成物、不落进文档目录,家在仓库根、与 tsconfig.base.json 同一层。刻意**不继承** tsconfig.base.json——那份基座的 types 是 [\"node\"],继承它等于把 Node 类型带进沙箱,「找不到这个名字」这条白名单反转当场漏;它要的只是最小 ECMAScript + 脚本 API 类型声明。本文件是**编译选项的基座**,不是可直接跑的项目:tsc -p 不能与源文件同命令行出现(TS5042,实测),而脚本路径每次编译都不同(冻结脚本落在 archive/<model>/<runId>/,基准脚本落在 benchmarks/<name>/),所以生成管线按它派生出只覆盖 files 与 outDir 的运行配置。files 刻意置空:留空则默认 include 是 **/*,这份配置会把整个仓库吞进一个 program;置空之后 `tsc -p` 直接报 TS18002,即这份配置自己拒绝被直接跑。outDir 刻意不叫 dist:.gitignore 里的 dist/ 是无锚点规则、命中任意层级,而 hld §7.4 要求编译产物入库,产物目录必须能过 git check-ignore(那条断言在 packages/tools/src/version-control-boundary.test.ts)。",
+  "//": "参赛脚本的编译配置(hld §6.2「编译」那一行)。它的身份是**编译器的输入**,不是任何仓库代码的依赖:所以它不落进包目录、不做成生成物、不落进文档目录,家在仓库根、与 tsconfig.base.json 同一层。刻意**不继承** tsconfig.base.json——那份基座的 types 是 [\"node\"],继承它等于把 Node 类型带进沙箱,「找不到这个名字」这条白名单反转当场漏;它要的只是最小 ECMAScript + 脚本 API 类型声明。本文件是**编译选项的基座**,不是可直接跑的项目:tsc -p 不能与源文件同命令行出现(TS5042,实测),而脚本路径每次编译都不同(冻结脚本落在 archive/<model>/<runId>/,基准脚本落在 benchmarks/<name>/),所以生成管线按它派生出只覆盖 files 与 outDir 的运行配置。files 刻意置空:留空则默认 include 是 **/*,这份配置会把整个仓库吞进一个 program;置空之后 `tsc -p` 直接报 TS18002,即这份配置自己拒绝被直接跑。outDir 刻意不叫 dist:.gitignore 里的 dist/ 是无锚点规则、命中任意层级,而 hld §7.4 要求编译产物入库,产物目录必须能过 git check-ignore(那条断言在 packages/tools/src/version-control-boundary.test.ts)。",
   "compilerOptions": {
     "target": "es2023",
     // lib 只含现代 ECMAScript:不带 DOM,沙箱里没有 document / fetch 这类名字。
@@ -11,11 +11,14 @@
     "module": "esnext",
     // 刻意不设 moduleResolution:脚本不从任何地方取模块,给不给解析器都一样没有可解析的东西,
     // 于是脚本里写下的任何 import 都在编译期红(单文件自包含的这一半)。
-    "types": [],
-    // 类型面:家已定在真源包 @model-war/schema,字段由对局内核与沙箱执行器回填(hld §6.2「API 误用」)。
-    // 回填之前这里刻意为空——「没有任何 @types 包进来」这条事实的正面写法就是空数组;它一旦长出第二项
-    // (尤其 "node"),白名单反转当场漏,而这条由 packages/tools/src/script-compile-config.test.ts 钉住。
-    // 回填之后也只允许在那一个位置引入脚本 API 的声明,不许顺带引进任何 @types 包。
+    //
+    // 类型面(hld §6.2「API 误用」那一行读的东西)归真源包 `packages/schema/script-api/`:它是
+    // 一份 ambient 声明,靠 typeRoots + types 引入,而不是靠包解析——后者给不给都一样,脚本没有包。
+    // typeRoots 指向真源包目录而**不含任何 `node_modules/@types`**:`types` 里能写的东西因此只有
+    // 下面那一个,加第二个(尤其 "node")得先改 typeRoots,那是明面上的改动而不是顺手添一行。
+    "typeRoots": ["./packages/schema"],
+    "types": ["script-api"],
+    // 「只有这一份声明进来」这条事实由 `packages/tools/src/script-compile-config.test.ts` 钉住。
 
     "strict": true,
     "noUncheckedIndexedAccess": true,

@@ -111,7 +111,7 @@ for (const name of BENCHMARK_NAMES) {
     callable = false;
   }
 
-  // ④ 诊断只有那三类,且类型面未回填这件事在报告上看得见。
+  // ④ 诊断只有那三类,而「名字未声明」那一项已经归零——类型面已回填(票 03),它必须一直是 0。
   for (const diagnostic of compiled.diagnostics.filter((d) => d.cls === "unexpected")) {
     console.error(`✗ ${name}:非预期诊断 ${diagnostic.line}`);
     failed = true;
@@ -123,7 +123,7 @@ for (const name of BENCHMARK_NAMES) {
       `${countBy(compiled.diagnostics, "unresolved-name")} / 形参隐式 any ` +
       `${countBy(compiled.diagnostics, "implicit-any-parameter")} / 可能为 undefined ` +
       `${countBy(compiled.diagnostics, "possibly-undefined")}` +
-      "(类型面尚未回填,第一项回填那天必须归零)",
+      "(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)",
   );
 }
 

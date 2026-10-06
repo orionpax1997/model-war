@@ -64,9 +64,11 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: "match",
     usage: "modelwar match <input.json>",
     summary: "执行一个对局(runner 与调试都走这条路径)",
-    provider: "@model-war/engine",
-    handler: "runMatch",
-    load: () => import("@model-war/engine"),
+    // 处理器住在 CLI 自己的模块里(同 `map-lint` 的先例):磁盘 I/O(hld §2.2.8)与 ajv 校验
+    // 都在这一侧,engine 的 `runMatch` 是它调用的那个纯函数。所以承载模块是 `@model-war/cli`。
+    provider: "@model-war/cli",
+    handler: "runMatchCommand",
+    load: () => import("./match/index.js"),
   },
   {
     name: "replay",
