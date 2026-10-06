@@ -82,6 +82,12 @@ export {
 export { HOST_BRIDGE_PREFIX } from "@model-war/schema";
 
 /**
+ * 沙箱注入面的**名单**(名字)与禁列全局名。经本包中转,理由同上面几条:引擎 manifest 上只有本包,
+ * 而引擎侧的 API 面断言要把 guest 铺出来的名字与这份真源逐字对齐(引擎不直接依赖真源包)。
+ */
+export { FORBIDDEN_GLOBAL_NAMES, SANDBOX_INJECTED_API_SYMBOLS } from "@model-war/schema";
+
+/**
  * 回放**文件格式**的版本(hld §7.5 末段)。跨版本兼容性以它为准(FR-9 AC2)。
  *
  * 它是格式的版本,不是行的形状:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包

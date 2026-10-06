@@ -33,4 +33,4 @@ export const SANDBOX_RUNTIME_ARTIFACT_PATH = "packages/engine/sandbox-runtime/ru
  * 改产物后跑 `pnpm run runtime:build` 重算并手写回这里,门禁负责证明两者一致。
  */
 export const SANDBOX_RUNTIME_HASH =
-  "4f1cfcaa53d03ab20de5987d5d232ce7cdad02e8110d18beb9c810c143d73fc5";
+  "46c93013071ebdc2ddd29e1d07604854a0a3e48fa2c6f1bf7f9e9cd811285f83";
