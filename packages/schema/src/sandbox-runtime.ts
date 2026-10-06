@@ -29,6 +29,15 @@ export const QUICKJS_WASI_VERSION = "3.6.2";
 export const SANDBOX_RUNTIME_ARTIFACT_PATH = "packages/engine/sandbox-runtime/runtime.iife.js";
 
 /**
+ * `quickjs-wasi` 的 wasm 字节**相对安装根**的路径(供组件层读盘传给引擎)。
+ *
+ * 引擎不做磁盘 I/O,wasm 字节必须由组件层(CLI)读盘后传入;路径写成相对安装根,
+ * 于是 `--root` 就是这一局的安装根(生产 = 仓库根,测试 = 临时根)。与产物路径同一条纪律:
+ * 路径的真源在真源包,不在各处手写字面量。
+ */
+export const QUICKJS_WASI_WASM_PATH = "node_modules/quickjs-wasi/quickjs.wasm";
+
+/**
  * runtime bundle 产物的字节 sha256。**本常量的书写真源是产物本身**:
  * 改产物后跑 `pnpm run runtime:build` 重算并手写回这里,门禁负责证明两者一致。
  */

@@ -39,6 +39,7 @@ export type {
 // 引擎不从这里取,以免污染它「恰好一个导出符号 runMatch」的对外面(见 ADR 0007)。
 export {
   QUICKJS_WASI_VERSION,
+  QUICKJS_WASI_WASM_PATH,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
   SANDBOX_RUNTIME_HASH,
 } from "./sandbox-runtime.js";

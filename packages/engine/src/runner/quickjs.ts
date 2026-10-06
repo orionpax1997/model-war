@@ -17,8 +17,9 @@
  * ── 三件套是构造选项,不是每 tick 的决定 ──
  *
  * 冻钟是 `wasi` 对 `clock_time_get` 的覆盖(写回固定纳秒值),`Math.random()` 的种子就来自这次
- * 读钟;时区是构造选项 `timezoneOffset`。三者只能建 VM 时定一次,所以它们不是对局参数,而是
- * 工程常量——同一份脚本因此在对局内、跨 VM、跨重跑三个维度上得到同一序列。
+ * 读钟;随机字节是 `wasi` 对 `random_get` 的覆盖(固定填充);时区是构造选项 `timezoneOffset`。
+ * 三者只能建 VM 时定一次,所以它们不是对局参数,而是工程常量——同一份脚本因此在对局内、跨 VM、
+ * 跨重跑三个维度上得到同一序列。
  *
  * ── 载入次序与删桥 ──
  *
@@ -76,6 +77,17 @@ export const WASI_CLOCK_MS = 1_700_000_000_000;
 /** 时区偏移:十进制分钟(UTC = 0)。三件套之一。`Date` 与 `getTimezoneOffset()` 由它决定。 */
 export const WASI_TIMEZONE_OFFSET_MINUTES = 0;
 
+/** 随机字节固定填充的**单字节值**。三件套之一(见本模块头注)。 */
+const WASI_RANDOM_FILL_BYTE = 0x00;
+
+/**
+ * `random_get` 的固定字节填充:**十六进制、不带 `0x` 前缀**。回放 meta 的 `wasiRandomFill` 栏取它。
+ *
+ * 由单字节值推出(而不是另写一个字面量字符串),于是「覆盖写进去的字节」与「写回放 meta 的字串」
+ * 不可能分叉。`quickjs-wasi` 默认的 `random_get` 走宿主 WebCrypto(**非确定**),所以必须显式覆盖。
+ */
+export const WASI_RANDOM_FILL = WASI_RANDOM_FILL_BYTE.toString(16).padStart(2, "0");
+
 /** 脚本入口的固定名字。载入之后引擎只调它(`function loop()`)。 */
 export const SCRIPT_ENTRY = "loop";
 
@@ -103,6 +115,12 @@ export const createSandboxVm = (options: QuickJsVmOptions): Promise<QuickJS> => 
     wasi: (memory: WebAssembly.Memory) => ({
       clock_time_get: (_clockId: number, _precision: number, resultPtr: number): number => {
         new DataView(memory.buffer).setBigUint64(resultPtr, BigInt(clockMs) * 1_000_000n, true);
+        return 0;
+      },
+      // 随机源不靠宿主 WebCrypto(那是非确定的):ALL 覆盖为固定字节填充。WASI libc 启动期的
+      // `arc4random`/`getentropy` 与将来若加载的扩展都走这里,于是整场对局完全确定。
+      random_get: (bufPtr: number, bufLen: number): number => {
+        new Uint8Array(memory.buffer, bufPtr, bufLen).fill(WASI_RANDOM_FILL_BYTE);
         return 0;
       },
     }),

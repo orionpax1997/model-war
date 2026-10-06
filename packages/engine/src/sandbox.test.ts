@@ -57,6 +57,7 @@ const head = {
   sandboxRuntimeHash: "f".repeat(64),
   wasiClock: String(WASI_CLOCK_MS),
   wasiRandomFill: "00",
+  wasiTimezoneOffset: "0",
 } as const;
 
 const runtimeEntry = fileURLToPath(new URL("./sandbox-runtime/index.ts", import.meta.url));
