@@ -79,6 +79,12 @@ EXIT=0
 
 `pnpm run check` 全绿(unit+property **48 文件 524 用例全过**;禁浮点 27 文件 0 违规;依赖 85 模块 146 依赖零违规;声明即依赖 43 文件 0 未声明;漂移 6 件无;基准 3 份绿)。跨进程形状的可赋值性由 `replay-line.test.ts` 在 `tsc -b` 层盯着(红在类型上,不是运行时)。
 
+### 收口时的三处修正(合入前复查发现)
+
+1. **`match` 的参数解析有个真 bug**:原先写的是 `args.filter((arg) => !arg.startsWith("-"))`,而 `--root` 的**值**不以 `-` 开头——`modelwar match --root <根> <input.json>` 这一序下位置参数成了 `["<根>", "<input.json>"]`,`positional[0]` 就是根目录,一个目录被拿去 `JSON.parse`。改成 `splitArgs` 先摘 `--root` 与它的值再取位置参数。用法串把 `<input.json>` 写在前面只是**惯例**,不是解析器的免责理由。新增用例「`match` 的 `--root` 写在 <input.json> 前面也能跑,退出 0」;实测反例:改回旧写法 → 该用例红
+2. **`RunMatchResult.finalState` 的注释是句假话**:原写「`outcome` 此刻已置」,而非 `resultLineOf` 只产终局行、**不写** `state.outcome`(那归票 09),所以 `finalState.outcome` 就是 `null`。读它的人会拿到 `null` 去解引用。注释改成事实陈述
+3. **基准产物门禁的输出文本过期**:它打印的尾巴写着「(类型面尚未回填,第一项回填那天必须归零)」,而票 03 已把类型面回填、第一项也已归零。改成「(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)」——门禁的输出也是给人读的,说错话同样算“一个事实两个家”
+
 ### 留给后续票的话
 
 - 04–09:步 5 判据、`state.outcome`、八种事件随各机制票填进各自的槽;`EVALUATE_STAGES` 的段序已立,票 09 只须填判据不必重定顺序。
