@@ -22,6 +22,11 @@ import type { Change } from "../driver/apply.js";
 import { findPath, type Point } from "../pathfinding/index.js";
 import { UNIT_TYPES, type PlayerIndex, type Terrain, type Unit } from "../world/state.js";
 import type { Intent } from "./intents.js";
+import { moveTargetOf, moveVerdict, unitById } from "./intent-verdicts.js";
+
+// `unitById` 判据的取物助手住在 `intent-verdicts.ts`(处理器与沙箱 guest 共用同一份)。
+// 本模块再导出它一次,是因为步 2 的移动竞争裁决一直从 `./movement.js` 取它。
+export { unitById };
 
 /** 两条移动意图。其余四条不是移动(归 05–09),本票只交付这两条。 */
 export type MoveIntent = Extract<Intent, { kind: "move" | "moveTo" }>;
@@ -46,35 +51,15 @@ export type MovementView = {
 /** 候选变更。它就是 `apply()` 已登记的那一种 `move-unit`,所以落子不需要第二种写操作。 */
 export type MoveCandidate = Extract<Change, { kind: "move-unit" }>;
 
-/** 按数值 id 取单位。`units` 由状态不变量保证升序,但这里只用线性查找——一次一条意图,不必二分。 */
-export const unitById = (view: MovementView, id: number): Unit | undefined =>
-  view.units.find((unit) => unit.id === id);
-
-const inBounds = (view: MovementView, x: number, y: number): boolean =>
-  x >= 0 && y >= 0 && x < view.size && y < view.size;
-
-const isWall = (view: MovementView, x: number, y: number): boolean => view.terrain[y]?.[x] === true;
+// ── 判据的实现与理由的家 ──────────────────────────────────────────────────────
+//
+// 六条判据的实现住在 `intent-verdicts.ts`(处理器与沙箱 guest 共用同一份),逐条的理由仍写在
+// 下面各 `check*` 的头注里。这里只把 `Verdict` 还原成布尔:结算只关心「成不成立」,
+// guest 才关心「没过的是哪一条」。
 
 /** 本轮某个格是否被占:**以该轮开始时的占位为准**(见文件头注第 1 条)。 */
 const isOccupied = (view: MovementView, x: number, y: number): boolean =>
   view.units.some((unit) => unit.x === x && unit.y === y);
-
-/**
- * 一条意图的目标格。
- *
- * `move` 是「当前格 + 位移」,`moveTo` 是绝对坐标。`(0, 0)` 的 `move` 不表达位移,不是移动,
- * 故返回 `null` 当作无效——规则面最小:把「原地不动」写成意图与「什么都不下」应当等价,不该多一条
- * 会参与竞争裁决的候选。
- */
-const moveTargetOf = (unit: Unit, intent: MoveIntent): Point | null => {
-  if (intent.kind === "moveTo") {
-    return { x: intent.x, y: intent.y };
-  }
-  if (intent.dx === 0 && intent.dy === 0) {
-    return null;
-  }
-  return { x: unit.x + intent.dx, y: unit.y + intent.dy };
-};
 
 /**
  * `check()`:参数在界、属主正确、目标格合法,返回布尔。
@@ -85,27 +70,8 @@ const moveTargetOf = (unit: Unit, intent: MoveIntent): Point | null => {
  * 「目格合法」只含界内与非墙。**目标格是否被占不在此列**:被占是裁决结果(移动失败),
  * 不是「意图非法」;两者都不发事件,但语义不同,混在一处会让「为什么这条意图被丢弃」失去答案。
  */
-export const checkMove = (view: MovementView, seat: PlayerIndex, intent: MoveIntent): boolean => {
-  const unit = unitById(view, intent.unitId);
-  if (unit === undefined) {
-    return false;
-  }
-  if (unit.owner !== seat) {
-    return false;
-  }
-  if (intent.kind === "move" && (Math.abs(intent.dx) > 1 || Math.abs(intent.dy) > 1)) {
-    // 类型上是 -1|0|1,但运行时(真沙箱交出的是 JSON)可能收到别的数,故在缝上再判一次。
-    return false;
-  }
-  const target = moveTargetOf(unit, intent);
-  if (target === null) {
-    return false;
-  }
-  if (!inBounds(view, target.x, target.y) || isWall(view, target.x, target.y)) {
-    return false;
-  }
-  return true;
-};
+export const checkMove = (view: MovementView, seat: PlayerIndex, intent: MoveIntent): boolean =>
+  moveVerdict(view, seat, intent).ok;
 
 /** 目标格未被基准占位就产出一个候选;被占则本轮移动失败(交换/穿行/链式全靠这一条)。 */
 const candidateInto = (view: MovementView, unit: Unit, target: Point): MoveCandidate | null => {

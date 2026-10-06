@@ -46,6 +46,13 @@ import type { RulesetView } from "../ruleset-loader/index.js";
 import type { Change } from "../driver/apply.js";
 import type { Intent } from "./intents.js";
 import type { PlayerIndex, Site, Unit } from "../world/state.js";
+import {
+  harvestVerdict,
+  nearestFriendlyBaseSite,
+  nearestFriendlyResourceSite,
+  transferVerdict,
+  unitById,
+} from "./intent-verdicts.js";
 
 /** 本模块处理的两条意图。收窄判别式,不靠 `as`。 */
 export type HarvestIntent = Extract<Intent, { kind: "harvest" }>;
@@ -76,66 +83,11 @@ export type EconomyView = {
 export type Harvest = Extract<Change, { kind: "harvest" }>;
 export type Transfer = Extract<Change, { kind: "transfer" }>;
 
-/** 按数值 id 取单位。`units` 由状态不变量保证升序,但一次一条意图,线性查找即可。 */
-const unitIn = (view: EconomyView, id: number): Unit | undefined =>
-  view.units.find((unit) => unit.id === id);
-
-/** 切比雪夫距离。与 `step3-combat.ts` 的射程判定同一个度量。 */
-const chebyshev = (left: Unit, right: Site): number =>
-  Math.max(Math.abs(left.x - right.x), Math.abs(left.y - right.y));
-
-/** 采集资格:唯一有采集能力的兵种是 `worker`(见头注的契约面缺口)。 */
-const canHarvest = (unit: Unit): boolean => unit.type === "worker";
-
 /**
- * 该单位相邻的**己方资源点**里数值 id 最小的那个;没有则 `undefined`。
- *
- * `view.sites` 由状态不变量保证升序,所以「升序遍历遇到的第一个合格者」就是 id 最小的合格者——
- * 不额外排序,也不依赖「先遍历到谁」。合格 = `kind === "resource"`、`owner === seat`、
- * `remaining > 0`、在射程内。`remaining === 0`(采空)的矿**跳过**:它还在点位表里(仍计入胜利
- * 条件),但再也产不出资源,所以不是可采目标。
+ * 采集/交付的取物助手(`unitById` / `nearestFriendlyResourceSite` / `nearestFriendlyBaseSite`)
+ * 住在 `intent-verdicts.ts`:处理器与沙箱 guest 共用同一份。上面两条头注(`nearestFriendly*` 的
+ * 「升序遍历取 id 最小」与采空矿跳过)随实现一起搬了过去,不再重述。
  */
-const nearestFriendlyResourceSite = (
-  view: EconomyView,
-  seat: PlayerIndex,
-  unit: Unit,
-  ruleset: RulesetView,
-): Site | undefined => {
-  const range = ruleset.statsOf(unit.type).range;
-  for (const site of view.sites) {
-    if (site.kind !== "resource" || site.owner !== seat) {
-      continue;
-    }
-    if ((site.remaining ?? 0) <= 0) {
-      continue;
-    }
-    if (chebyshev(unit, site) <= range) {
-      return site;
-    }
-  }
-  return undefined;
-};
-
-/**
- * 该单位相邻的**己方基地**里数值 id 最小的那个;没有则 `undefined`。口径同采集(见头注)。
- */
-const nearestFriendlyBaseSite = (
-  view: EconomyView,
-  seat: PlayerIndex,
-  unit: Unit,
-  ruleset: RulesetView,
-): Site | undefined => {
-  const range = ruleset.statsOf(unit.type).range;
-  for (const site of view.sites) {
-    if (site.kind !== "base" || site.owner !== seat) {
-      continue;
-    }
-    if (chebyshev(unit, site) <= range) {
-      return site;
-    }
-  }
-  return undefined;
-};
 
 /**
  * `checkHarvest()`:六条判据,返回布尔。
@@ -160,22 +112,7 @@ export const checkHarvest = (
   seat: PlayerIndex,
   ruleset: RulesetView,
   intent: HarvestIntent,
-): boolean => {
-  const unit = unitIn(view, intent.unitId);
-  if (unit === undefined) {
-    return false;
-  }
-  if (unit.owner !== seat) {
-    return false;
-  }
-  if (!canHarvest(unit)) {
-    return false;
-  }
-  if (unit.carrying >= ruleset.raw.carryLimit) {
-    return false;
-  }
-  return nearestFriendlyResourceSite(view, seat, unit, ruleset) !== undefined;
-};
+): boolean => harvestVerdict(view, seat, ruleset, intent).ok;
 
 /**
  * `run()`:在只读基线上算出唯一一条候选采集变更,或「不成立」(`null`)。
@@ -197,7 +134,7 @@ export const harvestChangeOf = (
   if (!checkHarvest(view, seat, ruleset, intent)) {
     return null;
   }
-  const unit = unitIn(view, intent.unitId);
+  const unit = unitById(view, intent.unitId);
   if (unit === undefined) {
     return null;
   }
@@ -231,19 +168,7 @@ export const checkTransfer = (
   seat: PlayerIndex,
   ruleset: RulesetView,
   intent: TransferIntent,
-): boolean => {
-  const unit = unitIn(view, intent.unitId);
-  if (unit === undefined) {
-    return false;
-  }
-  if (unit.owner !== seat) {
-    return false;
-  }
-  if (unit.carrying <= 0) {
-    return false;
-  }
-  return nearestFriendlyBaseSite(view, seat, unit, ruleset) !== undefined;
-};
+): boolean => transferVerdict(view, seat, ruleset, intent).ok;
 
 /**
  * `run()`:在只读基线上算出唯一一条候选交付变更,或「不成立」(`null`)。
@@ -260,7 +185,7 @@ export const transferChangeOf = (
   if (!checkTransfer(view, seat, ruleset, intent)) {
     return null;
   }
-  const unit = unitIn(view, intent.unitId);
+  const unit = unitById(view, intent.unitId);
   if (unit === undefined) {
     return null;
   }

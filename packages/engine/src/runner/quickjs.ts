@@ -3,7 +3,8 @@
  *
  * ── 缝不变:仍然恰好两个方法 ──
  *
- * 建 VM、铺注入面、**删桥**、注入座位、释放——全部发生在**工厂**里,不在 `SeatRunner` 上。
+ * 建 VM、铺注入面、**删掉 setup 与桥**、灌座位与规则面、释放——全部发生在**工厂**里,不在
+ * `SeatRunner` 上。
  * 交出去的执行器只有 `setSnapshot` / `drainIntents` 两条方法(与 `StubRunner` 逐字同形),
  * 所以结算管线认不出它收的是桩还是真 VM。VM 的生命周期归组装层:工厂返回 `{ runner, dispose }`,
  * 谁建的谁释放。
@@ -23,10 +24,12 @@
  *
  * ── 载入次序与删桥 ──
  *
- * `evalCode(runtimeCode)` 建 API 面 → 取两个桥的函数 handle → 从全局**删掉**它们 →
- * 注入按座位的 `getMyIndex` → `evalCode(scriptCode)` 载入脚本(入口名固定 `function loop()`)。
+ * 灌一次性 setup `{ seat, ruleset }` 到 `__setSnapshot` 这个名字下 → `evalCode(runtimeCode)` 建 API 面
+ * (runtime 在载入时把 setup 读进闭包,并把同一名字换成每 tick 的桥函数;`getMyIndex()` 由它自己铺)
+ * → 取两个桥的函数 handle → 从全局删掉两个桥 → `evalCode(scriptCode)` 载入脚本(入口名固定
+ * `function loop()`)。
  * 每 tick:`__setSnapshot(snapshot)` → `loop()` → `executePendingJobs()` 排空到不动点 →
- * `__drainIntents()`。删桥的断言是「脚本按 `__` 前缀枚举为空」,而宿主仍能经函数 handle 调桥。
+ * `__drainIntents()`。删干净了的断言是「脚本按 `__` 前缀枚举为空」,而宿主仍能经函数 handle 调桥。
  *
  * ── 排空到不动点为什么必须在 drain 之前 ──
  *
@@ -75,7 +78,7 @@
  */
 
 import { QuickJS, type JSValueHandle, type MemoryUsage } from "quickjs-wasi";
-import { MEMORY_SOFT_THRESHOLD_RATIO } from "@model-war/replay";
+import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset } from "@model-war/replay";
 
 import type { Intent } from "../processor/intents.js";
 import type { PlayerIndex, Snapshot } from "../world/state.js";
@@ -242,6 +245,11 @@ export type SandboxSession = {
   readonly runGC: () => void;
   /** 读 VM 当前的内存占用快照。字段见 `MemoryUsage`;判据用的是 `mallocSize`(存活堆口径)。 */
   readonly memoryUsage: () => MemoryUsage;
+  /**
+   * 在 guest 里求一段表达式并 dump 回宿主。测试与自检用(不入缝):API 面的名字集合对不对、
+   * 有没有 `__*` 残留、某个调用会不会抛。
+   */
+  readonly probe: (code: string) => unknown;
   /** 释放 VM 与所有保留的 handle。 */
   readonly dispose: () => void;
 };
@@ -264,12 +272,19 @@ export type QuickJsSessionOptions = QuickJsVmOptions & {
   readonly runtimeCode: string;
   /** 参赛脚本源码(单文件自包含,入口名固定 `function loop()`)。 */
   readonly scriptCode: string;
-  /** 本 VM 服务哪个座位:`getMyIndex()` 按它注入常量函数。 */
+  /** 本 VM 服务哪个座位:经建 VM 时的一次性 setup 载荷灌入,由 guest 的 `getMyIndex()` 读。 */
   readonly seat: PlayerIndex;
+  /**
+   * 这一局的规则集(`raw`),建 VM 时随一次性 setup 灌进 guest 供判据读射程/造价/携带上限。
+   *
+   * **缺席即判据降级**:要读规则面的那两条判据(射程/资金)跳过,交回引擎终裁。组装层拿到了
+   * 已校验的规则集,【应当】把它传进来;它缺席时脚本仍能跑完对局,只是少了那两条即时反馈。
+   */
+  readonly ruleset?: Ruleset;
 };
 
 /**
- * 开一次会话:建 VM → 载 runtime → 取桥 handle → 删桥 → 注入座位 → 载脚本 → 取入口 handle。
+ * 开一次会话:建 VM → 灌 setup → 载 runtime → 取桥 handle → 删桥 → 载脚本 → 取入口 handle。
  *
  * 载入期任一步抛异常都在这里把 VM 释放掉再抛出去:半个初始化好的 VM 不该漏出去,
  * 更不该在异常路径上把 `dispose` 变成调用方的义务。
@@ -277,23 +292,29 @@ export type QuickJsSessionOptions = QuickJsVmOptions & {
 export const openSandbox = async (options: QuickJsSessionOptions): Promise<SandboxSession> => {
   const { vm, eventCounter } = await createSandboxVmWithCounter(options);
   try {
+    // 一次性 setup 载荷:座位 + 规则面。**在 runtime 载入之前**先放在 `__setSnapshot` 这个名字下;
+    // runtime 载入时把它读进闭包,并立刻把同一个名字换成每 tick 的桥函数。这样不必新增一个只出现
+    // 一次的注入名(那会给 tools 的构建面添一处与并行票的耦合),而名字仍由 `HOST_BRIDGE_*` 常量拼出。
+    vm.setProp(
+      vm.global,
+      HOST_BRIDGE_SET_SNAPSHOT,
+      vm.hostToHandle({
+        seat: options.seat,
+        ...(options.ruleset === undefined ? {} : { ruleset: options.ruleset }),
+      }),
+    );
     vm.evalCode(options.runtimeCode, "<sandbox-runtime>").dispose();
 
     // 桥在脚本之前取 handle、之后从全局删。名字由 `HOST_BRIDGE_*` 常量拼(见 runner/index.ts)。
     const setSnapshotHandle = vm.global.getProp(HOST_BRIDGE_SET_SNAPSHOT);
     const drainIntentsHandle = vm.global.getProp(HOST_BRIDGE_DRAIN_INTENTS);
 
-    // 删桥:脚本执行前把两个 `__*` 全局摘掉。仍以常量为准拼出删除表达式,不手写字面量。
+    // 删两个桥:脚本执行前把两个 `__*` 全局摘掉。仍以常量为准拼出删除表达式,不手写字面量。
     vm.evalCode(
       `delete globalThis[${JSON.stringify(HOST_BRIDGE_SET_SNAPSHOT)}];` +
         `delete globalThis[${JSON.stringify(HOST_BRIDGE_DRAIN_INTENTS)}];`,
       "<delete-bridges>",
     ).dispose();
-
-    // 座位自认按座位注入常量函数(runtime 是同一串字节,座位只能由宿主绑)。
-    const seatFn = vm.newFunction("getMyIndex", () => vm.newNumber(options.seat));
-    vm.setProp(vm.global, "getMyIndex", seatFn);
-    seatFn.dispose();
 
     vm.evalCode(options.scriptCode, "<script>").dispose();
     const loopHandle = vm.global.getProp(SCRIPT_ENTRY);
@@ -320,6 +341,7 @@ export const openSandbox = async (options: QuickJsSessionOptions): Promise<Sandb
       pumpJobs: () => vm.executePendingJobs(),
       runGC: () => vm.runGC(),
       memoryUsage: () => vm.getMemoryUsage(),
+      probe: (code) => vm.evalCode(code).consume((handle: JSValueHandle) => vm.dump(handle)),
       drainIntents: () =>
         vm
           .callFunction(drainIntentsHandle, vm.undefined)
