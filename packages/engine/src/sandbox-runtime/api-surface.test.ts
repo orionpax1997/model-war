@@ -280,6 +280,7 @@ const BENCH_HEAD = {
   sandboxRuntimeHash: "d".repeat(64),
   wasiClock: String(WASI_CLOCK_MS),
   wasiRandomFill: "00",
+  wasiTimezoneOffset: "0",
 } as const;
 
 /** 真沙箱跑一场 cell-a:四个座位各一个 VM,规则集灌进 `__setup`;跑完逐个释放。 */

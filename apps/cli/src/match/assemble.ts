@@ -352,6 +352,15 @@ export const executeMatch = async (run: LoadedRun): Promise<ExecutedRun> => {
         runtimeCode: run.runtimeCode,
         scriptCode: run.scripts[seat] ?? "",
         seat,
+        // 规则面随建 VM 的一次性 setup 灌进 guest:射程/造价两条即时判据要与引擎同一份逻辑,否则降级。
+        ruleset: run.ruleset,
+        // 已启用的轨阈值透传给执行器(缺席的轨不写进选项,连计数回调都不装)。
+        ...(run.budget.eventTickLimit === undefined
+          ? {}
+          : { eventTickLimit: run.budget.eventTickLimit }),
+        ...(run.budget.apiCallTickLimit === undefined
+          ? {}
+          : { apiCallTickLimit: run.budget.apiCallTickLimit }),
         ...(run.budget.memoryLimit === undefined ? {} : { memoryLimit: run.budget.memoryLimit }),
         ...(run.budget.memoryTickCeiling === undefined
           ? {}
