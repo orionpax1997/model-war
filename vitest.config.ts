@@ -50,7 +50,7 @@ export default defineConfig({
       },
       {
         // 门禁本身的退出码。与 unit/property 分开不是为了好看,而是为了不递归(见 GATES_TEST)。
-        // `check` 显式只跑 unit 与 property;`gates` 由 `pnpm test` / `test:gates` 跑。
+        // 默认 `test` 与 `check` 都只跑 unit 与 property;`gates` 由 `test:gates` 单独运行。
         test: {
           name: "gates",
           include: [GATES_TEST],
@@ -62,7 +62,7 @@ export default defineConfig({
         },
       },
       {
-        // 门禁自测里慢的那一半。按需跑(`pnpm run test:slow`),默认 `test` 不含它。
+        // 门禁自测里慢的那一半,按需由 `pnpm run test:slow` 单独运行,默认 `test` 不含它。
         // 超时给到 15 分钟:其中一条要连跑两遍全矩阵(红一次 + 还原后绿一次),单条已实测 220s,
         // 而它 220s 的那个数字还是在这台机器上不 competing 的情况下取的。
         test: {

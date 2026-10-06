@@ -8,6 +8,9 @@ dist/
 # 工具临时目录
 .oxlint-cache/
 .vitest/
+
+# 本地子代理模型配置
+.pi/subagents-lite.json
 # codegraph 索引(由源码重建)
 .codegraph/
 

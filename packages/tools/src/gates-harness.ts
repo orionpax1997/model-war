@@ -68,7 +68,7 @@ export const manifest = (): Manifest =>
  * 为什么是清单而不是「最后 N 步」:纪律是「末尾那几道都是复核」,不是「末尾恰好 N 道」。
  * 清单可枚举,N 会漂——多一道或少一道,前者让断言变红,后者让它安静地放过一道混进末尾的新检查。
  *
- * 契约自证门禁**不在**这份清单里:它按需跑(自己的脚本 + `test:slow` 的反例),
+ * 契约自证门禁**不在**这份清单里:它按需跑(自己的脚本与 `test:slow` 的反例分属独立入口),
  * 理由与断言见 `gates.test.ts` 的 `契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`。
  */
 export const CONTENT_RECHECKS = ["pnpm run check:drift", "pnpm run check:bench"] as const;

@@ -42,9 +42,9 @@
  * `vitest run`,而这里会 spawn `check`。见 vitest.config.ts 的 GATES_TEST 常量,
  * 以及本文件末尾那条盯着该不变量的用例。
  *
- * **这里只放快的那一半**(同机实测:本文件 29 条合计约 40s)。契约自证门禁的四问与三个反例、
- * 以及会 spawn 全量 `check` 的那一条在 `gates-slow.test.ts`(约 350s),由 `pnpm run test:slow` 跑。
- * 拆分的理由、与「为什么它也不进默认 `test`」的纪律都写在那个文件的头注里。
+ * **这里只放门禁自测**(同机实测:本文件约 43s),由 `pnpm run test:gates` 按需运行,不属于默认快速 `test`。
+ * 契约自证门禁的四问与三个反例、以及会 spawn 全量 `check` 的那一条在 `gates-slow.test.ts`(约 350s),由 `pnpm run test:slow` 按需运行。
+ * 快慢拆分的理由写在 `gates-slow.test.ts` 的头注里。
  * 两个文件共用的那一层观察手段(`script` / `withProbeFile` / 末尾复核清单)在 `gates-harness.ts`,
  * 清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。
  */
@@ -1169,6 +1169,11 @@ it("契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆�
   expect(scripts["test:slow"] ?? "", "契约自证的反例没有落进可手工调用的入口").toContain(
     "--project slow",
   );
+  // 慢检查只保留独立入口,快速验证命令不能把它们隐式带入。
+  for (const entry of ["check", "check:quick", "check:types", "test", "verify:fast"] as const) {
+    expect(scripts[entry] ?? "", `慢门禁被放进快速入口 ${entry}`).not.toContain("test:slow");
+    expect(scripts[entry] ?? "", `慢门禁被放进快速入口 ${entry}`).not.toContain("check:selfproof");
+  }
   // 与基准产物门禁同侧:末尾那一组仍然全是「提交内容对不对」的复核。
   expect(tailSteps(), "基准产物门禁被挤出了末尾那一组").toContain("pnpm run check:bench");
 });
@@ -1207,13 +1212,14 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
   expect(slowListed.status, slowListed.output).toBe(0);
   expect(slowListed.output, slowListed.output).toContain("gates-slow.test.ts");
 
-  // 默认 `test` 也不含它:它要 ~6 分钟,而 `test` 是「跑一遍测试」的日常入口。
-  // 用显式 `--project` 列举而不是靠某个默认排除项,所以这里断言列举本身。
+  // 默认 `test` 只跑快速的 unit + property;门禁自测与慢 project 都有独立入口。
+  // 用显式 `--project` 列举而不是靠默认拾取规则,所以这里断言列举本身。
   const test = manifest().scripts["test"] ?? "";
   expect(test, "默认 test 不该跑 slow project").not.toContain("--project slow");
-  for (const project of ["unit", "property", "gates"]) {
-    expect(test, `默认 test 显式漏掉了 ${project}`).toContain(`--project ${project}`);
+  for (const project of ["unit", "property"]) {
+    expect(test, `快速 test 显式漏掉了 ${project}`).toContain(`--project ${project}`);
   }
+  expect(test, "默认 test 不应包含门禁自测").not.toContain("--project gates");
   // 按需入口得在:它被拆出来是为了「有需要时手工跑」,没有脚本这件事就没做完。
   expect(manifest().scripts["test:slow"], "慢门禁自测没有落进可手工调用的脚本").toContain(
     "--project slow",
