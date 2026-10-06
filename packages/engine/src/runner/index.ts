@@ -36,15 +36,64 @@ export const HOST_BRIDGE_DRAIN_INTENTS = `${HOST_BRIDGE_PREFIX}drainIntents`;
 export type RunnerKind = "stub" | "quickjs";
 
 /**
+ * 观测种类:预算裁决的计量全在执行器侧(计数器住宿主闭包、内存读数要强制回收后取),
+ * 而状态写入必须走引擎的 `apply()` 唯一写入口。于是观测只能搭**那一次返回载荷**回来,
+ * 由种类分成三条去向:
+ *
+ * - `tripped`:某条轨已触限——由步 0 落成状态变更(累加 `exceptionTicks`)。判据由执行器算好,
+ *   引擎**不做裁决**。阈值判定与淘汰不在本票。
+ * - `wall-clock-soft`:墙钟软限观测,只披露不判罚——转发给观测出口。
+ * - `memory-pressure`:内存压力观测,只披露不判罚——转发给观测出口。
+ */
+export type ObservationKind = "tripped" | "wall-clock-soft" | "memory-pressure";
+
+/**
+ * 一条观测:种类 + 轨名 + 观测值 + 上限值。
+ *
+ * `track` 是规则集里那条轨的名字(如 `eventTickLimit`),用来读数与定位。`value` 是观测读数,
+ * `limit` 是当时那条轨的上限。引擎在这条载荷上不做裁决:它只把 `tripped` 交给唯一写入口、
+ * 把另外两类原样转发。
+ */
+export type Observation = {
+  readonly kind: ObservationKind;
+  readonly track: string;
+  readonly value: number;
+  readonly limit: number;
+};
+
+/**
+ * `drainIntents()` 的返回载荷:**intents 加观测**。
+ *
+ * 这不新增中间表示、也不新增桥调用——ADR-0005 的「缝就是那两次宿主桥调用」原样成立,
+ * 只是回来的那一次载荷多了几栏。`observations` 为空数组时,这一 tick 没有任何预算事实要报。
+ */
+export type RunnerOutput = {
+  readonly intents: readonly Intent[];
+  readonly observations: readonly Observation[];
+};
+
+/**
+ * 观测出口。**可选**:缺席时另外两类观测静默丢弃,这样引擎单测不必关心它。
+ *
+ * 与回放 sink 平行但独立:观测永远不进回放、更不进 `stateHash`(hld《观测通道》)。
+ */
+export type ObservationSink = {
+  readonly record: (observation: Observation) => void;
+};
+
+/**
  * 一个座位的一个执行器。**这就是缝的全部**:两个方法,中间没有任何表示。
  *
  * 两个方法的签名就是 hld §4.5 那两次桥调用的签名,不多一栏(没有 `load` / `dispose` / `turn`)。
  * 「每 tick 一次」由**调用点**保证而不是由协议对象保证——协议对象每加一个方法,就多一处
- * 「这一步该不该调它」要由调用方记着的地方。
+ * 「这一步该不该调它」要由调用方记着的地方。建 VM 与释放归组装层,缝上不持生命周期。
  */
 export type SeatRunner = {
   /** 把这一 tick 的只读快照交给执行器。快照下 tick 全部作废,对象身份不跨 tick 保证。 */
   readonly setSnapshot: (snapshot: Snapshot) => void;
-  /** 交回这一 tick 的 intents。**空数组也是一种合法交回**(这一 tick 什么都不做)。 */
-  readonly drainIntents: () => readonly Intent[];
+  /**
+   * 交回这一 tick 的 intents 与观测。**空数组也是一种合法交回**(这一 tick 什么都不做)。
+   * 观测搭同一次载荷回来,不另开一条查询方法(理由见 `ObservationKind` 的注释)。
+   */
+  readonly drainIntents: () => RunnerOutput;
 };
