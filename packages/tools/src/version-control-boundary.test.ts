@@ -68,3 +68,12 @@ it("沙箱 runtime bundle 产物入库:落点不在任何 dist/ 下", () => {
   // 反面:同一份产物若落在 dist/ 下就被忽略,入库无从谈起。
   expect(isIgnored("packages/engine/sandbox-runtime/dist/runtime.iife.js")).toBe(true);
 });
+
+it("沙箱行为探针输出入库:落点不被忽略", () => {
+  // 探针输出落盘的唯一理由是「可复核」:指得出某个读数出自哪次运行。若落点被 `.gitignore` 吞掉,
+  // 它就又变成 spike 里那个「引用了输出、而输出无处可查」的缺口(票 10)。
+  expect(isIgnored(".scratch/sandbox-executor/probe-output/probes.txt")).toBe(false);
+  expect(
+    isIgnored(".scratch/sandbox-executor/probe-output/probe-03-interrupt-granularity.txt"),
+  ).toBe(false);
+});
