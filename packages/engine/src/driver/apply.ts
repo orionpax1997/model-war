@@ -33,8 +33,8 @@ import type {
 /**
  * 一次状态变更。这是状态**唯一**的写入口所收的那张表。
  *
- * 02a 只登记自己用得到的四种:建点位、建单位、销毁单位、移动单位。剩下的机制
- * (扣款、占领进度、产线推进、异常计数)随各自的机制票追加到这张表上——**走同一条登记**,
+ * 02a 只登记自己用得到的四种:建点位、建单位、销毁单位、移动单位;占领进度(票 05)随后追加。
+ * 剩下的机制(扣款、产线推进、异常计数)随各自的机制票追加到这张表上——**走同一条登记**,
  * 于是「唯一写入口」在整局里始终是一句能被检查的话。
  */
 export type Change =
@@ -66,7 +66,21 @@ export type Change =
    * 首触记忆是跨 tick 的状态,那就必须与别的状态走同一条登记:想写它,先在这里列一项。
    * 不开「步 2 直接展开状态对象写一栏」这条旁路,否则「有哪些写操作」就不再是一张可枚举的表。
    */
-  | { readonly kind: "mark-first-contact"; readonly tick: number };
+  | { readonly kind: "mark-first-contact"; readonly tick: number }
+  /**
+   * 推进一个点位的占领轨道(票 05)。
+   *
+   * `progressOwner` / `progress` 是**更新后的**整条轨道;`newOwner` 只在本 tick 易主时出现
+   * (那时 `progressOwner` 已被清成 `-1`、`progress` 清成 `0`,见 `processor/capture.ts`)。
+   * 是否易主由机器算好、由这条变更承载,`apply()` 只落结果——它不判阈值,也不看规则集。
+   */
+  | {
+      readonly kind: "advance-capture";
+      readonly siteId: number;
+      readonly progressOwner: Owner;
+      readonly progress: number;
+      readonly newOwner?: PlayerIndex;
+    };
 
 /** 按数值 id 升序插入。数组短(每 tick 几百个对象),有序插入比「先插后排」少一次全数组重排。 */
 const insertById = <T extends { readonly id: number }>(
@@ -117,6 +131,16 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
       };
     case "mark-first-contact":
       return { ...state, firstContactTick: change.tick };
+    case "advance-capture":
+      return {
+        ...state,
+        sites: replaceById(state.sites, change.siteId, (site) => ({
+          ...site,
+          progressOwner: change.progressOwner,
+          progress: change.progress,
+          ...(change.newOwner === undefined ? {} : { owner: change.newOwner }),
+        })),
+      };
     default: {
       // 穷尽性靠编译期兜住:新增一种变更而这里没跟上,是编译错误而不是运行期静默不改状态。
       const unreachable: never = change;
