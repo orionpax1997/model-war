@@ -68,3 +68,20 @@
 - 新增文件单独跑:`Test Files 1 passed (1)`、`Tests 8 passed (8)`。
 - `pnpm exec oxfmt` 对新增文件 → 完成,无改动残留。
 
+
+### 合入 PR 分支时的一处修正(与票 07 合流后发现)
+
+票 07 给 `GameState` 加了一栏 `economyDeadAtTick`(「整局一条」`economy-dead` 事件的事件闩,
+与 `firstContactTick` 同性质、不进 `Snapshot`)。本票的 `state-invariants.test.ts` 有两个
+`GameState` 字面量夹具,基线早于票 07,于是**编译期**就红(`TS2741` 缺必填栏)——这是**好事**:
+「新加一栏状态」这件事在有夹具的地方是编译错误,而不是某处静默少了一个字段。
+
+修法:两处夹具补 `economyDeadAtTick: [null, null, null, null]`(四席都还没发过那一条事件),
+并写清它是什么。**不改任何判据、不动三条反例、不动 `stateHashOf`**。
+
+这条修正也顺带说明本票与 07 的**载荷关系**:本票的 `stateHash` 反向钉要求「不变量被破坏时
+哈希必须变」,而 `economyDeadAtTick` 加进 `GameState` 之后**也会进那一行的载荷**吗?
+——不会:`tick` 行的载荷是 `{tick, players, units, sites, events}`(逐字来自 hld §7.5),
+本票那条反向钉用的正是写出路径的真实载荷,所以它与 07 的新栏互不干扰。
+
+读数:`pnpm run check` EXIT=0,**666 用例**、105 模块 216 依赖零违规、生成物 6 件无漂移。

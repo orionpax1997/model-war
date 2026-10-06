@@ -129,6 +129,8 @@ const makeState = (parts: {
   outcome: null,
   // 四席都在,无人被淘汰。
   eliminatedAtTick: [null, null, null, null],
+  // 四席都还没发过 `economy-dead`(票 07 的事件闩,与 `firstContactTick` 同性质、不进 `Snapshot`)。
+  economyDeadAtTick: [null, null, null, null],
   // null:让本文件那条多 tick 构造自己触发 first-contact,而不是被夹具预先抹掉。
   firstContactTick: null,
 });
@@ -183,6 +185,7 @@ it("正向钉:对象键书写顺序不同 → 哈希**逐字相同**(键那半�
   const reordered: GameState = {
     firstContactTick: ordered.firstContactTick,
     eliminatedAtTick: ordered.eliminatedAtTick,
+    economyDeadAtTick: ordered.economyDeadAtTick,
     outcome: ordered.outcome,
     nextId: ordered.nextId,
     sites: ordered.sites.map((site) => ({
