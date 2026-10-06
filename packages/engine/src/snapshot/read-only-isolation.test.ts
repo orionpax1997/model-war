@@ -65,6 +65,8 @@ const site = (id: number, owner: -1 | PlayerIndex): Site => ({
 /** 每个用例一份新状态:这些用例里有几条**故意**去写快照,共用一份会让脏写渗到别的用例。 */
 const makeState = (): GameState => ({
   tick: 0,
+  size: 8,
+  terrain: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => false)),
   players: [0, 1, 2, 3].map((index) => ({
     index: index as PlayerIndex,
     resources: 16,
@@ -75,6 +77,7 @@ const makeState = (): GameState => ({
   sites: [site(3, 0), site(4, -1)],
   nextId: 5,
   outcome: null,
+  firstContactTick: null,
 });
 
 it("深 freeze 冻到底:嵌套的单位、点位、点位上的产线订单都不可写", () => {

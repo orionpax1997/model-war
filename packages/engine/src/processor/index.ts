@@ -20,7 +20,7 @@
 
 import { createEventCollector, type Event } from "./events.js";
 import { initialContext, type Step, type TickContext } from "./context.js";
-import type { Intent } from "./intents.js";
+import type { IssuedIntent } from "./intents.js";
 import type { TickSink } from "../replay-writer/index.js";
 import type { RulesetView } from "../ruleset-loader/index.js";
 import type { SeatRunner } from "../runner/index.js";
@@ -60,8 +60,10 @@ export type TickResult = {
   readonly state: GameState;
   /** 事件流。由收集器定序后交出(hld §4.3 的定序规则,见 `processor/events.ts` 头注)。 */
   readonly events: readonly Event[];
-  /** 步 1 之后的那批 intent。交出来是给测试断言用的,生产侧在步 1 之后就与它无关了。 */
-  readonly intents: readonly Intent[];
+  /** 步 1 之后的那批 intent(带上座位,移动两条才有内容)。交出来是给测试断言用的。 */
+  readonly intents: readonly IssuedIntent[];
+  /** 本 tick 按座位计的寻路调用量(票 04)。预算层的输入,本层不判罚。 */
+  readonly pathfindingCalls: readonly number[];
   /** 步 7 的结论:`tick` 达 `tickLimit`。票 09 把它换成 `state.outcome`。 */
   readonly limitReached: boolean;
 };
@@ -86,6 +88,7 @@ export const processTick = (
     state: context.state,
     events: context.collector.events(),
     intents: context.intents,
+    pathfindingCalls: context.pathfindingCalls,
     limitReached: context.limitReached,
   };
 };

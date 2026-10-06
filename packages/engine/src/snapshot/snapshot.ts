@@ -47,6 +47,8 @@ const freezeDeep = <T>(value: T): T => {
 /** 快照的几栏是**逐字列出**的,不是 `Pick<GameState, …>`(理由见 state.ts 的 `Snapshot` 注释)。 */
 const snapshotShapeOf = (state: GameState): Snapshot => ({
   tick: state.tick,
+  size: state.size,
+  terrain: state.terrain,
   players: state.players,
   units: state.units,
   sites: state.sites,
