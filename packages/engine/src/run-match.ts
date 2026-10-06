@@ -28,6 +28,9 @@
  * 循环跑到 `state.outcome !== null` 为止:写 `outcome` 的那一 tick 就是收官那一 tick。
  * 「收官了却没有 `outcome`」在本函数里是一个**不该发生**的状态(步 5 / 步 7 每 tick 都判),
  * 出现即抛,而不是伪造一个「超时 + 全部并列」的兜底——那会让引擎故障伪装成一局正常超时。
+ *
+ * **另一条出口是故障**:步 0 交回硬超时故障位时,本函数不写末行、直接交回一个
+ * `uncertain-timeout` 状态。它使整场作废而非判罚,是唯一一个「跑完了但没有结果行」的出口。
  */
 
 import type { MapDefinition, ReplayPlayerRef, ReplayResultLine, Ruleset } from "@model-war/replay";
@@ -79,20 +82,36 @@ export type RunMatchParams = {
  */
 export type { BudgetConfig } from "./budget.js";
 
-/** `runMatch` 的返回值:终局那一行 + 收官时的状态 + 跑了多少 tick。 */
-export type RunMatchResult = {
-  /** 回放末行 `result`(hld §7.5)。 */
-  readonly result: ReplayResultLine;
-  /**
-   * 收官时的完整状态。
-   *
-   * **`outcome` 在这一刻必已置**(它就是循环的退出条件),与 `result` 是同一份终局的两条读法:
-   * `result` 是它的行格式投影,`finalState` 是引擎侧的原样。
-   */
-  readonly finalState: GameState;
-  /** 结算过的 tick 数。超时收官时它等于 `ruleset.tickLimit`。 */
-  readonly tickCount: number;
-};
+/**
+ * `runMatch` 的返回值:一个判别联合。
+ *
+ * ── 为什么是联合而不是「`result` 加一个可选故障位」──
+ *
+ * 硬超时那一局**没有**合法的末行 `result`(整场作废),而把 `result` 写成可选会让每个调用点
+ * 都得记得判一下「这次到底有没有结果」。判别联合把这件事交给编译器:读 `result` 之前必须先
+ * 收窄到 `completed` 那一支(spec《双重计数与墙钟》:作废而非判罚)。
+ */
+export type RunMatchResult =
+  | {
+      readonly status: "completed";
+      /** 回放末行 `result`(hld §7.5)。 */
+      readonly result: ReplayResultLine;
+      /**
+       * 收官时的完整状态。
+       *
+       * **`outcome` 在这一刻必已置**(它就是循环的退出条件),与 `result` 是同一份终局的两条读法:
+       * `result` 是它的行格式投影,`finalState` 是引擎侧的原样。
+       */
+      readonly finalState: GameState;
+      /** 结算过的 tick 数。超时收官时它等于 `ruleset.tickLimit`。 */
+      readonly tickCount: number;
+    }
+  | {
+      /** 墙钟硬超时:整场作废(不判罚、不写末行 `result`),由上层映射到退出码 3。 */
+      readonly status: "uncertain-timeout";
+      /** 硬超时发生的那一 tick。它被中断,没有写回放行(步骤 reduce 在步 0 后短路)。 */
+      readonly tick: number;
+    };
 
 /**
  * 终局行:`state.outcome` 的行格式投影。
@@ -141,11 +160,16 @@ export const runMatch = (params: RunMatchParams): RunMatchResult => {
   // `state.outcome !== null` 就是收官:写它的那一 tick 是最后结算的一 tick。
   while (state.outcome === null) {
     const ticked = processTick(state, runners, view, sink, observations, budget);
+    if (ticked.fault !== null) {
+      // 墙钟硬超时:作废而非判罚。本 tick 没写回放行(processTick 在步 0 后短路)、也不写末行
+      // `result`——它不是一个「合法的负/胜/超时」,而是「这一局的结果不可信」。
+      return { status: "uncertain-timeout", tick: ticked.state.tick };
+    }
     state = ticked.state;
     tickCount = ticked.state.tick;
   }
 
   const result = resultLineOf(state);
   sink.write(JSON.stringify(result));
-  return { result, finalState: state, tickCount };
+  return { status: "completed", result, finalState: state, tickCount };
 };

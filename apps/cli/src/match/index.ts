@@ -37,6 +37,7 @@ import { splitArgs } from "../args.js";
 import {
   EXIT_ENGINE_FAULT,
   EXIT_INTERNAL,
+  EXIT_NONDETERMINISTIC_TIMEOUT,
   EXIT_OK,
   EXIT_USAGE_OR_VALIDATION,
   reportFailure,
@@ -78,6 +79,18 @@ export const runMatchCommand = async (args: readonly string[]): Promise<number> 
     return failure.exitCode;
   }
 
+  // ── 墙钟硬超时:整场作废,走「不确定超时」轨(退出码 3),不是判负 ──
+  if (executed.status === "uncertain-timeout") {
+    const failure: CommandFailure = {
+      exitCode: EXIT_NONDETERMINISTIC_TIMEOUT,
+      message:
+        `不确定超时:第 ${String(executed.tick)} tick 被墙钟硬超时中断,本局作废` +
+        "(作废而非判负;按重跑 / 剔除处理)",
+    };
+    reportFailure("modelwar match", failure);
+    return failure.exitCode;
+  }
+
   // ── 写回放 ──
   // 回放与输入物化件同目录(hld §7.5 的拓扑:`matches/<...>/replay.jsonl`)。
   const replayPath = join(dirname(resolve(inputPath)), "replay.jsonl");
@@ -91,6 +104,27 @@ export const runMatchCommand = async (args: readonly string[]): Promise<number> 
     reportFailure("modelwar match", failure);
     return failure.exitCode;
   }
+
+  // ── 写观测(D3:与回放同级)。有观测才落盘;没有则静默跳过——不拿一个空文件假装披露过 ──
+  if (executed.observations.length > 0) {
+    const observationsPath = join(dirname(resolve(inputPath)), "observations.jsonl");
+    try {
+      writeFileSync(
+        observationsPath,
+        `${executed.observations.map((line) => JSON.stringify(line)).join("\n")}\n`,
+      );
+    } catch (cause) {
+      const failure: CommandFailure = {
+        exitCode: EXIT_INTERNAL,
+        message:
+          `观测写盘失败 ${observationsPath}:` +
+          `${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+      reportFailure("modelwar match", failure);
+      return failure.exitCode;
+    }
+  }
+
   process.stdout.write(
     `modelwar match: ${String(executed.tickCount)} tick 已结算,` +
       `回放写入 ${replayPath}(runner=quickjs,${executed.result.reason})\n`,

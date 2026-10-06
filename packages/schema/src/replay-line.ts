@@ -133,10 +133,9 @@ export type ReplaySite = {
   readonly producing: ReplaySiteProduction | null;
 };
 
-/** 八种事件(hld §7.5)。名字是回放与叙事战报共同读的,所以一个都不能改写。 */
+/** 七种事件(hld §7.5)。名字是回放与叙事战报共同读的,所以一个都不能改写。 */
 export type ReplayEventKind =
   | "exception"
-  | "budget-soft-warning"
   | "first-contact"
   | "unit-destroyed"
   | "site-captured"
@@ -346,7 +345,6 @@ const REPLAY_EVENT = {
     kind: {
       enum: [
         "exception",
-        "budget-soft-warning",
         "first-contact",
         "unit-destroyed",
         "site-captured",
@@ -354,7 +352,7 @@ const REPLAY_EVENT = {
         "player-eliminated",
         "victory",
       ],
-      description: "八种事件之一(hld §7.5)。名字是回放与叙事战报共同读的,改一个即改一份存档格式。",
+      description: "七种事件之一(hld §7.5)。名字是回放与叙事战报共同读的,改一个即改一份存档格式。",
     },
     subjectId: {
       type: "integer",

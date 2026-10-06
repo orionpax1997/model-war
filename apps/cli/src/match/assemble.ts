@@ -32,11 +32,13 @@ import {
   type JsonValue,
   type MapDefinition,
   type MatchInput,
+  type ObservationLine,
   type ReplayPlayerRef,
+  type ReplayResultLine,
   type ReplaySeat,
   type Ruleset,
 } from "@model-war/schema";
-import { runMatch, type RunMatchParams, type RunMatchResult } from "@model-war/engine";
+import { runMatch, type RunMatchParams } from "@model-war/engine";
 import {
   WASI_CLOCK_MS,
   WASI_RANDOM_FILL,
@@ -54,6 +56,7 @@ import {
   type ValidationRejection,
 } from "../validator.js";
 import { measureSandboxRuntimeHash } from "./sandbox-runtime.js";
+import { observationLinesOf, type ObservationInput } from "./observations.js";
 
 const sha256 = (bytes: Buffer | string): string => createHash("sha256").update(bytes).digest("hex");
 
@@ -329,13 +332,26 @@ export const assemble = (inputPath: string, root: string): AssembleResult => {
   };
 };
 
-/** 一次真沙箱执行的结果:回放行 + 终局 + tick 数 + 观测(本票只把它接出来,文件格式归票 09)。 */
-export type ExecutedRun = {
-  readonly lines: readonly string[];
-  readonly result: RunMatchResult["result"];
-  readonly tickCount: number;
-  readonly observations: readonly string[];
-};
+/**
+ * 一次真沙箱执行的结果:回放行 + 终局 + tick 数 + 观测行;或一条作废(硬超时)。
+ *
+ * 判别联合与引擎的 `RunMatchResult` 同一条理由:硬超时那一局没有合法的回放与末行 `result`,
+ * 写成「可选栏」会让每个调用点都得记得判一下这次到底有没有结果。
+ */
+export type ExecutedRun =
+  | {
+      readonly status: "completed";
+      readonly lines: readonly string[];
+      readonly result: ReplayResultLine;
+      readonly tickCount: number;
+      /** 观测行,已按「每玩家每类首条」去重(D3:`observations.jsonl` 的内容)。 */
+      readonly observations: readonly ObservationLine[];
+    }
+  | {
+      /** 墙钟硬超时:整场作废(不写回放、不写观测),由命令映射到退出码 3。 */
+      readonly status: "uncertain-timeout";
+      readonly tick: number;
+    };
 
 /**
  * 真沙箱执行:编译 wasm(一次)→ 四个 VM → `runMatch` → 释放四个 VM。
@@ -365,13 +381,22 @@ export const executeMatch = async (run: LoadedRun): Promise<ExecutedRun> => {
         ...(run.budget.memoryTickCeiling === undefined
           ? {}
           : { memoryTickCeiling: run.budget.memoryTickCeiling }),
+        // 墙钟两轨:软限只产观测;硬超时中断本 tick 并交回故障位。缺席即不启用(不读钟)。
+        ...(run.budget.wallClockSoftLimit === undefined
+          ? {}
+          : { wallClockSoftLimit: run.budget.wallClockSoftLimit }),
+        ...(run.budget.wallClockHardTimeout === undefined
+          ? {}
+          : { wallClockHardTimeout: run.budget.wallClockHardTimeout }),
       }),
     ),
   );
   try {
     const lines: string[] = [];
-    const observations: string[] = [];
-    const outcome: RunMatchResult = runMatch({
+    // 观测出口**接好**(缺席静默丢弃):墙钟软限/内存压力两类从这里出来。
+    // 去重与投影(引擎载荷 → 观测行)交给纯函数 `observationLinesOf`(见那个文件头注)。
+    const observations: ObservationInput[] = [];
+    const outcome = runMatch({
       ruleset: run.ruleset,
       map: run.map,
       seed: run.seed,
@@ -380,12 +405,18 @@ export const executeMatch = async (run: LoadedRun): Promise<ExecutedRun> => {
       runners: handles.map((handle) => handle.runner),
       budget: run.budget,
       sink: { write: (line) => void lines.push(line) },
-      // 观测出口**接好**(缺席静默丢弃):票 09 的墙钟软限/内存压力两类会从这里出来。
-      observations: {
-        record: (observation) => void observations.push(JSON.stringify(observation)),
-      },
+      observations: { record: (record) => void observations.push(record) },
     });
-    return { lines, result: outcome.result, tickCount: outcome.tickCount, observations };
+    if (outcome.status !== "completed") {
+      return { status: "uncertain-timeout", tick: outcome.tick };
+    }
+    return {
+      status: "completed",
+      lines,
+      result: outcome.result,
+      tickCount: outcome.tickCount,
+      observations: observationLinesOf(observations),
+    };
   } finally {
     for (const handle of handles) {
       handle.dispose();

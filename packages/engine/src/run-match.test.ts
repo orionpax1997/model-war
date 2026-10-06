@@ -60,6 +60,9 @@ it("跑完一整场到超时:meta 行在前、600 个 tick 行、result 行收�
   expect(lines).toHaveLength(1 + RULESET.tickLimit + 1);
   expect(parsed[0]?.type).toBe("meta");
   expect(parsed.at(-1)?.type).toBe("result");
+  if (outcome.status !== "completed") {
+    throw new Error("桩路径不应产生故障位");
+  }
   expect(outcome.tickCount).toBe(RULESET.tickLimit);
   // tick 行从 0 到 599,逐个不缺不多(少一格就说明有一 tick 没被结算或没被写出)。
   const tickNumbers = parsed
@@ -86,7 +89,10 @@ it("末行 result:空转对局按 gdd 是全部并列的超时(不是空排名�
     budget: {},
     sink,
   });
-  const result = outcome.result;
+  const result = outcome.status === "completed" ? outcome.result : undefined;
+  if (result === undefined) {
+    throw new Error("桩路径不应产生故障位");
+  }
   expect(result.reason).toBe("timeout");
   // 全部并列是空转对局的**诚实答案**(四方领土分相同),而空数组会被叙事战报读成「打完了」。
   expect(result.rankings).toEqual([1, 1, 1, 1]);

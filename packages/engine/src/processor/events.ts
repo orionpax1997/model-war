@@ -1,5 +1,5 @@
 /**
- * 事件流与它的定序规则(hld §7.5 的八种事件、§4.3 的步位)。
+ * 事件流与它的定序规则(hld §7.5 的事件、§4.3 的步位)。
  *
  * ═══ 本模块的头注就是那条定序规则本身 ═══
  *
@@ -13,29 +13,28 @@
  * 「谁先被遍历到」——那正是各步内部允许存在的实现自由度。改一处遍历顺序,历史回放里的一段叙事战报
  * 就会静默变样,而回放是「可复算原始数据」,它变样等于证据失效。
  *
- * 排第三的那条兜底之所以可接受:八种事件里每一种的主体在一 tick 内至多出现一次
+ * 排第三的那条兜底之所以可接受:七种事件里每一种的主体在一 tick 内至多出现一次
  * (一个单位同 tick 死一次、一个点位同 tick 易主一次、一个玩家同 tick 出局一次),
  * 所以兜底在规则层**几乎**不可达;它留着是为了让「本 tick 有两条同类同主体事件」这种尚未出现的
  * 情形有一个确定答案,而不是让顺序依赖实现的自由。
  *
  * ═══ 为什么每种事件一个具名方法 ═══
  *
- * 八种事件各自**绑定一个步位**。具名方法让「这个事件该由哪一步发」写在调用点上,
+ * 七种事件各自**绑定一个步位**。具名方法让「这个事件该由哪一步发」写在调用点上,
  * 而步号由方法自己带,于是第 1 条规则由类型与命名维持,而不是由每个调用点记得传一个步号。
  * 不允许某一步随手往数组里 `push`:出口只有 `events()` 一个,而它会先定序再交出。
  *
  * ═══ 02a 不发任何事件 ═══
  *
- * 八种事件由 04–09 各自填进自己的槽位。**本票只把收集器与定序规则立住**——
+ * 七种事件由 04–09 各自填进自己的槽位。**本票只把收集器与定序规则立住**——
  * 规则先立、事件后填,这样每一张机制票都不必各自决定顺序。
  */
 
 import type { PlayerIndex } from "../world/state.js";
 
-/** 八种事件(hld §7.5)。名字是回放与叙事战报共同读的,所以一个都不能改写。 */
+/** 七种事件(hld §7.5)。名字是回放与叙事战报共同读的,所以一个都不能改写。 */
 export type EventKind =
   | "exception"
-  | "budget-soft-warning"
   | "first-contact"
   | "unit-destroyed"
   | "site-captured"
@@ -62,7 +61,6 @@ export type StepNo = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 const STEP_OF: { readonly [kind in EventKind]: StepNo } = {
   // 0 dispatch:由执行器上报,不来自结算
   exception: 0,
-  "budget-soft-warning": 0,
   // 2 movement / 3 combat
   "first-contact": 2,
   "unit-destroyed": 3,
@@ -76,7 +74,6 @@ const STEP_OF: { readonly [kind in EventKind]: StepNo } = {
 
 export type EventCollector = {
   readonly exception: (player: PlayerIndex) => void;
-  readonly budgetSoftWarning: (player: PlayerIndex) => void;
   readonly firstContact: (unitId: number) => void;
   readonly unitDestroyed: (unitId: number) => void;
   readonly siteCaptured: (siteId: number) => void;
@@ -113,7 +110,6 @@ export const createEventCollector = (): EventCollector => {
   };
   return {
     exception: (player) => record("exception", player),
-    budgetSoftWarning: (player) => record("budget-soft-warning", player),
     firstContact: (unitId) => record("first-contact", unitId),
     unitDestroyed: (unitId) => record("unit-destroyed", unitId),
     siteCaptured: (siteId) => record("site-captured", siteId),
