@@ -51,5 +51,5 @@ wc -c runs/t11-readings/replay.jsonl   # 2388636(逐行字节之和,含每行行
 ## 本票不裁的三件事(只在此留指针)
 
 拷贝粒度优化到什么程度算完(hld 开放项 #6)、回放体量与夜间扫描的存储/IO 方案(hld 开放项 #7)、
-性能那个「单场平均墙钟」的目标值(NFR-3 标定)——三者的停止条件**不在本票**,归节点 L / `grill`
+性能那个「对局平均墙钟」的目标值(NFR-3 标定)——三者的停止条件**不在本票**,归节点 L / `grill`
 (见 `.scratch/engine-core/issues/11-determinacy-first-touch-rerun-and-readings.md` 的 `## Answer`)。
