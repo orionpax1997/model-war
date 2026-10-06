@@ -14,6 +14,7 @@ import type { Ruleset } from "@model-war/replay";
 import { processTick } from "./index.js";
 import { loadRuleset } from "../ruleset-loader/index.js";
 import { stubRunner } from "../runner/stub.js";
+import { buildTickLine, serializeTickLine } from "../replay-writer/tick-line.js";
 import type { Observation, RunnerOutput, SeatRunner } from "../runner/index.js";
 import type { GameState, PlayerIndex, Site, Terrain } from "../world/state.js";
 
@@ -152,4 +153,22 @@ it("桩执行器不产出观测:exceptionTicks 恒 0(桩路径零回归)", () =>
     SINK,
   );
   expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([0, 0, 0, 0]);
+});
+
+it("exceptionTicks 随每 tick 写进回放行(该栏位在真源包已存在)", () => {
+  const seat0 = fakeRunner({
+    intents: [],
+    observations: [{ kind: "tripped", track: "eventTickLimit", value: 9001, limit: 9000 }],
+  });
+  const result = processTick(
+    makeState(),
+    [seat0, fakeRunner(EMPTY), fakeRunner(EMPTY), fakeRunner(EMPTY)],
+    loadRuleset(RULESET),
+    SINK,
+  );
+  // 行组装 → 序列化 → 重新解析:tick 行里的 players 一栏就是异常计数的家。
+  const parsed = JSON.parse(serializeTickLine(buildTickLine(result.state, result.events))) as {
+    readonly players: readonly { readonly exceptionTicks: number }[];
+  };
+  expect(parsed.players.map((player) => player.exceptionTicks)).toEqual([1, 0, 0, 0]);
 });

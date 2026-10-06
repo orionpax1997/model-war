@@ -21,6 +21,18 @@
  * 票 06 的账。本票需要的只有三件事:桥按约定的次序被删、闭包内引用照常、一笔意图能经脊梁
  * (`move`)走到底。所以这里只铺 `getTick` / `getObjectsByType` / `move` 三样,其余留给票 06。
  *
+ * ── API 计数(票 07 的「双计数」之一)──
+ *
+ * 与「控制流事件计数」不同,API 调用计数**就在 guest 里自增**:hld §4.5 定的是「action/查询函数
+ * 做收集 + 界检查 + **API 计数自增**」。所以每个注入函数都 `apiCalls += 1`(一个**宿主 authored
+ * 的普通整数**,不是 guest 可改的全局)。计数经**同一次 `__drainIntents()` 返回载荷**带回宿主
+ * (返回结构从 `intents[]` 变成 `{ intents, apiCalls }`)——不新增桥调用、不做每次 API 调用的
+ * 跨边界计数。**阈值判定不在 guest**:宿主拿到 `apiCalls` 后与 `apiCallTickLimit` 比较,超限则
+ * 作废该座位本 tick 的全部意图。
+ *
+ * 计数每 tick 由 `__setSnapshot` 归零(与 `pending` 同一处重置),所以「本 tick 的计数」这一栏
+ * 就是它字面上的意思。
+ *
  * ── 座位自认为什么不在本文件 ──
  *
  * 四份 runtime bundle 是**同一串字节**(它的 sha256 就是 `sandboxRuntimeHash`),而 `getMyIndex()`
@@ -82,6 +94,12 @@ type GuestSnapshot = {
 /** 一条待交回的意图。形状由动作函数(`move` 等)构造,真正合法性终裁在引擎。 */
 type GuestIntent = Record<string, unknown>;
 
+/** `__drainIntents()` 的返回形状:意图 + 本 tick 的 API 调用计数(票 07)。 */
+type GuestDrainResult = {
+  readonly intents: readonly GuestIntent[];
+  readonly apiCalls: number;
+};
+
 const guest = globalThis as unknown as Record<string, unknown>;
 
 /** 本 tick 的只读快照。`null` = 宿主还没交过。 */
@@ -89,6 +107,12 @@ let snapshot: GuestSnapshot | null = null;
 
 /** 本 tick 已收集、待 `__drainIntents()` 交回的意图。每 tick 由 `__setSnapshot` 清空。 */
 let pending: GuestIntent[] = [];
+
+/**
+ * 本 tick 已发生的 API 调用数。一个**普通整数**,每 tick 由 `__setSnapshot` 归零,经
+ * `__drainIntents()` 的返回载荷交回宿主裁决(阈值判定不在 guest,见文件头注)。
+ */
+let apiCalls = 0;
 
 // ── 桥:唯一两个与宿主约定名字的符号 ─────────────────────────────────────────
 //
@@ -98,22 +122,27 @@ let pending: GuestIntent[] = [];
 guest[HOST_BRIDGE_SET_SNAPSHOT] = (next: GuestSnapshot): void => {
   snapshot = next;
   pending = [];
+  apiCalls = 0;
 };
 
-guest[HOST_BRIDGE_DRAIN_INTENTS] = (): readonly GuestIntent[] => {
+guest[HOST_BRIDGE_DRAIN_INTENTS] = (): GuestDrainResult => {
   const drained = pending;
   pending = [];
-  return drained;
+  return { intents: drained, apiCalls };
 };
 
 // ── 注入 API 面的最小骨架(铺全归票 06) ──────────────────────────────────────
 
-guest.getTick = (): number => (snapshot === null ? -1 : snapshot.tick);
+guest.getTick = (): number => {
+  apiCalls += 1;
+  return snapshot === null ? -1 : snapshot.tick;
+};
 
 guest.getObjectsByType = (
   kind: string,
   filter?: { readonly owner?: number; readonly type?: string; readonly kind?: string },
 ): readonly unknown[] => {
+  apiCalls += 1;
   if (snapshot === null) {
     return [];
   }
@@ -140,6 +169,7 @@ guest.getObjectsByType = (
 };
 
 guest.move = (unitId: number, dx: number, dy: number): void => {
+  apiCalls += 1;
   pending = [...pending, { kind: "move", unitId, dx, dy }];
 };
 

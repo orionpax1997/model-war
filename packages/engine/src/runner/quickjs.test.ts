@@ -25,10 +25,15 @@ import { stubRunner } from "./stub.js";
 import type { GameState, PlayerIndex, Site, Snapshot, Terrain } from "../world/state.js";
 import { HOST_BRIDGE_DRAIN_INTENTS, HOST_BRIDGE_SET_SNAPSHOT } from "./index.js";
 import {
+  API_CALL_TRACK,
+  EVENT_TRACK,
+  INTERRUPT_EVENT_GRANULARITY,
   MEMORY_TRACK,
   WASI_CLOCK_MS,
+  createEventCounter,
   createQuickJsRunner,
   createSandboxVm,
+  eventCounterHandler,
   openSandbox,
 } from "./quickjs.js";
 
@@ -164,13 +169,13 @@ it("反例:不排空则意图跨 tick 残留(tick 0 的意图在 tick 1 才出�
     session.setSnapshot(snapshotOf(0));
     session.runLoop();
     // 本 tick 不排空:那一笔意图还留在 job 队列里。
-    expect(session.drainIntents()).toEqual([]);
+    expect(session.drainIntents().intents).toEqual([]);
 
     session.setSnapshot(snapshotOf(1));
     session.runLoop();
     // 上一 tick 的 job 在这里才跑——它把 tick 0 的意图带进了 tick 1 的交回里。
     expect(session.pumpJobs()).toBeGreaterThan(0);
-    expect(session.drainIntents()).toEqual([{ kind: "move", unitId: 1, dx: 1, dy: 0 }]);
+    expect(session.drainIntents().intents).toEqual([{ kind: "move", unitId: 1, dx: 1, dy: 0 }]);
   } finally {
     session.dispose();
   }
@@ -273,6 +278,8 @@ const drainOneTick = async (
     readonly memoryLimit?: number;
     readonly memoryTickCeiling?: number;
     readonly softThresholdRatio?: number;
+    readonly eventTickLimit?: number;
+    readonly apiCallTickLimit?: number;
   } = {},
 ) => {
   const { runner, dispose } = await createQuickJsRunner({
@@ -457,6 +464,211 @@ it("每 tick 末的强制回收有开销:读数记录在案(不是免费动作)"
     writeReading("t08-gc-overhead", { samples, microsPerTick });
     // 读数存在即有账:每 tick 一次的强制回收不是零成本动作。
     expect(microsPerTick).toBeGreaterThan(0);
+  } finally {
+    dispose();
+  }
+});
+
+// ── 双计数(票 07):控制流事件计数 + API 调用计数 ────────────────────────────
+//
+// 两个计数都是**宿主 authored 的纯整数计数**,互为盲区:纯计算死循环由事件计数抓,API 轰炸由
+// API 调用计数抓。夹具在 `fixtures/guest/event-spin.js` 与 `api-flood.js`。
+
+const EVENT_SPIN_SCRIPT = readFixture("event-spin.js");
+const API_FLOOD_SCRIPT = readFixture("api-flood.js");
+
+it("事件计数回调内无时钟、无分配:只做整数自增与阈值比较", () => {
+  // 一条断言钉住回调的形状:它的源码里不得出现时钟读取或分配构造。回调只能在构造时装,
+  // 所以它是整条轨里唯一会被每 5000 次控制流事件调到的热点——那里放重活会拖慢每一步。
+  const source = eventCounterHandler.toString();
+  for (const forbidden of [
+    "Date",
+    "performance",
+    "Math",
+    "new ",
+    ".push(",
+    "Object.",
+    "Array",
+    "[",
+  ]) {
+    expect(source).not.toContain(forbidden);
+  }
+  // 行为:恰好按粒度自增,达阈才置截停标志。
+  const counter = createEventCounter(2 * INTERRUPT_EVENT_GRANULARITY);
+  counter.armed = true;
+  expect(eventCounterHandler(counter)).toBe(false);
+  expect(counter.count).toBe(INTERRUPT_EVENT_GRANULARITY);
+  expect(eventCounterHandler(counter)).toBe(true);
+  expect(counter.tripped).toBe(true);
+  // 未 arm、或本轨未启用(阈值缺席)时,回调恒不截停。
+  expect(eventCounterHandler(createEventCounter(undefined))).toBe(false);
+  const idle = createEventCounter(1);
+  expect(eventCounterHandler(idle)).toBe(false);
+});
+
+it("纯计算死循环夹具被控制流事件计数截停(意图作废、产 tripped)", async () => {
+  const limit = 10 * INTERRUPT_EVENT_GRANULARITY;
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: EVENT_SPIN_SCRIPT,
+    seat: 0,
+    eventTickLimit: limit,
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    const output = runner.drainIntents();
+    // 死循环交不出任何意图(它本来也不产生);本 tick 被截停。
+    expect(output.intents).toEqual([]);
+    expect(output.observations).toHaveLength(1);
+    const tripped = output.observations[0];
+    expect(tripped).toMatchObject({ kind: "tripped", track: EVENT_TRACK, limit });
+    // 夹具一个 API 都不调,所以截停它的不可能是 API 计数轨(对照下一组)。
+    expect(tripped?.value).toBeGreaterThanOrEqual(limit);
+  } finally {
+    dispose();
+  }
+});
+
+it("事件计数轨的边界:阈值高低决定截停与否(能弄红的反例)", async () => {
+  // 同一条有界重计算脚本:阈值远高于它的事件数 → 不截停,意图照常交回。
+  const bounded = "function loop() { for (let i = 0; i < 20000; i++) {} move(0, 1, 0); }";
+  const noTrip = await drainOneTick(bounded, {
+    eventTickLimit: 1000 * INTERRUPT_EVENT_GRANULARITY,
+  });
+  expect(noTrip.observations).toEqual([]);
+  expect(noTrip.intents).toEqual([{ kind: "move", unitId: 0, dx: 1, dy: 0 }]);
+  // 阈值降到一格 → 截停,意图作废。两条一起才说明「截停」是阈值造成的,不是脚本本身交不出。
+  const tripped = await drainOneTick(bounded, { eventTickLimit: INTERRUPT_EVENT_GRANULARITY });
+  expect(tripped.intents).toEqual([]);
+  expect(tripped.observations[0]).toMatchObject({ kind: "tripped", track: EVENT_TRACK });
+  // 未定值(字段缺席)下本轨不启用:同一脚本连观测都不产,意图照常交回。
+  const disabled = await drainOneTick(bounded);
+  expect(disabled.observations).toEqual([]);
+  expect(disabled.intents).toEqual([{ kind: "move", unitId: 0, dx: 1, dy: 0 }]);
+});
+
+it("本 tick 的事件计数在下一 tick 进入时重置(读数逐 tick 稳定)", async () => {
+  const limit = 10 * INTERRUPT_EVENT_GRANULARITY;
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: EVENT_SPIN_SCRIPT,
+    seat: 0,
+    eventTickLimit: limit,
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    const first = runner.drainIntents().observations[0];
+    runner.setSnapshot(snapshotOf(1));
+    const second = runner.drainIntents().observations[0];
+    // 每 tick 从 0 起算 → 两 tick 读数相同;若累计不重置,第二 tick 会翻倍到 2×limit。
+    expect(first?.value).toBe(limit);
+    expect(second?.value).toBe(limit);
+  } finally {
+    dispose();
+  }
+});
+
+it("API 轰炸夹具被 API 调用计数截停(意图作废、产 tripped)", async () => {
+  const output = await drainOneTick(API_FLOOD_SCRIPT, { apiCallTickLimit: 400 });
+  // 夹具在打完之后下一笔 move:超限 → 该座位本 tick 的意图全部作废,那笔 move 不该出现。
+  expect(output.intents).toEqual([]);
+  expect(output.observations).toHaveLength(1);
+  const tripped = output.observations[0];
+  expect(tripped).toMatchObject({ kind: "tripped", track: API_CALL_TRACK, limit: 400 });
+  expect(tripped?.value).toBeGreaterThanOrEqual(400);
+});
+
+it("API 计数轨只在启用时生效:同一轰炸脚本未启用时正常交回意图(能弄红的反例)", async () => {
+  const output = await drainOneTick(API_FLOOD_SCRIPT);
+  expect(output.observations).toEqual([]);
+  expect(output.intents).toEqual([{ kind: "move", unitId: 0, dx: 1, dy: 0 }]);
+});
+
+it("本 tick 的 API 计数在下一 tick 进入时重置", async () => {
+  // 每 tick 3 次调用、上限 4:两 tick 都不该超。若计数不重置,第二 tick 累到 6 就超了。
+  const script = "function loop() { getTick(); getTick(); move(7, 1, 0); }";
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: script,
+    seat: 0,
+    apiCallTickLimit: 4,
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    const first = runner.drainIntents();
+    runner.setSnapshot(snapshotOf(1));
+    const second = runner.drainIntents();
+    expect(first.observations).toEqual([]);
+    expect(second.observations).toEqual([]);
+    expect(second.intents).toEqual([{ kind: "move", unitId: 7, dx: 1, dy: 0 }]);
+  } finally {
+    dispose();
+  }
+});
+
+it("超限只作废该座位本 tick 的意图:其余三方照常结算、引擎不受影响", async () => {
+  // 座位 0 是 API 轰炸的真执行器;座位 1 是普通桩,替一个存在的单位下一笔 move。
+  const seeker = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: API_FLOOD_SCRIPT,
+    seat: 0,
+    apiCallTickLimit: 400,
+  });
+  try {
+    const state: GameState = {
+      ...makeState(),
+      units: [{ id: 50, owner: 1, type: "worker", x: 3, y: 3, hp: 2, carrying: 0 }],
+    };
+    const mover = stubRunner(() => [{ kind: "move", unitId: 50, dx: 1, dy: 0 }]);
+    const result = processTick(
+      state,
+      [seeker.runner, mover, stubRunner(() => []), stubRunner(() => [])],
+      loadRuleset(RULESET),
+      { write: () => {} },
+    );
+    // 座位 0 累加一次异常;座位 1 的单位照常移动——超限不污染其他三方与引擎。
+    expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([1, 0, 0, 0]);
+    expect(result.state.units.find((unit) => unit.id === 50)?.x).toBe(4);
+  } finally {
+    seeker.dispose();
+  }
+});
+
+it("反复失控不能靠计数重置逃逸:exceptionTicks 跨 tick 单调不减,达上限即出局、点位回归中立", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: EVENT_SPIN_SCRIPT,
+    seat: 0,
+    eventTickLimit: 10 * INTERRUPT_EVENT_GRANULARITY,
+  });
+  try {
+    const idle = stubRunner(() => []);
+    const budget = { exceptionTickLimit: 2 };
+    const readings: number[][] = [];
+    let state = makeState();
+    for (let i = 0; i < 3; i++) {
+      state = processTick(
+        state,
+        [runner, idle, idle, idle],
+        loadRuleset(RULESET),
+        { write: () => {} },
+        undefined,
+        budget,
+      ).state;
+      readings.push(state.players.map((player) => player.exceptionTicks));
+    }
+    // 单调不减:1 → 2 → 2(出局后不再累加)。
+    expect(readings[0]).toEqual([1, 0, 0, 0]);
+    expect(readings[1]).toEqual([2, 0, 0, 0]);
+    expect(readings[2]).toEqual([2, 0, 0, 0]);
+    // 达上限即出局,名下点位回归中立。
+    expect(state.players[0]?.alive).toBe(false);
+    expect(state.sites.find((site) => site.id === 900)?.owner).toBe(-1);
   } finally {
     dispose();
   }
