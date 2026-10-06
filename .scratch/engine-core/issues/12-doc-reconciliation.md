@@ -149,3 +149,30 @@ mmdc -s 2 -i docs/diagrams/v0-milestone-dag.md -o docs/diagrams/v0-milestone-dag
 - **复算那一格(`modelwar verify`)不实现,归 G**(它要重新执行真脚本);`match-result` 与回放行形状已定,可直接接。
 - **类型面(形状)归 F、注入面(名字铺放时机、桥删除时机)归 G**,同源于一份形状;G 若发现某名字在类型面里而铺不出来,那是 G 的缺陷,不是「类型面漏了」。
 - `sandbox-runtime.ts` 的桩哈希换成真产物;`validateReplayResultLine` 的读入端接线也归「回放读入端校验归哪一层」的裁定。
+
+### 潜伏红修复:门禁自测里那条被 engine 的 `Math.abs` 用法弄红的期望
+
+**这不是实现有 bug**——白名单(`ALLOWED_MATH_MEMBERS`,判据「整数入整数出」)没错,engine 代码也没错(过门禁 0 违规,用例第 1 条断言就是证据)。**错的只有那条自测的期望**。修的是 `packages/tools/src/gates.test.ts` 一处;名单内容、engine 业务代码、门禁脚本(`run-no-float-gate.ts`)判据一字未动。
+
+**那条红是什么**:用例「生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变」把真源 `packages/schema/src/builtin-globals.ts` 里的 `"abs",` 摘掉 → 重跑生成器 → 放一个用 `Math.sign` 的探针 → 跑 `check:no-float`,第 3 条断言 `stillAllowed.status === 0` 失败(原 `:320`)。
+
+**为什么红**:第 3 条隐含前提是「engine 源码里一处都不用 `Math.abs`」。而 engine 源码现有 **6 文件 12 处**用 `Math.abs`(`pathfinding/find-path.ts:86`、`processor/combat.ts:105`、`processor/economy.ts:85`、`processor/movement.ts:96`、`processor/steps/step2-movement.ts:106`、`fixtures/strategies.ts:37`),摘掉 `abs` 后它们本来就该被判违规,整道门禁因此无论如何都退非零。原报错文案「名单内的其他成员被连坐」是**误诊**:被报的恰恰就是被摘掉的那个成员。
+
+**谁引入的**:`Math.abs` 首次进 engine 源码是**票 04**(`996de72`),所以这条自测**从票 04 起就是红的**。**为什么一直没被发现**:本 feature 迭代期按约定只跑 `check` 与 unit+property、不跑 `gates`,直到收尾全量 `pnpm run test` 才暴露。
+
+**选了 A,并配上 B 的那条断言当自证(即 A+B)**:把「被摘掉的成员」从 `abs` 换成 engine 源码**一处都不用**的 `clz32`(动笔前实测:`packages/engine/src` 下 `clz32` 零命中)。这样第 1–3 条断言(放行 / 拒绝 / 仍在名单里照旧放行)原样保留,原意图「变红的是『白名单』,不是整道门禁」1:1 成立,不必把 `status === 0` 降级成文本断言。
+
+A 的隐含前提(所选成员零使用)用一条**前置自证**盯住:在 `removed` 那次门禁输出里,断言被判违规的文件**恰好只有探针文件**(`violatingFiles(...)` 去重后 `toEqual([NO_FLOAT_PROBE])`)。若哪天 engine 源码开始用 `clz32`,这条会以清楚的处方红掉——「engine 源码里已经用上了 `Math.clz32`,这条反例该换成员了」——而不是以「名单内的其他成员被连坐」误导后来者。顺带把原第 3 条的误导文案改掉,写清「摘掉的是 `clz32`,`sign` 没动」。
+
+**三条反例读数**
+
+1. **修前(基线)**:`pnpm exec vitest run --project gates -t "生成器:改真源重跑后"` → `Test Files 1 failed | Tests 1 failed | 29 skipped`,报错原文 `AssertionError: 名单内的其他成员被连坐:` + 12 处 `Math.abs` 违规(6 文件)+ `expected 1 to be +0`(`/tmp/gate-baseline-red.log`)。
+2. **把第 3 条要证明的东西弄红一次(A 版)**:临时在 `packages/engine/src/pathfinding/find-path.ts` 尾部加 `export const __clz32PreconditionProbe = Math.clz32(1);`(破坏「所选成员零使用」的前提)→ 同一条用例红,报错 `AssertionError: engine 源码里已经用上了 \`Math.clz32\`,这条反例该换成员了:…`,并列的两个违规文件 `["packages/engine/src/__nofloat-probe.ts", "packages/engine/src/pathfinding/find-path.ts"]`——**报错清楚指向「换成员」,证明自证不是空断言**。完后 `git checkout` 还原,工作树干净(`/tmp/gate-counter2.log`)。
+3. **修后正向(绿)**:同一单测入口 → `Tests 1 passed | 29 skipped`,第 3 条对仍在名单里的 `sign` 确实放行(整道门禁退 0);全量 `pnpm run test` 里该用例也过(见下)。
+
+**修后读数**
+
+- `pnpm run check` → **EXIT=0**;**`pnpm run test` → EXIT=0**,`Test Files 61 passed (61) | Tests 706 passed (706)`(修前是 `Test Files 1 failed | 60 passed` / `Tests 1 failed | 705 passed`)。落盘 `/tmp/gate-check.log`、`/tmp/gate-test.log`。未跑 `test:slow`。
+- 改的文件:`packages/tools/src/gates.test.ts`(抽出 `NO_FLOAT_PROBE` 常量单点化探针路径、`REMOVED_MEMBER = "clz32"`、`violatingFiles` 助手、用例四条断言)。
+
+每次探针跑完 `git status` 均为干净(只余本提交的 `gates.test.ts` 改动)。
