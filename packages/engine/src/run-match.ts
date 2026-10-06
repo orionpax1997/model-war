@@ -19,7 +19,8 @@
  * 本函数对执行器的认知止于 `setSnapshot` / `drainIntents` 两条方法(hld §4.5,ADR-0005)。
  * 建 VM 与释放归**组装层**:`stubRunner`(测试)与真沙箱执行器是同一个缝的两个适配器。
  * 预算配置与可选观测出口一并收下:解析(规则集里的未定值→启用的轨)也在组装层,引擎不认识
- * 「未定值」。真沙箱执行器把脚本文本变成 `SeatRunner` 的那一步在引擎之外,本函数不参与。
+ * 「未定值」。预算配置透传进结算管线的 `TickContext`(步 5 的淘汰判定读 `exceptionTickLimit`);
+ * 事件/API 两轨的阈值判定在执行器侧(它在构造时就拿到阈值,与 `budget` 是同一份组装层解析结果)。真沙箱执行器把脚本文本变成 `SeatRunner` 的那一步在引擎之外,本函数不参与。
  *
  * ── 终局行怎么来的 ──
  *
@@ -31,6 +32,7 @@
 
 import type { MapDefinition, ReplayPlayerRef, ReplayResultLine, Ruleset } from "@model-war/replay";
 
+import type { BudgetConfig } from "./budget.js";
 import { processTick } from "./processor/index.js";
 import { createRandom, fillVariantWalls } from "./driver/random.js";
 import type { ObservationSink, SeatRunner } from "./runner/index.js";
@@ -60,7 +62,7 @@ export type RunMatchParams = {
    * 认知止于 `setSnapshot` / `drainIntents` 两条方法,不知道 VM 存在。
    */
   readonly runners: readonly SeatRunner[];
-  /** 预算配置(已启用的轨 + 阈值)。字段缺席即该轨不启用。本票只定义形状,不读它。 */
+  /** 预算配置(已启用的轨 + 阈值)。字段缺席即该轨不启用。透传进 `TickContext`(淘汰判定)。 */
   readonly budget: BudgetConfig;
   /** 回放写出的唯一出口。本函数**不做磁盘 I/O**(hld §2.2.8),落到哪由上层决定。 */
   readonly sink: TickSink;
@@ -71,30 +73,11 @@ export type RunMatchParams = {
 /**
  * 预算配置:组装层把规则集里**已启用**的轨与阈值解析好后传进来。
  *
- * 字段缺席即该轨不启用——不需要第二个字段表达「开但值是 0」。规则集里取未定值的键,由组装层读
- * 键清单的两态字段(`calibration.state`)决定缺席;引擎不认识「未定值」这个概念
- * (解析归组装层,见 spec《未定值与预算配置》)。
- *
- * 脚本体积上限不进这里:它是编译期的事,判定点在编译/校验层(编译后产物的字节数)。
- *
- * 本票只定义形状:阈值判定与淘汰归后续票,`runMatch` 现在只把它收下,不读它。
+ * 形状的家在 `./budget.ts`(它同时是 `TickContext` 那一格的类型);这里再导出一次,让
+ * 只认识 `runMatch` 入参的调用方不必多 import 一个模块。字段缺席即该轨不启用——解析归组装层,
+ * 引擎不认识「未定值」(见 `budget.ts` 头注)。
  */
-export type BudgetConfig = {
-  /** 累计异常判负阈值(次/整局)。 */
-  readonly exceptionTickLimit?: number;
-  /** 单 tick 控制流事件计数上限(次/tick)。 */
-  readonly eventTickLimit?: number;
-  /** 单 tick API 调用计数上限(次/tick)。 */
-  readonly apiCallTickLimit?: number;
-  /** VM 线性内存分配上限(bytes)。 */
-  readonly memoryLimit?: number;
-  /** 内存判据判罚线(bytes,tick 末存活堆读数)。 */
-  readonly memoryTickCeiling?: number;
-  /** 单 tick 墙钟软限(ms,只观测)。 */
-  readonly wallClockSoftLimit?: number;
-  /** 墙钟硬超时(ms,只作废该场)。 */
-  readonly wallClockHardTimeout?: number;
-};
+export type { BudgetConfig } from "./budget.js";
 
 /** `runMatch` 的返回值:终局那一行 + 收官时的状态 + 跑了多少 tick。 */
 export type RunMatchResult = {
@@ -139,8 +122,9 @@ const resultLineOf = (state: GameState): ReplayResultLine => {
  * 「tick 的结算」这条规则因此**只有一处实现**,本函数不可能与它分叉。
  */
 export const runMatch = (params: RunMatchParams): RunMatchResult => {
-  const { ruleset, map, seed, head, players, runners, sink, observations } = params;
-  // `params.budget`:本票只把它收进入参形状;阈值判定与淘汰归后续票,这里不读它。
+  const { ruleset, map, seed, head, players, runners, sink, observations, budget } = params;
+  // `budget` 透传进 `processTick` → `TickContext`:步 5 的淘汰判定读 `exceptionTickLimit`。
+  // 事件/API 两轨的判定在执行器侧(它构造时就拿到阈值),不在管线里。
   const view: RulesetView = loadRuleset(ruleset);
 
   // 种子驱动的变体墙在开局前填一次(hld §7.3「地图 + 种子 → 地形是纯函数」)。这一步曾经缺失:
@@ -156,7 +140,7 @@ export const runMatch = (params: RunMatchParams): RunMatchResult => {
   let tickCount = 0;
   // `state.outcome !== null` 就是收官:写它的那一 tick 是最后结算的一 tick。
   while (state.outcome === null) {
-    const ticked = processTick(state, runners, view, sink, observations);
+    const ticked = processTick(state, runners, view, sink, observations, budget);
     state = ticked.state;
     tickCount = ticked.state.tick;
   }

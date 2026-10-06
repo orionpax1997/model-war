@@ -15,5 +15,11 @@
   "bracketSameLine": false,
   "sortImports": false,
   "sortPackageJson": false,
-  "ignorePatterns": [".scratch/**", ".pi/**", "node_modules/**", "dist/**"]
+  "ignorePatterns": [
+    ".scratch/**",
+    ".pi/**",
+    "node_modules/**",
+    "dist/**",
+    "packages/engine/sandbox-runtime/runtime.iife.js"
+  ]
 }

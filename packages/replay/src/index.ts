@@ -60,6 +60,22 @@ export { RULESET_KEYS, RULESET_UNIT_KEYS } from "@model-war/schema";
 export { RULESET_VERSION } from "@model-war/schema";
 
 /**
+ * 内存软阈系数(软阈 = 该系数 × `memoryTickCeiling`)。经本包中转,理由同上面的类型面:
+ * 引擎 manifest 上只有本包,而内存判据的执行器侧要拿这个真源常数、不能手抄一份 0.8。
+ */
+export { MEMORY_SOFT_THRESHOLD_RATIO } from "@model-war/schema";
+
+/**
+ * 沙箱 runtime bundle 的工程常量(产物路径 / 产物字节 sha256 / `quickjs-wasi` 版本)。
+ * 经本包中转:引擎侧只声明了本包这一条依赖,而 VM 载入测试要按这三个常量读盘与比对。
+ */
+export {
+  QUICKJS_WASI_VERSION,
+  SANDBOX_RUNTIME_ARTIFACT_PATH,
+  SANDBOX_RUNTIME_HASH,
+} from "@model-war/schema";
+
+/**
  * 宿主桥前缀(hld §6.2)。**原样再导出**:沙箱执行器那一侧(票 G)与本仓引擎侧拼同一个桥名,
  * 两侧各写一个字面量 `__` 就是那套 `__*` 静态禁令漏掉的那一半。
  */

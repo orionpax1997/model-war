@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import type { MapDefinition } from "@model-war/schema";
+import { SANDBOX_RUNTIME_HASH } from "@model-war/schema";
 
 /**
  * 命令行的外部可观察行为只有两件:帮助信息列出哪几条子命令,以及未实现的子命令怎么退。
@@ -262,7 +263,8 @@ it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
 
 const sha256Hex = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
-const stubRuntimeHash = sha256Hex("stub-runner/v1");
+// 真沙箱 runtime 的实测哈希 = 入库产物字节的 sha256(真源在 `@model-war/schema`,由 check:runtime 盯住)。
+const sandboxRuntimeHash = SANDBOX_RUNTIME_HASH;
 
 /**
  * 在临时目录里造一份**合法**的对局输入(4 份存档三件套 + input.json)。
@@ -298,7 +300,7 @@ const writeMatchInput = (
       validation: { passed: true, errors: [] },
       tscVersion: "7.0.2",
       scriptSha256: scriptSha,
-      sandboxRuntimeHash: stubRuntimeHash,
+      sandboxRuntimeHash: sandboxRuntimeHash,
     };
     const metaBytes = `${JSON.stringify(meta, null, 2)}\n`;
     writeFileSync(join(dir, "meta.json"), metaBytes);

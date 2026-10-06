@@ -2,7 +2,13 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc"],
   "env": { "builtin": true },
-  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/*.d.ts", "**/coverage/**"],
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/*.d.ts",
+    "**/coverage/**",
+    "packages/engine/sandbox-runtime/runtime.iife.js"
+  ],
   "categories": { "correctness": "error" },
   "rules": {
     "no-unused-vars": [

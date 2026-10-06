@@ -19,11 +19,14 @@
  * 收集器在这一层已经是可用的——`exception` / `budgetSoftWarning` 两个具名方法挂在步 0 上,
  * 它们在那两票落地时不需要改定序规则,只需要有人调它们。
  *
- * ── 观测 → 变更这条路径的接通(票 02)──
+ * ── 观测 → 变更这条路径的接通(票 02/07)──
  *
- * 执行器的返回载荷现在带观测。本层在它上面**不做裁决**:种类为 `tripped` 的观测转成一条
- * `count-exception-tick` 变更(累加该座位的 `exceptionTicks`),另外两类原样转发给观测出口
- * (缺席即静默丢弃)。阈值判定与淘汰归后续票;本层只负责把「观测 → 唯一写入口」接通。
+ * 执行器的返回载荷带观测。本层在它上面**不做裁决**:种类为 `tripped` 的观测转成 `count-exception-tick`
+ * 变更(累加该座位的 `exceptionTicks`),另外两类原样转发给观测出口(缺席即静默丢弃)。
+ * **一条 `tripped` 计一次**(按异常事件累加),变更带上该观测的轨名——同 tick 两条不同轨
+ * 各计一次(见 `apply.ts` 那条变更的注释)。阈值判定(事件/API/内存)与淘汰不在本层:
+ * 阈值判定在执行器侧(构造时就拿到阈值),淘汰在步 5 的既有淘汰变更上。本层只负责把
+ * 「观测 → 唯一写入口」接通。
  *
  * ── 淘汰方不再被调用(票 09)──
  *
@@ -68,22 +71,19 @@ export const step0Dispatch: Step = (context) => {
     const runner = runnerOf(context, seat);
     runner.setSnapshot(snapshot);
     const output = runner.drainIntents();
-    // 观测在缝上**不做裁决**:`tripped` 落成一条 `count-exception-tick` 变更(唯一写入口),
-    // 另外两类原样转发给观测出口。阈值判定与淘汰归后续票。
-    let tripped = 0;
+    // 观测在缝上**不做裁决**:每条 `tripped` 落成一条 `count-exception-tick` 变更(唯一写入口)
+    // 并带上轨名,另外两类原样转发给观测出口。阈值判定与淘汰不在本层(见文件头注)。
     for (const observation of output.observations) {
       if (observation.kind === "tripped") {
-        tripped += 1;
+        state = apply(state, context.ruleset.raw, {
+          kind: "count-exception-tick",
+          seat,
+          count: 1,
+          track: observation.track,
+        });
       } else {
         context.observations?.record(observation);
       }
-    }
-    if (tripped > 0) {
-      state = apply(state, context.ruleset.raw, {
-        kind: "count-exception-tick",
-        seat,
-        count: tripped,
-      });
     }
     return { seat, intents: output.intents };
   });

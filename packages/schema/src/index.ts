@@ -34,8 +34,16 @@ export type {
   ScriptOutcomeKind,
 } from "./script-outcome.js";
 
-/**
- * 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
+// 沙箱 runtime bundle 的工程常量:产物路径 / 产物字节 sha256 / `quickjs-wasi` 版本。
+// 供 `apps/cli`(装载期比对存档 meta)与 `packages/tools`(漂移门禁)两侧共享;
+// 引擎不从这里取,以免污染它「恰好一个导出符号 runMatch」的对外面(见 ADR 0007)。
+export {
+  QUICKJS_WASI_VERSION,
+  SANDBOX_RUNTIME_ARTIFACT_PATH,
+  SANDBOX_RUNTIME_HASH,
+} from "./sandbox-runtime.js";
+
+/** 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
  */
 export type RulesetVersion = "v1";
