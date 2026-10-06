@@ -1,18 +1,23 @@
 /**
  * 参赛脚本可见面的**名单类**真源:宿主桥前缀、禁列全局名、沙箱注入的 API 符号表。
  *
- * 注入面符号表那一件已经不是纯名单:它的一行带**签名**(函数档)与**一句触发条件**(全档),
- * 因为面向模型的契约文档就是照着这张表渲染的,签名与触发条件各只该有一个家。
+ * 注入面符号表那一件已经不是纯名单:它的一行带**一句触发条件**(全档),因为面向模型的契约文档
+ * 就是照着这张表渲染的,而触发条件只该有一个家。
  * 「落在丢弃还是异常」那半张表在 `script-outcome.ts`,理由见那里的头注。
+ *
+ * **签名不在本文件里**,家是类型面 `packages/schema/script-api/index.d.ts`(见下面
+ * `InjectedApiSymbolEntry` 的头注):这张表回答「脚本运行时能拿到哪些**名字**」,那份声明回答
+ * 「拿到的值**形状**对不对」。本文件曾经自己抄了一份签名,类型面回填那天删掉了——两份会分叉的
+ * 真源是最坏的一种,而分叉的形态正是「文档说签名是 A、编译器说签名是 B」。
  *
  * 与 `builtin-globals.ts` 同属一张名单类数据的家(hld §6.2:名单由 `schema` 提供,
  * 与沙箱 runtime 暴露的 API 面同源)。消费者一个名字都不许自己存:
  * - **静态校验器**(D 节点,`packages/tools`):禁 `__*` 前缀、禁列全局名,两件事的规则形态
  *   全在它那边,本文件只提供「什么算桥前缀 / 哪些名字被禁」;
  * - **沙箱执行器**(G 节点):注入面按同一张符号表铺。
- *   两侧同源保证的是「注入面与静态校验读的是一张表」,**不是**「校验器能判这个名字存不存在」
- *   ——后者归编译器的名字解析,而它要的是类型面,符号表给不出;类型面尚未回填(hld §6.2
- *   「全局白名单」与「API 误用」两行)。
+ *   两侧同源保证的是「注入面与静态校验读的是一张表」;而「这个名字存不存在」由**编译器的名字解析**
+ *   承担,判据是类型面(hld §6.2「API 误用」那一行)。符号表给不出签名,类型面给不出「为什么收」,
+ *   两张脸各管一件事,**互相不得引用为依据**。
  *
  * 分界线(ADR-0003):「谁在运行时决定这个值」归实现包,「这个值叫什么、什么形状」归本文件。
  * 门禁怎么查(AST 遍历、违规产出、退出码)归工具包;数值型的上限不进名单——
@@ -101,34 +106,36 @@ type InjectedApiSymbolBase = {
  * 理由不是装饰:它是判据在这个名字上的一次应用,也是加名字的门槛。加不进来的名字先问
  * 「它运行时是个值吗」,答不上来就停在这一步,不必再问「能不能通融」——没有通融这一档。
  *
- * **按 `kind` 分成两个形态**,而不是把签名与后果都做成可选字段:可选字段意味着「忘了给」
- * 与「这一档本来就没有」在类型上不可分,而那份文档正是照着这张表渲染的——少一个签名渲染成
- * 一个空格,模型照着写就少一个参数。分档之后,函数档**不可能**没有签名,错误码档**不可能**
- * 有一个签名,两者各由 `tsc -b` 兜着。
+ * ── 为什么没有「签名」那一栏 ──
+ *
+ * 签名是**类型面**的事实(`hld` §6.2 那一行「API 误用」读的就是它),家已定在
+ * `packages/schema/script-api/index.d.ts`。本目录曾经自己抄了一份,理由是「类型面还没落库,
+ * 而面向模型的契约文档必须现在就把签名写出来」——那个理由在类型面回填那天消失了,于是那 15 条
+ * `signature` 字符串**被删除而不是并行保留**:两份会分叉的真源是最坏的一种,而它们分叉的形态
+ * 恰好是「文档说签名是 A、编译器说签名是 B」,模型照着文档写就编译不过。
+ *
+ * 现在的方向是单向投影:**类型面 → 契约文档的签名那一栏**(由工具包里那份严格读法渲染),
+ * 符号表不再参与。
+ *
+ * 分档仍然按 `kind` 分成两个形态,但理由换了一条:**错误码档不是函数**,它是一个字符串常量,
+ * 调用不起来,按函数渲染就会渲染出一行调不动的东西。分档之后「给错误码档安一个函数形态」
+ * 在 `tsc -b` 当场编译不过——分档的收益从「签名不缺」变成了「形态不串」。
  */
 export type InjectedApiSymbolEntry = InjectedApiFunctionEntry | InjectedErrorCodeEntry;
 
 /**
- * 四个函数档(查询 / 动作 / 座位自认 / 错误判别 helper):调得起来的一个函数,所以有签名。
+ * 四个函数档(查询 / 动作 / 座位自认 / 错误判别 helper):调得起来的一个函数。
  *
- * ── 签名这一栏归谁:现在住在这里,回填触发条件是类型面 ──
- *
- * 签名是**类型面**的事实(`hld` §6.2 那一行「API 误用」读的就是类型面),而类型面尚未落库。
- * 面向模型的契约文档必须现在就把签名写出来,所以它由本目录这一处书写,并被 API 表逐字渲染——
- * **同一个字符串只有一个家**,而「文档里那一份」是它的投影,不是抄本。
- *
- * 类型面回填那天,这一栏改为从类型面投影,与 `SANDBOX_INJECTED_API_SYMBOLS` 同一句纪律:
- * **位置留着,回填有触发条件**。触发条件就是类型面里那些函数声明本身——它们存在的那天,
- * 本目录不再自己写签名,只引用。在那之前多抄一份的风险由 `packages/tools` 的漂移检查兜着。
+ * 它的签名不在本文件里,而在类型面:`getTick` 那一行的形态是 `declare function getTick(): number`,
+ * 而**面向模型的那一串签名由它投影**(见 `InjectedApiSymbolEntry` 的头注)。本类型因此只剩
+ * 「它是一个函数」这一件事实,由 `kind` 那一栏钉死。
  */
 export type InjectedApiFunctionEntry = InjectedApiSymbolBase & {
   readonly kind: Exclude<InjectedApiSymbolKind, "error-code">;
-  /** 面向模型的那一栏签名:`名字(参数): 返回值`。逐字渲染进契约文档的 API 表。 */
-  readonly signature: string;
 };
 
 /**
- * 错误码档:它不是一个函数,是一个**字符串常量**,所以没有签名。
+ * 错误码档:它不是一个函数,是一个**字符串常量**,所以在类型面上也不是函数声明。
  *
  * 它落在「丢弃」还是「异常」不在本文件里写:那一半是结算后果,归 `script-outcome.ts`,
  * 两边由 `script-surface.test.ts` 与 `script-outcome.test.ts` 各查一半并互相点名
@@ -238,13 +245,11 @@ export const SANDBOX_INJECTED_API_SYMBOL_CATALOG: readonly InjectedApiSymbolEntr
     symbol: "getTick",
     kind: "query",
     reason: "当前 tick 号;脚本每 tick 都要读一次时间轴,读出来是个数值。",
-    signature: "getTick(): number",
   },
   {
     symbol: "getObjectById",
     kind: "query",
     reason: "按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。",
-    signature: "getObjectById(id: number): Unit | Site | null",
   },
   {
     symbol: "getObjectsByType",
@@ -252,83 +257,66 @@ export const SANDBOX_INJECTED_API_SYMBOL_CATALOG: readonly InjectedApiSymbolEntr
     reason:
       "按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的批量入口。" +
       "四个座位的资源、存活与异常计数也从这里读,不必在脚本里另记一份。",
-    signature:
-      "getObjectsByType(kind: 'unit' | 'site' | 'player', filter?: " +
-      "{ owner?: -1|0|1|2|3; type?: UnitType; kind?: 'base' | 'resource' }): " +
-      "(Unit | Site | Player)[]",
   },
   {
     symbol: "getRange",
     kind: "query",
     reason: "两点间 Chebyshev 距离;射程心算要读它算出来的那个数值。",
-    signature: "getRange(ax: number, ay: number, bx: number, by: number): number",
   },
   {
     symbol: "getTerrainAt",
     kind: "query",
     reason: "某格地形(`plain`/`wall`/`out`);绕墙寻路之前先读它。",
-    signature: "getTerrainAt(x: number, y: number): 'plain' | 'wall' | 'out'",
   },
   {
     symbol: "findPath",
     kind: "query",
     reason: "寻路路径是一串坐标点,读得到的就是值;它计入 API 调用预算,而预算值不归这张表。",
-    signature:
-      "findPath(sx: number, sy: number, tx: number, ty: number): { x: number; y: number }[] | null",
   },
   {
     symbol: "move",
     kind: "action",
     reason: "走一步(含对角),提交一条单位级意图。",
-    signature: "move(unitId: number, dx: -1|0|1, dy: -1|0|1): void | ErrResult",
   },
   {
     symbol: "moveTo",
     kind: "action",
     reason: "朝目标点走一步,提交一条单位级意图;路径由引擎沿 `findPath` 走。",
-    signature: "moveTo(unitId: number, x: number, y: number): void | ErrResult",
   },
   {
     symbol: "attack",
     kind: "action",
     reason: "攻击敌方单位,提交一条单位级意图。",
-    signature: "attack(unitId: number, targetId: number): void | ErrResult",
   },
   {
     symbol: "harvest",
     kind: "action",
     reason: "在己方资源点采集,提交一条单位级意图。",
-    signature: "harvest(unitId: number, siteId: number): void | ErrResult",
   },
   {
     symbol: "transfer",
     kind: "action",
     reason: "把携带量交给相邻己方基地,提交一条单位级意图。",
-    signature: "transfer(unitId: number): void | ErrResult",
   },
   {
     symbol: "spawnUnit",
     kind: "action",
     reason: "在己方基地下单出兵,提交一条玩家级意图。",
-    signature: "spawnUnit(baseId: number, unitType: UnitType): void | ErrResult",
   },
   {
     symbol: "getMyIndex",
     kind: "seat",
     reason: "座位自认的唯一正式入口;快照里没有 `you`/`isSelf` 标记,别靠单位位置反推座位。",
-    signature: "getMyIndex(): 0|1|2|3",
   },
   {
     symbol: "isError",
     kind: "helper",
     reason: "「这次调用是不是错了」的布尔,显式判别的第一步;不要用 typeof 或真值去猜。",
-    signature: "isError(result: void | ErrResult): boolean",
   },
   {
     symbol: "errCode",
     kind: "helper",
     reason: "取回那个错误码字符串,显式判别的第二步;读出来的正是一个 `ERR_*` 值。",
-    signature: "errCode(result: void | ErrResult): ErrCode",
   },
   {
     symbol: "ERR_NOT_ENOUGH_RESOURCES",

@@ -14,20 +14,20 @@
  * 运行配置由基座派生、**只覆盖 `files` 与 `outDir`**(`tsc -p` 不能与源文件同命令行出现,TS5042)——
  * 与将来的生成管线同形,这也是票 06 要求的用法。
  *
- * ── 类型面未回填,于是编译**必然非零退出**,而产物照样落盘 ──────────────────────
- * 脚本 API 的类型声明面家已定在真源包,内容由对局内核与沙箱执行器回填(hld §6.2「API 误用」),
- * `tsconfig.scripts.json` 的 `types` 因此是空的。于是每个用到 API 的脚本编译后必然报
- * 「找不到名字」,而本配置**刻意不设 `noEmitOnError`**:`tsc` 在这种情形下照常 emit,
- * 那份产物就是门禁与生成管线将来真正加载的东西。
+ * ── 类型面已回填,于是编译**仍可能非零退出**,而产物照样落盘 ────────────────────
+ * 脚本 API 的类型声明面家已定在真源包(`packages/schema/script-api/index.d.ts`,hld §6.2
+ * 「API 误用」那一行读的就是它),`tsconfig.scripts.json` 的 `types` 经它引入。于是「API 名字
+ * 拼错」这一类错误在编译期就红,而「脚本自身在 `strict` 下的写法账」仍在——本配置**刻意不设
+ * `noEmitOnError`**:`tsc` 在有诊断的情形下照常 emit,那份产物就是门禁与生成管线真正加载的东西。
  *
  * 于是「产物是真跑出来的」这件事的机器形态是**逐字节可复现**:拿入库的源码重跑同一条命令,
  * 必须得到与入库产物逐字节相同的结果(`run-benchmarks-gate.ts` 判它)。
  * 本文件只提供那次编译与它的诊断,判决在门禁里。
  *
- * 诊断分三类,三类之外任何一条都判红(理由逐条在 `DiagnosticClass` 上):
- * 「名字未声明」是类型面未回填的账,类型面回填那天它必须归零,那是回填那一格的验收信号;
- * 另两类是三份脚本**自身**在 `strict` 下的写法账,与类型面无关,回填之后依然在——
- * 把它们混进第一类,等于替回填那一格把账赖掉。
+ * 诊断分三类,三类之外任何一条都判红(理由逐条在 `DiagnosticClass` 上):「名字未声明」归零是
+ * 类型面回填的验收信号(回填之前它是 40 / 25 / 17,回填之后必须一条都不剩);另两类是三份脚本
+ * **自身**在 `strict` 与 `noUncheckedIndexedAccess` 下的写法账,与类型面无关,它们仍在——
+ * 把它们算进第一类,等于把那份声明说成「脚本写得也不干净」。
  */
 
 import { spawnSync } from "node:child_process";
@@ -41,6 +41,12 @@ import {
   SANDBOX_INJECTED_API_SYMBOL_CATALOG,
   type InjectedApiSymbolEntry,
 } from "@model-war/schema";
+
+import {
+  SCRIPT_API_DECLARATION,
+  readScriptApiDeclarations,
+  type ScriptApiDeclarations,
+} from "../script-api/declarations.ts";
 
 const here = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
 
@@ -88,7 +94,9 @@ export const benchmarkFile = (name: BenchmarkName, file: string): string =>
  *   那与类型面无关,当场红。
  * - `implicit-any-parameter`:脚本自己的形参没标注,在 `strict` 下报 TS7006。与类型面无关:
  *   形参属于脚本自己的函数,回填类型面不会动它。
- * - `possibly-undefined`:`noUncheckedIndexedAccess` 下 `xs[i]` 报 TS18048。同样与类型面无关。
+ * - `possibly-undefined`:`noUncheckedIndexedAccess` 下取值可能取不到。TS18048(`'x' is possibly
+ *   'undefined'`)与 TS2532(`Object is possibly 'undefined'`,即拿一个可能取不到的下标结果去算)
+ *   是同一条判据的两种措辞,归同一档。同样与类型面无关。
  * - `unexpected`:**不在上面三类里的任何一条诊断**。它是兜底档,正常编译一份基准脚本时为空;
  *   它一非空就说明基座或脚本出了这三条之外的事(比如真的语法错、真的类型不兼容),
  *   那时继续拿产物说事就是不负责任,所以门禁与测试都判红。
@@ -113,8 +121,12 @@ const UNRESOLVED_NAME = /error TS(?:2304|2552): Cannot find name '([^']+)'/;
 /** 形参隐式 `any`。 */
 const IMPLICIT_ANY = /error TS7006: Parameter '[^']+' implicitly has an 'any' type/;
 
-/** 下标取值在 `noUncheckedIndexedAccess` 下可能为 `undefined`。 */
-const POSSIBLY_UNDEFINED = /error TS18048: '[^']+' is possibly 'undefined'/;
+/**
+ * 下标取值在 `noUncheckedIndexedAccess` 下可能为 `undefined`。两种措辞:直接用那个值(TS18048),
+ * 或拿它去参与一次运算(TS2532)。归一档的理由是它们判的是同一件事。
+ */
+const POSSIBLY_UNDEFINED =
+  /error TS(?:18048: '[^']+' is possibly 'undefined'|2532: Object is possibly 'undefined')/;
 
 /**
  * 把 `tsc` 的诊断全文分类。
@@ -148,7 +160,7 @@ export const classifyDiagnostics = (output: string): readonly Diagnostic[] => {
 };
 
 export type Compilation = {
-  /** `tsc` 的退出码。类型面未回填时它必然非零,见本文件头注。 */
+  /** `tsc` 的退出码。诊断还在时它非零,见本文件头注。 */
   readonly status: number;
   /** 诊断全文(标准输出与标准错误合并)。 */
   readonly output: string;
@@ -199,10 +211,23 @@ export const compileBenchmarkSource = (source: string): Compilation => {
 };
 
 /**
+ * 读一次类型面,取它的签名。**签名是类型面的事实**,家是那份声明(见头注),所以这里读声明、
+ * 不读符号表:符号表曾经自抄一份 `signature`,那份抄本已经删掉了,两份会分叉的真源是最坏的一种。
+ *
+ * 只读不缓存:本文件被基准门禁按次调用,而「每次都读一遍当前磁盘上的真源」比「读一个忘了刷新的
+ * 快照」更难走样。
+ */
+const typeSurface = (): ScriptApiDeclarations =>
+  readScriptApiDeclarations(
+    SCRIPT_API_DECLARATION,
+    readFileSync(`${repoRoot}${SCRIPT_API_DECLARATION}`, "utf8"),
+  );
+
+/**
  * 返回类型 → **空值**的对照。这是「注入面桩」的全部知识:桩不模拟对局,只让入口调得动。
  *
- * 取值全部由 `SANDBOX_INJECTED_API_SYMBOL_CATALOG` 的 `signature` 推导,本文件**一个 API 名字都不写**——
- * 名字只有一处可改(真源包那张目录),而这张表多抄一份就等于多一处会悄悄过期的名单。
+ * 取值全部由**类型面声明的签名**推导,本文件**一个 API 名字都不写**——名字只有一处可改(真源包
+ * 那张目录),而这张表多抄一份就等于多一处会悄悄过期的名单。
  * 连「取不到错误码时的兜底值」那个位置也不写名字:错误码同样只从目录投影,推不出来就抛错。
  * 抛错而不是塞个兜底值:那种情况说明目录里一个错误码都没有,塞个名字糊过去会让本文件
  * 自己的纪律(「一个名字都不写」)当场失效,而失效的形式恰好是最难发现的那种。
@@ -225,8 +250,8 @@ const EMPTY_VALUE_OF = (signature: string, errorCodes: readonly string[]): unkno
     }
     return anyCode;
   }
-  // 字符串字面量联合(地形的 `'plain' | 'wall' | 'out'`):取第一个候选,当作「最普通的那种」。
-  const literal = /^'([a-z]+)'(\s*\|\s*'[a-z]+')*$/.exec(returns);
+  // 字符串字面量联合(地形的 `"plain" | "wall" | "out"`):取第一个候选,当作「最普通的那种」。
+  const literal = /^["']([a-z]+)["'](\s*\|\s*["'][a-z]+["'])*$/.exec(returns);
   if (literal !== null) return literal[1] ?? "";
   if (returns === "void | ErrResult" || returns === "void") return null;
   // `number` 与 `0|1|2|3` 都是数值;位运算型座位自认(`getMyIndex`)也落在这里。
@@ -246,16 +271,29 @@ export const emptyInjectedSurface = (): Record<string, unknown> => {
     (entry) => entry.kind === "error-code",
   ).map((entry) => entry.symbol);
 
+  const signatures = typeSurface();
   const surface: Record<string, unknown> = {};
   for (const entry of SANDBOX_INJECTED_API_SYMBOL_CATALOG) {
-    surface[entry.symbol] = stubFor(entry, errorCodes);
+    surface[entry.symbol] = stubFor(entry, errorCodes, signatures);
   }
   return surface;
 };
 
-const stubFor = (entry: InjectedApiSymbolEntry, errorCodes: readonly string[]): unknown => {
+const stubFor = (
+  entry: InjectedApiSymbolEntry,
+  errorCodes: readonly string[],
+  signatures: ScriptApiDeclarations,
+): unknown => {
   if (entry.kind === "error-code") return entry.symbol;
-  return () => EMPTY_VALUE_OF(entry.signature, errorCodes);
+  const declared = signatures.functionSignatures.get(entry.symbol);
+  if (declared === undefined || declared.length === 0) {
+    // 符号表里有、声明里没有:那正是「文档说能用、编译器说没有」的分叉,当场报出来而不是给个兜底桩。
+    throw new Error(
+      `注入面符号表里的 \`${entry.symbol}\` 是函数档,而 ${SCRIPT_API_DECLARATION} 里没有它的声明。`,
+    );
+  }
+  // 重载取**最后一条**:桩只需要知道「返回值长什么样」,而同一个名字的几条重载返回的是同一族值。
+  return () => EMPTY_VALUE_OF(declared[declared.length - 1] ?? "", errorCodes);
 };
 
 /**

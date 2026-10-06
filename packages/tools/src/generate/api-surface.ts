@@ -6,9 +6,10 @@
  * 面向模型的 API 文档直接进 prompt,所以它最容易出的错不是难看得见,而是**看起来对**:
  * 签名少一个参数、某个码的触发条件写成了另一个码的情形、错误码落在「异常」而实际是「丢弃」。
  * 这些错在模型那一侧都是照着写脚本,而且写得很顺——所以它们的防线只能是机器断言,而机器断言
- * 只能对着**唯一的一份数据**做。这里那份数据是真源包的两个目录:符号表给名字、签名与触发条件,
- * 后果行给「这个码落在哪一类、这一类丢的是什么」。文档里每一个名字、每一个签名、每一个
- * 「落在哪类」都是从这两个目录渲染出来的投影,没有任何一处是第二次书写。
+ * 只能对着**唯一的一份数据**做。这里那份数据是真源包的两个目录加那份声明:符号表给名字与
+ * 触发条件,**类型面**(`packages/schema/script-api/index.d.ts`)给签名,后果行给「这个码落在
+ * 哪一类、这一类丢的是什么」。文档里每一个名字、每一个签名、每一个「落在哪类」都是从这三份
+ * 投影出来的,没有任何一处是第二次书写。
  *
  * ── 为什么不生成散文 ──
  *
@@ -23,6 +24,8 @@
  * 一整块的话,「符号表改了」与「后果改了」在报告里长得一模一样,查的人得先猜是哪半边。
  *
  * 真源都是 `.ts`,所以本件走 `@model-war/schema` 的编译产物(与前两件同一套分发机制);
+ * 类型面那份声明是 ambient 的 `.d.ts`,类型擦除之后不留任何运行时痕迹,所以它由
+ * `../script-api/declarations.ts` 那个**严格读法**在生成期读出来;
  * 数值那一半不走这里,它归 `rules-value-table.ts`。
  */
 
@@ -39,9 +42,17 @@ import type {
   ScriptOutcomeKind,
 } from "@model-war/schema";
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { tableCell } from "./emit.ts";
 import { sectionMarker } from "./section.ts";
 import type { GeneratedArtifact, Section, SectionArtifact } from "./artifact.ts";
+import {
+  SCRIPT_API_DECLARATION,
+  readScriptApiDeclarations,
+  type ScriptApiDeclarations,
+} from "../script-api/declarations.ts";
 
 /** 契约文档 API 面那一份的相对路径。落点与两行定界标记都按它拼。 */
 const API_DOC = "docs/rules-v1/api.md";
@@ -49,6 +60,38 @@ const API_DOC = "docs/rules-v1/api.md";
 /** 真源路径串。进生成头注释,改了它等于改了入库文档的正文,漂移检查会照出来。 */
 const SYMBOL_TRUTH = "packages/schema/src/script-surface.ts";
 const OUTCOME_TRUTH = "packages/schema/src/script-outcome.ts";
+
+/**
+ * 读一次类型面。**只读不缓存**:生成器是一次性入口,缓存没有收益,而「读一次」比「读到一个
+ * 忘了刷新的东西」更难走样。声明形态不认识就抛(理由见那个读法的头注)。
+ */
+const typeSurface = (): ScriptApiDeclarations =>
+  readScriptApiDeclarations(
+    SCRIPT_API_DECLARATION,
+    readFileSync(resolve(import.meta.dirname, "../../../..", SCRIPT_API_DECLARATION), "utf8"),
+  );
+
+/**
+ * 一行在 API 表里的签名。**投影自类型面,不是抄本**:签名是类型面的事实(hld §6.2「API 误用」),
+ * 它的家在 `packages/schema/script-api/index.d.ts`,符号表不再自己写一份——两份会分叉的真源是
+ * 最坏的一种,而分叉的形态正是「文档说签名是 A、编译器说签名是 B」。
+ *
+ * 同名多行(重载)按声明序用 ` / ` 连起来:`getObjectsByType` 就是这么写的,而把它压成一条
+ * 「三个 kind 的并集」会重新造出「一调就报 TS2345」那个老问题。
+ *
+ * 表上取不到签名时非零退出而不是留一格 `—`:模型读到一格空白,会以为那个函数没有参数或没有
+ * 返回值,于是照着写出一个编不过的脚本。
+ */
+const signatureCell = (entry: InjectedApiSymbolEntry, surface: ScriptApiDeclarations): string => {
+  const signatures = surface.functionSignatures.get(entry.symbol);
+  if (signatures === undefined || signatures.length === 0) {
+    throw new Error(
+      `注入面符号表里的 \`${entry.symbol}\` 是函数档,而类型面 ${SCRIPT_API_DECLARATION} 里没有它的声明。` +
+        "符号表与类型面必须逐条对齐:少一条的症状正是「文档说有、编译器说没有」。",
+    );
+  }
+  return tableCell(signatures.join(" / "));
+};
 
 /**
  * 分组渲染的组序与组标题。
@@ -79,19 +122,19 @@ const outcomeOf = (code: string): ScriptOutcomeEntry | undefined =>
 const row = (cells: readonly string[]): string => `| ${cells.join(" | ")} |`;
 
 /** 三个单元格的一行:名字、签名、一句语义。签名里的竖线必须转义。 */
-const functionRow = (entry: InjectedApiSymbolEntry): string =>
+const functionRow = (entry: InjectedApiSymbolEntry, surface: ScriptApiDeclarations): string =>
   entry.kind === "error-code"
     ? // 错误码档没有签名(它不是函数),而这行不进函数表:真源侧的类型分档已经让它到不了这里,
       // 这一支只是让「渲染时忘了分档」不会悄悄渲染出一行空的签名。
       row([`\`${tableCell(entry.symbol)}\``, "—"])
     : row([
         `\`${tableCell(entry.symbol)}\``,
-        `\`${tableCell(entry.signature)}\``,
+        `\`${signatureCell(entry, surface)}\``,
         tableCell(entry.reason),
       ]);
 
-/** 函数档三组表:一组一个标题 + 一张表。 */
-const functionTables = (): string[] =>
+/** 函数档四组表:一组一个标题 + 一张表。 */
+const functionTables = (surface: ScriptApiDeclarations): string[] =>
   FUNCTION_GROUPS.flatMap((group) => {
     const entries = SANDBOX_INJECTED_API_SYMBOL_CATALOG.filter(
       (entry) => entry.kind === group.kind,
@@ -104,7 +147,7 @@ const functionTables = (): string[] =>
           "",
           row(["函数", "签名", "一句语义"]),
           row(["---", "---", "---"]),
-          ...entries.map(functionRow),
+          ...entries.map((entry) => functionRow(entry, surface)),
           "",
         ];
   });
@@ -151,8 +194,9 @@ const errorCodeTable = (): string[] => {
  * 常量表里归本表的那一半:**错误码字符串**。
  *
  * 类型名(`UnitType` / `IntentKind` / `ErrResult` / `Snapshot` / `Intent`)刻意**不**在这里渲染:
- * 它们擦掉类型标注后不剩运行时值,归类型面(hld §6.2),而类型面尚未落库;数值归
- * `rulesets/v1.json` 那条链,渲染在「数值常量表」一节。所以本表只出这个联合。
+ * 它们擦掉类型标注后不剩运行时值,归类型面(hld §6.2)——家已落库,见
+ * `packages/schema/script-api/index.d.ts`;数值归 `rulesets/v1.json` 那条链,渲染在「数值常量表」
+ * 一节。所以本表只出这个联合。
  *
  * 联合的成员序即符号表里错误码的书写序,不去重也不排序——排序会让「码表长什么样」取决于
  * 排序实现,而书写序是有人有意定的。
@@ -229,16 +273,19 @@ const apiSurfaceContent = (): string => {
   const errorCodes = SANDBOX_INJECTED_API_SYMBOL_CATALOG.filter(
     (entry) => entry.kind === "error-code",
   );
+  const surface = typeSurface();
   return (
     [
       "> 本节三张表是**生成物**,勿手改:由 `packages/tools/src/generate/api-surface.ts` 从",
       `> \`${SYMBOL_TRUTH}\`(注入面符号表)与 \`${OUTCOME_TRUTH}\`(后果行)产出。`,
+      "> **API 表的「签名」那一栏投影自类型面**",
+      `> \`${SCRIPT_API_DECLARATION}\`,它才是签名的家(符号表不再自己写一份)。`,
       "> 改真源后跑 `pnpm run generate`;手改会在下一次生成时被原样覆盖,并被生成物漂移检查",
       "> (`check:drift`)判红。",
       "",
       "**API 表**",
       "",
-      ...functionTables(),
+      ...functionTables(surface),
       ...errorCodeTable(),
       ...constantTable(),
       ...discriminationNote(errorCodes),
