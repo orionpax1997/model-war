@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,14 +22,15 @@ const mapPath = fileURLToPath(new URL("../../../maps/open-clash.json", import.me
 const COMMANDS = ["gen", "run", "match", "replay", "verify", "map-lint"] as const;
 
 /**
- * 尚未落地的子命令。`map-lint` 不在其中:它已实现,被下面那组自己的断言盯着。
+ * 尚未落地的子命令。`map-lint` / `replay` / `match` 不在其中:三者已实现,被下面各自那组断言盯着。
  * 这张名单会随实现推进缩短——把一条命令搬出这张名单是“它有断言了”的信号。
  */
-const UNIMPLEMENTED = ["gen", "run", "match", "replay", "verify"] as const;
+const UNIMPLEMENTED = ["gen", "run", "verify"] as const;
 
 let bundle = "";
 let scratch = "";
 let poolSeq = 0;
+let seq = 0;
 
 const run = (args: readonly string[]) =>
   spawnSync(process.execPath, [bundle, ...args], { cwd: repoRoot, encoding: "utf8" });
@@ -202,6 +204,51 @@ it("`map-lint` 拿到一个空目录时判失败(而不是静默通过)", () => 
   expect(result.stdout).toContain("地图池里没有地图");
 });
 
+const writeReplay = (lines: readonly unknown[]): string => {
+  const path = join(scratch, `replay-${String(seq++)}.jsonl`);
+  writeFileSync(path, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+  return path;
+};
+
+it("`replay` 不再走「未实现」那条路径:渲染器住在 replay 包(provider 登记的包)", () => {
+  const path = writeReplay([
+    {
+      type: "meta",
+      schemaVersion: 1,
+      ruleset: "v1",
+      quickjsWasiVersion: null,
+      sandboxRuntimeHash: null,
+      wasiClock: null,
+      wasiRandomFill: null,
+      timezoneOffset: "+08:00",
+      mapHash: "a".repeat(64),
+      seed: 7,
+      players: [{ model: "alpha", archiveRef: "archive/alpha/r1", seat: 0 }],
+      runner: "stub",
+    },
+    {
+      type: "tick",
+      tick: 0,
+      players: [],
+      units: [],
+      sites: [],
+      events: [],
+      stateHash: "c".repeat(64),
+    },
+  ]);
+  const result = run(["replay", path]);
+  expect(result.stderr).not.toContain("未实现");
+  expect(result.status).toBe(0);
+  // 「runner 栏读不出来」的反例:这一条红,而后果是有人拿桩跑的读数当座位轮换的结论。
+  expect(result.stdout).toContain("runner stub");
+});
+
+it("`replay` 读不到文件或缺参时按装载期拒跑退 2,不静默返回成功", () => {
+  // 静默 0 的反例:这两条一起红——自动化流程把「没跑成」读成「跑通了」。
+  expect(run(["replay", join(scratch, "no-such-replay.jsonl")]).status).toBe(2);
+  expect(run(["replay"]).status).toBe(2);
+});
+
 it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
   // index.ts 里的 CLI_VERSION 是写死的(打包后不读盘),而"与 package.json 同步"这句
   // 光写在注释里没有任何东西在盯。这里把它变成断言:改了一边不改另一边,这条会红。
@@ -209,4 +256,138 @@ it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
   const result = run(["--version"]);
   expect(result.status).toBe(0);
   expect(result.stdout).toContain(`modelwar ${manifest.version} `);
+});
+
+// ── `match`:装载 → 校验 → 跑一局 → 写回放 → 映射退出码 ──────────────────────────
+
+const sha256Hex = (bytes: Buffer | string): string =>
+  createHash("sha256").update(bytes).digest("hex");
+const stubRuntimeHash = sha256Hex("stub-runner/v1");
+
+/**
+ * 在临时目录里造一份**合法**的对局输入(4 份存档三件套 + input.json)。
+ * 存档与 input 写在同一个 `root` 下,`archivePath` 按仓库根相对(hld §7.4 的拓扑)。
+ * 造完返回 input.json 的路径。
+ */
+const writeMatchInput = (
+  options: {
+    readonly tamper?: "mapSha" | "scriptSha" | "metaSha" | "ruleset" | "dropArchive";
+  } = {},
+): string => {
+  const root = mkdtempSync(`${scratch}/root-`);
+  const mapBytes = readFileSync(mapPath);
+  const mapSha = options.tamper === "mapSha" ? "d".repeat(64) : sha256Hex(mapBytes);
+
+  const models = ["alpha", "beta", "gamma", "delta"];
+  const archives = models.map((model, seat) => {
+    const archivePath = `archive/${model}/r1`;
+    const dir = join(root, archivePath);
+    mkdirSync(dir, { recursive: true });
+    const scriptJs = `function loop(){ return []; }\n`;
+    writeFileSync(join(dir, "script.js"), scriptJs);
+    writeFileSync(join(dir, "script.ts"), `function loop(){ return []; }\n`);
+    const scriptSha = sha256Hex(scriptJs);
+    const meta = {
+      model,
+      modelVersion: "snapshot-1",
+      generatedAt: "2026-01-01T00:00:00Z",
+      protocolRounds: 1,
+      prompts: [`prompt ${model}`],
+      generationLog: [`generated ${model}`],
+      ruleset: "v1",
+      validation: { passed: true, errors: [] },
+      tscVersion: "7.0.2",
+      scriptSha256: scriptSha,
+      sandboxRuntimeHash: stubRuntimeHash,
+    };
+    const metaBytes = `${JSON.stringify(meta, null, 2)}\n`;
+    writeFileSync(join(dir, "meta.json"), metaBytes);
+    const recordedScript =
+      options.tamper === "scriptSha" && seat === 0 ? "e".repeat(64) : scriptSha;
+    const recordedMeta =
+      options.tamper === "metaSha" && seat === 0 ? "f".repeat(64) : sha256Hex(metaBytes);
+    return { archivePath, scriptSha256: recordedScript, metaSha256: recordedMeta };
+  });
+
+  if (options.tamper === "dropArchive") {
+    rmSync(join(root, archives[2]?.archivePath ?? "", "script.js"), { force: true });
+  }
+
+  const input = {
+    archives,
+    map: "open-clash",
+    mapSha256: mapSha,
+    seed: 20260101,
+    ruleset: options.tamper === "ruleset" ? "v2" : "v1",
+  };
+  const runDir = join(root, "runs", "r1", "matches", "c0");
+  mkdirSync(runDir, { recursive: true });
+  const inputPath = join(runDir, "input.json");
+  writeFileSync(inputPath, `${JSON.stringify(input, null, 2)}\n`, "utf8");
+  // 地图按名复制到 root,让 --root 找得到;规则集也复制一份(装载期从 root 读它)。
+  mkdirSync(join(root, "maps"), { recursive: true });
+  writeFileSync(join(root, "maps", "open-clash.json"), mapBytes);
+  mkdirSync(join(root, "rulesets"), { recursive: true });
+  writeFileSync(
+    join(root, "rulesets", "v1.json"),
+    readFileSync(fileURLToPath(new URL("../../../rulesets/v1.json", import.meta.url))),
+  );
+  return inputPath;
+};
+
+it("`match` 跑完一整场到超时,退出 0,回放落盘且能被 `replay` 渲染(演示态)", () => {
+  const inputPath = writeMatchInput();
+  const runDir = join(inputPath, "..");
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const result = run(["match", inputPath, "--root", root]);
+  // 「规则内结果一律 0」:超时是**合法结果**,不是失败。
+  expect(result.status, result.stderr).toBe(0);
+  const replayPath = join(runDir, "replay.jsonl");
+  const lines = readFileSync(replayPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  expect(lines[0].type).toBe("meta");
+  expect(lines.at(-1).type).toBe("result");
+  // 600 tick + meta + result。
+  expect(lines).toHaveLength(602);
+  // 回放能渲染:第二条命令看得到画面。
+  const shown = run(["replay", replayPath]);
+  expect(shown.status).toBe(0);
+  expect(shown.stdout).toContain("runner stub");
+});
+
+/**
+ * `--root` 写在位置参数**前面**也要能跑。
+ *
+ * 反例:把参数摘取写成 `args.filter((arg) => !arg.startsWith("-"))`,`--root` 的**值**
+ * 不以 `-` 开头,于是它被当成位置参数、`positional[0]` 成了根目录——一个目录被拿去
+ * `JSON.parse`。用法串把 `<input.json>` 写在前面只是惯例,参数顺序不该决定命令能不能跑。
+ */
+it("`match` 的 `--root` 写在 <input.json> 前面也能跑,退出 0", () => {
+  const inputPath = writeMatchInput();
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const result = run(["match", "--root", root, inputPath]);
+  expect(result.status, result.stderr).toBe(0);
+  expect(readFileSync(join(inputPath, "..", "replay.jsonl"), "utf8")).not.toBe("");
+});
+
+it("`match` 装载期拒跑一律退 2:缺档 / 哈希不符 / 规则集版本不一致,一条都不静默 0", () => {
+  for (const tamper of ["dropArchive", "scriptSha", "metaSha", "mapSha", "ruleset"] as const) {
+    const inputPath = writeMatchInput({ tamper });
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const result = run(["match", inputPath, "--root", root]);
+    expect(result.status, `${tamper} 应当按装载期拒跑退 2,stderr:\n${result.stderr}`).toBe(2);
+  }
+  // 缺参也退 2(不是 0,也不是别的)。
+  expect(run(["match"]).status).toBe(2);
+  // 读不到输入文件也退 2。
+  expect(run(["match", join(scratch, "no-such-input.json")]).status).toBe(2);
+});
+
+it("`match` 不再走「未实现」那条路径:处理器住在 CLI 的 match 模块", () => {
+  const inputPath = writeMatchInput();
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const result = run(["match", inputPath, "--root", root]);
+  expect(result.stderr).not.toContain("未实现");
 });

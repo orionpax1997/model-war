@@ -45,7 +45,7 @@ export const RULESET_VERSION: RulesetVersion = "v1";
 
 /**
  * JSON 可表示的值。数据格式定义归本包所有(hld §2.2.5):
- * ruleset / 地图 / 存档 meta / result / 回放行都是它的形状。
+ * ruleset / 地图 / 存档 meta / 对局输入 / result / 回放行都是它的形状。
  *
  * 注意:带索引签名的对象类型只接受**type 别名**,不接受 interface
  * (interface 没有隐式索引签名,不能赋给本类型)。凡是要进入回放或 meta 的状态结构,
@@ -58,6 +58,15 @@ export type JsonValue =
   | null
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
+
+// 跨进程的两份物化件:冻结脚本存档的 `meta.json` 与单个对局的 `input.json`。
+// 形状一次定死,取值随生成 / 物化管线落库(理由写在各自头注里)。
+export * from "./archive-meta.js";
+export * from "./match-input.js";
+
+// 回放 JSONL 的三行(`meta` / `tick` / `result`,hld §7.5)。形状一次定死,取值由引擎写出。
+// 末行 `result` 的终局原因取值域由本模块的 `ReplayOutcomeReason` 定死(09 票销掉 `match-result`)。
+export * from "./replay-line.js";
 
 // 各域文件(形状 / 参数清单 / 常量表)一律从这里再导出。
 export * from "./map.js";

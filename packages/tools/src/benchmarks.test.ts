@@ -24,7 +24,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { RULESET_VERSION, SANDBOX_INJECTED_API_SYMBOLS } from "@model-war/schema";
+import { RULESET_VERSION } from "@model-war/schema";
 
 import {
   BENCHMARK_NAMES,
@@ -34,6 +34,7 @@ import {
   benchmarkFile,
   compileBenchmarkSource,
 } from "./benchmarks/compile.ts";
+import { validateScriptSource } from "./validate/pipeline.ts";
 
 /** 说明表(基准目录里唯一的那份 Markdown)。 */
 const README = `${BENCHMARK_ROOT}/README.md`;
@@ -201,14 +202,23 @@ it("说明表带着「不可与旧四舱互比」的口径,以及换契约版本
   expect(readme).toContain("生成管线那一格");
 });
 
-it("三份脚本的编译诊断只有那三类,且「名字未声明」逐个在注入面符号表里", () => {
+/**
+ * 三份脚本的编译诊断:**「名字未声明」一条都不许有**,而另外两类(脚本自身的写法账)仍在。
+ *
+ * 这一条是类型面回填的验收信号,方向是反过来的:类型面回填之前三份脚本分别报 40 / 25 / 17 个
+ * 「名字未声明」,而那些名字**逐个都在注入面符号表里**——也就是说它们全都是「类型面还没来」这一件事
+ * 的账,不是脚本用了运行时不存在的 API。回填之后这个数必须归零:它归零意味着「脚本写错 API 名字」
+ * 这类错误从此在编译期就红,而不是跑到沙箱里才炸。
+ *
+ * **退出码不再是判据**:归零之后剩下的诊断是脚本**自身**在 `strict` 与 `noUncheckedIndexedAccess`
+ * 下的写法账(形参没标注、下标取值可能取不到),与类型面无关,它们仍在,所以非零退出还会继续出现。
+ * 拿退出码当类型面的判据,迟早会因为「谁把脚本里那几处写法改了」而假红。
+ */
+it("三份脚本的编译诊断里「名字未声明」归零,剩下的只有脚本自身那两类", () => {
   for (const name of BENCHMARK_NAMES) {
     const source = readFileSync(benchmarkFile(name, SOURCE_FILE), "utf8");
     const compiled = compileBenchmarkSource(source);
     const where = `${name} 的编译诊断`;
-
-    // 零退出在这里是**坏消息**:类型面还没回填,零退出意味着某个东西替 API 填上了声明。
-    expect(compiled.status, `${where} 编译通过了,类型面却还没回填`).not.toBe(0);
 
     const unexpected = compiled.diagnostics.filter((d) => d.cls === "unexpected");
     expect(
@@ -219,13 +229,35 @@ it("三份脚本的编译诊断只有那三类,且「名字未声明」逐个在
     const names = compiled.diagnostics
       .filter((d) => d.cls === "unresolved-name")
       .map((d) => d.name ?? "");
-    expect(names.length, `${where} 一个「名字未声明」都没有,那它压根没用注入面`).toBeGreaterThan(0);
-    for (const unresolved of names) {
-      expect(
-        SANDBOX_INJECTED_API_SYMBOLS,
-        `${where} 用到了注入面符号表里没有的名字 \`${unresolved}\`,` +
-          "那不是「类型面没回填」而是脚本用了运行时不存在的 API",
-      ).toContain(unresolved);
-    }
+    expect(
+      names,
+      `${where} 还有「名字未声明」。类型面已回填,这类诊断必须归零——` +
+        "留着它就意味着写错 API 名字的脚本照样能编译过去。",
+    ).toEqual([]);
+  }
+});
+
+/**
+ * 三份入库产物过**静态校验判定链**,零违规。
+ *
+ * 这是「源形态收紧」那一侧的对称钉子。收紧的目的是拒掉未经编译的 TS 源码(hld §6.2
+ * 「四条规则统一跑在编译产物上」),而这一条钉的是**收紧的另一侧**:产物必须仍然放行。
+ * 只钉拒绝侧的话,把 script 源形态整个判死——连这 5–8 KB 的真产物一起拒——同样能变绿,
+ * 那是误伤,而两种失效方向相反,处方也相反。
+ *
+ * 用入库产物而不是现造的最小样本,是因为最小样本证明不了「真实规模与真实写法的产物不受影响」。
+ * 产物逐字节由 `check:bench` 钉住(真的是 `tsconfig.scripts.json` 跑出来的),
+ * 于是本条与那一条合起来给出的结论是:「由基座编译出来的产物,判定链放行」。
+ *
+ * 上限给足,让体积级不参与:体积的取值归 `rulesets/*.json`(未定值),拿它当判据会让本条
+ * 在取值落地那天红,而那时候红的原因与源形态无关。
+ */
+it("三份入库产物过静态校验判定链,零违规(源形态收紧不得误伤产物)", () => {
+  for (const name of BENCHMARK_NAMES) {
+    const product = readFileSync(benchmarkFile(name, PRODUCT_FILE), "utf8");
+    expect(
+      validateScriptSource(product, { maxBytes: Number.MAX_SAFE_INTEGER, phase: "freeze" }),
+      `${name} 的产物被判定链判违规`,
+    ).toEqual([]);
   }
 });

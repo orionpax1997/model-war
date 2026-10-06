@@ -148,7 +148,9 @@
 | hash | `node:crypto` SHA-256(标准库) | stateHash、地图 hash、存档完整性校验,零第三方依赖 |
 | 随机数与 ID | **归 `driver` 所有**:整数 LCG + `IdGen`;RNG 消费顺序写入 rules-vN | 确定性原语不散落;消费顺序是回放断裂的经典成因(§4.6) |
 
-**「读入端强制校验」的覆盖面当前只有两类,是刻意的不完整,不是半成品**。本仓现在真正被校验的只有**规则集与地图**;存档 meta / result / 回放行三类的**家已经定在真源包**(见上表第一行),但**字段尚未回填**,因此真源包里只有它们的占位清单(标记 + 回填触发条件),没有 schema。另有一件要说清:规则集与地图两类的**校验通路已交付**(唯一一份 ajv 校验器、两个纯函数、两层诊断、装载期版本与派生量断言),但**接进子命令装载路径的只有地图那一半**——`modelwar map-lint <maps/>` 已经跑通「读文件 → 校验 → 带定位诊断拒跑 → 非零退出」这条通路;规则集那一侧的调用点随 runner 落地。规则集侧现在多了一份东西但仍然不是接线:`rulesets/v1.json` 已落库(21 个键 = 13 定稿 + 8 未定值占位,§7.1),并有单元用例**读那份真文件**逐条过 `validateRuleset`(键集与键清单两个方向都比、诊断带 JSON 指针)——**被校验过不等于被装载时校验过**:今天仍然没有任何生产路径读它。因此 **FR-10 AC2 的「错配拒跑」与「读入端强制校验」仍按尚未兑现记**:地图侧机制、家与诊断形态已定死并跑通,规则集侧差的是接线,不是设计。**写在这里是为了不让后来者以为它已经兑现**,也为了说明为什么不写半截 schema:放行额外属性的空 schema 等于不校验,却会让人以为「存档 meta 已校验」,比不写更坏。
+**「读入端强制校验」的覆盖面现在是六类,其中四类由对局内核这一格新接线;它仍然不完整,但「为什么不完整」的理由与上一版不同**。本仓有 JSON Schema 且**家都在真源包**(见上表第一行)的六类数据是:**规则集、地图、存档元数据(`archive-meta`)、对局输入(`input.json`)、回放行(`meta` / `tick`)、终局结果(`result` 行)**——六类全部落库(规则集与地图早于此;存档元数据 / 对局输入 / 回放行 / 终局结果由本 feature 的 01、02b、09 三票落库)。**逐类说清接线在哪一层**:① **规则集**与② **地图**走唯一一份 ajv 校验器(`apps/cli/src/validator.ts` 的 `validateRuleset` / `validateMap`,后者另有 `modelwar map-lint` 那条通路);本 feature 把规则集那一侧的调用点接进了 `modelwar match` 的装载段,`rulesets/v1.json` 的版本号三处(文件名 / 目录名 / 版本常量)对不上即拒跑(FR-10 AC2 的错配拒跑)。③ **存档元数据**与④ **对局输入**也在本 feature 接进 `modelwar match`:`validateMatchInput` 判版本三处一致、四个座位存档在不在、各文件哈希与实测是否相等;`validateArchiveMeta` 逐座位判缺档与元数据完整性。⑤ **回放行**(`meta` / `tick` 两行的形状与 JSON Schema 都在真源包)**尚未接进任何生产路径**,读盘渲染器(住 `@model-war/replay`)只 `JSON.parse` 后防御式读栏,不做 schema 校验;⑥ **终局结果**同理:`validateReplayResultLine` 已交付(纯函数 + 用例),但没有生产调用点。
+
+**为什么仍然不完整,与上一版的理由不同**:上一版缺的是「字段未回填」,本 feature 之后字段全已落库,缺的只剩两处接线与一处的**值**。⑤⑥ 两类的形状与 JSON Schema 都已生成,缺的只是**读入端调用点**——那要在回放的**读入端**才落地,而读盘渲染器住 `@model-war/replay`(依赖方向 `schema ← replay`),不能反向依赖持有唯一 ajv 实例的 `apps/cli`(§3.2),接线归「回放读入端校验归哪一层」那次有意的裁定,等**赛季调度(`I`)**那一格(它才是回放的正式消费者与报告路径)。③ 存档元数据那一路虽然形状与读入端校验都已到位,但它记的**字段值**由**生成管线(`H`)**写出:H 落地前读入端只能校验到形状与实测哈希一致,H 落地后才第一次校验到真实存档产物。**写在这里是为了不让后来者以为六类都已兑现**,也为了说明为什么不写半截 schema:放行额外属性的空 schema 等于不校验,却会让人以为「存档 meta 已校验」,比不写更坏。
 
 **漂移检查的实现是三段判定,不是裸的 `git diff --exit-code`**:① 内容一致性——真源现在会产出的东西与工作树里那个文件是不是同一份,**按形态分两种口径**(抓「改了真源没重跑」与「生成物被手改 / 被删」);② 对 `HEAD` 的差异检查,**限定在生成物路径上**(`git diff --quiet HEAD -- <生成物路径>`,抓「生成了但没提交」)——限定是为了不把开发者工作树里别的未提交内容报出来,把报错指向错误的地方;③ 按生成物路径的状态检查(`git ls-files`,未被索引跟踪即失败,抓「新增生成物没进版本库」)。后两刀是分开的:裸 `git diff` 看不见未跟踪文件,而新增生成物恰恰是漂移检查最该抓住的情形。路径清单从生成物注册表本身取,不另存一份(§3.1)。
 
@@ -175,17 +177,20 @@
 | `check:declared-deps` | `node packages/tools/src/gate/run-declared-deps-gate.ts` | 挂在 `check` 末尾:工具包运行时源码里 import 的第三方包必须在它自己的 `package.json` 里声明(§3.2);**零构建**,与读 `dist` 的 `check:deps` 互补 |
 | `check:drift` | `node packages/tools/src/generate/run-drift-gate.ts`(生成物漂移检查) | 挂在 `check` 末尾,**不进 `check:quick`**:它需要一次 `tsc -b`(生产函数 import 真源包),而 `check:types` 里已经有,快门禁的零构建性质因此不受影响 |
 | `check:bench` | `node packages/tools/src/benchmarks/run-benchmarks-gate.ts`(基准产物门禁) | 挂在 `check` 末尾:入库的基准产物必须是 `tsconfig.scripts.json` 真跑出来的那一份(逐字节判);**不进 `check:quick`**:它要 spawn 一次 `tsc` |
-| `check:selfproof` | `node packages/tools/src/selfproof/run-selfproof-gate.ts`(契约自证门禁) | 挂在 `check` 末尾(最后一道):拿终稿契约把 `benchmarks/` 的三份产物**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同);srs §4 第 2 条的机器防线;**不进 `check:quick`**:它要跑 64 场对局 |
+| `check:selfproof` | `node packages/tools/src/selfproof/run-selfproof-gate.ts`(契约自证门禁) | **按需跑,不在 `check` 里**:拿终稿契约把 `benchmarks/` 的三份产物**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同);改契约、改 `rulesets/`、改自证桩时手工敲;反例在 `test:slow` |
 | `check:types` | `check:quick` + `tsc -b` + `oxlint --type-aware` | 改完一个 issue 跑一次 |
 | `check:deps` | `tsc -b` + dependency-cruiser(巡航 `dist` 而非 `src`,§2.2.10) | 依赖方向 |
-| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` + `check:selfproof` | 全量 |
+| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` | 全量(约 9s) |
 | `test:props` | `vitest run --project property` | 长时属性测试,单独跑 |
-| `test:gates` | `vitest run --project gates`(门禁自测:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
+| `test:gates` | `vitest run --project gates`(门禁自测的快的一半:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
+| `test:slow` | `vitest run --project slow`(门禁自测里慢的一半:契约自证四问 + 三个反例 + 会 spawn `check` 的那一条) | 按需手工跑;**不进 `check`,也不进默认 `test`**(同套娃理由 + 耗时理由,见下) |
 | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 | — |
 
 **参赛脚本静态校验器(§6.2 那个工具)不是本仓库的门禁**:`package.json` 里没有它的 `check:*` 脚本,它也不巡航本仓库源码——它服务于生成管线,调用方式是 gen 管线以子进程 spawn 它的入口(§6.2)。**要说清的是「不进 `check`」这句限定只到「它不是一道仓库门禁」为止,不是说它的测试不跑**:`check` 含 `vitest run --project unit`,而该工具的规则与入口自测落在 `unit` 的拾取范围(`packages/*/src/**/*.test.ts`)内,所以每次 `check` 都会跑到它们。真把它们抽出去只能像 `gates` 那样单开一个 project,而那会让这些反例失去常态覆盖。
 
 > 快慢分离是关键:agent 走 `check:quick`,需要类型感知 lint 时跑 `check:types`,全量走 `check`。类型感知 lint 超过 ~10s,agent 就会"写完一起跑",反馈回路断掉。
+
+> **上表 `check` 那一行的 5.65s 是自证门禁摘出去之前的数**。摘出之后同机单次实测 **8.95s**——**它反而变慢了**,因为多了 `vitest run --project unit --project property` 的 5.2s(早先那张表的 17 个测试文件只覆盖到一部分)。不重取 5 次是因为**基线换了**:拿旧口径的中位数与新口径的单次数字相比没有意义,重测请连同下面「契约自证门禁按需跑」那一节一起当作新基线。
 
 **门禁耗时(实测;观测项,不是承诺)**。测量方法:在合并后的仓库树上先跑一次 `pnpm run build`,随后**连续 5 次**取该门禁的墙钟(`/usr/bin/time` 墙钟),**报中位数**(不报单次最好成绩);环境 Node v24.15.0 / Linux x64。
 
@@ -201,19 +206,47 @@
 
 > 上一版这里写的是「`check:quick` 目标 < 5s」,那是一个没有实测支撑的许愿。现在有数字了,但**它不能变成承诺**:`< 5s` 若写成硬约束,后来者为了凑数字能改门禁的覆盖面(少查几个包、把类型感知挪出快门),而那比慢 5s 坏得多。**正确用法是把它当基线**:仓库长大后用同一方法(同机、5 次取样、报中位数)重测一次;只有重测出来的中位数显著上升,才谈是否再加一层分层。先前那条未经验证的许愿到此作废。
 
-**票 14 之后全量门禁离开秒级(观测项,不是承诺)**。`check` 的末尾多了一道 `check:selfproof`,它要真跑
-64 场对局(标定环那个桩、6 路并行):同机单次实测**墙钟 95s**,其中这道门禁自己 **82s**——**全量门禁
-的时间几乎全在它身上**,而上一表里 `check` 的中位数是 5.65s。**快门禁不受影响**——`check:quick` 那四项
-一项没动,契约自证按位置纪律不进快门禁,与漂移检查、基准产物门禁同一理由(要跑真实命令,不是零构建)。
-这一条同样不作承诺:该做的分层取舍是「反馈回路归快门禁、提交前的复核归全量」,哪一道该进哪一层由它的
+**契约自证门禁按需跑(决策记录,不是承诺)**。它曾挂在 `check` 末尾,单次实测墙钟 95s、其中它自己 82s
+(64 场对局、标定环那个桩、6 路并行;8 核机上并发上限是 `min(6, cpus-2)`,提到 8 最多省 20s,
+**并发这条路没有肉**)。同机实测 `check` 各步:selfproof 80.6s / vitest unit+property 5.2s /
+`check:types` 1.9s / 其余四道 1.9s——**它占全量门禁的 89%**。于是它被摘出 `check`,`check` 回到约 9s。
+
+**理由不是「它慢」,是「命令名与它的时间代价对不上」**:`check` 的名义是「提交前跑一遍」,挂着它之后
+八成时间花在一道与提交内容无关的重测算上,于是人开始跳过它或者每次都无脑等它——**两种都等价于没有
+这道门禁**,而且比没有更坏:没挂的时候至少知道自己没跑。诚实的位置就是按需。
+
+**代价要说清楚**:它从「每次 `check` 都拦」退化成「想跑才拦」,而它是那条机器防线的唯一执行者。
+**这个退化是自觉换来的**,换回来的是一道跑得起的门禁。两条断言(`gates.test.ts` 的
+`契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`)同时盯着两半——「不在 `check` 里」与
+「有独立脚本 + `test:slow` 里的三个反例」,少任何一半,这个决定就没有代价交换。
+
+**快门禁与末尾复核不受影响**:`check:quick` 那四项一项没动;`check` 末尾的提交内容复核仍是
+`check:drift` + `check:bench`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`)。哪一道该进哪一层由它的
 耗时与覆盖面决定,不由它在表里的位置决定。
 
-**`test:gates` 自己也有量(观测项,不是承诺)**:它是**门禁自测**,每道门禁的真跑加反向用例,墙钟
-**约 517s**(2026-10-05,基线提交 `f801bcb` 之后)。它比 `check` 长得多,因为它把末尾那几道要 spawn
-真实命令的门禁(含契约自证)反复跑成反例。同一次改动里它从 894s 降到 517s,改的是**反例的矩阵规模**:
-反例要证的是「改这一项会红」,不是四问的取值,于是反例改用缩矩阵,判不出红时断言当场红;唯一一条
-关于指标的论断(`--same-script` 要证三对都掉到 0/9)保留全矩阵,因为采样噪声会混进来。**这两个数字不
-构成承诺,只说明一件事**:门禁自测贵的原因是它在跑真命令,不是判据写得糙。
+**`test:gates` 也有量(观测项,不是承诺)**:它是**门禁自测**,每道门禁的真跑加反向用例。它比 `check`
+长得多,因为它把末尾那几道要 spawn 真实命令的门禁(含契约自证)反复跑成反例。**它按墙钟拆成了两个
+project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自证的四问与三个反例、
+以及会 spawn 全量 `check` 的那一条;`gates.test.ts`(`gates` project,`pnpm run test:gates`)装剩下
+那些秒级的。拆的根据是实测(2026-10-05,基线提交 `99b7372`):慢的一半约 **350s**(其中 `--same-script`
+那一条自己就 220s——它要证「三份同源后三对都掉到 0/9」,一个关于指标的论断,不能用缩矩阵判,于是它连同
+还原那一次跑两遍全矩阵),快的一半约 **43s**,8:1。**不拆的代价不是「慢一点」,是那个 43s 的东西没人跑**:捆在一起之后,
+想跑快的那一半要付慢的那一半的价钱,于是两个后果二选一——要么整个门禁自测没人跑,要么它每天都跑,
+于是没人看结果。拆开的代价只是「想跑全的要敲两条命令」。
+两个文件共用的那一层观察手段(`script` / `withProbeFile` / 末尾复核清单)在 `gates-harness.ts`:
+清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。（早于这次拆分,
+它已经从 894s 降到 517s 再到拆开合计的 393s,先改的是**反例的矩阵规模**:反例要证的是「改这一项会红」,不是四问的取值,
+于是反例改用缩矩阵,判不出红时断言当场红;唯一一条关于指标的论断保留全矩阵。**这三个数字不构成
+承诺,只说明一件事**:门禁自测贵的原因是它在跑真命令,不是判据写得糙。）
+
+**慢的一半为什么连默认 `test` 也不进**:`test` 显式列举 `--project unit --project property --project
+gates` 三个 project,所以 `slow` 不在其中。理由与位置纪律分开算:套娃的理由由 unit 的 `exclude` 承担
+(那条与 `GATES_TEST` 同源,同一个文件被 `check` 里的 vitest 收进去就会 `check → slow → check`);
+**不进 `test` 是耗时理由**——它要 ~6 分钟,而 `test` 是「跑一遍测试」的日常入口。**这不是说它可以不跑**:
+它由 `test:slow` 落成可手工调用的入口,`gates.test.ts` 里有两条不变量盯着它(不被 unit/property/gates
+任何一个 project 拾取、默认 `test` 不含它且三个 project 一个不缺),另有 `afterAll` 兜底清理探针。
+**要跑全套的那道对局门禁**(`check:selfproof` 与它的反例)时敲两条:`pnpm run check:selfproof` 与
+`pnpm run test:slow`——现在这两样都不在 `check` 与 `test` 里,这是决策不是遗漏(上一节)。
 
 **主流水线**(每次 PR 与主干 push,全部通过才可合并;**尚未建成**,当前全部以命名脚本手工触发):
 
@@ -380,12 +413,11 @@ interface GameState {
   players: Player[4];            // index 0..3,固定
   units: Unit[];                // 按数值 id 升序维护
   sites: Site[];                // 按数值 id 升序维护(基地 + 资源点)
-  productions: Production[];     // 各基地独立队列,单条
   nextId: number;               // 全局单调递增,对象创建时分配
   outcome: Outcome | null;      // 终局:排名 + 原因
 }
 
-// Outcome:{ rankings: number[]; reason: 'victory' | 'shortcut' | 'timeout'; territoryScores: number[] }
+// Outcome:{ rankings: number[]; reason: 'victory' | 'shortcut' | 'timeout' | 'all-eliminated'; territoryScores: number[] }
 // rankings[i] = 玩家 i 的名次(1 起,可并列),由 gdd《胜利与淘汰》的排序规则产生
 
 interface Player {
@@ -412,9 +444,8 @@ interface Site {
   progressOwner: -1 | 0|1|2|3;
   progress: number;
   remaining?: number;           // 仅资源点
+  producing: { type: UnitType; remainingTicks: number } | null;  // 产线订单,挂在基地上;无订单为 null
 }
-
-interface Production { baseId: number; type: UnitType; ticksLeft: number }
 ```
 
 - **id 全局单调递增**(含被销毁对象),一切"按对象处理"的阶段按**数值 id 升序**迭代。数值升序是唯一被声明的定序语义,写入 rules-vN。
@@ -598,17 +629,27 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 | 全局白名单 | **承载方是编译器的名字解析**:脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types`、只额外引入脚本 API 类型声明的环境里编译,「找不到这个名字」就是精确的白名单反转。**静态校验器不做反转**,也不为它自建作用域分析(实测与理由见本节末)。名字级别的禁令(`__*` 前缀全禁、确定性污染源)仍由它承担。内置全局表与注入符号表的真源在 `schema`,本包经生成器读生成物(§3.2),与沙箱 runtime 暴露的 API 面同源;**名单取值不在本文档复制**(见下一行与 `packages/schema/src/builtin-globals.ts`) |
 | 内置全局白名单的收录判据 | **这一格放的是一条收录准则(一整句话的判据),不是名单的取值**:判据原文、判据的边界(什么算这一格里的名字)与逐个名字的「为什么收/不收」都在 `packages/schema/src/builtin-globals.ts` 的头注,那是它们的家,本文档只留指针。**这张表的消费者是面向模型的规则文档,不参与白名单反转的判定**;两侧不得互相引用为依据 |
 | 确定性污染源 | 禁 `Date`、`Math.random`、`performance`、`queueMicrotask` 及其他非确定源(运行时 WASI 时钟已定格,本行为纵深防御)。静态校验器承担 |
-| API 误用 | **依赖真源包的类型面(公开 `.d.ts`),不是符号表**:符号表是一张名字数组,给不出签名与结构化 intent 类型,判「用错」靠的是类型面。类型面**尚未回填**(家已定、字段未交付,§2.2.5 那条纪律),内容由对局内核与沙箱执行器回填;不补的话「编译步骤放行但运行时报未定义」在结构上仍可能发生——放行的是编译器,静态校验器在这条上从不是裁判 |
+| API 误用 | **依赖真源包的类型面(公开 `.d.ts`),不是符号表**:符号表是一张名字数组,给不出签名与结构化 intent 类型,判「用错」靠的是类型面。**承载方即类型面本身**(家是 `packages/schema/script-api/index.d.ts`,`tsconfig.scripts.json` 的 `types` 经它引入,见 [ADR-0006](./adr/0006-script-api-type-surface-lands-in-engine.md)),由对局内核这一格回填。类型面落地后「编译步骤放行但运行时报未定义」在结构上不再发生——放行的是编译器,而编译器现在有一份可校验的名字与签名;静态校验器在这条上从不是裁判 |
 | 脚本体积 | 顶层脚本体积上限——封"直线代码不计量、大循环体放大每格工作量"的计数盲区。**量测对象是编译后产物的字节数**(不是原始 TS 源码,也不是字符数);取值入 `rulesets/v1.json`,由生成管线作为参数传入、校验器不给默认值;**检查时机:每轮迭代都查,迭代期只提示不拦,冻结期才拦** |
 
 **四条规则统一跑在编译产物上,不在原始 TS 上跑**:模块语法、桥前缀、禁列在编译后仍逐条可判定,而在原始 TS 上跑会漏掉类型断言与类型标注这类 TS 特有形态,等于为它们再写一套判据;顺带消掉了「模块源码 / 脚本源码」两种源形态的分支。
 
-**实测结论(只对所记版本组合成立,换版本即失效)**。以下两条来自 2026-10-03 的一次探针,环境 **`oxc-parser` 0.152.0**(native binding `linux-x64-gnu`)+ Node v24.15.0 / Linux x64,**探针不落库**(与 §5.0 五条沙箱实测同一处置):
+**这条不只是「怎么跑」,也是「收在哪」——静态校验器的源形态只有一种,且由解析层独占地兑现**。解析层(`packages/tools/src/parse-source.ts`)对 `script` 源形态用 `lang: "js"` 与 `.js` 文件名(`module` 那侧是 `lang: "ts"` 与 `.ts`,仓库自身源码照旧按 TS 解析),所以一份**未经编译**的参赛脚本(入口带返回类型标注、写着泛型实参或 `as` 断言)落进的是 `syntax-error` 那一支,而不是被几条规则放过。入口签名本身的形态归契约面(同节表格「编译」那一行已留指针)。
+
+**落点选在解析层而不是校验入口**,理由是绕不开:规则层的禁列 / 桥前缀 / 模块系统三条各自独立调解析层,入口声明源形态的话要在四个调用点各传一次,任何一处漏传就静默回到「判据更宽」——而更宽正是这条要消除的方向。文件名的另一半是**自述**不是行为开关(实测见下表第 3 条)。
+
+**「未编译」不是误伤,两个方向不能一起处置**:误伤是「合规产物被拒」,这里是「判据比契约宽、放行了不该由本工具判的东西」。收紧因此**两侧都钉**:拒 TS 注解源码的那半在 `parse-source.test.ts`,放行编译产物的那半拿 `benchmarks/*/script.js` 三份真产物在 `benchmarks.test.ts`——只钉前者的话,把 script 形态整个判死(连真产物一起拒)同样能变绿。**TS 专有的模块写法(`import x = require(…)`、`export = x`)不归静态校验器**:`tsconfig.scripts.json` 的 `module: esnext` 让 `tsc` 先判红(实测 TS1202 / TS1203,诊断由编译步骤透传,见上表「编译」那一行)。
+
+**实测结论(只对所记版本组合成立,换版本即失效)**。以下前两条来自 2026-10-03 的一次探针,第 3–6 条来自 2026-10-04 的收源形态探针,环境均为 **`oxc-parser` 0.152.0**(native binding `linux-x64-gnu`)+ Node v24.15.0 / Linux x64,**探针不落库**(与 §5.0 五条沙箱实测同一处置):
 
 | # | 行为 | 结论 |
 |---|---|---|
 | 1 | 解析结果的可见面 | `ParseResult` 只有 `program` / `module` / `comments` / `errors` 四个 getter,`module` 只有 `hasModuleSyntax` / `staticImports` / `staticExports` / `dynamicImports` / `importMetas`;**没有符号表、没有引用解析、没有「这个名字是不是自由变量」的任何 API**,包的全部导出(含 `raw-transfer/*` 子路径)里也没有 symbol/scope 相关入口 |
 | 2 | 标识符不区分引用位与声明位 | 声明位置与引用位置的标识符反序列化后是**同一个 `type` 字符串 `"Identifier"`、同一组字段**,逐字段深比较只差 `start`/`end`。判「引用还是声明」只能靠**父节点字段位置**(实测:`…declarations[0].id` vs `…argument.left`),而哪些父节点字段算声明位(变量/函数/参数/解构简写/`catch` 参数/`for-of` 绑定/class 方法名/对象字面量键)得自己维护 |
+| 3 | `lang` 是开关,文件名是自述 | 同一段源码下,文件名给 `script.js` 或 `script.ts` 配 `lang: "js"` **逐条行为相同**(TS 注解的八种写法全被拒、纯 JS 全放行、行列口径一致);oxc 只在**缺** `lang` 时才看扩展名。`astType` 随 `lang` 变(`js` 形态下不返 TS 专属属性),而三条规则读的那几个字段(`Literal` 的 `raw`、`MemberExpression` 的 object/property)两种取值下形状相同 |
+| 4 | 收紧只动 TS 注解,不动模块语法 | `lang: "js"` + `sourceType: "script"` 下,`export const a = 1` / `import x from "std"` / `import("std")` / `require("std")` 四种**一律零解析错误**(静态 `import` / `export` 另置 `module.hasModuleSyntax`,动态 `import()` / `require()` 不置——而规则层读的是 AST 节点不是那个标志,两种口径对本条结论无影响)——所以**模块系统必须仍是独立一级**,不能靠解析层挡。同形态下 `import.meta` 才由 oxc 直接判解析失败(`Unexpected import.meta expression`),归 `syntax-error` |
+| 5 | 重复导出名在 JS 形态下是解析错误 | `export { a, a }` 在 `lang: "ts"` 下放行、在 `lang: "js"` 下报 `Duplicated export 'a'`。判据取样必须避开它:拿它当「一个 export 节点报一条违规」的样本,收紧后整条落进 `syntax-error`,钉的就不再是原来那件事 |
+| 6 | 注释的可见面两种 `lang` 下逐字相同 | `comments` getter 在 `lang: "js"` 与 `lang: "ts"` 下都给同样的条目与同样的 `type`(`Line` / `Block`),`/// <reference …>` 与 JSDoc `@type` 均在其中。所以「注释算不算源码」不是这次收紧的变量——这条曾被列为两种候选收紧方式的差别,实测排除 |
 
 **承载权因此从静态校验器移到编译器**:白名单反转的本质是自由变量判定,而这一层解析不提供作用域;自建分析器的失败模式是**漏掉任何一处声明位置 = 误伤一份合规脚本**,而误报在五轮迭代预算里不对称地致命(模型拿到一条改不掉的违规,五轮耗尽,这一轮生成作废),漏报的代价只是回到现状。编译器的名字解析对这种不对称性零成本,且已在流水线上。
 
@@ -675,22 +716,24 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ```
 
 - 编译责任在 gen 包(定版前完成),engine 不引入 tsc(§2.2.8)。
-- `meta.json` 的**形状家归真源包**(§2.2.5),字段随生成管线那一票回填;在此之前本仓没有它的 JSON Schema,读入端不校验它(这是刻意的,不是漏做)。
-- runner 启动即校验元数据完整性,缺档**报错退出**(FR-6 AC2,不跳过)。
-- 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。
+- `meta.json` 的**形状家归真源包**(§2.2.5),十一项字段已由本 feature 的 01 票定死(`packages/schema/src/archive-meta.ts` 的类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。
+- **runner 启动即校验元数据完整性**,缺档**报错退出**(FR-6 AC2,不跳过)。**这里的「runner」指本 feature 的那个进程——第一个执行脚本的进程**(即 `modelwar match` 的装载段),不是赛季调度器 `runner` 那个包;赛季调度复用同一条校验路径,不复写。不消歧的话「runner」两个包都算。
+- 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。哈希取每座存档的 `script.js` / `meta.json` 各一份与地图一份,**不含 `script.ts`**(复算认编译产物,定版源码的不可变由 gen 保证,FR-6 AC1);**座位由 `archives` 的下标承载**(下标即 `playerIndex`),轮换算法归赛季调度物化期,不进这份文件。
 
 ### 7.5 回放 JSONL(`matches/<...>/replay.jsonl`)
 
 ```
-第 1 行   {"type":"meta", schemaVersion, ruleset, quickjsWasiVersion, sandboxRuntimeHash,
+第 1 行   {"type":"meta", schemaVersion, ruleset, runner, quickjsWasiVersion, sandboxRuntimeHash,
            wasiClock, wasiRandomFill, timezoneOffset, mapHash, seed, players:[{model, archiveRef, seat}]}
-第 n 行   {"type":"tick", tick, players, units, sites, productions, events:[...], stateHash}
+第 n 行   {"type":"tick", tick, players, units, sites, events:[...], stateHash}
 末 行    {"type":"result", rankings, reason, territoryScores}
 ```
 
 - `schemaVersion` 由 `replay` 包 `CURRENT_SCHEMA_VERSION` 常量承担,跨版本兼容性以它为准(FR-9 AC2)。**它是回放文件格式的版本,不是行的形状**:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包,`replay` 包只做编解码、不再声明行的类型(§2.2.5、§3.1)。这一格曾经有两个家(§2.2.5 说形状在真源包、§3.1 说行格式取自 `replay` 包),按「每个事实只有一个家」留在真源包。
+- **meta 行共十二栏,`runner` 是判别式**(取值 `"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,缺这一栏就把可读性押在「四个沙箱栏同时为空」这个约定上。**`runner === "stub"` 时四个沙箱栏(`quickjsWasiVersion` / `sandboxRuntimeHash` / `wasiClock` / `wasiRandomFill`)全为 `null`**(不是空串、不是 `0`——「未发生」与「恰好是空串」要能区分),本 feature 只有 `StubRunner`,故桩回放四栏皆 `null`;`runner === "quickjs"` 时四栏都是非空字符串,填错在类型上编译不过(判别联合)。
 - 每 tick 记录足以绘制完整画面的状态:点位归属、占领进度条、单位位置血量携带、玩家资源。
 - **events 事件流**(叙事战报的统一来源):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`budget-soft-warning`、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态。
+- **`first-contact` 的判据是观测量,不是规则参数**:任意敌对单位 Chebyshev ≤ 2、**整局第一次**一条,故不进 `rulesets/v1.json`(它不判胜负、不判合法、不影响移动,只给事件流标一个时刻)。判据的定性半句在 gdd 首触那一段(「首触判据吃的是接近度」),**给予它的精确定义是 gdd 那一侧的欠账**;引擎按该口径实现并在 `packages/engine/src/processor/steps/step2-movement.ts` 的注释里注明出处。
 
 ## 8. runner 与排名概要设计
 
@@ -776,6 +819,6 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 5a | TypeScript 7.0 GA 时点 | **已收口**:7.0.2(2026-07-08 GA,Go 实现,`tsgo` 名已取消)为精确锁版,见 ADR-0002 锁定版本表。本项关闭。 |
 | 5b | 类型感知 lint 的可用性与耗时 | **已收口**:oxlint-tsgolint 已 stable(oxlint 1.86.0 `--help` 无 experimental 标记),进 `check:types` 不再并行试跑;版本耦合形状 `7.0.<tsPatch><golintPatch>` 由 `coupling` 断言脚本强制(§2.2.3)。耗时见 §2.2.7 实测表(只此一处,不在此复述)。本项关闭,后续只剩随仓库规模重测。 |
 | 5c | oxfmt 0.x 风险 | **已收口为接受风险**:官方称 JS/TS 已 100% 通过 Prettier conformance,未兑现的只是 1.0 发布;由 caret + lockfile + `oxfmt --check` 门禁兜住(ADR-0002)。**不设降级到 Prettier 的退路**。本项关闭。 |
-| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化 |
-| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估 |
+| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**观测项不是承诺**,不裁「优化到什么程度算完」——停止条件归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
+| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**观测项不是承诺**,不裁方案——存储/IO 方案归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
 | 8 | 沙箱行为五条结论的复验 | §5 上表五条只对 `quickjs-wasi@3.6.2` 成立;实现真实沙箱执行器的 ticket 落地时第一条验收即按当时版本组合重跑五条并写回 §5。在那之前升级条款为空头承诺(§5.0 “升级条款”段)。 |

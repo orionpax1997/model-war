@@ -41,34 +41,33 @@
  * 与 unit / property 分成不同的 vitest project 是为了不递归:全量门禁 `check` 里含
  * `vitest run`,而这里会 spawn `check`。见 vitest.config.ts 的 GATES_TEST 常量,
  * 以及本文件末尾那条盯着该不变量的用例。
+ *
+ * **这里只放快的那一半**(同机实测:本文件 29 条合计约 40s)。契约自证门禁的四问与三个反例、
+ * 以及会 spawn 全量 `check` 的那一条在 `gates-slow.test.ts`(约 350s),由 `pnpm run test:slow` 跑。
+ * 拆分的理由、与「为什么它也不进默认 `test`」的纪律都写在那个文件的头注里。
+ * 两个文件共用的那一层观察手段(`script` / `withProbeFile` / 末尾复核清单)在 `gates-harness.ts`,
+ * 清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。
  */
 
-import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
 
+import {
+  VIOLATING_SCRIPT_PROBE_PATH,
+  type Outcome,
+  here,
+  manifest,
+  repoRoot,
+  run,
+  script,
+  tailSteps,
+  withProbeFile,
+} from "./gates-harness.ts";
 import { sectionMarker } from "./generate/section.ts";
 
-const here = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
-const repoRoot = here("../../../");
 const bin = (name: string): string => here(`../../../node_modules/.bin/${name}`);
-
-type Outcome = { status: number; output: string };
-
-const run = (command: string, args: readonly string[]): Outcome => {
-  const result = spawnSync(command, [...args], { cwd: repoRoot, encoding: "utf8" });
-  if (result.error !== undefined) {
-    throw result.error;
-  }
-  return { status: result.status ?? -1, output: `${result.stdout}${result.stderr}` };
-};
-
-/** 跑一条根脚本。`pnpm` 走 PATH 上的 corepack shim;可用 GATE_PNPM 覆盖。 */
-const script = (name: string, args: readonly string[] = []): Outcome =>
-  run(process.env["GATE_PNPM"] ?? "pnpm", ["run", name, ...args]);
 
 /**
  * 漂移检查那一节用的三个探针路径(常量提到这里,好让 `afterAll` 的兜底清理能引用它们):
@@ -80,22 +79,15 @@ const IGNORED_ARTIFACT_PATH = "packages/tools/dist/__drift-probe.ts";
 const UNRELATED_NOISE_PATH = "docs/__drift-noise-probe.md";
 const SECTION_PROBE_PATH = "docs/__section-probe.md";
 
-/**
- * 契约自证门禁那条反例用的违规脚本探针(反例①)。
- *
- * 落点与别的探针同一形态:`packages/tools/src` 下的 `.js`——各包 tsconfig 的 `include` 只收 `.ts`
- * 且不开 `allowJs`,所以它进得了桩的装载、进不了 `tsc -b`,反例只证明它该证明的那一件事。
- * 它**刻意不含 `import` / `export`**:那两条虽然也违规,但会让桩在装载产物时抛异常,
- * 门禁读到的是「跑批崩了」,而不是「静态校验器判它红」——那证明不了①这一问。
- */
-const VIOLATING_SCRIPT_PROBE_PATH = "packages/tools/src/selfproof/__selfproof-probe.js";
+/** 禁浮点反例用的探针路径:落在 engine 的运行时代码里,这道门禁才看得见它。 */
+const NO_FLOAT_PROBE = "packages/engine/src/__nofloat-probe.ts";
 
-/** 本文件用过的全部探针路径。 */
+/** 本文件用过的全部探针路径(`gates-slow.test.ts` 用它自己的那一条,各自兜底)。 */
 const PROBES = [
   "packages/schema/src/__fmt-probe.js",
   "packages/schema/src/__lint-probe.js",
   "packages/schema/src/__lint-probe.ts",
-  "packages/engine/src/__nofloat-probe.ts",
+  NO_FLOAT_PROBE,
   "packages/tools/src/__declared-deps-probe.ts",
   "packages/runner/dist/__gate-probe.js",
   "packages/engine/dist/__gate-probe.js",
@@ -105,16 +97,6 @@ const PROBES = [
   SECTION_PROBE_PATH,
   VIOLATING_SCRIPT_PROBE_PATH,
 ] as const;
-
-/** 放一个探针进去,跑 `body`,无论成败都把它撤掉。 */
-const withProbeFile = (path: string, contents: string, body: () => Outcome): Outcome => {
-  writeFileSync(`${repoRoot}${path}`, contents, "utf8");
-  try {
-    return body();
-  } finally {
-    rmSync(`${repoRoot}${path}`, { force: true });
-  }
-};
 
 afterAll(() => {
   for (const probe of PROBES) {
@@ -132,24 +114,9 @@ afterAll(() => {
 // 为什么是清单而不是「最后 N 步」:纪律是「末尾那几道都是复核」,不是「末尾恰好 N 道」。
 // 清单可枚举,N 会漂——多一道或少一道,前者让断言变红,后者让它安静地放过一道混进末尾的新检查。
 
-/** 挂在 `check` 末尾的提交内容复核(逐条写出来,顺序不钉死)。 */
-const CONTENT_RECHECKS = [
-  "pnpm run check:drift",
-  "pnpm run check:bench",
-  "pnpm run check:selfproof",
-] as const;
-
-type Manifest = { scripts: Record<string, string> };
-
-const manifest = (): Manifest =>
-  JSON.parse(readFileSync(`${repoRoot}package.json`, "utf8")) as Manifest;
-
-/** 全量门禁末尾那一组(取与复核清单等长的一段)。 */
-const tailSteps = (): string[] =>
-  (manifest().scripts["check"] ?? "")
-    .split("&&")
-    .map((step) => step.trim())
-    .slice(-CONTENT_RECHECKS.length);
+// 「挂在 `check` 末尾的提交内容复核」那份清单与取末尾一段的算术都在 `gates-harness.ts`,
+// `gates-slow.test.ts` 与本文件的三处断言共用同一份(`slice(-3)` 写成三处,加一道门禁要改三处,
+// 而三处里漏掉一处的后果是「有一道复核其实不在末尾」没人发现)。
 
 // ── 分层门禁在空壳上各自退出 0 ────────────────────────────────────────────────
 
@@ -181,10 +148,8 @@ it("test:props(长时属性测试)退出 0", () => {
   expect(result.status, result.output).toBe(0);
 });
 
-it("check(全量门禁)退出 0", () => {
-  const result = script("check");
-  expect(result.status, result.output).toBe(0);
-});
+// 「check(全量门禁)退出 0」那条在 `gates-slow.test.ts`:它要真跑一遍全量门禁(内含 64 场对局,
+// 单次约 90s),而这一份文件是给「想快点知道门禁自测过没过」的人跑的。
 
 // ── 工具版本耦合:错位即非零退出 ──────────────────────────────────────────────
 
@@ -218,19 +183,15 @@ it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", (
   // 探针落在 engine 的运行时代码里,而且是 .ts 而非 .js:这道门禁读的是**源码**
   // (自建校验器建在 oxc-parser 上,不经 tsc 产物),所以在 dist 里丢文件它根本看不见。
   // 位置与扩展名合起来才是「它真的在读该读的那片源码」的证据。
-  const violated = withProbeFile(
-    "packages/engine/src/__nofloat-probe.ts",
-    "export const speed = 1.5;\n",
-    () => script("check:no-float"),
+  const violated = withProbeFile(NO_FLOAT_PROBE, "export const speed = 1.5;\n", () =>
+    script("check:no-float"),
   );
   expect(violated.status, "浮点字面量必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("__nofloat-probe.ts");
 
   // 同一路径换成整数:判决跟着内容走,不是跟着文件名走。
-  const fixed = withProbeFile(
-    "packages/engine/src/__nofloat-probe.ts",
-    "export const speed = 3;\n",
-    () => script("check:no-float"),
+  const fixed = withProbeFile(NO_FLOAT_PROBE, "export const speed = 3;\n", () =>
+    script("check:no-float"),
   );
   expect(fixed.status, `整数仍被拦下:\n${fixed.output}`).toBe(0);
 
@@ -244,8 +205,35 @@ const SCHEMA_ALLOWLIST = "packages/schema/src/builtin-globals.ts";
 const GENERATED_ALLOWLIST = "packages/tools/src/generated/builtin-globals.ts";
 const GENERATED_SCRIPT_SURFACE = "packages/tools/src/generated/script-surface.ts";
 
-/** 探针:一条用到 `Math.abs` 的运行时代码。 */
-const MATH_ABS_PROBE = "export const probe = Math.abs(-1);\n";
+/**
+ * 反例里被从真源摘掉的那个成员。
+ *
+ * 选它而不是 `abs`,是因为必须摘一个 engine 源码**一处都不用**的成员:摘掉它只让「用它的探针」
+ * 变红,engine 自己的代码一处都不被牵连,末一条断言(仍在名单里的成员照旧放行 → 整道门禁退 0)
+ * 才成立。换成 engine 正在用的成员(如 `abs`),那些调用会一起被判违规,门禁无论如何都退非零,
+ * 那条断言就变成了在测一个不存在的状态(票 12 修掉的那条红)。这个前提由下面那条前置自证盯着。
+ */
+const REMOVED_MEMBER = "clz32";
+/** 探针:一条用到 `REMOVED_MEMBER` 的运行时代码。它在名单里时放行,摘掉后必被拒。 */
+const REMOVED_MEMBER_PROBE = `export const probe = Math.${REMOVED_MEMBER}(-1);\n`;
+/** 探针:一条用到另一个成员的运行时代码。`sign` 与 `clz32` 一样,engine 源码一处不用。 */
+const STILL_ALLOWED_MEMBER_PROBE = "export const probe = Math.sign(-1);\n";
+
+/**
+ * 从禁浮点门禁的输出里取出被判违规的文件路径(去重)。
+ *
+ * 违规行形如 `<仓库根相对路径>:<行>:<列>  <规则>  <说明>`;末尾那行汇总
+ * (`禁浮点门禁:检查 N 个文件,M 处违规。`)不含 `:行:列` 前缀,天然被滤掉。
+ * 用它把「违规只来自探针文件」从一句注释变成一条机器可判的前提。
+ */
+const violatingFiles = (output: string): readonly string[] => [
+  ...new Set(
+    output
+      .split("\n")
+      .map((line) => /^(\S+?):\d+:\d+ /.exec(line)?.[1])
+      .filter((path) => path !== undefined),
+  ),
+];
 
 /**
  * 一次真源改动的两端:改哪个真源、重跑生成器会重写哪些落点。
@@ -326,38 +314,46 @@ const withRegeneratedAllowlist = (
 ): Outcome => withPatchedTruth(ALLOWLIST_TARGET, patch, { regenerate: true }, body);
 
 it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变", () => {
-  // 基线:`abs` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
-  const allowed = withProbeFile("packages/engine/src/__nofloat-probe.ts", MATH_ABS_PROBE, () =>
+  // 基线:`clz32` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
+  const allowed = withProbeFile(NO_FLOAT_PROBE, REMOVED_MEMBER_PROBE, () =>
     script("check:no-float"),
   );
   expect(allowed.status, `名单内的成员被拦下:\n${allowed.output}`).toBe(0);
 
-  // 从真源里摘掉 `abs` 并重跑生成器:同一条探针,从通过变拒绝。这就是「改真源 → 门禁行为改变」
-  // 这条链的正面证据,断言落在门禁的退出码与报告文本上,不碰任何内部函数。
+  // 从真源里摘掉 `REMOVED_MEMBER` 并重跑生成器:同一条探针,从通过变拒绝。这就是「改真源 →
+  // 门禁行为改变」这条链的正面证据,断言落在门禁的退出码与报告文本上,不碰任何内部函数。
   const removed = withRegeneratedAllowlist(
-    (source) => source.replace('  "abs",\n', ""),
-    () =>
-      withProbeFile("packages/engine/src/__nofloat-probe.ts", MATH_ABS_PROBE, () =>
-        script("check:no-float"),
-      ),
+    (source) => source.replace(`  "${REMOVED_MEMBER}",\n`, ""),
+    () => withProbeFile(NO_FLOAT_PROBE, REMOVED_MEMBER_PROBE, () => script("check:no-float")),
   );
   expect(removed.status, "真源摘掉成员后,用到它的脚本必须被拒绝").toBe(1);
-  expect(removed.output, removed.output).toContain("Math.abs");
+  expect(removed.output, removed.output).toContain(`Math.${REMOVED_MEMBER}`);
+
+  // 前置自证:被摘掉的成员此刻必须**只在探针里**被用到。若 engine 源码哪天开始使用它,
+  // 这里的违规文件就不再只有探针——那种红会以「名单内的其他成员被连坐」的旧文案误导后来者
+  // (正是票 12 修掉的那一条)。所以断言「违规恰好只来自探针文件」,并把处方写进报错。
+  const files = violatingFiles(removed.output);
+  expect(files.length, `探针没有被判违规,这条反例不成立:\n${removed.output}`).toBeGreaterThan(0);
+  expect(
+    files,
+    `engine 源码里已经用上了 \`Math.${REMOVED_MEMBER}\`,这条反例该换成员了:` +
+      "摘掉它会把 engine 自己的代码一起弄红,违规不该只留在探针文件里。" +
+      `\n${removed.output}`,
+  ).toEqual([NO_FLOAT_PROBE]);
 
   // 同一时刻仍在名单里的成员照旧放行:变红的是「白名单」,不是整道门禁——
   // 少了这一条,「生成器把规则层弄坏了」也会被算作通过。
   const stillAllowed = withRegeneratedAllowlist(
-    (source) => source.replace('  "abs",\n', ""),
-    () =>
-      withProbeFile(
-        "packages/engine/src/__nofloat-probe.ts",
-        "export const probe = Math.sign(-1);\n",
-        () => script("check:no-float"),
-      ),
+    (source) => source.replace(`  "${REMOVED_MEMBER}",\n`, ""),
+    () => withProbeFile(NO_FLOAT_PROBE, STILL_ALLOWED_MEMBER_PROBE, () => script("check:no-float")),
   );
-  expect(stillAllowed.status, `名单内的其他成员被连坐:\n${stillAllowed.output}`).toBe(0);
+  expect(
+    stillAllowed.status,
+    `仍在名单里的成员被连坐:摘掉的是 \`${REMOVED_MEMBER}\`,而 \`sign\` 没动,` +
+      `整道门禁不该退非零(engine 源码零使用 \`${REMOVED_MEMBER}\` 是本条的前提):\n${stillAllowed.output}`,
+  ).toBe(0);
 
-  // 链路的另一头:还原后门禁回到绿。少了它,一条「红到底」的假实现也能满足上面三条。
+  // 链路的另一头:还原后门禁回到绿。少了它,一条「红到底」的假实现也能满足上面四条。
   expect(script("check:no-float").status, "还原后禁浮点门禁没有回到绿").toBe(0);
 });
 
@@ -1142,91 +1138,39 @@ it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
   expect(manifest().scripts["check:types"]).not.toContain("check:bench");
 });
 
-// ── 契约自证门禁:四问的退出码与三个反例 ────────────────────────────────────
+// ── 契约自证门禁:按需,不在 check 里 ────────────────────────────────────────
 //
-// 基线绿那一条跑**整张矩阵**(4 臂 × 4 座位轮转 × 4 种子 = 64 场,单次约一分半)——四问的读数
-// 只能来自全矩阵。**每条反例跑的是缩矩阵**(`--probe`:1 臂组 × 1 轮转 × 1 种子 = 4 场),成对
-// 「红 → 同参数还原 → 绿」。理由是反例要证明的是「改这一项,门禁会红」,不是四问的取值;
-// 而红不红在小矩阵上照样判得红——真判不出来时下面那条 `toBe(1)` 会当场红,不会静默放过。
-// **例外是 `--same-script` 那一条**:它要证的是「三对都掉到 0/9」,一个关于指标的论断,
-// 小矩阵的采样噪声会混进来,所以那一条连同它的还原都跑全矩阵。
-// 形态与前面几节不同:基线绿只跑一次(单独一条用例),每条反例只跑两次,少掉的那次基线不是
-// 证据变薄——「同参数还原后回到绿」与「基线是绿的」证明的是同一件事。
+// 四问的退出码与三个反例在 `gates-slow.test.ts`(要跑矩阵,单次约 85s,合计约 350s)。
+// 留在这一份文件里的只有它的**位置纪律**——那一条不跑任何命令,只读 manifest,耗时可忽略。
+//
+// 为什么它**不进 `check`**:它要真跑 64 场对局(6 路并行,8 核机上墙钟约 80s),
+// 而那是全量门禁其余七步加起来(约 9s)的九倍。挂着它的 `check` 名义上是「提交前跑一遍」,
+// 实际上八成时间花在一道与提交内容无关的重测算上——**命令名与它真实的时间代价对不上,
+// 人就会开始不跑它,或者每次都跳过它**,两种都等价于没有这道门禁。
+// 诚实的做法是把它标成按需:它有自己的脚本(`pnpm run check:selfproof`),有自己的反例
+// (`test:slow`),改契约 / 改 `rulesets/` / 改自证桩时手工敲。
+//
+// **代价要说清楚**:它从「每次 check 都拦」退化成「想跑才拦」,而它是 srs 那条机器防线的唯一执行者。
+// 这条退化是**自觉换来的**,不是漏掉的;下面两条断言盯着的正是它换来的东西——
+// 「不在 check 里」与「有独立入口 + 有反例覆盖」,少任何一半,这个决定就没有代价交换。
 
-const selfproof = (args: readonly string[] = []): Outcome => script("check:selfproof", args);
-
-it("契约自证门禁:四问全绿", () => {
-  const result = selfproof();
-  expect(result.status, result.output).toBe(0);
-  // 报告要说得出四问各自的判据读数,而不只是一个「绿」——否则红起来时没人知道是哪一问。
-  expect(result.output, result.output).toContain("① 零静态违规：过");
-  expect(result.output, result.output).toContain("② 正常终局：过");
-  expect(result.output, result.output).toContain("③ 消耗 ≤ 总储量 1/4");
-  expect(result.output, result.output).toContain("④ 取策略互不相同：过");
-  // 夹具闸门先于正表:锚点漂了就不该有正表的读数,所以这一行必须在场。
-  expect(result.output, "报告里没有夹具闸门的锚点读数").toContain("p100=479");
-});
-
-it("契约自证门禁:把配额改小 → ③ 变红,还原 → 绿", () => {
-  // 配额是③的判据本身(默认总储量的 1/4),把它改到 6% 就低于 A 的实际消耗中位(6.9%)。
-  const shrunk = selfproof(["--probe", "--quota-percent=6"]);
-  expect(shrunk.status, `配额改小后门禁仍为绿:\n${shrunk.output}`).toBe(1);
-  expect(shrunk.output, shrunk.output).toContain("③ 消耗 ≤ 总储量 1/4（配额 6%");
-  expect(shrunk.output, shrunk.output).toContain("**不过**");
-  // 红的原因得是③而不是别的:另外三问仍然过。
-  expect(shrunk.output, "红的原因不是③").toContain("契约自证门禁:红（① 过 ② 过 ③ 不过 ④ 过）");
-
-  expect(selfproof(["--probe"]).status, "配额还原后没有回到绿").toBe(0);
-});
-
-it("契约自证门禁:把一份产物换成违规脚本 → ① 变红,撤掉探针 → 绿", () => {
-  const violated = withProbeFile(
-    VIOLATING_SCRIPT_PROBE_PATH,
-    [
-      "// 故意违规的参赛脚本:确定性污染源 + 宿主桥 + 浮点字面量。",
-      "function loop() {",
-      "    const noise = Math.random() * 100;",
-      "    console.log(__peekHost(noise), Date.now(), performance.now());",
-      "}",
-      "",
-    ].join("\n"),
-    () => selfproof(["--probe", `--script-a=${repoRoot}${VIOLATING_SCRIPT_PROBE_PATH}`]),
+it("契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖", () => {
+  const scripts = manifest().scripts;
+  // 缺席:它不在全量门禁的任何一个 project 里(含末尾那一组)。
+  expect(scripts["check"] ?? "", "契约自证门禁还在 check 里").not.toContain("check:selfproof");
+  expect(tailSteps(), "契约自证门禁还在全量门禁末尾那一组复核里").not.toContain("check:selfproof");
+  // 也不在快门禁与类型门禁里——那两处它从来就不该在,留着这条是为了挡住「顺手挪进去」。
+  expect(scripts["check:quick"], "契约自证门禁被挪进了快门禁").not.toContain("check:selfproof");
+  expect(scripts["check:types"], "契约自证门禁被挪进了类型门禁").not.toContain("check:selfproof");
+  // 在场:按需入口还在(它是这件事的全部意义),且测试侧的反例由 test:slow 承载。
+  expect(scripts["check:selfproof"] ?? "", "按需入口没了,这道门禁从此没人跑").toContain(
+    "run-selfproof-gate.ts",
   );
-  expect(violated.status, `换成违规脚本后门禁仍为绿:\n${violated.output}`).toBe(1);
-  expect(violated.output, violated.output).toContain("① 零静态违规：**不过**");
-  // 判红的依据是静态校验器自己的报告,不是本门禁的一句话。
-  expect(violated.output, "报告里没有静态校验器的违规原文").toContain("禁列全局名");
-  expect(violated.output, violated.output).toContain("宿主桥前缀");
-
-  expect(selfproof(["--probe"]).status, "撤掉探针后没有回到绿").toBe(0);
-});
-
-it("契约自证门禁:三份换成同一份 → ④ 变红,还原 → 绿", () => {
-  // 这一条**跑全矩阵**,不用 `--probe`:④ 的判据是「每一对至少 3 项指标相对差 ≥ 25%」,
-  // 而把三份换成同一份之后要证明的是「三对都掉到 0/9」——那是一个关于指标的论断,
-  // 拿 4 场的小矩阵去判它,采样噪声会混进来(淘汰率那一项就是这么混进来的)。
-  const same = selfproof(["--same-script"]);
-  expect(same.status, `三份同源后门禁仍为绿:\n${same.output}`).toBe(1);
-  expect(same.output, same.output).toContain("④ 取策略互不相同：**不过**");
-  // 三份指纹逐项相同,所以每一对的分开项数都掉到 0——这是④的判据失效的样子,不是「差距不够大」。
-  expect(same.output, same.output).toContain("A vs B：分开 0/9 项");
-
-  expect(selfproof().status, "还原后没有回到绿").toBe(0);
-});
-
-it("契约自证门禁挂在全量门禁末尾,且不进快门禁", () => {
-  const steps = tailSteps();
-  expect(steps, "契约自证门禁不在全量门禁末尾那一组复核里").toContain("pnpm run check:selfproof");
-  // 末尾这一组的最后一道是它:它读的是入库产物与对局读数,排在纯文本复核之后。
-  expect(
-    (manifest().scripts["check"] ?? "").split("&&").at(-1)?.trim(),
-    "契约自证门禁不在全量门禁的最后一步",
-  ).toBe("pnpm run check:selfproof");
-  // 与基准产物门禁同侧:提交内容对不对的那几道复核都在末尾那一组里。
-  expect(steps, "基准产物门禁被挤出了末尾那一组").toContain("pnpm run check:bench");
-  // 它要跑 64 场对局,与快门禁的零构建、秒级性质都不相容(理由同 check:drift / check:bench)。
-  expect(manifest().scripts["check:quick"]).not.toContain("check:selfproof");
-  expect(manifest().scripts["check:types"]).not.toContain("check:selfproof");
+  expect(scripts["test:slow"] ?? "", "契约自证的反例没有落进可手工调用的入口").toContain(
+    "--project slow",
+  );
+  // 与基准产物门禁同侧:末尾那一组仍然全是「提交内容对不对」的复核。
+  expect(tailSteps(), "基准产物门禁被挤出了末尾那一组").toContain("pnpm run check:bench");
 });
 
 // ── 反递归不变量 ─────────────────────────────────────────────────────────────
@@ -1245,4 +1189,33 @@ it("gates 不在 unit 的拾取范围里(否则 check 会套娃成叉炸弹)", (
   const gatesListed = run("pnpm", ["exec", "vitest", "list", "--project", "gates"]);
   expect(gatesListed.status, gatesListed.output).toBe(0);
   expect(gatesListed.output, gatesListed.output).toContain("gates.test.ts");
+});
+
+it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
+  // `gates-slow.test.ts` 会 spawn `check`,所以它对 unit 的禁令与 gates.test.ts 完全同源:
+  // 一旦被 `check` 里的 `vitest run --project unit` 收进去,后果同样是套娃,而且同样
+  // 只在有人手工跑 check 时才发作。所以这里对三个常跑 project 各断言一次。
+  for (const project of ["unit", "property", "gates"] as const) {
+    const listed = run("pnpm", ["exec", "vitest", "list", "--project", project]);
+    expect(listed.status, listed.output).toBe(0);
+    expect(listed.output, `gates-slow.test.ts 被 ${project} 收进去了`).not.toContain(
+      "gates-slow.test.ts",
+    );
+  }
+  // 反面证据:它确实被自己的 project 收着(排除过头与没排除是同一种失败)。
+  const slowListed = run("pnpm", ["exec", "vitest", "list", "--project", "slow"]);
+  expect(slowListed.status, slowListed.output).toBe(0);
+  expect(slowListed.output, slowListed.output).toContain("gates-slow.test.ts");
+
+  // 默认 `test` 也不含它:它要 ~6 分钟,而 `test` 是「跑一遍测试」的日常入口。
+  // 用显式 `--project` 列举而不是靠某个默认排除项,所以这里断言列举本身。
+  const test = manifest().scripts["test"] ?? "";
+  expect(test, "默认 test 不该跑 slow project").not.toContain("--project slow");
+  for (const project of ["unit", "property", "gates"]) {
+    expect(test, `默认 test 显式漏掉了 ${project}`).toContain(`--project ${project}`);
+  }
+  // 按需入口得在:它被拆出来是为了「有需要时手工跑」,没有脚本这件事就没做完。
+  expect(manifest().scripts["test:slow"], "慢门禁自测没有落进可手工调用的脚本").toContain(
+    "--project slow",
+  );
 });

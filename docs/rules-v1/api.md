@@ -145,15 +145,15 @@ type Site = {
   所以你不需要、也不该在脚本里另记一份队列(下一小节说这件事)。
 - **快照只给读得到的东西。** 引擎内部的那些字段(对象 id 的分配器、终局结果之类)不在快照里,别去找。
 
-**这一段是契约侧的声明,目前还没有对应的投影。** 引擎的状态模型里没有这份形状
-(`packages/engine` 的 `Site` 还没有 `producing` 与 `remaining`,产线仍是一个独立的 `Production`
-类型),而脚本 API 的**类型声明面尚未回填**(家已定在真源包里,内容由对局内核与沙箱执行器回填,
-hld §6.2「API 误用」)。两件都回填之后,这一段才改为从那份声明投影,与第 3 节的签名同一处置;
-在那之前它就是本文档对字段名与语义作出的承诺,而模型必须有一份能读到的形状,所以它先落在这里。
+**这一段现在是类型面的一份投影,不再是等待回填的承诺。** 引擎的状态模型里已经有这份形状
+(`packages/engine` 的 `Site` 有 `producing` 与 `remaining`,产线就是 `Site` 上的一栏,不是独立的
+`Production` 类型),而脚本 API 的**类型声明面也已回填**(家是 `packages/schema/script-api/index.d.ts`,
+`tsconfig.scripts.json` 的 `types` 经它引入,见 [ADR-0006](../adr/0006-script-api-type-surface-lands-in-engine.md))。
+上面那份形状与类型面**逐字段一致**——`type Player` / `type Unit` / `type Site` 三个块的字段名与次序
+两边相同,由 `packages/tools/src/api-doc.test.ts` 的机器断言盯着(改一边不改另一边即红)。
 
-投影回来之前 `ErrResult`、`Intent` 这两个类型名本文档不展开(它们是类型面事实)。字段名在这段
-声明期间不改——改字段名要走一次有意的变更,像改一个错误码名那样;改成投影之后,改名的唯一去处
-就是那份声明本身。
+`ErrResult`、`Intent` 这两个类型名现在的家也在类型面。字段名不改——改字段名要走一次有意的变更,
+像改一个错误码名那样;它的唯一去处就是那份声明本身,上面这一块要跟着同步(机器断言会盯着,分叉即红)。
 
 ### 2.2 玩家侧三项与产线订单:在哪读
 
@@ -263,6 +263,8 @@ function loop() {
 <!-- generated:api-v1-api-surface:begin -->
 > 本节三张表是**生成物**,勿手改:由 `packages/tools/src/generate/api-surface.ts` 从
 > `packages/schema/src/script-surface.ts`(注入面符号表)与 `packages/schema/src/script-outcome.ts`(后果行)产出。
+> **API 表的「签名」那一栏投影自类型面**
+> `packages/schema/script-api/index.d.ts`,它才是签名的家(符号表不再自己写一份)。
 > 改真源后跑 `pnpm run generate`;手改会在下一次生成时被原样覆盖,并被生成物漂移检查
 > (`check:drift`)判红。
 
@@ -274,16 +276,16 @@ function loop() {
 | --- | --- | --- |
 | `getTick` | `getTick(): number` | 当前 tick 号;脚本每 tick 都要读一次时间轴,读出来是个数值。 |
 | `getObjectById` | `getObjectById(id: number): Unit \| Site \| null` | 按数值 id 取本 tick 快照里的那个对象;是取单个快照值的入口。 |
-| `getObjectsByType` | `getObjectsByType(kind: 'unit' \| 'site' \| 'player', filter?: { owner?: -1\|0\|1\|2\|3; type?: UnitType; kind?: 'base' \| 'resource' }): (Unit \| Site \| Player)[]` | 按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的批量入口。四个座位的资源、存活与异常计数也从这里读,不必在脚本里另记一份。 |
+| `getObjectsByType` | `getObjectsByType(kind: "unit", filter?: UnitFilter): Unit[] / getObjectsByType(kind: "site", filter?: SiteFilter): Site[] / getObjectsByType(kind: "player", filter?: PlayerFilter): Player[]` | 按类型批量取快照对象(unit / site / player,可带过滤);同一个快照值的批量入口。四个座位的资源、存活与异常计数也从这里读,不必在脚本里另记一份。 |
 | `getRange` | `getRange(ax: number, ay: number, bx: number, by: number): number` | 两点间 Chebyshev 距离;射程心算要读它算出来的那个数值。 |
-| `getTerrainAt` | `getTerrainAt(x: number, y: number): 'plain' \| 'wall' \| 'out'` | 某格地形(`plain`/`wall`/`out`);绕墙寻路之前先读它。 |
-| `findPath` | `findPath(sx: number, sy: number, tx: number, ty: number): { x: number; y: number }[] \| null` | 寻路路径是一串坐标点,读得到的就是值;它计入 API 调用预算,而预算值不归这张表。 |
+| `getTerrainAt` | `getTerrainAt(x: number, y: number): "plain" \| "wall" \| "out"` | 某格地形(`plain`/`wall`/`out`);绕墙寻路之前先读它。 |
+| `findPath` | `findPath(sx: number, sy: number, tx: number, ty: number): { readonly x: number; readonly y: number }[] \| null` | 寻路路径是一串坐标点,读得到的就是值;它计入 API 调用预算,而预算值不归这张表。 |
 
 **动作函数**——收集一条意图 + 参数界检查,不直写引擎。
 
 | 函数 | 签名 | 一句语义 |
 | --- | --- | --- |
-| `move` | `move(unitId: number, dx: -1\|0\|1, dy: -1\|0\|1): void \| ErrResult` | 走一步(含对角),提交一条单位级意图。 |
+| `move` | `move(unitId: number, dx: -1 \| 0 \| 1, dy: -1 \| 0 \| 1): void \| ErrResult` | 走一步(含对角),提交一条单位级意图。 |
 | `moveTo` | `moveTo(unitId: number, x: number, y: number): void \| ErrResult` | 朝目标点走一步,提交一条单位级意图;路径由引擎沿 `findPath` 走。 |
 | `attack` | `attack(unitId: number, targetId: number): void \| ErrResult` | 攻击敌方单位,提交一条单位级意图。 |
 | `harvest` | `harvest(unitId: number, siteId: number): void \| ErrResult` | 在己方资源点采集,提交一条单位级意图。 |
@@ -294,7 +296,7 @@ function loop() {
 
 | 函数 | 签名 | 一句语义 |
 | --- | --- | --- |
-| `getMyIndex` | `getMyIndex(): 0\|1\|2\|3` | 座位自认的唯一正式入口;快照里没有 `you`/`isSelf` 标记,别靠单位位置反推座位。 |
+| `getMyIndex` | `getMyIndex(): 0 \| 1 \| 2 \| 3` | 座位自认的唯一正式入口;快照里没有 `you`/`isSelf` 标记,别靠单位位置反推座位。 |
 
 **错误判别 helper**——把动作函数的返回值拆成可判的两步。
 
@@ -457,6 +459,10 @@ function loop() {
 
   for (let i = 0; i < mine.length; i += 1) {
     const unit = mine[i];
+    if (unit === undefined) {
+      // 数组下标可能取不到元素，判一下再用。
+      continue;
+    }
     const enemy = nearestEnemyId(unit, foes);
     if (enemy === null) {
       continue;
