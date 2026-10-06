@@ -23,7 +23,7 @@ import { initialContext, type Step, type TickContext } from "./context.js";
 import type { IssuedIntent } from "./intents.js";
 import type { TickSink } from "../replay-writer/index.js";
 import type { RulesetView } from "../ruleset-loader/index.js";
-import type { SeatRunner } from "../runner/index.js";
+import type { ObservationSink, SeatRunner } from "../runner/index.js";
 import type { GameState } from "../world/state.js";
 import { step0Dispatch } from "./steps/step0-dispatch.js";
 import { step1Validate } from "./steps/step1-validate.js";
@@ -70,6 +70,7 @@ export type TickResult = {
  * 结算一个 tick。
  *
  * `runners` 按 `playerIndex 0..3` 对齐(下标即座位),`sink` 收步 6 写出的那一行。
+ * `observations` 是可选的观测出口:缺席时那两类观测静默丢弃(引擎单测不必关心它)。
  * 返回值是**新状态**:调用方拿着旧状态继续读不算错,但下一 tick 必须用返回值(hld §4.1)。
  */
 export const processTick = (
@@ -77,10 +78,11 @@ export const processTick = (
   runners: readonly SeatRunner[],
   ruleset: RulesetView,
   sink: TickSink,
+  observations?: ObservationSink,
 ): TickResult => {
   const context = STEPS.reduce<TickContext>(
     (now, step) => step(now),
-    initialContext(ruleset, runners, sink, createEventCollector(), state),
+    initialContext(ruleset, runners, sink, createEventCollector(), state, observations),
   );
   return {
     state: context.state,

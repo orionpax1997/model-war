@@ -101,6 +101,20 @@ export type Change =
    */
   | { readonly kind: "mark-economy-dead"; readonly seat: PlayerIndex; readonly tick: number }
   /**
+   * 累加某座位的 `exceptionTicks`(票 02 的预置件;判据与淘汰归票 07)。
+   *
+   * ── 为什么这条要进变更表 ──
+   * 与 `mark-first-contact` / `mark-economy-dead` 同理:`exceptionTicks` 是跨 tick 的状态,
+   * 而「唯一写入口」是对**整份 `GameState`** 成立。不开「步 0 直接展开玩家对象写一栏」的旁路,
+   * 否则「有哪些写操作」就不再是一张可枚举的表。
+   *
+   * ── 为什么它只带座位与值 ──
+   * 判据(这条轨是不是真触限)由执行器在宿主侧算好并作为 `tripped` 观测上报,步 0 只把它转成
+   * 本条变更;`apply()` **只落不判**——不看规则集、不判阈值、不判淘汰。`count` 是这一 tick 该
+   * 座位累加的异常次数(一条 `tripped` 观测计一次)。
+   */
+  | { readonly kind: "count-exception-tick"; readonly seat: PlayerIndex; readonly count: number }
+  /**
    * 推进一个点位的占领轨道(票 05)。
    *
    * `progressOwner` / `progress` 是**更新后的**整条轨道;`newOwner` 只在本 tick 易主时出现
@@ -287,6 +301,16 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
         ...state,
         economyDeadAtTick: state.economyDeadAtTick.map((tick, seat) =>
           seat === change.seat ? change.tick : tick,
+        ),
+      };
+    case "count-exception-tick":
+      // 只累加计数;阈值与淘汰的判定不在本函数(理由见该变更注释)。
+      return {
+        ...state,
+        players: state.players.map((player) =>
+          player.index === change.seat
+            ? { ...player, exceptionTicks: player.exceptionTicks + change.count }
+            : player,
         ),
       };
     case "harvest":

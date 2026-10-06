@@ -18,7 +18,7 @@
  */
 
 import type { RulesetView } from "../ruleset-loader/index.js";
-import type { SeatRunner } from "../runner/index.js";
+import type { ObservationSink, SeatRunner } from "../runner/index.js";
 import type { TickSink } from "../replay-writer/index.js";
 import type { DrainedIntents, IssuedIntent } from "./intents.js";
 import type { EventCollector } from "./events.js";
@@ -31,6 +31,13 @@ export type TickContext = {
   readonly runners: readonly SeatRunner[];
   /** 输出 sink。步 6 往它写一行;不写盘(hld §2.2.8)。 */
   readonly sink: TickSink;
+  /**
+   * 观测出口。**可选**:缺席时另外两类观测静默丢弃。
+   *
+   * 它与 `sink` 平行但独立:观测永远不进回放行、更不进 `stateHash`。放在上下文里而不是步 0 的
+   * 局部量里,与收集器同理——「谁收到观测」整条管线只有一处。
+   */
+  readonly observations: ObservationSink | undefined;
   /** 事件收集器,整条管线共用一个。 */
   readonly collector: EventCollector;
   /** 步 0 之后:各座位交回的 intents,按 `playerIndex 0..3` 串行排列。 */
@@ -58,10 +65,13 @@ export const initialContext = (
   sink: TickSink,
   collector: EventCollector,
   state: GameState,
+  /** 观测出口;缺席即另外两类观测静默丢弃。 */
+  observations?: ObservationSink,
 ): TickContext => ({
   ruleset,
   runners,
   sink,
+  observations,
   collector,
   drained: [],
   intents: [],

@@ -19,6 +19,12 @@
  * 收集器在这一层已经是可用的——`exception` / `budgetSoftWarning` 两个具名方法挂在步 0 上,
  * 它们在那两票落地时不需要改定序规则,只需要有人调它们。
  *
+ * ── 观测 → 变更这条路径的接通(票 02)──
+ *
+ * 执行器的返回载荷现在带观测。本层在它上面**不做裁决**:种类为 `tripped` 的观测转成一条
+ * `count-exception-tick` 变更(累加该座位的 `exceptionTicks`),另外两类原样转发给观测出口
+ * (缺席即静默丢弃)。阈值判定与淘汰归后续票;本层只负责把「观测 → 唯一写入口」接通。
+ *
  * ── 淘汰方不再被调用(票 09)──
  *
  * 淘汰方这一 tick 交回空数组、`loop()` 不被执行;但它的单位、资源仍随快照写进后续 tick 的
@@ -26,6 +32,7 @@
  * 沙箱执行器不需要知道「谁出局了」,那是引擎状态的事。
  */
 
+import { apply } from "../../driver/apply.js";
 import { buildSnapshot } from "../../snapshot/snapshot.js";
 import type { PlayerIndex } from "../../world/state.js";
 import type { DrainedIntents } from "../intents.js";
@@ -49,8 +56,9 @@ export const step0Dispatch: Step = (context) => {
   const snapshot = buildSnapshot(context.state);
   // 座位序 = 串行序。串行不是性能选择:四方**串行**执行是 hld §2.3 的规则,沙箱共享宿主状态时
   // 并行执行的结果不可复算,而这一层正是「四方依次拿到同一份只读快照」的那一层。
+  let state = context.state;
   const drained: DrainedIntents[] = SEATS.map((seat) => {
-    const player = context.state.players[seat];
+    const player = state.players[seat];
     // hld §4.3 步 5 第四条:淘汰方的 `loop()` 不再执行,但状态保留以便重放取证。
     // 跳过时交**空数组**而不是不交条目——`DrainedIntents[]` 的四项对齐是这一层的不变量,
     // 「这一 tick 什么都不做」本来就有一个合法表示(空数组),不必另造一个缺席。
@@ -59,7 +67,25 @@ export const step0Dispatch: Step = (context) => {
     }
     const runner = runnerOf(context, seat);
     runner.setSnapshot(snapshot);
-    return { seat, intents: runner.drainIntents() };
+    const output = runner.drainIntents();
+    // 观测在缝上**不做裁决**:`tripped` 落成一条 `count-exception-tick` 变更(唯一写入口),
+    // 另外两类原样转发给观测出口。阈值判定与淘汰归后续票。
+    let tripped = 0;
+    for (const observation of output.observations) {
+      if (observation.kind === "tripped") {
+        tripped += 1;
+      } else {
+        context.observations?.record(observation);
+      }
+    }
+    if (tripped > 0) {
+      state = apply(state, context.ruleset.raw, {
+        kind: "count-exception-tick",
+        seat,
+        count: tripped,
+      });
+    }
+    return { seat, intents: output.intents };
   });
-  return { ...context, drained };
+  return { ...context, state, drained };
 };

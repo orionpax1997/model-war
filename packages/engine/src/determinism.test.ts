@@ -29,7 +29,7 @@ import type { MapDefinition, ReplayLine, Ruleset } from "@model-war/replay";
 import { runMatch } from "./index.js";
 import { stateHashesOf } from "./fixtures/harness.js";
 import { marchToNearestEnemy } from "./fixtures/strategies.js";
-import type { StubStrategy } from "./runner/stub.js";
+import { stubRunner, type StubStrategy } from "./runner/stub.js";
 
 const read = (relative: string): string =>
   readFileSync(fileURLToPath(new URL(`../../../${relative}`, import.meta.url)), "utf8");
@@ -55,7 +55,9 @@ const runOnce = (strategies: readonly StubStrategy[]): readonly ReplayLine[] => 
     seed: 20260101,
     head,
     players,
-    strategies,
+    // 桩路径:普通 TS 策略包成执行器(不经 VM),不启用预算轨、不带观测出口。
+    runners: strategies.map((strategy) => stubRunner(strategy)),
+    budget: {},
     sink: { write: (line) => void lines.push(line) },
   });
   return lines.map((line) => JSON.parse(line) as ReplayLine);

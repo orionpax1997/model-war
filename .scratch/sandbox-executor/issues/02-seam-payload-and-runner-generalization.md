@@ -12,12 +12,27 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 缝仍然只有两个方法:进快照、出意图;没有新增接口方法、没有基类、没有工厂、没有生命周期协议(建 VM 与释放归组装层)——一条断言钉住方法集恰为两个
-- [ ] 返回载荷含「意图」与「观测」两类;观测条目形如:种类 + 轨名 + 观测值 + 上限值
-- [ ] 引擎在这条载荷上**不做裁决**:种类为「已触限」的观测由步 0 落成状态变更,另外两类转发给观测出口
-- [ ] `runMatch` 收四个**已构造好**的执行器,并额外收预算配置与可选观测出口;引擎不知道 VM 存在
-- [ ] 桩执行器返回空观测;既有桩路径测试(十次重跑、夹具、导出面断言)**全部绿**
-- [ ] 引擎对外运行时导出面仍然恰好一个符号
-- [ ] `docs/adr/0005` 增加一节:组装层的泛化与载荷加栏都不改变缝,缝仍是那两次桥调用
+- [x] 缝仍然只有两个方法:进快照、出意图;没有新增接口方法、没有基类、没有工厂、没有生命周期协议(建 VM 与释放归组装层)——一条断言钉住方法集恰为两个
+- [x] 返回载荷含「意图」与「观测」两类;观测条目形如:种类 + 轨名 + 观测值 + 上限值
+- [x] 引擎在这条载荷上**不做裁决**:种类为「已触限」的观测由步 0 落成状态变更,另外两类转发给观测出口
+- [x] `runMatch` 收四个**已构造好**的执行器,并额外收预算配置与可选观测出口;引擎不知道 VM 存在
+- [x] 桩执行器返回空观测;既有桩路径测试(十次重跑、夹具、导出面断言)**全部绿**
+- [x] 引擎对外运行时导出面仍然恰好一个符号
+- [x] `docs/adr/0005` 增加一节:组装层的泛化与载荷加栏都不改变缝,缝仍是那两次桥调用
+
+## Answer
+
+改了什么:
+
+- **缝的载荷加栏**(`runner/index.ts`):`drainIntents()` 由 `readonly Intent[]` 改成 `RunnerOutput = { intents, observations }`;新增 `Observation`(`kind` / `track` / `value` / `limit`)、`ObservationKind`(`tripped` / `wall-clock-soft` / `memory-pressure`)与可选 `ObservationSink`。`SeatRunner` 仍是 `setSnapshot` / `drainIntents` 两个方法(未新增)。
+- **桩适配器**(`runner/stub.ts`):把策略结果包成 `{ intents, observations: [] }`;`stub.test.ts` 的返回形状断言跟着改,并补一条「桩观测恒空」。
+- **观测 → 变更这条路径**:`step0-dispatch.ts` 在载荷上不做裁决——`tripped` 落成新 `Change` 种类 `count-exception-tick`(只带座位与值,`apply()` 只落不判,照 `mark-first-contact` / `mark-economy-dead` 先例);另外两类转发给可选观测出口(缺席静默丢弃)。观测出口经 `TickContext.observations` / `initialContext` / `processTick` 的可选参数接到步 0。
+- **`runMatch` 泛化**(`run-match.ts`):`strategies: readonly StubStrategy[]` → `runners: readonly SeatRunner[]`,新增 `budget: BudgetConfig`(7 个已启用轨的可选阈值,`scriptSizeLimit` 不入)与 `observations?: ObservationSink`;删掉 `strategiesOf`,引擎不再包策略。全部调用方(`apps/cli/src/match/index.ts`、`determinism.test.ts`、`run-match.test.ts`、`fixtures/harness.ts`)跟着改。
+- **ADR**:`docs/adr/0005-*.md` 增加「修订(票 02):载荷加栏与执行器泛化都不改变缝」一节。
+- **新增单测**:`processor/observations.test.ts`,用一个只实现两条方法的假执行器证明 `tripped → exceptionTicks` 与两类转发都通,并复钉桩路径 `exceptionTicks` 恒 0。
+
+关键文件:`packages/engine/src/runner/index.ts`、`processor/steps/step0-dispatch.ts`、`driver/apply.ts`、`run-match.ts`、`processor/context.ts`、`processor/index.ts`、`docs/adr/0005-runner-seam-is-the-two-bridge-calls.md`。
+
+命令与结果:`pnpm run typecheck` 绿;`pnpm exec vitest run --project unit packages/engine` 197 用例全绿;`apps/cli/src/cli.test.ts` 17 用例全绿;`pnpm run check:quick` 绿。

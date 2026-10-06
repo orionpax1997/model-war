@@ -63,7 +63,9 @@ export const stubRunner = (strategy: StubStrategy): SeatRunner => {
       // 先落「已交回」再调策略:策略自己抛异常时,这一 tick 仍然是「已经交回过一次」,
       // 否则异常路径会把它放行到第二次 drain,于是一个异常变成两个。
       drained = true;
-      return strategy(snapshot);
+      // 桩没有预算事实可报,故观测恒为空数组——**这是「桩路径零回归」的成本控制**:
+      // 既有桩路径测试(fixtures / determinism / `exceptionTicks` 恒 0)一行不用改。
+      return { intents: strategy(snapshot), observations: [] };
     },
   };
 };

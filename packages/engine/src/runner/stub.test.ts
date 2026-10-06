@@ -42,7 +42,10 @@ it("策略经 setSnapshot 拿到快照、经 drainIntents 交回 intent 数组",
     return [{ kind: "move", unitId: 1, dx: 1, dy: 0 }];
   });
   runner.setSnapshot(snapshotOf(4));
-  expect(runner.drainIntents()).toEqual([{ kind: "move", unitId: 1, dx: 1, dy: 0 }]);
+  expect(runner.drainIntents()).toEqual({
+    intents: [{ kind: "move", unitId: 1, dx: 1, dy: 0 }],
+    observations: [],
+  });
   // 「抄近路直接读引擎状态」的反例:策略拿到的必须是**快照**,
   // 少掉 nextId 与 outcome 两栏(Snapshot 是逐字列出的,不是 Pick<GameState>)。
   expect(seen).toHaveLength(1);
@@ -53,7 +56,14 @@ it("策略经 setSnapshot 拿到快照、经 drainIntents 交回 intent 数组",
 it("空数组也是一种合法交回:这一 tick 什么都不做", () => {
   const runner = stubRunner(() => []);
   runner.setSnapshot(snapshotOf(0));
-  expect(runner.drainIntents()).toEqual([]);
+  expect(runner.drainIntents()).toEqual({ intents: [], observations: [] });
+});
+
+it("桩执行器的观测恒为空:它没有预算事实可报", () => {
+  const runner = stubRunner(() => [{ kind: "move", unitId: 1, dx: 1, dy: 0 }]);
+  runner.setSnapshot(snapshotOf(0));
+  // 「桩也跟着报观测」的反例:一旦它上报,既有桩路径测试就不是零回归了。
+  expect(runner.drainIntents().observations).toEqual([]);
 });
 
 it("协议误用当场抛:setSnapshot 之前 drain、或者一个 tick drain 两次", () => {
@@ -68,7 +78,7 @@ it("协议误用当场抛:setSnapshot 之前 drain、或者一个 tick drain 两
   expect(() => twice.drainIntents()).toThrow();
   // 下一个 tick 重新武装:「一个 tick 一次」是每 tick 计一次,不是整局只准一次。
   twice.setSnapshot(snapshotOf(1));
-  expect(twice.drainIntents()).toEqual([]);
+  expect(twice.drainIntents()).toEqual({ intents: [], observations: [] });
 });
 
 it("策略自己抛异常时,这一 tick 仍然算「已经交回过一次」", () => {
