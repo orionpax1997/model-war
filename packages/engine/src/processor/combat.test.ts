@@ -97,6 +97,7 @@ const makeState = (
     // 本用例四席都在,无人被淘汰。
     eliminatedAtTick: [null, null, null, null],
     firstContactTick: options.firstContactTick ?? 0,
+    economyDeadAtTick: [null, null, null, null],
   };
 };
 

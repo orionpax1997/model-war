@@ -94,6 +94,7 @@ const makeState = (tick = 0): GameState => ({
   // 本用例四席都在,无人被淘汰。
   eliminatedAtTick: [null, null, null, null],
   firstContactTick: null,
+  economyDeadAtTick: [null, null, null, null],
 });
 
 const idleRunners = () => [

@@ -80,6 +80,7 @@ const makeState = (): GameState => ({
   // 本用例四席都在,无人被淘汰。
   eliminatedAtTick: [null, null, null, null],
   firstContactTick: null,
+  economyDeadAtTick: [null, null, null, null],
 });
 
 it("深 freeze 冻到底:嵌套的单位、点位、点位上的产线订单都不可写", () => {

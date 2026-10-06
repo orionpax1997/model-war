@@ -2,14 +2,19 @@
  * 步 1 · validate:intent 先按单位分组、每单位只留最后一个(静默丢弃、不计异常),
  * 分组后按 `playerIndex 0..3` 再按对象数值 id 升序逐条校验;无效者丢弃(hld §4.3)。
  *
- * ── 本票的校验覆盖移动两条、攻击一条与生产一条,其余两条是「尚未实现」而不是「非法」 ──
+ * ── 本票的校验覆盖移动两条、攻击一条、采集两条与生产一条 ──
  *
- * 六条 intent 里,`harvest` / `transfer` 的 `check()` 归 07,尚未落地。本步现在把这两条
- * **丢弃**。写清楚这是**尚未实现**:不写,后来者会把「一条 harvest 被丢掉」读成「harvest 是真的非法」,
- * 而那不是本层的语义。丢弃的原因是那两条尚未落地。
+ * 六条 intent 里,`harvest` / `transfer` 的 `check()` 归 07(本票)。两条都是**单位级**意图,
+ * 与其余单位级意图一起分组、定序。
  *
  * `spawnUnit` 是**玩家级**意图(不带单位 id),由 `groupIssuedIntents` 与单位级意图混在同一个序列里
  * 按「座位 → 对象数值 id」排,且**不参与「每单位只留最后一个」那条分组**(见 intents.ts)。
+ *
+ * ── 为什么 `harvest` / `transfer` 也用 tick 开始的状态校验,而步 4 会再判一次 ──
+ *
+ * 与 `attack` 同形:步 1 判「这条意图单看是否合法」,真正的落子步(步 4)在**当前**状态上重判——
+ * 同 tick 的占领(a 段)可能已把矿/基地易主,采集也可能已把矿采空。两次判读的是同一份只读视图,
+ * 重判不在步 1 之外另立一套判据。
  *
  * ── 丢弃为什么不发事件、不计异常 ──
  *
@@ -20,6 +25,7 @@
  */
 
 import { checkAttack, isAttackIntent } from "../combat.js";
+import { checkHarvest, checkTransfer, isHarvestIntent, isTransferIntent } from "../economy.js";
 import { groupIssuedIntents } from "../intents.js";
 import { checkMove, isMoveIntent } from "../movement.js";
 import { checkSpawn, isSpawnIntent } from "../production.js";
@@ -39,7 +45,13 @@ export const step1Validate: Step = (context) => {
     if (isSpawnIntent(intent)) {
       return checkSpawn(view, seat, context.ruleset, intent);
     }
-    // harvest / transfer 尚未实现,不是非法。静默丢弃,不发事件、不计异常(见头注)。
+    if (isHarvestIntent(intent)) {
+      return checkHarvest(view, seat, context.ruleset, intent);
+    }
+    if (isTransferIntent(intent)) {
+      return checkTransfer(view, seat, context.ruleset, intent);
+    }
+    // 六条 intent 已全部覆盖;走到这里只可能是类型层加了新的一条而这里没跟上。
     return false;
   });
   return { ...context, intents };

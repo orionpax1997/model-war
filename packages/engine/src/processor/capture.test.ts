@@ -104,6 +104,7 @@ const makeState = (units: readonly Unit[], sites: readonly Site[], tick = 0): Ga
   // 本用例四席都在,无人被淘汰。
   eliminatedAtTick: [null, null, null, null],
   firstContactTick: null,
+  economyDeadAtTick: [null, null, null, null],
 });
 
 const SINK = { write: () => {} };
