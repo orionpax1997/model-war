@@ -21,7 +21,13 @@
  */
 
 import { expect, it } from "vitest";
-import type { ReplayEvent, ReplayPlayer, ReplaySite, ReplayTickLine, ReplayUnit } from "@model-war/replay";
+import type {
+  ReplayEvent,
+  ReplayPlayer,
+  ReplaySite,
+  ReplayTickLine,
+  ReplayUnit,
+} from "@model-war/replay";
 
 import type { Event } from "./processor/events.js";
 import type { TickLine } from "./replay-writer/index.js";

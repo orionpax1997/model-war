@@ -78,7 +78,9 @@ const strategiesOf = (strategies: readonly StubStrategy[]) => {
   const runners = SEATS.map((seat) => {
     const strategy = strategies[seat];
     if (strategy === undefined) {
-      throw new Error(`座位 ${String(seat)} 没有参赛策略:策略数组必须按 playerIndex 0..3 对齐,长度 4`);
+      throw new Error(
+        `座位 ${String(seat)} 没有参赛策略:策略数组必须按 playerIndex 0..3 对齐,长度 4`,
+      );
     }
     return stubRunner(strategy);
   });

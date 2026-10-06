@@ -44,11 +44,13 @@ const EXIT_OK = 0;
 const EXIT_LOAD_REJECTED = 2;
 const EXIT_ENGINE_FAULT = 1;
 
-const sha256 = (bytes: Buffer | string): string =>
-  createHash("sha256").update(bytes).digest("hex");
+const sha256 = (bytes: Buffer | string): string => createHash("sha256").update(bytes).digest("hex");
 
 /** 把一条 `ValidationRejection` 渲染成面向人的几行(用面向模型层那组短句),写到 stderr。 */
-const reportRejection = (label: string, rejection: { readonly modelDiagnostics: readonly string[] }): void => {
+const reportRejection = (
+  label: string,
+  rejection: { readonly modelDiagnostics: readonly string[] },
+): void => {
   process.stderr.write(`${label}\n`);
   for (const diagnostic of rejection.modelDiagnostics) {
     process.stderr.write(`  ${diagnostic}\n`);
@@ -57,7 +59,11 @@ const reportRejection = (label: string, rejection: { readonly modelDiagnostics: 
 
 /** 存档三件套在不在。缺哪一件由 01 票的 `validateArchiveMeta` 判,这里只如实报。 */
 type ArchiveRead = {
-  readonly present: { readonly scriptTs: boolean; readonly scriptJs: boolean; readonly metaJson: boolean };
+  readonly present: {
+    readonly scriptTs: boolean;
+    readonly scriptJs: boolean;
+    readonly metaJson: boolean;
+  };
   readonly meta: JsonValue | undefined;
   readonly scriptSha256: string | undefined;
   readonly metaSha256: string | undefined;
@@ -88,7 +94,8 @@ const readArchiveMeta = (archiveDir: string): ArchiveRead => {
   const scriptBytes = read("script.js");
   return {
     present,
-    meta: metaBytes === undefined ? undefined : (JSON.parse(metaBytes.toString("utf8")) as JsonValue),
+    meta:
+      metaBytes === undefined ? undefined : (JSON.parse(metaBytes.toString("utf8")) as JsonValue),
     scriptSha256: scriptBytes === undefined ? undefined : sha256(scriptBytes),
     metaSha256: metaBytes === undefined ? undefined : sha256(metaBytes),
   };
@@ -144,8 +151,9 @@ const runMatchLoaded = (inputPath: string, root: string): number => {
   // 四个座位的存档:读三件套 + 实测哈希,组装 `measuredArchives`(下标即座位)。
   // `archivePath` 是**仓库根相对**的(hld §7.4 的拓扑:存档在仓库根下的 `archive/<model>/<runId>/`),
   // 所以按 root 解析,不是按 input.json 所在目录。
-  const rawArchives = (rawInput as { readonly archives?: readonly { readonly archivePath?: string }[] })
-    .archives;
+  const rawArchives = (
+    rawInput as { readonly archives?: readonly { readonly archivePath?: string }[] }
+  ).archives;
   const measuredArchives: (MeasuredArchive | null)[] = Array.from({ length: 4 }, (_, seat) => {
     const archivePath = rawArchives?.[seat]?.archivePath;
     if (archivePath === undefined) {
@@ -229,10 +237,17 @@ const runMatchLoaded = (inputPath: string, root: string): number => {
       loadedRulesetVersion: RULESET_VERSION,
     });
     if (!metaValidation.ok) {
-      reportRejection(`modelwar match: 座位 ${String(seat)} 的存档 meta 未通过校验:`, metaValidation);
+      reportRejection(
+        `modelwar match: 座位 ${String(seat)} 的存档 meta 未通过校验:`,
+        metaValidation,
+      );
       return EXIT_LOAD_REJECTED;
     }
-    players.push({ model: metaValidation.meta.model, archiveRef: archive.archivePath, seat: seat as ReplaySeat });
+    players.push({
+      model: metaValidation.meta.model,
+      archiveRef: archive.archivePath,
+      seat: seat as ReplaySeat,
+    });
   }
 
   // ── 跑一局(engine 纯函数) ──

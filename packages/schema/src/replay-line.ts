@@ -206,7 +206,15 @@ const META_REQUIRED_KEYS = [
   "runner",
 ] as const;
 
-const TICK_REQUIRED_KEYS = ["type", "tick", "players", "units", "sites", "events", "stateHash"] as const;
+const TICK_REQUIRED_KEYS = [
+  "type",
+  "tick",
+  "players",
+  "units",
+  "sites",
+  "events",
+  "stateHash",
+] as const;
 
 const RESULT_REQUIRED_KEYS = ["type", "rankings", "reason", "territoryScores"] as const;
 
@@ -343,6 +351,10 @@ const REPLAY_EVENT = {
  * 桩执行器那一支上四栏只能是 `null`(「未发生」与「恰好是空串」要能区分),真沙箱那一支上
  * 四栏都必须是字符串。JSON Schema 表达不了 `oneOf` 那种「联合的联合」,但 `if/then` 够用。
  */
+// `then` 在这里是 **JSON Schema 的关键字**(if/then/else),不是「一个可 awaited 的对象」——
+// oxlint 的 `unicorn/no-thenable` 会把它读成 thenable。本仓用 if/then 表达「按判别字段分栏」
+// (桩那一支四个沙箱栏必须是 null),禁掉它等于禁掉 JSON Schema 的一部分,故整块关掉。
+/* oxlint-disable unicorn/no-thenable */
 export const REPLAY_META_LINE_JSON_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   title: "model-war 回放 meta 行",
@@ -415,6 +427,7 @@ export const REPLAY_META_LINE_JSON_SCHEMA = {
     },
   ],
 } as const;
+/* oxlint-enable unicorn/no-thenable */
 
 /**
  * tick 行的 JSON Schema(hld §7.5 的「第 n 行」)。

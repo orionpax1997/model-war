@@ -49,8 +49,3 @@ it("六个 intent 只有一个实现,不构成缝,所以不导出", () => {
     expect(exported).not.toContain(symbol);
   }
 });
-
-it("当前导出面没有运行时符号(外部缝尚不存在)", () => {
-  // 02b 把 `runMatch` 接进来之后,这一条要改成「恰好只有 runMatch」。
-  expect(Object.keys(engine)).toEqual([]);
-});

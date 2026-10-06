@@ -91,7 +91,9 @@ it("四个沙箱栏从行里读得回来:报告据此分开「桩跑的」与「
     serializeMetaLine(buildMetaLine({ ...BASE, runner: "stub" }, BASE_SEED, PLAYERS)),
   ) as Record<string, unknown>;
   const quickjs = JSON.parse(
-    serializeMetaLine(buildMetaLine({ ...BASE, runner: "quickjs", ...SANDBOX }, BASE_SEED, PLAYERS)),
+    serializeMetaLine(
+      buildMetaLine({ ...BASE, runner: "quickjs", ...SANDBOX }, BASE_SEED, PLAYERS),
+    ),
   ) as Record<string, unknown>;
   expect(stub["runner"]).toBe("stub");
   expect(quickjs["runner"]).toBe("quickjs");
