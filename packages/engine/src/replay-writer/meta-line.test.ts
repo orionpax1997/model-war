@@ -26,9 +26,10 @@ const PLAYERS = [
 const BASE = {
   timezoneOffset: "+08:00",
   mapHash: "a".repeat(64),
-  seed: 20260101,
-  players: PLAYERS,
 } as const;
+
+/** 种子是 `runMatch` 的入参,不是 meta 头的字段;`buildMetaLine` 单独收它。 */
+const BASE_SEED = 20260101;
 
 const SANDBOX = {
   quickjsWasiVersion: "0.8.0",
@@ -38,7 +39,7 @@ const SANDBOX = {
 } as const;
 
 it("meta 行是十二栏,runner 是第 12 栏", () => {
-  const line = buildMetaLine({ ...BASE, runner: "stub" });
+  const line = buildMetaLine({ ...BASE, runner: "stub" }, BASE_SEED, PLAYERS);
   expect(Object.keys(line)).toHaveLength(12);
   expect(Object.keys(line).at(-1)).toBe("runner");
   // hld §7.5 的十栏都在,顺序不变。
@@ -59,13 +60,13 @@ it("meta 行是十二栏,runner 是第 12 栏", () => {
 });
 
 it("schemaVersion 与 ruleset 取自真源常量,不由本模块硬编码", () => {
-  const line = buildMetaLine({ ...BASE, runner: "stub" });
+  const line = buildMetaLine({ ...BASE, runner: "stub" }, BASE_SEED, PLAYERS);
   expect(line.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   expect(line.ruleset).toBe(RULESET_VERSION);
 });
 
 it("桩执行器:四个沙箱栏一律 null,不是空串也不是 0", () => {
-  const line = buildMetaLine({ ...BASE, runner: "stub" });
+  const line = buildMetaLine({ ...BASE, runner: "stub" }, BASE_SEED, PLAYERS);
   // 「填空串」的反例:这一条红,而报告里「看起来有值」就成了假信息。
   expect(line.quickjsWasiVersion).toBeNull();
   expect(line.sandboxRuntimeHash).toBeNull();
@@ -77,7 +78,7 @@ it("桩执行器:四个沙箱栏一律 null,不是空串也不是 0", () => {
 });
 
 it("真沙箱:四个沙箱栏原样落行", () => {
-  const line = buildMetaLine({ ...BASE, runner: "quickjs", ...SANDBOX });
+  const line = buildMetaLine({ ...BASE, runner: "quickjs", ...SANDBOX }, BASE_SEED, PLAYERS);
   expect(line.quickjsWasiVersion).toBe(SANDBOX.quickjsWasiVersion);
   expect(line.sandboxRuntimeHash).toBe(SANDBOX.sandboxRuntimeHash);
   expect(line.wasiClock).toBe(SANDBOX.wasiClock);
@@ -86,12 +87,11 @@ it("真沙箱:四个沙箱栏原样落行", () => {
 });
 
 it("四个沙箱栏从行里读得回来:报告据此分开「桩跑的」与「真沙箱跑的」", () => {
-  const stub = JSON.parse(serializeMetaLine(buildMetaLine({ ...BASE, runner: "stub" }))) as Record<
-    string,
-    unknown
-  >;
+  const stub = JSON.parse(
+    serializeMetaLine(buildMetaLine({ ...BASE, runner: "stub" }, BASE_SEED, PLAYERS)),
+  ) as Record<string, unknown>;
   const quickjs = JSON.parse(
-    serializeMetaLine(buildMetaLine({ ...BASE, runner: "quickjs", ...SANDBOX })),
+    serializeMetaLine(buildMetaLine({ ...BASE, runner: "quickjs", ...SANDBOX }, BASE_SEED, PLAYERS)),
   ) as Record<string, unknown>;
   expect(stub["runner"]).toBe("stub");
   expect(quickjs["runner"]).toBe("quickjs");

@@ -6,7 +6,7 @@
  */
 
 export { buildMetaLine, serializeMetaLine } from "./meta-line.js";
-export type { MetaInput, MetaLine, ReplayPlayerRef, SandboxReadings } from "./meta-line.js";
+export type { MetaHead, SandboxReadings } from "./meta-line.js";
 export { buildTickLine, serializeTickLine, tickLinePayload } from "./tick-line.js";
 export type { TickLine, TickPayload } from "./tick-line.js";
 export type { TickSink } from "./sink.js";

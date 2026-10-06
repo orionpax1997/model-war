@@ -1,0 +1,20 @@
+{
+  "model": "delta",
+  "modelVersion": "snapshot-1",
+  "generatedAt": "2026-01-01T00:00:00Z",
+  "protocolRounds": 1,
+  "prompts": [
+    "prompt for delta"
+  ],
+  "generationLog": [
+    "generated delta"
+  ],
+  "ruleset": "v1",
+  "validation": {
+    "passed": true,
+    "errors": []
+  },
+  "tscVersion": "7.0.2",
+  "scriptSha256": "73a15ddb344341a89e13e302feb62419a1240990a601a843a4964513d7263153",
+  "sandboxRuntimeHash": "b196dfb1e62fd50a3b1229832c8ccb983a4c3308bd69cb76b333494ca0d242d0"
+}
