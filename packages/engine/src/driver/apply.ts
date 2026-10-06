@@ -40,7 +40,12 @@ import type {
 export type Change =
   | {
       readonly kind: "create-site";
-      /** 点位的号由**地图**给出,不走 `nextId`:地图数据自带 id,引擎不重编号。 */
+      /**
+       * 点位的号由**地图**给出,不走 `nextId`:地图数据自带 id,引擎不重编号。
+       * 所以开局必须先把 `nextId` 抬到所有地图号之上(见 `world/initial-state.ts` 的
+       * `firstUnitId`),否则单位号会与点位号撞——而 `getObjectById(id): Unit | Site | null`
+       * 要的是一个全局 id 空间。
+       */
       readonly id: number;
       readonly siteKind: SiteKind;
       readonly x: number;

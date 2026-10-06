@@ -202,23 +202,26 @@ it("攻击者无攻击能力(农民)的意图无效丢弃:判据看 damage 不�
   expect(at(result.state, 2).hp).toBe(2);
 });
 
-it("基地不可被攻击:目标 id 落在点位上即丢弃(与单位撞号时点位优先)", () => {
-  // id 空间撞号:`unit.id` 从 1 起、`site.id` 由地图给出,两者可以是同一个数。
-  // 本票判据「命中 sites → 丢弃」先于单位查找,所以 5 号点位会遮住 5 号单位。
+it("基地不可被攻击:目标命中点位即丢弃(号段互斥后不靠撞号)", () => {
+  // 判据 4 前半的正当用例:拿一个**真实点位号**当 `targetId`——点位不是可攻击目标。
+  // 号段互斥(见 world/initial-state.test.ts)之后不存在「点位遮住同号单位」这回事,
+  // 所以这里不再靠撞号构造。
   const a = unit(1, 0, "melee", 0, 0, 12);
-  const colliding = unit(5, 1, "melee", 1, 0, 12);
-  const base = site(5, "base", 5, 5, 1);
-  const result = run(makeState([a, colliding], { sites: [base] }), [[attack(1, 5)], [], [], []]);
+  const enemy = unit(2, 1, "melee", 1, 0, 12);
+  const base = site(9, "base", 9, 9, 1);
+  const result = run(makeState([a, enemy], { sites: [base] }), [[attack(1, 9)], [], [], []]);
+  // 同一 tick、射程内有一个可打的敌方单位,但目标号指向点位 → 丢弃,且不误伤那个单位。
   expect(result.intents).toEqual([]);
   expect(result.events).toEqual([]);
-  expect(at(result.state, 5).hp).toBe(12);
+  expect(at(result.state, 2).hp).toBe(12);
 });
 
 it("基地不可被攻击:点位号不被任何单位占用时也丢弃", () => {
   const a = unit(1, 0, "melee", 0, 0, 12);
   const base = site(9, "base", 9, 9, -1);
   const result = run(makeState([a], { sites: [base] }), [[attack(1, 9)], [], [], []]);
-  // 「允许攻击基地」的反例见上一条(撞号那条能把守卫的缺失也弄红);这一条钉「点位一律丢弃」。
+  // 「允许攻击基地」的反例试法见 `## Answer` §5:号段互斥后,删掉守卫不再改变结果(点位 id 永不
+  // 命中单位),守卫值价在于把这条语义写死;这一条钉「点位一律丢弃」。
   expect(result.intents).toEqual([]);
   expect(result.events).toEqual([]);
 });

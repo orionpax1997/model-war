@@ -20,12 +20,13 @@
  *    它与「目标不存在」是两条不同的丢弃路径(前者是「打的是一个点位」,后者是「打的是空气」)。
  * 5. 目标在射程内:切比雪夫距离 `max(|dx|, |dy|) <= statsOf(攻击者.type).range`,射程从规则集读。
  *
- * ── id 空间提示 ──
+ * ── id 空间是**一条**全局空间 ──
  *
- * `unit.id`(由 `nextId` 分配,从 1 起)与 `site.id`(由地图给出,本仓地图是 0..27)是**同一个
- * 数值空间的两个数组**,并不保证互斥——两者会撞号。判据 4 因此先判 `sites`:**命中点位即丢弃**,
- * 与「命中单位」互斥时点位优先。这条撞号后果记在 `## Answer`,不在本票修(改 id 分配或让 intent
- * 带上目标种类都是跨票变更)。
+ * `unit.id` 与 `site.id` 共用同一个数值空间:`getObjectById(id): Unit | Site | null`
+ * (`docs/rules-v1/api.md`)只收一个 id,查出来要么是单位要么是点位。开局先把点位号占据低端、
+ * 单位号从所有地图号之上起(见 `world/initial-state.ts` 的 `firstUnitId`),两者不撞号。
+ * 判据 4 里的「命中 `sites` 即丢弃」因此是「基地不可被攻击」的**语义**,不是避让撞号;它与
+ * 「两边都没命中 → 丢弃」各自独立,两条都保留。
  */
 
 import type { RulesetView } from "../ruleset-loader/index.js";
@@ -86,8 +87,9 @@ export const checkAttack = (
   if (stats.damage <= 0) {
     return false;
   }
-  // 判据 4 前半:目标不可为点位(基地不可被攻击)。**先于**单位查找判——`sites` 与 `units`
-  // 会撞号,命中点位一律丢弃(点位优先),见文件头注。
+  // 判据 4 前半:目标不可为点位(基地不可被攻击)。两个数组的号段互斥(见文件头注),
+  // 所以它与「目标不存在」是两条彼此独立的丢弃路径:命中 `sites` 是「打的是一个点位」,
+  // 两边都没命中才是「打的是空气」。两条都留。
   if (view.sites.some((site) => site.id === intent.targetId)) {
     return false;
   }
