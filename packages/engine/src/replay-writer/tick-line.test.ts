@@ -54,6 +54,7 @@ const makeState = (tick = 7): GameState => ({
   // 本用例四席都在,无人被淘汰。
   eliminatedAtTick: [null, null, null, null],
   firstContactTick: null,
+  economyDeadAtTick: [null, null, null, null],
 });
 
 const NO_EVENTS: readonly Event[] = [];

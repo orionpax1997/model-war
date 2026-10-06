@@ -90,6 +90,17 @@ export type Change =
    */
   | { readonly kind: "mark-first-contact"; readonly tick: number }
   /**
+   * 记下某座位 `economy-dead` **事件**已发的那一 tick(票 07)。
+   *
+   * ── 为什么这条要进变更表 ──
+   * 与 `mark-first-contact` 同理:「这条事件发过没有」是跨 tick 的状态,而「唯一写入口」是对
+   * **整份 `GameState`** 成立,不只对玩家可见字段。不开「步 4 直接展开状态对象写一栏」的旁路,
+   * 否则「有哪些写操作」就不再是一张可枚举的表。
+   * 注意它落的**不是**玩家的经济状态——判据本身是纯函数(见 `world/state.ts` 那一栏的注释),
+   * 本变更只移动「事件发到第几次」的账。
+   */
+  | { readonly kind: "mark-economy-dead"; readonly seat: PlayerIndex; readonly tick: number }
+  /**
    * 推进一个点位的占领轨道(票 05)。
    *
    * `progressOwner` / `progress` 是**更新后的**整条轨道;`newOwner` 只在本 tick 易主时出现
@@ -158,6 +169,40 @@ export type Change =
       readonly kind: "cancel-production";
       readonly siteId: number;
       readonly refund?: { readonly player: PlayerIndex; readonly amount: number };
+    }
+  /**
+   * 一次采集落子(票 07):**同一个变更同时加携带量、减矿的储量**。
+   *
+   * ── 为什么两件事必须是一条变更 ──
+   * 与 `start-production` 的「占队列 + 扣款」同理:一条规则一次落子,中间不留可观察的半截状态。
+   * 拆成「先加携带量」「再减矿」两条,若第一条落了、第二条因任何原因没落,状态里就出现
+   * 「凭空多出携带量」——它不会被任何断言发现,只会在交付那一步变出一笔不存在的资源。
+   * 取量由 `processor/economy.ts` 在产生这条变更之前封顶
+   * (`min(harvestRate, carryLimit - carrying, remaining)`),所以本变更的施加是无条件的。
+   */
+  | {
+      readonly kind: "harvest";
+      readonly unitId: number;
+      readonly siteId: number;
+      /** 本 tick 的取量,全整数,取自规则集并封顶。 */
+      readonly amount: number;
+    }
+  /**
+   * 一次交付落子(票 07):**同一个变更同时把携带量清零、把资源加进玩家池**。
+   *
+   * 与 `harvest` 同理:一次落子,不留「携带量清了、资源没进池」或反之的半截状态。
+   * `amount` 由 `processor/economy.ts` 取成单位当前的携带量,所以清零后 `carrying` 恒为 `0`。
+   * `siteId` 是**交付目标基地**:资源进的是玩家全局共享池(不按基地分池),所以 `apply()`
+   * **不读它**——它只是这条变更记录下来的事实(先例:`advance-capture.previousOwner`),
+   * 让「交付给了哪一个基地」在变更流/回放里可审计,也让「多个相邻己方基地取数值 id 最小者」
+   * 这条规则有一处可被断言的地方。
+   */
+  | {
+      readonly kind: "transfer";
+      readonly unitId: number;
+      readonly siteId: number;
+      readonly player: PlayerIndex;
+      readonly amount: number;
     }
   /**
    * 把一个座位判为出局(票 09)。
@@ -236,6 +281,41 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
       };
     case "mark-first-contact":
       return { ...state, firstContactTick: change.tick };
+    case "mark-economy-dead":
+      // 只是把「这条事件发过了」记到该座位那一格,不碰玩家对象上的任何一栏(理由见该变更注释)。
+      return {
+        ...state,
+        economyDeadAtTick: state.economyDeadAtTick.map((tick, seat) =>
+          seat === change.seat ? change.tick : tick,
+        ),
+      };
+    case "harvest":
+      // 加携带量与减矿一次落:没有可观察的半截状态(理由见该变更的注释)。
+      return {
+        ...state,
+        units: replaceById(state.units, change.unitId, (unit) => ({
+          ...unit,
+          carrying: unit.carrying + change.amount,
+        })),
+        sites: replaceById(state.sites, change.siteId, (site) => ({
+          ...site,
+          remaining: (site.remaining ?? 0) - change.amount,
+        })),
+      };
+    case "transfer":
+      // 清携带量与入池一次落;目标基地(`siteId`)只随变更传递,资源进的是玩家池(理由见该变更注释)。
+      return {
+        ...state,
+        units: replaceById(state.units, change.unitId, (unit) => ({
+          ...unit,
+          carrying: unit.carrying - change.amount,
+        })),
+        players: state.players.map((player) =>
+          player.index === change.player
+            ? { ...player, resources: player.resources + change.amount }
+            : player,
+        ),
+      };
     case "advance-capture":
       // `previousOwner` 只随变更单传递、不由本函数落下(见该变更的注释),故这里不读它。
       return {

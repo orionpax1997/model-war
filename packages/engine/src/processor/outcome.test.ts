@@ -108,6 +108,8 @@ const makeState = (parts: {
   eliminatedAtTick: parts.eliminatedAtTick ?? NO_ELIMINATIONS,
   // 非 null:本文件的用例不观察首触,别让它混进事件流(战斗用例同款处理)。
   firstContactTick: 0,
+  // 经济死亡的闩:默认四席都没发过,免得干扰步 5 的事件断言。
+  economyDeadAtTick: [null, null, null, null],
 });
 
 const idleRunner = () => stubRunner(() => []);

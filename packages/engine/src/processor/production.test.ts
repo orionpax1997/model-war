@@ -138,6 +138,8 @@ const makeState = (
   ),
   // 默认非 null:这些用例不该被「首触」事件干扰(战斗用例的同一条处置)。
   firstContactTick: 0,
+  // 四席都没有「economy-dead 事件已发」的记录;若有用例需要，单独传。
+  economyDeadAtTick: [null, null, null, null],
 });
 
 /**
@@ -216,16 +218,19 @@ it("下单先校验资金、校验过才扣款:资金恰好等于造价时能下
 });
 
 it("资金不足:这一单无效——不占队列、不扣款、资金一个不少,且不抛错误码", () => {
+  // 座位 0 资金 4 < melee.cost(8) → 这一单无效。
+  // 刻意不用「资源 3 + 下 worker」:那样座位 0 会同时满足「无农民且 resources < worker.cost」,
+  // 步 4 会多出一条 `economy-dead`(票 07),而本用例要断言的是「这条 spawn 没发事件」。
   const result = step(
     makeState([HOLDER], [base(5, 1, 1, 0), DECOY_SITE], {
-      resources: { 0: 3 },
+      resources: { 0: 4 },
       alive: { 1: false, 2: false },
     }),
-    [[spawn(5, "worker")], [], [], []],
+    [[spawn(5, "melee")], [], [], []],
   );
-  // 「校验推进、扣款退后」的反例(先扣再判)会让资金变成 -1、或先占上队列 → 这两条红。
+  // 「校验推进、扣款退后」的反例(先扣再判)会让资金变成负数、或先占上队列 → 这两条红。
   expect(result.state.sites[0]!.producing).toBeNull();
-  expect(result.state.players[0]!.resources).toBe(3);
+  expect(result.state.players[0]!.resources).toBe(4);
   // 只看向座位 0:这一单没成就不该凭空多出一个属于它的单位。
   expect(result.state.units.filter((item) => item.owner === 0)).toEqual([]);
   // 静默丢弃:不发事件、不计异常(八种事件里没有「意图无效」这一类)。

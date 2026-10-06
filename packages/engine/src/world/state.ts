@@ -171,6 +171,29 @@ export type GameState = {
    * 它**不进快照**(脚本不该读到引擎的内部记账,先例是 `nextId` 与 `outcome`)。
    */
   readonly firstContactTick: number | null;
+  /**
+   * 每个座位的 `economy-dead` **事件**已发的 tick;下标即座位号,`null` = 这条事件还没发过。
+   *
+   * ── 它为什么不是「经济死亡状态字段」 ──
+   *
+   * 票面明令「状态模型里没有经济死亡字段」。理由是:经济死亡的形式定义是「无任何农民单位且
+   * `resources` < 农民造价」——两个谓词的与,任何人拿 `players[].resources` 与 `units` 一眼能算
+   * (与 `alive` 不同:后者的判定链要重跑整条 evaluate 步,所以配得上字段)。
+   * 本栏记的**不是**那个可算事实,而是「`economy-dead` 这条**事件**在哪一 tick 发过」——
+   * 与 `firstContactTick` 同性质的一份跨 tick 记忆。事件必须**每局每席至多一条**,而收集器每
+   * tick 新建,能跨 tick 的只有状态;回放也必须能复现「这是第一次」。
+   *
+   * 为什么不能用一个 `Player.economicallyDead` 布尔替代:它会是那个可算事实的第二个家,并且会
+   * **撒谎**——玩家可能靠退款(基地易主的全额退款)重新有钱,布尔却停在 `true`。本栏不参与任何
+   * 判据:判据是 `processor/economy.ts` 的纯函数 `isEconomyDead(view, seat, ruleset)`,只读单位表、
+   * 玩家资源与规则集的 `worker.cost`。所以「不可逆」只对**事件**成立(发过不再发),不对玩家的
+   * 实际经济状态成立。反向用例钉住这三件事(见 `processor/economy.test.ts`):
+   * `Player` 键集恰好四栏、快照键集无 `economy*` 栏、判据不读本栏。
+   *
+   * 它**不进 `Snapshot`**(与 `nextId` / `outcome` / `eliminatedAtTick` / `firstContactTick` 同列):
+   * 脚本可见面里没有任何一栏断言玩家的经济状态。长度恒为四(下标即座位号)。
+   */
+  readonly economyDeadAtTick: readonly (number | null)[];
 };
 
 /**
@@ -180,8 +203,10 @@ export type GameState = {
  * 契约面对模型承诺了字段名,「字段名在这段声明期间不改」,于是这份清单只能被显式地写出来,
  * 靠一个 `Pick` 隐式跟着状态走的话,给状态加一栏会**静默**把那一栏塞进脚本可见面。
  *
- * 少掉的几栏是有理由的:对象 id 的分配器(`nextId`)、终局结果(`outcome`)与首触记账
- * (`firstContactTick`)是引擎内部的,契约面点名它们「不在快照里,别去找」。
+ * 少掉的几栏是有理由的:对象 id 的分配器(`nextId`)、终局结果(`outcome`)、淘汰时刻
+ * (`eliminatedAtTick`)、首触记账(`firstContactTick`)与经济死亡**事件**的闩
+ * (`economyDeadAtTick`)是引擎内部的,契约面点名它们「不在快照里,别去找」。脚本可见面里
+ * **没有**任何一栏断言玩家的经济状态。
  *
  * `size` / `terrain` 在快照里**是为了 `getTerrainAt`**,不是因为「顺手多带一路板面」:
  * hld §4.5 的脚本查询面需要它,而快照是脚本唯一能看到的世界。
