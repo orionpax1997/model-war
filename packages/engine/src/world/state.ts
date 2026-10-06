@@ -18,6 +18,8 @@
  * 类型一律用 `type` 而非 `interface`:进回放的形状必须可赋给 `JsonValue`,而只有类型别名拿得到隐式索引签名。
  */
 
+import type { ReplayOutcomeReason } from "@model-war/replay";
+
 /** 座位下标。固定 0..3,顺序即 playerIndex 串行执行顺序(hld §2.3)。 */
 export type PlayerIndex = 0 | 1 | 2 | 3;
 
@@ -102,8 +104,12 @@ export type Site = {
   readonly producing: SiteProduction | null;
 };
 
-/** 终局原因。四个值,判别联合的穷尽性由 `satisfies never` 一类断言兜住(见 outcome.test)。 */
-export type OutcomeReason = "victory" | "shortcut" | "timeout" | "all-eliminated";
+/**
+ * 终局原因。**它是契约面那份的别名**——取值域的家在 `packages/schema` 的 `ReplayOutcomeReason`
+ * (末行 `result.reason` 的那四个值),这里不再重列第二份取值表(先例见 `replay-writer/tick-line.ts`
+ * 的 `TickPayload = ReplayTickPayload`)。判别联合的穷尽性由 `processor/outcome.ts` 的 `never` 兜住。
+ */
+export type OutcomeReason = ReplayOutcomeReason;
 
 export type Outcome = {
   /** rankings[i] = 玩家 i 的名次(1 起,可并列),由 gdd《胜利与淘汰》的排序规则产生。 */
@@ -140,6 +146,20 @@ export type GameState = {
   /** 全局单调递增,对象创建时分配;被销毁对象的号不回收。 */
   readonly nextId: number;
   readonly outcome: Outcome | null;
+  /**
+   * 每个座位的淘汰 tick;下标即座位号,`null` = 尚未淘汰、值 = 被淘汰的那个 tick。
+   *
+   * ── 为什么它是一栏独立的、而不挂在 `Player` 上 ──
+   * 名次第三条要「已淘汰者按淘汰时间倒序」,所以每个座位的淘汰时刻必须是一份可读的状态。
+   * 但**不能加在 `Player` 上**:`Snapshot.players` 的类型就是 `Player[]`,而 `Player` 的形状是
+   * **已冻结的契约面**(`docs/rules-v1/api.md` 只有 `index` / `resources` / `alive` / `exceptionTicks`
+   * 四栏,脚本类型面与之逐字对应)。给 `Player` 加一栏会**静默**把它塞进脚本可见面,
+   * 同时让契约面失真。淘汰时刻是引擎内部的记账,与 `nextId` / `outcome` / `firstContactTick`
+   * 同列——**不进 `Snapshot`**(`Snapshot` 是逐字列出的形状,不是 `Pick<GameState>`)。
+   *
+   * 长度恒为四(下标即座位号):它是「四个座位各一份淘汰时刻」,不是一张随淘汰增长的表。
+   */
+  readonly eliminatedAtTick: readonly (number | null)[];
   /**
    * 首触(任意敌对单位 Chebyshev ≤ 2)发生的那一 tick;**整局一条**,未发生为 `null`。
    *

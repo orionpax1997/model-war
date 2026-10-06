@@ -46,14 +46,12 @@ export type TickContext = {
    * 挂在上下文里而不是步 2 的局部量里,是因为 `TickResult` 要把它交给测试与将来的预算层。
    */
   readonly pathfindingCalls: readonly number[];
-  /** 步 7 的结论:`tick` 达 `tickLimit` 即真。名次排序随判据一起落进票 09,本票不写终局。 */
-  readonly limitReached: boolean;
 };
 
 /** 一步。纯函数:换一份上下文,不碰别处。 */
 export type Step = (context: TickContext) => TickContext;
 
-/** 步 0 之前的上下文:`drained` / `intents` / `limitReached` 三个派生栏还没有内容。 */
+/** 步 0 之前的上下文:`drained` / `intents` 两个派生栏还没有内容。 */
 export const initialContext = (
   ruleset: RulesetView,
   runners: readonly SeatRunner[],
@@ -69,5 +67,4 @@ export const initialContext = (
   intents: [],
   pathfindingCalls: [0, 0, 0, 0],
   state,
-  limitReached: false,
 });

@@ -13,7 +13,7 @@ import { processTick } from "./index.js";
 import { loadRuleset } from "../ruleset-loader/index.js";
 import { stubRunner } from "../runner/stub.js";
 import type { Intent } from "./intents.js";
-import type { GameState, PlayerIndex, Terrain, Unit, UnitType } from "../world/state.js";
+import type { GameState, PlayerIndex, Site, Terrain, Unit, UnitType } from "../world/state.js";
 
 const RULESET: Ruleset = {
   tickLimit: 600,
@@ -52,6 +52,24 @@ const unit = (id: number, owner: PlayerIndex, type: UnitType, x: number, y: numb
   carrying: 0,
 });
 
+/**
+ * 四个座位各一个哨兵基地(id 900+seat、坐标远离用例单位)。
+ *
+ * 本文件测的是步 2,而 `processTick` 会跑完整条管线:没有它,那些「只有座位 0 有单位」的
+ * 用例会在步 5 把其余三席当作无兵无基地而淘汰掉,凭空多出 `player-eliminated` 事件与状态变化。
+ * 一个不会被摧毁、也不会被踏上的基地让步 5 在这些用例里恒为 no-op。
+ */
+const SEAT_BASES: readonly Site[] = [0, 1, 2, 3].map((seat) => ({
+  id: 900 + seat,
+  kind: "base",
+  x: 900 + seat,
+  y: 900,
+  owner: seat as PlayerIndex,
+  progressOwner: -1,
+  progress: 0,
+  producing: null,
+}));
+
 const makeState = (
   units: readonly Unit[],
   options: {
@@ -73,9 +91,11 @@ const makeState = (
       exceptionTicks: 0,
     })),
     units,
-    sites: [],
+    sites: SEAT_BASES,
     nextId: 100,
     outcome: null,
+    // 本用例四席都在,无人被淘汰。
+    eliminatedAtTick: [null, null, null, null],
     firstContactTick: options.firstContactTick ?? null,
   };
 };

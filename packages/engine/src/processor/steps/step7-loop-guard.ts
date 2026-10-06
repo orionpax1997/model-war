@@ -1,5 +1,5 @@
 /**
- * 步 7 · loop guard:`tick` 达规则集的 `tickLimit` → 超时,按 gdd《胜利与淘汰》的领土分规则定名次。
+ * 步 7 · loop guard:`tick` 达规则集的 `tickLimit` → 超时,写 `state.outcome` 的第四种原因。
  *
  * ── 为什么判的是「写出行之后的 `state.tick`」 ──
  * 步 6 已经 `tick++`,所以到这里 `state.tick` 是**下一 tick 的编号**。「tick 达 `tickLimit`」
@@ -7,18 +7,32 @@
  * 拿 `state.tick` 之前判,会早一 tick 收官;拿 `state.tick + 1` 判,会晚一 tick,
  * 两者都会让「第 N 行 tick 栏」与「规则以为的 N」差一格,而这类差一格在回放里极难看出来。
  *
- * ── 本票只做到「判超时」,名次算法留给票 09 ──
- * 名次要按 gdd 的四层排序(胜者第一、存活分层、层内按领土分或淘汰时间、仍相同则并列),
- * 而领土分要用**控制基地数**与**存活单位造价**——后者的来源是步 4 的生产记录,
- * 04–09 落地之前算不出真实的领土分。故本步只产出**触发信号** `limitReached`,
- * 票 09 把它换成 `state.outcome`。信号走返回值而不是写 `outcome` 的半截形状:
- * 一个 `reason: "timeout"` 而 `rankings` 还是空数组的 `Outcome`,会被渲染器与战报当成
- * 「这局打完了」读。
+ * ── 为什么先看 `state.outcome` 再判超时 ──
+ * 步 5 可能在**恰是最后一 tick** 上判出 victory / shortcut / all-eliminated(胜负先于超时);那时
+ * `outcome` 已置,本步不得把它覆盖成 timeout——「打满 600 tick」与「第 600 tick 分出胜负」是报告
+ * 靠 `reason` 区分的两件事,覆盖就是把后者读成前者。
+ *
+ * ── 名次算法在哪 ──
+ * 领土分、名次编号与胜者的纯计算在 `processor/outcome.ts`;本步只负责把 `timeout` 这一档
+ * (无胜者)交给它,经 `apply()` 的 `set-outcome` 变更落进 `state.outcome`(唯一写入口)。
  */
 
+import { apply } from "../../driver/apply.js";
 import type { Step } from "../context.js";
+import { outcomeOf } from "../outcome.js";
 
-export const step7LoopGuard: Step = (context) => ({
-  ...context,
-  limitReached: context.state.tick >= context.ruleset.raw.tickLimit,
-});
+export const step7LoopGuard: Step = (context) => {
+  if (context.state.outcome !== null) {
+    return context;
+  }
+  if (context.state.tick < context.ruleset.raw.tickLimit) {
+    return context;
+  }
+  return {
+    ...context,
+    state: apply(context.state, context.ruleset.raw, {
+      kind: "set-outcome",
+      outcome: outcomeOf(context.state, context.ruleset, "timeout", null),
+    }),
+  };
+};

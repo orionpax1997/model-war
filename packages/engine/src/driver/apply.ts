@@ -22,6 +22,7 @@ import type { Ruleset } from "@model-war/replay";
 import { allocateId } from "./id-gen.js";
 import type {
   GameState,
+  Outcome,
   Owner,
   PlayerIndex,
   Site,
@@ -101,7 +102,28 @@ export type Change =
       readonly progressOwner: Owner;
       readonly progress: number;
       readonly newOwner?: PlayerIndex;
-    };
+    }
+  /**
+   * 把一个座位判为出局(票 09)。
+   *
+   * ── 为什么一条变更同时写两处(玩家码位与淘汰时刻) ──
+   * 「这个座位出局了」与「它是在哪个 tick 出局的」是**同一件事**的两个面:名次第三条要用后者
+   * 排序,而报告与事件看的是前者。拆成两条变更会让「已 `alive = false` 但 `eliminatedAtTick`
+   * 仍是 `null`」成为可构造的中间态,于是名次算出一个 `?? -1` 的哨兵值。一条变更把两面
+   * 一起落,中间态在类型上不存在(`Change` 里根本没有只写一面的条目)。
+   */
+  | { readonly kind: "eliminate-player"; readonly seat: PlayerIndex; readonly tick: number }
+  /**
+   * 把一个点位的残余进度与队列一起清回中立(票 09, gdd《胜利与淘汰》)。
+   *
+   * `owner` 回 `-1`、占领轨道清零、`producing` 取消。**队列取消不退款**——这条路径与
+   * 「易主 → 退款」是两件事(给票 06 的话:基地回归中立那条路取消队列且不退款)。
+   * 不做成「另发几条变更」:回归中立是一个原子结果,分几条写会让中间态里出现
+   * 「已中立但还挂着一条产线」这种半截状态。
+   */
+  | { readonly kind: "return-site-to-neutral"; readonly siteId: number }
+  /** 写上终局结果(票 09)。步 5 写 `victory` / `shortcut` / `all-eliminated`,步 7 写 `timeout`。 */
+  | { readonly kind: "set-outcome"; readonly outcome: Outcome };
 
 /** 按数值 id 升序插入。数组短(每 tick 几百个对象),有序插入比「先插后排」少一次全数组重排。 */
 const insertById = <T extends { readonly id: number }>(
@@ -168,6 +190,29 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
           ...(change.newOwner === undefined ? {} : { owner: change.newOwner }),
         })),
       };
+    case "eliminate-player":
+      return {
+        ...state,
+        players: state.players.map((player) =>
+          player.index === change.seat ? { ...player, alive: false } : player,
+        ),
+        eliminatedAtTick: state.eliminatedAtTick.map((tick, seat) =>
+          seat === change.seat ? change.tick : tick,
+        ),
+      };
+    case "return-site-to-neutral":
+      return {
+        ...state,
+        sites: replaceById(state.sites, change.siteId, (site) => ({
+          ...site,
+          owner: -1,
+          progressOwner: -1,
+          progress: 0,
+          producing: null,
+        })),
+      };
+    case "set-outcome":
+      return { ...state, outcome: change.outcome };
     default: {
       // 穷尽性靠编译期兜住:新增一种变更而这里没跟上,是编译错误而不是运行期静默不改状态。
       const unreachable: never = change;

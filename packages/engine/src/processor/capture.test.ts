@@ -76,6 +76,17 @@ const withProgress = (site: Site, progressOwner: Owner, progress: number): Site 
   progress,
 });
 
+/**
+ * 四个座位各一个哨兵基地(id 900+seat、坐标远离用例单位)。
+ *
+ * 本文件测的是步 4,而 `processTick` 会跑完整条管线:没有它,那些「只有一方有单位」的用例会在
+ * 步 5 把其余三席当作无兵无基地而淘汰掉,凭空多出 `player-eliminated` 事件。基地不会被摧毁、
+ * 也不会被踏上(坐标远离单位),故它让步 5 在这些用例里恒为 no-op。
+ */
+const SEAT_BASES: readonly Site[] = [0, 1, 2, 3].map((seat) =>
+  base(900 + seat, 900 + seat, 900, seat as Owner),
+);
+
 const makeState = (units: readonly Unit[], sites: readonly Site[], tick = 0): GameState => ({
   tick,
   size: 8,
@@ -87,9 +98,11 @@ const makeState = (units: readonly Unit[], sites: readonly Site[], tick = 0): Ga
     exceptionTicks: 0,
   })),
   units,
-  sites,
+  sites: [...sites, ...SEAT_BASES],
   nextId: 100,
   outcome: null,
+  // 本用例四席都在,无人被淘汰。
+  eliminatedAtTick: [null, null, null, null],
   firstContactTick: null,
 });
 

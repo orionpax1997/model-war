@@ -91,12 +91,25 @@ const makeState = (
       exceptionTicks: 0,
     })),
     units,
-    sites: options.sites ?? [],
+    sites: [...(options.sites ?? []), ...SEAT_BASES],
     nextId: 100,
     outcome: null,
+    // 本用例四席都在,无人被淘汰。
+    eliminatedAtTick: [null, null, null, null],
     firstContactTick: options.firstContactTick ?? 0,
   };
 };
+
+/**
+ * 四个座位各一个哨兵基地(id 900+seat、坐标远离用例单位)。
+ *
+ * 本文件测的是步 3,而 `processTick` 会跑完整条管线:没有它,「双方各自最后一名单位互杀」这类
+ * 用例会在步 5 把四方全部淘汰掉,凭空多出 `player-eliminated` 事件。基地不会被摧毁也不会被踏
+ * (坐标远离单位),故它让步 5 在这些用例里恒为 no-op。
+ */
+const SEAT_BASES: readonly Site[] = [0, 1, 2, 3].map((seat) =>
+  site(900 + seat, "base", 900 + seat, 900, seat as Site["owner"]),
+);
 
 /** 什么都不记的 sink。 */
 const SINK: TickSink = { write: () => {} };
