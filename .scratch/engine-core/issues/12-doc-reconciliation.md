@@ -176,3 +176,63 @@ A 的隐含前提(所选成员零使用)用一条**前置自证**盯住:在 `rem
 - 改的文件:`packages/tools/src/gates.test.ts`(抽出 `NO_FLOAT_PROBE` 常量单点化探针路径、`REMOVED_MEMBER = "clz32"`、`violatingFiles` 助手、用例四条断言)。
 
 每次探针跑完 `git status` 均为干净(只余本提交的 `gates.test.ts` 改动)。
+
+### 收口:双轴 code review 的发现与处置
+
+固定点:本地 `main` = `15d8e65`(本 feature 的分支点)。两轴 review 跑完后按下述收口。**本节只做两件事**——把散文/注释用词改回 `CONTEXT.md` 的词汇表纪律,以及记下这笔账;不改业务逻辑、不改任何断言、不动门禁。
+
+#### 1. Spec 轴唯一发现「范围蔓延」——主线程已处置
+
+- review 报 `AGENTS.md` 与 `.pi/subagents-lite.json` 两份**不属本 feature** 的文件混进了改动面。根因:合并提交 `caeb67a` 用了 `git add -A`,把工作树里这两份**用户本地改动**一并卷了进来。
+- **处置(主线程完成)**:一个 revert 提交把这两份**在版本库里还原成 `main` 的版本**,于是本 feature 相对 `main` 对这两个文件的**净差异为零**(`git diff main...HEAD --name-only` 已不再含它们);用户本地的工作树(主 checkout)里的那两份改动**原样保留(未提交)**,既没丢也没被提交。
+- 本票如实记这笔账,**不动这两份文件**。
+
+#### 2. Standards 轴:4 处散文叫法漂移(引 `CONTEXT.md` 词汇表)逐条改
+
+纪律来源:`CONTEXT.md` 定 `对局`(一场完整的四人对战,**在本项目只有这一个叫法**,`_Avoid_`: 场次、单场、比赛)与 `叙事战报`(一场对局的散文叙述,`_Avoid_`: 战报裸用、报告);`docs/agents/domain.md` 要求「用词汇表用语」。改动只落在注释散文,**未碰任何标识符/断言/字符串字面量**。
+
+| # | 位置 | 改前 | 改后 |
+|---|---|---|---|
+| 1 | `packages/engine/src/fixtures/harness.ts:2,3,14` | 「`runMatch` **单场**是引擎唯一的粒度」「一批**场次**的分布」「把**单场**包起来」「不是**单场**的一次读数」 | 「`runMatch` **一个对局**是引擎唯一的粒度」「一批**对局**的分布」「把**一个对局**包起来」「不是**一个对局**的一次读数」 |
+| 2 | `packages/engine/src/fixtures/cavalry.ts:8` | `` 席位(场次) `` | `` 席位(对局) `` |
+| 3 | `packages/engine/src/replay-writer/tick-line.ts:15` | 「渲染器与**战报**都得先判它」 | 「渲染器与**叙事战报**都得先判它」 |
+| 4 | `packages/engine/src/run-match.test.ts:86` | 「空数组会被**战报**读成『打完了』」 | 「空数组会被**叙事战报**读成『打完了』」 |
+
+#### 3. 同一改动面里搜出的同类命中与逐条处置
+
+范围与手法:按 `git diff main...HEAD --name-only | grep -E '\.(ts|md)$'` 圈定本 feature 的改动面(108 个现存文件),全文搜 `单场 / 场次 / 比赛 / 裸战报 / 词汇表其它 _Avoid_ 词`。reviewer 只抽查了 4 处,以下是把同类一次搜净。
+
+**改了**(真在说「一个对局」却写「单场/场次」,或裸用「战报」):
+
+- `packages/engine/src/replay-writer/tick-line.ts:19`「**战报**只消费 `events`」→「**叙事战报**只消费 `events`」。
+- `packages/engine/src/replay-writer/tick-line.test.ts:89`「而**战报**只消费 events」→「而**叙事战报**只消费 events」。
+- `packages/engine/src/processor/events.ts:13`「历史回放里的一段**战报**」→「一段**叙事战报**」;`:35`「回放与**战报**共同读的」→「回放与**叙事战报**共同读的」。
+- `packages/schema/src/replay-line.ts:134,354`「回放与**战报**共同读的」→「回放与**叙事战报**共同读的」(两处)。
+- `.scratch/engine-core/issues/02-spine-empty-match-to-timeout.md:53`「渲染器与**战报**当成…」→「渲染器与**叙事战报**当成…」。
+- `.scratch/engine-core/issues/10-state-invariants-and-counterexamples.md:9`「就是**战报**稳定性的全部」→「就是**叙事战报**稳定性的全部」。
+- `.scratch/engine-core/spec.md:48`「**战报**与报告给出的时刻」→「**叙事战报**与报告给出的时刻」;`:161`「**战报**生成器只消费事件」→「**叙事战报**生成器只消费事件」。
+- **度量名里的「单场」漂移**(与 `docs/srs.md` 的「每个**对局**的平均墙钟耗时」对齐):`.scratch/engine-core/issues/11-determinacy-first-touch-rerun-and-readings.md:30,128`「单场平均墙钟」、`:93`「`runMatch` 单场粒度」;`.scratch/engine-core/readings.md:54`「单场平均墙钟」;`.scratch/engine-core/spec.md:305`「单场墙钟」;`docs/diagrams/v0-milestone-dag.md:173`「NFR-3 单场墙钟 X」——全部改成「对局……」。
+
+**判为正当提及 / 有意不改**(逐条理由):
+
+- `packages/engine/src/fixtures/endgame.ts:6`「桩 `tables.mjs` §1.4 … 印成一行:**场次**、`结局 tick 中位`…」——逐字转写 legacy 桩 `tables.mjs` 的**列名**(桩源码写死 `| 矩阵 | 场次 | …`),属「名字」而非本项目的散文叫法;改了会与桩输出不符,按 `CONTEXT.md` 的「区分叫法与名字」保留。
+- `docs/gdd.md:240`「最坏**单场**」——任务限定 `docs/gdd.md` 不碰。
+- 子命令名 / 目录名 / 英文残留(`modelwar match`、`matches/`、`match`、`Match*` 标识符)——词汇表明写「名字,改不动也不该改」,一律不动。
+- 已经写全「叙事战报」的全部命中(`docs/hld.md` 多处、`packages/engine/src/processor/state-invariants.test.ts:335`、`issues/07-…md:7` 等)——不改。
+- 词汇表其它 `_Avoid_` 词:`docs/hld.md:570`「控制流事件计数**而非指令计数**」、`:520`「不回退**逐函数注入**」——两处都是**拿被弃术语当对立面**的正当提及,不改;「经济失败」「OOM 事件判据」以及「比赛」在本改动面零命中。
+- 含「场」的**量词 / 复合**用法(`一场对局`、`全场`、`每场`、`几场`、`同场`、`多场跑批循环`、`n 场`)——不在 `_Avoid_` 词表(词汇表自己定义 `对局` 就写「**一场**完整的四人对战」);按「判据是词汇表不是口味」不改。
+- 跨称复核:`回放` 与 `报告` 之间**没有互称误用**(逐处读过,均为层级上的正当用法)。
+
+#### 4. 两处结构性欠账:复核后维持原判
+
+两轴都判为「有意偏离、不计新发现」的两处,票面已各记「有意不改 + 原因」:
+
+- **`packages/replay` 把真源包类型原样再导出**(让 `engine` 绕开 manifest 里的 `@model-war/schema` 声明):票 12 的「有意不改 #5」已记「更干净是给 engine 补声明依赖;这处不改任何可观察行为,动它会牵动包图与门禁,归后续」。
+- **`packages/engine/src/fixtures/` 是一层只有测试用的跑批 harness,却住在 engine 包的非测试源码里**:票 11 的 Answer 已记落点与理由(能 import 引擎的只有 engine 自己与 `apps/cli`;`packages/tools` 进去放夹具会被 `check:declared-deps` 拦,落点只能是 engine)。
+
+**本次 review 复核后维持原判**:两处都不是要就地改的东西,保持票面已记的落点。
+
+#### 5. 修完的门禁读数
+
+- `pnpm run check` → **EXIT=0**(`/tmp/fix-check.log`):`fmt`「All matched files use the correct format」;`check:no-float`「检查 41 个文件,无违规」;`vitest run --project unit --project property` → **60 files / 676 tests 全过**(与基线一致——本收口未动逻辑);`check:deps`「111 modules, 233 dependencies, no violations」;`check:declared-deps`「43 文件,已声明 2 个依赖,无未声明引用」;`check:drift`「注册 6 件,无漂移」;`check:bench`「3 份逐字节一致」。
+- 未跑 `pnpm run test` / `test:slow`;改动文件已 `pnpm exec oxfmt`。
