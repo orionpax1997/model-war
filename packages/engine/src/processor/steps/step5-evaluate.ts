@@ -35,7 +35,7 @@ type EvaluateStage = (context: TickContext) => TickContext;
 
 /** 段名。中文小标题即 gdd《胜利与淘汰》里那四条,与判据的措辞对齐。 */
 export const EVALUATE_STAGE_NAMES = [
-  "a) 淘汰:满足淘汰条件者出局(同时无任何单位且无任何基地)",
+  "a) 淘汰:无单位且无基地者,或累计异常达 exceptionTickLimit 者,出局",
   "b) 点位回归中立:被淘汰玩家名下残余点位全部回归中立",
   "c) 全点位归属:全部点位归属单一玩家 → 胜",
   "d) 捷径条款:仅剩一方尚存即胜(兜底)",
@@ -45,22 +45,33 @@ export const EVALUATE_STAGE_NAMES = [
 const SEATS: readonly PlayerIndex[] = [0, 1, 2, 3];
 
 /**
- * a) 淘汰:同时**无任何单位且无任何基地**者出局(gdd)。
+ * a) 淘汰:同时**无任何单位且无任何基地**者出局(gdd);或**累计异常达 `exceptionTickLimit`** 者
+ *    判负出局(hld §5.2 第一/二/四类的共同后果,gdd《异常与出局》)。
  *
- * 条件是「与」不是「或」:部队尚存就仍有翻盘可能——被夺家后靠残兵反夺基地是刻意保留的戏剧空间。
- * 出局这一件事经**一条** `eliminate-player` 变更同时写 `alive` 与淘汰时刻(理由见 `apply.ts`)。
+ * 条件是「或」的两支:
+ * - 「无单位且无基地」是与——部队尚存就仍有翻盘可能——被夺家后靠残兵反夺基地是刻意保留的戏剧空间;
+ * - 「累计异常达上限」是**独立一支**:它不看在不在场内,判的是脚本自身的失控。
+ *
+ * 异常支只在组装层传了 `exceptionTickLimit` 时生效(字段缺席即该轨不启用,引擎不认识「未定值」)。
+ * 异常计数已在同一 tick 的步 0 由 `tripped` 观测累加进 `player.exceptionTicks`,本段读到的是
+ * **更新后**的值——所以「本 tick 触发、本 tick 判负」是同一拍完成的。出局这一件事经**一条**
+ * `eliminate-player` 变更同时写 `alive` 与淘汰时刻(理由见 `apply.ts`)。
  */
 const eliminateStage: EvaluateStage = (context) => {
-  const { ruleset, collector } = context;
+  const { ruleset, collector, budget } = context;
+  const exceptionTickLimit = budget.exceptionTickLimit;
   let state = context.state;
   for (const seat of SEATS) {
     const player = state.players[seat];
     if (player === undefined || !player.alive) {
       continue;
     }
+    // 异常支:达累计上限即判负(不看单位/基地)。未启用本轨时恒 false。
+    const caughtByExceptions =
+      exceptionTickLimit !== undefined && player.exceptionTicks >= exceptionTickLimit;
     const hasUnit = state.units.some((unit) => unit.owner === seat);
     const hasBase = state.sites.some((site) => site.kind === "base" && site.owner === seat);
-    if (hasUnit || hasBase) {
+    if (!caughtByExceptions && (hasUnit || hasBase)) {
       continue;
     }
     state = apply(state, ruleset.raw, { kind: "eliminate-player", seat, tick: state.tick });
