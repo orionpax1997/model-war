@@ -59,6 +59,22 @@ export type Change =
   | { readonly kind: "destroy-unit"; readonly unitId: number }
   | { readonly kind: "move-unit"; readonly unitId: number; readonly x: number; readonly y: number }
   /**
+   * 把单位血量改成某个值(票 08)。
+   *
+   * ── 为什么扣血要经变更表,而不在步 3 里就地写一栏 ──
+   * 「唯一写入口」是对**整份 `GameState`** 成立,不只是对某几个字段。伤害结算要改 `Unit.hp`,
+   * 那就必须与别的写操作走同一条登记:想写它,先在这里列一项。不开「步 3 直接展开单位对象」
+   * 这条旁路,否则「有哪些写操作」就不再是一张可枚举的表。
+   *
+   * ── 为什么允许 hp 取到 0 或负数 ──
+   * 本变更**唯**的调用点是 `step3-combat.ts`:它先在只读基线上把全部伤害算完,再按目标求和,
+   * 然后把 `hp - 求和伤害` 写进来。求和可能过杀(负值),而归零者由调用方在**同一次迭代内**
+   * 紧接着发一条 `destroy-unit` 移除——所以负 hp 只在本步之内瞬时存在,不会出现在任何写出的
+   * tick 行里(有一条用例解析写出行断言 hp 非负)。把「扣到几」与「死不死」拆给两个变更单,
+   * 是为了让「单一血池求和」这一步留在结算层,`apply()` 只负责把值落进状态。
+   */
+  | { readonly kind: "set-unit-hp"; readonly unitId: number; readonly hp: number }
+  /**
    * 记下首触发生的 tick(票 04)。
    *
    * ── 为什么这条要进变更表,而不在步 2 里直接赋一栏 ──
@@ -114,6 +130,12 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
           x: change.x,
           y: change.y,
         })),
+      };
+    case "set-unit-hp":
+      // 目标不存在时 `replaceById` 是一次 no-op(每个单位是一次 map),所以调用方不必先查存在。
+      return {
+        ...state,
+        units: replaceById(state.units, change.unitId, (unit) => ({ ...unit, hp: change.hp })),
       };
     case "mark-first-contact":
       return { ...state, firstContactTick: change.tick };
