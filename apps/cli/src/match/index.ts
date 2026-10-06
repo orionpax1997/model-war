@@ -101,8 +101,16 @@ const readArchiveMeta = (archiveDir: string): ArchiveRead => {
   };
 };
 
-/** 空转对局的策略:什么都不交回。冻结脚本文本→策略的编译是沙箱执行器那一格的事(见 `runMatch` 头注)。 */
-const idleStrategy = () => () => [];
+/**
+ * 空转对局的执行器:什么都不交回、也没有观测。桩路径在 CLI 里只作测试入口(spec)。
+ *
+ * 引擎的导出面**只有 `runMatch`**,不导出桩适配器,所以这里按缝的两条方法就地造一个最小执行器。
+ * 真沙箱执行器落地后(票 03),组装层会改成先建 VM 再传这四个执行器。
+ */
+const idleRunner = () => ({
+  setSnapshot: () => {},
+  drainIntents: () => ({ intents: [], observations: [] }),
+});
 
 /**
  * `modelwar match <input.json>`。
@@ -287,7 +295,9 @@ const runMatchLoaded = (inputPath: string, root: string): number => {
     seed: input.seed,
     head: { runner: "stub", timezoneOffset: "+00:00", mapHash: input.mapSha256 },
     players,
-    strategies: [idleStrategy(), idleStrategy(), idleStrategy(), idleStrategy()],
+    runners: [idleRunner(), idleRunner(), idleRunner(), idleRunner()],
+    // 桩路径不启用任何预算轨;观测出口也不需要(桩不产出观测)。
+    budget: {},
     sink: { write: (line) => void lines.push(line) },
   });
 
