@@ -730,7 +730,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ```
 
 - `schemaVersion` 由 `replay` 包 `CURRENT_SCHEMA_VERSION` 常量承担,跨版本兼容性以它为准(FR-9 AC2)。**它是回放文件格式的版本,不是行的形状**:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包,`replay` 包只做编解码、不再声明行的类型(§2.2.5、§3.1)。这一格曾经有两个家(§2.2.5 说形状在真源包、§3.1 说行格式取自 `replay` 包),按「每个事实只有一个家」留在真源包。
-- **meta 行共十二栏,`runner` 是判别式**(取值 `"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,缺这一栏就把可读性押在「四个沙箱栏同时为空」这个约定上。**`runner === "stub"` 时四个沙箱栏(`quickjsWasiVersion` / `sandboxRuntimeHash` / `wasiClock` / `wasiRandomFill`)全为 `null`**(不是空串、不是 `0`——「未发生」与「恰好是空串」要能区分),本 feature 只有 `StubRunner`,故桩回放四栏皆 `null`;`runner === "quickjs"` 时四栏都是非空字符串,填错在类型上编译不过(判别联合)。
+- **meta 行共十三栏,`runner` 是判别式**(取值 `"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,缺这一栏就把可读性押在「五个沙箱栏同时为空」这个约定上。**`runner === "stub"` 时五个沙箱栏(`quickjsWasiVersion` / `sandboxRuntimeHash` / `wasiClock` / `wasiRandomFill` / `wasiTimezoneOffset`)全为 `null`**(不是空串、不是 `0`——「未发生」与「恰好是空串」要能区分),故桩回放五栏皆 `null`;`runner === "quickjs"` 时五栏都是非空字符串(十进制毫秒 / 十六进制字节不带前缀 / 十进制分钟),填错在类型上编译不过(判别联合)。
 - 每 tick 记录足以绘制完整画面的状态:点位归属、占领进度条、单位位置血量携带、玩家资源。
 - **events 事件流**(叙事战报的统一来源,**七种**):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态;墙钟软限与内存压力是**观测行**(`observations.jsonl`),不进事件流、更不进 `stateHash`。
 - **`first-contact` 的判据是观测量,不是规则参数**:任意敌对单位 Chebyshev ≤ 2、**整局第一次**一条,故不进 `rulesets/v1.json`(它不判胜负、不判合法、不影响移动,只给事件流标一个时刻)。判据的定性半句在 gdd 首触那一段(「首触判据吃的是接近度」),**给予它的精确定义是 gdd 那一侧的欠账**;引擎按该口径实现并在 `packages/engine/src/processor/steps/step2-movement.ts` 的注释里注明出处。

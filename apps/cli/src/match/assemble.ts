@@ -44,6 +44,7 @@ import {
   WASI_RANDOM_FILL,
   WASI_TIMEZONE_OFFSET_MINUTES,
   createQuickJsRunner,
+  type QuickJsRunnerOptions,
 } from "@model-war/engine/runner";
 
 import { EXIT_USAGE_OR_VALIDATION, type CommandFailure } from "../exit-codes.js";
@@ -354,6 +355,27 @@ export type ExecutedRun =
     };
 
 /**
+ * 把已启用的预算轨阈值透传给执行器。**缺席的轨不写进选项**——于是连对应的计数回调/读钟都不装,
+ * 引擎与执行器都不必认识「未定值」这个概念(判据与缺席语义见 `budgetOf`)。
+ */
+const budgetTracksOf = (
+  budget: NonNullable<RunMatchParams["budget"]>,
+): Partial<QuickJsRunnerOptions> => ({
+  ...(budget.eventTickLimit === undefined ? {} : { eventTickLimit: budget.eventTickLimit }),
+  ...(budget.apiCallTickLimit === undefined ? {} : { apiCallTickLimit: budget.apiCallTickLimit }),
+  ...(budget.memoryLimit === undefined ? {} : { memoryLimit: budget.memoryLimit }),
+  ...(budget.memoryTickCeiling === undefined
+    ? {}
+    : { memoryTickCeiling: budget.memoryTickCeiling }),
+  ...(budget.wallClockSoftLimit === undefined
+    ? {}
+    : { wallClockSoftLimit: budget.wallClockSoftLimit }),
+  ...(budget.wallClockHardTimeout === undefined
+    ? {}
+    : { wallClockHardTimeout: budget.wallClockHardTimeout }),
+});
+
+/**
  * 真沙箱执行:编译 wasm(一次)→ 四个 VM → `runMatch` → 释放四个 VM。
  *
  * 建与释放都在这一个函数里成对出现:任一步抛异常都走 `finally` 把已建出来的 VM 释放掉,
@@ -370,24 +392,7 @@ export const executeMatch = async (run: LoadedRun): Promise<ExecutedRun> => {
         seat,
         // 规则面随建 VM 的一次性 setup 灌进 guest:射程/造价两条即时判据要与引擎同一份逻辑,否则降级。
         ruleset: run.ruleset,
-        // 已启用的轨阈值透传给执行器(缺席的轨不写进选项,连计数回调都不装)。
-        ...(run.budget.eventTickLimit === undefined
-          ? {}
-          : { eventTickLimit: run.budget.eventTickLimit }),
-        ...(run.budget.apiCallTickLimit === undefined
-          ? {}
-          : { apiCallTickLimit: run.budget.apiCallTickLimit }),
-        ...(run.budget.memoryLimit === undefined ? {} : { memoryLimit: run.budget.memoryLimit }),
-        ...(run.budget.memoryTickCeiling === undefined
-          ? {}
-          : { memoryTickCeiling: run.budget.memoryTickCeiling }),
-        // 墙钟两轨:软限只产观测;硬超时中断本 tick 并交回故障位。缺席即不启用(不读钟)。
-        ...(run.budget.wallClockSoftLimit === undefined
-          ? {}
-          : { wallClockSoftLimit: run.budget.wallClockSoftLimit }),
-        ...(run.budget.wallClockHardTimeout === undefined
-          ? {}
-          : { wallClockHardTimeout: run.budget.wallClockHardTimeout }),
+        ...budgetTracksOf(run.budget),
       }),
     ),
   );

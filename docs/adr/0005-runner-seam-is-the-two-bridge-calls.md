@@ -22,6 +22,10 @@ hld §5 已经把这条缝的动机写死了:「§5.0 的 `Runner` 缝**只为�
 
 两条修订后,缝的**类型仍是那两个方法、桥调用仍是那两次**(`__setSnapshot` 进 / `__drainIntents` 出),`Object.keys(runner)` 仍恰为 `["drainIntents", "setSnapshot"]`。后来的沙箱执行器与桩执行器仍是同一个缝的两个适配器。
 
+两处再澄清(票 11 收口):
+
+- **「接口面积不增加」指的是缝的类型,不是禁止一个构造入口**。真沙箱执行器的工厂 `createQuickJsRunner` 落在 `packages/engine/src/runner/`,经包导出表的独立入口 `@model-war/engine/runner` 供组装层取用;主入口 `@model-war/engine` 仍恰好一个运行时符号 `runMatch`(`index.test.ts` 钉住)。引擎新增 `quickjs-wasi` 运行时依赖、持 VM 构造 API,这一入口正是那句依赖的落地(spec《依赖与构建》),不是什么第二套表示。
+
 ## Consequences
 
 - **`packages/engine` 的对外接口面积不因执行器而增加**。适配器要满足的那个接口就是两个桥函数调用的形状,没有 `Runner` 基类、没有工厂、没有生命周期协议。后来者想加一层,得先说明那层挡住了什么。
