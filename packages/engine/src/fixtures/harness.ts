@@ -93,6 +93,10 @@ export const playMatch = (input: FixtureMatchInput): FixtureMatch => {
     budget: {},
     sink: { write: (line) => void lines.push(line) },
   });
+  if (outcome.status !== "completed") {
+    // 桩执行器不装墙钟硬超时回调,故它交不出故障位。真出现了就是引擎缺陷,响亮地失败。
+    throw new Error("夹具对局遇到不确定超时——桩路径不应产生故障位(引擎缺陷)");
+  }
   return {
     lines,
     parsed: lines.map((line) => JSON.parse(line) as ReplayLine),

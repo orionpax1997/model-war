@@ -26,6 +26,8 @@ export type {
   MapSite,
   MapSpawnUnit,
   MapVariantSlot,
+  ObservationLine,
+  ObservationLineKind,
   ReplayEvent,
   ReplayEventKind,
   ReplayLine,
@@ -48,6 +50,7 @@ export type {
 
 /** 回放三行的 JSON Schema。经本包中转,理由同上面的类型面。 */
 export {
+  OBSERVATION_LINE_JSON_SCHEMA,
   REPLAY_META_LINE_JSON_SCHEMA,
   REPLAY_RESULT_LINE_JSON_SCHEMA,
   REPLAY_TICK_LINE_JSON_SCHEMA,

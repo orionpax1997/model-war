@@ -77,6 +77,10 @@ export * from "./match-input.js";
 // 末行 `result` 的终局原因取值域由本模块的 `ReplayOutcomeReason` 定死(09 票销掉 `match-result`)。
 export * from "./replay-line.js";
 
+// 观测行:回放**之外**那份 `observations.jsonl` 的一行(墙钟软限 / 内存压力两类只披露的观测)。
+// 与回放线同级但独立:它永远不进回放、更不进 `stateHash`(hld §5.3)。
+export * from "./observation-line.js";
+
 // 各域文件(形状 / 参数清单 / 常量表)一律从这里再导出。
 export * from "./map.js";
 export * from "./pending.js";

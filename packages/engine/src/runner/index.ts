@@ -22,9 +22,9 @@
  * 这个判别联合跟着**谁跑**这件事走,所以它的家在执行器这一格,不在写出侧。
  */
 
-import { HOST_BRIDGE_PREFIX } from "@model-war/replay";
+import { HOST_BRIDGE_PREFIX, type ObservationLineKind } from "@model-war/replay";
 import type { Intent } from "../processor/intents.js";
-import type { Snapshot } from "../world/state.js";
+import type { PlayerIndex, Snapshot } from "../world/state.js";
 
 /** 进的那次桥:`__setSnapshot(snapshot)`。名字由前缀常量拼,不手写字面量。 */
 export const HOST_BRIDGE_SET_SNAPSHOT = `${HOST_BRIDGE_PREFIX}setSnapshot`;
@@ -44,8 +44,11 @@ export type RunnerKind = "stub" | "quickjs";
  *   引擎**不做裁决**。阈值判定与淘汰不在本票。
  * - `wall-clock-soft`:墙钟软限观测,只披露不判罚——转发给观测出口。
  * - `memory-pressure`:内存压力观测,只披露不判罚——转发给观测出口。
+ *
+ * 只披露的那两类取值域由真源包 `ObservationLineKind` 定死(观测行的 `kind` 枚举同源),这样
+ * 「引擎上报什么」与「观测文件收什么」不可能各写一份。`tripped` 是第三类,它不进观测文件。
  */
-export type ObservationKind = "tripped" | "wall-clock-soft" | "memory-pressure";
+export type ObservationKind = "tripped" | ObservationLineKind;
 
 /**
  * 一条观测:种类 + 轨名 + 观测值 + 上限值。
@@ -62,23 +65,57 @@ export type Observation = {
 };
 
 /**
- * `drainIntents()` 的返回载荷:**intents 加观测**。
+ * `drainIntents()` 的返回载荷:**intents 加观测**,再加一个可选的故障位。
  *
  * 这不新增中间表示、也不新增桥调用——ADR-0005 的「缝就是那两次宿主桥调用」原样成立,
  * 只是回来的那一次载荷多了几栏。`observations` 为空数组时,这一 tick 没有任何预算事实要报。
+ *
+ * ── `fault` 为什么是一个故障位而不是第三条观测 ──
+ *
+ * 墙钟硬超时不是「一条读数」,而是「这一局作废」:它使整场走**作废而非判罚**那条轨
+ * (spec《双重计数与墙钟》)。用观测承载它会让读者以为它也可以被「只记录」。故它是一个明确的
+ * 故障位,由座的执行器在结束本 tick 时置上,`runMatch` 见它即停、标记 `不确定超时`。
  */
 export type RunnerOutput = {
   readonly intents: readonly Intent[];
   readonly observations: readonly Observation[];
+  /** 故障位。缺席即本 tick 正常;`uncertain-timeout` 即墙钟硬超时,整场作废(不判罚)。 */
+  readonly fault?: RunnerFault;
+};
+
+/**
+ * 执行器故障位。目前只有一种:墙钟硬超时。
+ *
+ * 它是一份**封闭取值**:将来若多出一种故障,在座位的合并语义(见 `step0-dispatch.ts`)由
+ * 「常量值无歧义」升级为「按座位序取最先者」——而那是那一天的活,不是今天预埋一个没人读的枚举。
+ */
+export type RunnerFault = "uncertain-timeout";
+
+/**
+ * 观测出口收到的一条:**观测 + 它发生的那一格**(tick 与座位)。
+ *
+ * `Observation` 本身只回答「哪一类、读到多少、上限多少」;tick 与座位归**调用点**(步 0),
+ * 因为只有那里同时看得见状态与座位。缝上不为此新增方法(ADR-0005)。
+ */
+export type ObservationRecord = {
+  /** 发生这条观测的那一 tick(与同 tick 回放行的 `tick` 栏同号,不早也不晚)。 */
+  readonly tick: number;
+  readonly seat: PlayerIndex;
+  readonly kind: ObservationLineKind;
+  /** 轨名(执行器的原生词,如 `wallClockSoftLimit`)。观测行不写它(kind 已唯一对应一条轨)。 */
+  readonly track: string;
+  readonly value: number;
+  readonly limit: number;
 };
 
 /**
  * 观测出口。**可选**:缺席时另外两类观测静默丢弃,这样引擎单测不必关心它。
  *
  * 与回放 sink 平行但独立:观测永远不进回放、更不进 `stateHash`(hld《观测通道》)。
+ * 收到的每条已带 tick 与座位(调用点补齐,不增缝上的方法)。
  */
 export type ObservationSink = {
-  readonly record: (observation: Observation) => void;
+  readonly record: (record: ObservationRecord) => void;
 };
 
 /**

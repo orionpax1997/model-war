@@ -174,6 +174,16 @@ export const runVerifyCommand = async (args: readonly string[]): Promise<number>
     reportFailure(COMMAND, failure);
     return failure.exitCode;
   }
+  if (executed.status === "uncertain-timeout") {
+    // 存档回放是「跑完的一局」,重算却硬超时——环境变了或引擎坏了。不静默换、也不当成比对差异:
+    // 按引擎故障轨处理(与「重算时未捕获异常」同一码)。
+    const failure: CommandFailure = {
+      exitCode: EXIT_ENGINE_FAULT,
+      message: `重算遇到不确定超时(第 ${String(executed.tick)} tick)——存档回放本不应硬超时`,
+    };
+    reportFailure(COMMAND, failure);
+    return failure.exitCode;
+  }
 
   // ── 逐 tick 比对 + 末行 ——
   const archivedTicks = archivedLines.filter(
