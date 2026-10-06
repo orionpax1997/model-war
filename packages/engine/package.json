@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./runner": {
+      "types": "./dist/runner/quickjs.d.ts",
+      "default": "./dist/runner/quickjs.js"
     }
   },
   "dependencies": {

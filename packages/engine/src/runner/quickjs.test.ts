@@ -15,7 +15,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
-import { expect, it, beforeAll } from "vitest";
+import { expect, it, beforeAll, vi } from "vitest";
 import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset } from "@model-war/replay";
 import type { QuickJS } from "quickjs-wasi";
 
@@ -29,12 +29,14 @@ import {
   EVENT_TRACK,
   INTERRUPT_EVENT_GRANULARITY,
   MEMORY_TRACK,
+  WALL_CLOCK_SAMPLE_INTERVAL,
+  WALL_CLOCK_TRACK,
   WASI_CLOCK_MS,
-  createEventCounter,
   createQuickJsRunner,
   createSandboxVm,
-  eventCounterHandler,
+  createTickCounter,
   openSandbox,
+  tickCounterHandler,
 } from "./quickjs.js";
 
 /** 一份最小快照:预览桥/骨架即可,不含任何对象。 */
@@ -280,6 +282,8 @@ const drainOneTick = async (
     readonly softThresholdRatio?: number;
     readonly eventTickLimit?: number;
     readonly apiCallTickLimit?: number;
+    readonly wallClockSoftLimit?: number;
+    readonly wallClockHardTimeout?: number;
   } = {},
 ) => {
   const { runner, dispose } = await createQuickJsRunner({
@@ -477,33 +481,53 @@ it("每 tick 末的强制回收有开销:读数记录在案(不是免费动作)"
 const EVENT_SPIN_SCRIPT = readFixture("event-spin.js");
 const API_FLOOD_SCRIPT = readFixture("api-flood.js");
 
-it("事件计数回调内无时钟、无分配:只做整数自增与阈值比较", () => {
-  // 一条断言钉住回调的形状:它的源码里不得出现时钟读取或分配构造。回调只能在构造时装,
-  // 所以它是整条轨里唯一会被每 5000 次控制流事件调到的热点——那里放重活会拖慢每一步。
-  const source = eventCounterHandler.toString();
-  for (const forbidden of [
-    "Date",
-    "performance",
-    "Math",
-    "new ",
-    ".push(",
-    "Object.",
-    "Array",
-    "[",
-  ]) {
+it("计数回调内每次只做整数自增与比较;时钟按抽样读(不是每次)", () => {
+  // 静态:回调源码里没有分配类构造。它每 5000 次控制流事件就被调到一次,放重活会拖慢每一步。
+  // 时钟读取是**允许**的(hld §5.3:「不得放每次都做的重活;时钟按抽样读」),所以不列入禁词。
+  const source = tickCounterHandler.toString();
+  for (const forbidden of ["Math", "new ", ".push(", "Object.", "Array", "["]) {
     expect(source).not.toContain(forbidden);
   }
-  // 行为:恰好按粒度自增,达阈才置截停标志。
-  const counter = createEventCounter(2 * INTERRUPT_EVENT_GRANULARITY);
+  // 行为:每 `WALL_CLOCK_SAMPLE_INTERVAL` 次回调才读一次钟——前 N-1 次一次都不读。
+  const spy = vi.spyOn(performance, "now");
+  try {
+    const counter = createTickCounter({
+      eventLimit: undefined,
+      softLimit: 0,
+      hardLimit: undefined,
+    });
+    counter.armed = true;
+    for (let call = 0; call < WALL_CLOCK_SAMPLE_INTERVAL - 1; call++) {
+      expect(tickCounterHandler(counter)).toBe(false);
+    }
+    // 未到抽样点:一次钟都没读。若回调每次都读钟,这一条红。
+    expect(spy).not.toHaveBeenCalled();
+    expect(tickCounterHandler(counter)).toBe(false);
+    // 恰好到抽样点:读一次钟,并把首越读数记下。
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(counter.softValue).toBeGreaterThanOrEqual(0);
+  } finally {
+    spy.mockRestore();
+  }
+  // 事件计数:恰好按粒度自增,达阈才置截停标志。
+  const counter = createTickCounter({
+    eventLimit: 2 * INTERRUPT_EVENT_GRANULARITY,
+    softLimit: undefined,
+    hardLimit: undefined,
+  });
   counter.armed = true;
-  expect(eventCounterHandler(counter)).toBe(false);
-  expect(counter.count).toBe(INTERRUPT_EVENT_GRANULARITY);
-  expect(eventCounterHandler(counter)).toBe(true);
-  expect(counter.tripped).toBe(true);
+  expect(tickCounterHandler(counter)).toBe(false);
+  expect(counter.eventCount).toBe(INTERRUPT_EVENT_GRANULARITY);
+  expect(tickCounterHandler(counter)).toBe(true);
+  expect(counter.eventTripped).toBe(true);
   // 未 arm、或本轨未启用(阈值缺席)时,回调恒不截停。
-  expect(eventCounterHandler(createEventCounter(undefined))).toBe(false);
-  const idle = createEventCounter(1);
-  expect(eventCounterHandler(idle)).toBe(false);
+  expect(
+    tickCounterHandler(
+      createTickCounter({ eventLimit: undefined, softLimit: undefined, hardLimit: undefined }),
+    ),
+  ).toBe(false);
+  const idle = createTickCounter({ eventLimit: 1, softLimit: undefined, hardLimit: undefined });
+  expect(tickCounterHandler(idle)).toBe(false);
 });
 
 it("纯计算死循环夹具被控制流事件计数截停(意图作废、产 tripped)", async () => {
@@ -607,6 +631,62 @@ it("本 tick 的 API 计数在下一 tick 进入时重置", async () => {
   } finally {
     dispose();
   }
+});
+
+// ── 墙钟(票 09):软限只观测、硬超时作废而非判罚 ────────────────────────────
+
+/**
+ * 一段**有界但慢**的脚本:迭代 30 万次后才交回一笔 intent。它产生足够多的循环回边,
+ * 使墙钟能被抽到样(每 `WALL_CLOCK_SAMPLE_INTERVAL` 次回调读一次钟),而自己会终上。
+ */
+const SLOW_SCRIPT = `function loop() {
+  let acc = 0;
+  for (let i = 0; i < 300000; i++) {
+    acc = (acc + i) % 7;
+  }
+  move(acc, 1, 0);
+}`;
+
+it("墙钟软限:慢脚本产出一条 wall-clock-soft 观测(只观测、不判罚)", async () => {
+  // 软限取 0:抽样到就必越。它与阈值高低无关,只验「越了软限就报一条」。
+  const output = await drainOneTick(SLOW_SCRIPT, { wallClockSoftLimit: 0 });
+  // 软限不判罚:意图照常交回(与 tripped 的「意图全部作废」相反)。
+  expect(output.intents).toHaveLength(1);
+  expect(output.observations).toHaveLength(1);
+  const soft = output.observations[0];
+  expect(soft).toMatchObject({ kind: "wall-clock-soft", track: WALL_CLOCK_TRACK, limit: 0 });
+  expect(soft?.value).toBeGreaterThanOrEqual(0);
+});
+
+it("能弄红的反例:同一类脚本但回边不够,抽样不到就一条观测都不产", async () => {
+  // 短脚本只产生远少于「每 5000 事件一格」的回边,回调一次不调,于是不抽样、不产观测。
+  // 若把「读钟」做成每次 API 调用都做、或把软限当阈值无条件报,这一条红。
+  const output = await drainOneTick("function loop() { move(0, 1, 0); }", {
+    wallClockSoftLimit: 0,
+  });
+  expect(output.observations).toEqual([]);
+  expect(output.intents).toHaveLength(1);
+});
+
+it("未定值(墙钟软限字段缺席)下本轨不启用:连回调都不装、不产观测", async () => {
+  const output = await drainOneTick(SLOW_SCRIPT);
+  expect(output.observations).toEqual([]);
+});
+
+it("墙钟硬超时:死循环被截停,交回 uncertain-timeout 故障位(作废而非判罚)", async () => {
+  const output = await drainOneTick(EVENT_SPIN_SCRIPT, { wallClockHardTimeout: 1 });
+  // 硬超时不产观测、不累加异常——它是一个故障位,不是一条读数。
+  expect(output.fault).toBe("uncertain-timeout");
+  expect(output.observations).toEqual([]);
+  expect(output.intents).toEqual([]);
+});
+
+it("硬超时未触发时不置故障位,只有真的过了硬限才作废", async () => {
+  const output = await drainOneTick("function loop() { move(0, 1, 0); }", {
+    wallClockHardTimeout: 60000,
+  });
+  expect(output.fault).toBeUndefined();
+  expect(output.intents).toHaveLength(1);
 });
 
 it("超限只作废该座位本 tick 的意图:其余三方照常结算、引擎不受影响", async () => {

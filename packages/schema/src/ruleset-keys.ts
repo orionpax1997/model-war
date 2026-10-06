@@ -337,7 +337,8 @@ export const RULESET_KEY_CATALOG = {
     unit: "milliseconds",
     minimum: 0,
     calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
-    description: "单 tick `loop()` 的墙钟软限(ms)。**只观测**:写进回放与报告披露,不参与判罚。",
+    description:
+      "单 tick `loop()` 的墙钟软限(ms)。**只观测**:写进观测文件披露,不参与判罚,也不进回放。",
     schema: { type: "integer", minimum: 0, description: "单 tick loop() 的墙钟软限(ms,只观测)。" },
   },
   wallClockHardTimeout: {

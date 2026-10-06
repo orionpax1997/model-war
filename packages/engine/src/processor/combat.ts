@@ -32,6 +32,7 @@
 import type { RulesetView } from "../ruleset-loader/index.js";
 import type { PlayerIndex, Site, Unit } from "../world/state.js";
 import type { Intent } from "./intents.js";
+import { attackVerdict, unitById } from "./intent-verdicts.js";
 
 /** 本模块唯一处理的那条意图。收窄判别式,不靠 `as`。 */
 export type AttackIntent = Extract<Intent, { kind: "attack" }>;
@@ -60,51 +61,18 @@ export type AttackDamage = {
   readonly damage: number;
 };
 
-/** 按数值 id 取单位。`units` 由状态不变量保证升序,但一次一条意图,线性查找即可。 */
-const unitIn = (view: AttackView, id: number): Unit | undefined =>
-  view.units.find((unit) => unit.id === id);
-
 /**
  * `check()`:五条判据,返回布尔。
  *
  * 它**收规则集**:判据 3 要 `damage`、判据 5 要 `range`,两条都从规则集读,不是收下不看的一栏。
+ * 判据的实现在 `intent-verdicts.ts`(处理器与沙箱 guest 共用同一份),这里只还原成布尔。
  */
 export const checkAttack = (
   view: AttackView,
   seat: PlayerIndex,
   ruleset: RulesetView,
   intent: AttackIntent,
-): boolean => {
-  const attacker = unitIn(view, intent.unitId);
-  if (attacker === undefined) {
-    return false;
-  }
-  if (attacker.owner !== seat) {
-    return false;
-  }
-  const stats = ruleset.statsOf(attacker.type);
-  // 判据 3:有攻击能力看 `damage`,不看 `range`(农民 range=1、damage=0)。
-  if (stats.damage <= 0) {
-    return false;
-  }
-  // 判据 4 前半:目标不可为点位(基地不可被攻击)。两个数组的号段互斥(见文件头注),
-  // 所以它与「目标不存在」是两条彼此独立的丢弃路径:命中 `sites` 是「打的是一个点位」,
-  // 两边都没命中才是「打的是空气」。两条都留。
-  if (view.sites.some((site) => site.id === intent.targetId)) {
-    return false;
-  }
-  const target = unitIn(view, intent.targetId);
-  if (target === undefined) {
-    return false;
-  }
-  // 判据 4 后半:目标须为敌方单位。
-  if (target.owner === seat) {
-    return false;
-  }
-  // 判据 5:切比雪夫距离 ≤ 射程。
-  const distance = Math.max(Math.abs(attacker.x - target.x), Math.abs(attacker.y - target.y));
-  return distance <= stats.range;
-};
+): boolean => attackVerdict(view, seat, ruleset, intent).ok;
 
 /**
  * `run()`:在只读基线上算一条伤害条,或「不成立」(`null`)。
@@ -121,7 +89,7 @@ export const runAttack = (
   if (!checkAttack(view, seat, ruleset, intent)) {
     return null;
   }
-  const attacker = unitIn(view, intent.unitId);
+  const attacker = unitById(view, intent.unitId);
   if (attacker === undefined) {
     return null;
   }

@@ -133,11 +133,11 @@ it("逐 tick 摘要带 stateHash 前缀,末行 result 给出名次与领土分",
   expect(out).toContain("A=1");
 });
 
-it("缺参、读不到、某一行不是合法 JSON:一律装载期拒跑,退出码 2", async () => {
+it("缺参、读不到、某一行不是合法 JSON:一律装载期拒跑,退出码 1", async () => {
   const broken = join(dir, "broken.jsonl");
   writeFileSync(broken, `${JSON.stringify(META("stub"))}\n{oops\n`, "utf8");
   // 静默返回 0 的反例:这三条一起红——自动化流程把「没跑成」读成「跑通了」。
-  expect((await run(undefined)).status).toBe(2);
-  expect((await run(join(dir, "no-such.jsonl"))).status).toBe(2);
-  expect((await run(broken)).status).toBe(2);
+  expect((await run(undefined)).status).toBe(1);
+  expect((await run(join(dir, "no-such.jsonl"))).status).toBe(1);
+  expect((await run(broken)).status).toBe(1);
 });

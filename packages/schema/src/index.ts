@@ -39,6 +39,7 @@ export type {
 // 引擎不从这里取,以免污染它「恰好一个导出符号 runMatch」的对外面(见 ADR 0007)。
 export {
   QUICKJS_WASI_VERSION,
+  QUICKJS_WASI_WASM_PATH,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
   SANDBOX_RUNTIME_HASH,
 } from "./sandbox-runtime.js";
@@ -75,6 +76,10 @@ export * from "./match-input.js";
 // 回放 JSONL 的三行(`meta` / `tick` / `result`,hld §7.5)。形状一次定死,取值由引擎写出。
 // 末行 `result` 的终局原因取值域由本模块的 `ReplayOutcomeReason` 定死(09 票销掉 `match-result`)。
 export * from "./replay-line.js";
+
+// 观测行:回放**之外**那份 `observations.jsonl` 的一行(墙钟软限 / 内存压力两类只披露的观测)。
+// 与回放线同级但独立:它永远不进回放、更不进 `stateHash`(hld §5.3)。
+export * from "./observation-line.js";
 
 // 各域文件(形状 / 参数清单 / 常量表)一律从这里再导出。
 export * from "./map.js";

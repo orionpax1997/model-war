@@ -19,6 +19,7 @@ import {
   ARCHIVE_META_JSON_SCHEMA,
   MAP_JSON_SCHEMA,
   MATCH_INPUT_JSON_SCHEMA,
+  OBSERVATION_LINE_JSON_SCHEMA,
   REPLAY_RESULT_LINE_JSON_SCHEMA,
   RULESET_JSON_SCHEMA,
   RULESET_KEYS,
@@ -31,6 +32,8 @@ import type {
   MapVariantSlot,
   MatchInput,
   MatchInputArchive,
+  ObservationLine,
+  ObservationLineKind,
   ReplayOutcomeReason,
   ReplayResultLine,
   Ruleset,
@@ -49,6 +52,7 @@ import {
   validateArchiveMeta,
   validateMap,
   validateMatchInput,
+  validateObservationLine,
   validateReplayResultLine,
   validateRuleset,
   type ArchiveMetaProvenance,
@@ -1336,4 +1340,91 @@ it("回放 result:名次低于 1、领土分为负、类型不对都被拒", () 
   ]);
   expect(resultKeywords(rejectResult(badResult({ type: "tick" })))).toEqual(["enum"]);
   expect(resultKeywords(rejectResult(badResult({ rankings: "1,2,3,4" })))).toEqual(["type"]);
+});
+
+// ── 观测行(09 票:回放之外那份 observations.jsonl 的一行)──────────────────────
+
+/**
+ * 类型级断言:JSON Schema 里 `kind` 的枚举与类型侧的 `ObservationLineKind` 逐字相同。
+ * 两侧各改一个值而只改一边时,`tsc -b` 非零退出(与 `result.reason` 那条同源)。
+ */
+type ObservationKindEnum =
+  (typeof OBSERVATION_LINE_JSON_SCHEMA)["properties"]["kind"]["enum"][number];
+export type ObservationKindEnumMatchesType = Assert<
+  Equals<ObservationKindEnum, ObservationLineKind>
+>;
+
+/** 一份完整的合法观测行。 */
+const GOOD_OBSERVATION: ObservationLine = {
+  type: "observation",
+  tick: 12,
+  seat: 2,
+  kind: "wall-clock-soft",
+  value: 15,
+  limit: 10,
+};
+
+const badObservation = (
+  patch: Record<string, JsonValue> = {},
+  drop: readonly string[] = [],
+): JsonValue =>
+  Object.fromEntries(
+    Object.entries({ ...GOOD_OBSERVATION, ...patch }).filter(([key]) => !drop.includes(key)),
+  );
+
+const rejectObservation = (value: JsonValue) => {
+  const result = validateObservationLine(value);
+  if (result.ok) {
+    throw new Error(`本该被拒绝,却被接受了:${JSON.stringify(value)}`);
+  }
+  return result;
+};
+
+const observationKeywords = (result: ReturnType<typeof rejectObservation>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.keyword);
+
+const observationPointers = (result: ReturnType<typeof rejectObservation>): readonly string[] =>
+  result.machineDiagnostics.map((diagnostic) => diagnostic.pointer);
+
+it("观测行:合法行被接受,并把原值交出来(不重写、不裁剪)", () => {
+  const result = validateObservationLine(GOOD_OBSERVATION);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.observation).toEqual(GOOD_OBSERVATION);
+  }
+});
+
+it("观测行 schema 的必填键就是六栏,且与 properties 一一对应", () => {
+  const required = [...OBSERVATION_LINE_JSON_SCHEMA.required];
+  expect(required).toEqual(["type", "tick", "seat", "kind", "value", "limit"]);
+  expect([...required].sort()).toEqual(Object.keys(OBSERVATION_LINE_JSON_SCHEMA.properties).sort());
+});
+
+it("观测行:删掉任意一个必填项即被拒,诊断指向那个键(六栏逐项)", () => {
+  for (const key of OBSERVATION_LINE_JSON_SCHEMA.required) {
+    const result = rejectObservation(badObservation({}, [key]));
+    expect(observationKeywords(result), `删掉 ${key} 竟不是缺键错`).toEqual(["required"]);
+    expect(observationPointers(result)).toEqual([`/${key}`]);
+  }
+});
+
+it("观测行:多一个未声明的栏即被拒", () => {
+  const result = rejectObservation(badObservation({ mystery: 1 }));
+  expect(observationKeywords(result)).toEqual(["additionalProperties"]);
+  expect(observationPointers(result)).toEqual(["/mystery"]);
+});
+
+it("观测行:kind 取值不在两值枚举内即被拒(只披露、不判罚那两类)", () => {
+  const result = rejectObservation(badObservation({ kind: "tripped" }));
+  expect(observationKeywords(result)).toEqual(["enum"]);
+  expect(observationPointers(result)).toEqual(["/kind"]);
+});
+
+it("观测行:座位/读数/上限的类型与下界不对都被拒", () => {
+  expect(observationKeywords(rejectObservation(badObservation({ seat: 4 })))).toEqual(["enum"]);
+  expect(observationKeywords(rejectObservation(badObservation({ value: -1 })))).toEqual([
+    "minimum",
+  ]);
+  expect(observationKeywords(rejectObservation(badObservation({ limit: "10" })))).toEqual(["type"]);
+  expect(observationKeywords(rejectObservation(badObservation({ tick: 1.5 })))).toEqual(["type"]);
 });

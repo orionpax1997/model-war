@@ -39,7 +39,8 @@
 import type { RulesetView } from "../ruleset-loader/index.js";
 import type { Change } from "../driver/apply.js";
 import type { Intent } from "./intents.js";
-import type { Owner, Player, PlayerIndex, Site, Unit, UnitType } from "../world/state.js";
+import type { Owner, Player, PlayerIndex, Site, Unit } from "../world/state.js";
+import { costOf, spawnVerdict } from "./intent-verdicts.js";
 
 /** 本模块唯一处理的那条意图。收窄判别式,不靠 `as`。 */
 export type SpawnIntent = Extract<Intent, { kind: "spawnUnit" }>;
@@ -62,16 +63,10 @@ export type ProductionView = {
 /** 候选变更。它就是 `apply()` 已登记的 `start-production`,所以落子不需要第二种写操作。 */
 export type StartProduction = Extract<Change, { kind: "start-production" }>;
 
-/** 按数值 id 取点位。`sites` 由状态不变量保证升序,一次一条意图,线性查找即可。 */
-const siteById = (view: ProductionView, id: number): Site | undefined =>
-  view.sites.find((site) => site.id === id);
-
-/** 按座位取玩家;`players` 按 `playerIndex 0..3` 对齐。 */
-const playerOf = (view: ProductionView, seat: PlayerIndex): Player | undefined =>
-  view.players.find((player) => player.index === seat);
-
-/** 该兵种的造价。全整数,取自规则集,代码里不出现那个数字。 */
-const costOf = (ruleset: RulesetView, unitType: UnitType): number => ruleset.statsOf(unitType).cost;
+/**
+ * 该兵种的造价(`costOf`)与取物的两个助手(`siteById` / `playerOf`)住在 `intent-verdicts.ts`:
+ * 处理器与沙箱 guest 共用同一份。`costOf` 还被下面的易主退款用着(见 `cancelOnCaptureOf`)。
+ */
 
 /**
  * `check()`:五条判据,返回布尔。
@@ -92,29 +87,7 @@ export const checkSpawn = (
   seat: PlayerIndex,
   ruleset: RulesetView,
   intent: SpawnIntent,
-): boolean => {
-  const site = siteById(view, intent.baseId);
-  if (site === undefined) {
-    return false;
-  }
-  if (site.kind !== "base") {
-    return false;
-  }
-  if (site.owner !== seat) {
-    return false;
-  }
-  const player = playerOf(view, seat);
-  if (player === undefined) {
-    return false;
-  }
-  if (player.resources < costOf(ruleset, intent.unitType)) {
-    return false;
-  }
-  if (site.producing !== null) {
-    return false;
-  }
-  return true;
-};
+): boolean => spawnVerdict(view, seat, ruleset, intent).ok;
 
 /**
  * `run()`:在只读基线上算出唯一一条候选变更(下单占线 + 扣款),或「不成立」(`null`)。

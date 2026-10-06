@@ -51,7 +51,7 @@ export type ReplayPlayerRef = {
   readonly seat: ReplaySeat;
 };
 
-/** meta 行除执行器读数之外的那些栏(与 `runner` 那一支合起来是十二栏)。 */
+/** meta 行除执行器读数之外的那些栏(与 `runner` 那一支合起来是十三栏)。 */
 type ReplayMetaCommon = {
   readonly type: "meta";
   /** 回放**文件格式**的版本(不是行形状的版本);取值由 `replay` 包的 `CURRENT_SCHEMA_VERSION` 提供。 */
@@ -65,7 +65,7 @@ type ReplayMetaCommon = {
 };
 
 /**
- * meta 行:十二栏,`runner` 是判别式。
+ * meta 行:十三栏,`runner` 是判别式。
  *
  * `stateHashOf` 的规范化序列化按**对象键升序**遍历,所以这一栏在文件里的书写顺序
  * (hld §7.5 的列出顺序)与哈希无关:哈希那侧自己会排。书写顺序归写出侧(引擎的 `buildMetaLine`),
@@ -79,6 +79,7 @@ export type ReplayMetaLine = ReplayMetaCommon &
         readonly sandboxRuntimeHash: null;
         readonly wasiClock: null;
         readonly wasiRandomFill: null;
+        readonly wasiTimezoneOffset: null;
       }
     | {
         readonly runner: "quickjs";
@@ -86,6 +87,7 @@ export type ReplayMetaLine = ReplayMetaCommon &
         readonly sandboxRuntimeHash: string;
         readonly wasiClock: string;
         readonly wasiRandomFill: string;
+        readonly wasiTimezoneOffset: string;
       }
   );
 
@@ -131,10 +133,9 @@ export type ReplaySite = {
   readonly producing: ReplaySiteProduction | null;
 };
 
-/** 八种事件(hld §7.5)。名字是回放与叙事战报共同读的,所以一个都不能改写。 */
+/** 七种事件(hld §7.5)。名字是回放与叙事战报共同读的,所以一个都不能改写。 */
 export type ReplayEventKind =
   | "exception"
-  | "budget-soft-warning"
   | "first-contact"
   | "unit-destroyed"
   | "site-captured"
@@ -215,6 +216,7 @@ const META_REQUIRED_KEYS = [
   "sandboxRuntimeHash",
   "wasiClock",
   "wasiRandomFill",
+  "wasiTimezoneOffset",
   "timezoneOffset",
   "mapHash",
   "seed",
@@ -343,7 +345,6 @@ const REPLAY_EVENT = {
     kind: {
       enum: [
         "exception",
-        "budget-soft-warning",
         "first-contact",
         "unit-destroyed",
         "site-captured",
@@ -351,7 +352,7 @@ const REPLAY_EVENT = {
         "player-eliminated",
         "victory",
       ],
-      description: "八种事件之一(hld §7.5)。名字是回放与叙事战报共同读的,改一个即改一份存档格式。",
+      description: "七种事件之一(hld §7.5)。名字是回放与叙事战报共同读的,改一个即改一份存档格式。",
     },
     subjectId: {
       type: "integer",
@@ -361,11 +362,11 @@ const REPLAY_EVENT = {
 } as const;
 
 /**
- * meta 行的 JSON Schema(hld §2.2.5)。十二栏全必填,`additionalProperties: false`。
+ * meta 行的 JSON Schema(hld §2.2.5)。十三栏全必填,`additionalProperties: false`。
  *
- * **`runner` 与四个沙箱栏的耦合由 `allOf` + `if/then` 表达**,与类型侧的判别联合同一条纪律:
- * 桩执行器那一支上四栏只能是 `null`(「未发生」与「恰好是空串」要能区分),真沙箱那一支上
- * 四栏都必须是字符串。JSON Schema 表达不了 `oneOf` 那种「联合的联合」,但 `if/then` 够用。
+ * **`runner` 与五个沙箱栏的耦合由 `allOf` + `if/then` 表达**,与类型侧的判别联合同一条纪律:
+ * 桩执行器那一支上五栏只能是 `null`(「未发生」与「恰好是空串」要能区分),真沙箱那一支上
+ * 五栏都必须是字符串。JSON Schema 表达不了 `oneOf` 那种「联合的联合」,但 `if/then` 够用。
  */
 // `then` 在这里是 **JSON Schema 的关键字**(if/then/else),不是「一个可 awaited 的对象」——
 // oxlint 的 `unicorn/no-thenable` 会把它读成 thenable。本仓用 if/then 表达「按判别字段分栏」
@@ -375,7 +376,7 @@ export const REPLAY_META_LINE_JSON_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   title: "model-war 回放 meta 行",
   description:
-    "回放 JSONL 的第 1 行(hld §7.5):十二栏。四个沙箱栏在桩执行器下为 null," +
+    "回放 JSONL 的第 1 行(hld §7.5):十三栏。五个沙箱栏在桩执行器下为 null," +
     "真沙箱下为字符串;这一层耦合由 if/then 表达,与类型侧的判别联合同一条纪律。",
   type: "object",
   additionalProperties: false,
@@ -393,13 +394,19 @@ export const REPLAY_META_LINE_JSON_SCHEMA = {
       description: "QuickJS WASI 版本;桩执行器下为 null。",
     },
     sandboxRuntimeHash: {
-      ...SHA256,
+      // 桩执行器下为 null,故顶层允许 null;真沙箱那一支由 `then` 再收紧到 `SHA256` 的形状。
+      type: ["string", "null"],
+      pattern: "^[0-9a-f]{64}$",
       description: "沙箱运行时 hash;桩执行器下为 null(不写空串:「未发生」要与「空串」分得开)。",
     },
     wasiClock: { type: ["string", "null"], description: "WASI 时钟读数;桩执行器下为 null。" },
     wasiRandomFill: {
       type: ["string", "null"],
       description: "WASI 确定性随机填值;桩执行器下为 null。",
+    },
+    wasiTimezoneOffset: {
+      type: ["string", "null"],
+      description: "WASI 时区偏移;桩执行器下为 null。与下面的 `timezoneOffset`(装载时区)是两件事。",
     },
     timezoneOffset: { type: "string", minLength: 1, description: "装载时的时区偏移。" },
     mapHash: { ...SHA256, description: "地图 JSON 的 sha256。" },
@@ -427,6 +434,7 @@ export const REPLAY_META_LINE_JSON_SCHEMA = {
           sandboxRuntimeHash: { type: "null" },
           wasiClock: { type: "null" },
           wasiRandomFill: { type: "null" },
+          wasiTimezoneOffset: { type: "null" },
         },
       },
     },
@@ -438,6 +446,7 @@ export const REPLAY_META_LINE_JSON_SCHEMA = {
           sandboxRuntimeHash: SHA256,
           wasiClock: { type: "string", minLength: 1 },
           wasiRandomFill: { type: "string", minLength: 1 },
+          wasiTimezoneOffset: { type: "string", minLength: 1 },
         },
       },
     },

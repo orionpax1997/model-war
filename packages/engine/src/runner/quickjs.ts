@@ -3,7 +3,8 @@
  *
  * ── 缝不变:仍然恰好两个方法 ──
  *
- * 建 VM、铺注入面、**删桥**、注入座位、释放——全部发生在**工厂**里,不在 `SeatRunner` 上。
+ * 建 VM、铺注入面、**删掉 setup 与桥**、灌座位与规则面、释放——全部发生在**工厂**里,不在
+ * `SeatRunner` 上。
  * 交出去的执行器只有 `setSnapshot` / `drainIntents` 两条方法(与 `StubRunner` 逐字同形),
  * 所以结算管线认不出它收的是桩还是真 VM。VM 的生命周期归组装层:工厂返回 `{ runner, dispose }`,
  * 谁建的谁释放。
@@ -17,15 +18,18 @@
  * ── 三件套是构造选项,不是每 tick 的决定 ──
  *
  * 冻钟是 `wasi` 对 `clock_time_get` 的覆盖(写回固定纳秒值),`Math.random()` 的种子就来自这次
- * 读钟;时区是构造选项 `timezoneOffset`。三者只能建 VM 时定一次,所以它们不是对局参数,而是
- * 工程常量——同一份脚本因此在对局内、跨 VM、跨重跑三个维度上得到同一序列。
+ * 读钟;随机字节是 `wasi` 对 `random_get` 的覆盖(固定填充);时区是构造选项 `timezoneOffset`。
+ * 三者只能建 VM 时定一次,所以它们不是对局参数,而是工程常量——同一份脚本因此在对局内、跨 VM、
+ * 跨重跑三个维度上得到同一序列。
  *
  * ── 载入次序与删桥 ──
  *
- * `evalCode(runtimeCode)` 建 API 面 → 取两个桥的函数 handle → 从全局**删掉**它们 →
- * 注入按座位的 `getMyIndex` → `evalCode(scriptCode)` 载入脚本(入口名固定 `function loop()`)。
+ * 灌一次性 setup `{ seat, ruleset }` 到 `__setSnapshot` 这个名字下 → `evalCode(runtimeCode)` 建 API 面
+ * (runtime 在载入时把 setup 读进闭包,并把同一名字换成每 tick 的桥函数;`getMyIndex()` 由它自己铺)
+ * → 取两个桥的函数 handle → 从全局删掉两个桥 → `evalCode(scriptCode)` 载入脚本(入口名固定
+ * `function loop()`)。
  * 每 tick:`__setSnapshot(snapshot)` → `loop()` → `executePendingJobs()` 排空到不动点 →
- * `__drainIntents()`。删桥的断言是「脚本按 `__` 前缀枚举为空」,而宿主仍能经函数 handle 调桥。
+ * `__drainIntents()`。删干净了的断言是「脚本按 `__` 前缀枚举为空」,而宿主仍能经函数 handle 调桥。
  *
  * ── 排空到不动点为什么必须在 drain 之前 ──
  *
@@ -34,19 +38,25 @@
  * `pumpJobs` 分成两步暴露(而非在 `drainIntents` 里一把梭),正是为了给这条反例留一个
  * 能弄红的入口:见 `quickjs.test.ts`。
  *
- * ── 双计数(票 07):两个宿主 authored 的纯整数计数 ──
+ * ── 双计数与墙钟(票 07/09):宿主 authored 的纯整数计数 + 抽样读钟 ──
  *
  * 控制流事件计数用 `QuickJS.create({ interruptHandler })` 装一个宿主闭包计数器:WASM 侧每
- * `INTERRUPT_EVENT_GRANULARITY` 次控制流事件(循环回边/调用/返回)调一次,回调**只做整数
- * 自增与阈值比较**,不分配、不读时钟(hld §5.3 的硬要求)。计数状态只能住宿主闭包——
- * `interruptHandler` 建 VM 后改不了(没有 setter)。本 tick 进入时归零,累计值在闭包内。
+ * `INTERRUPT_EVENT_GRANULARITY` 次控制流事件(循环回边/调用/返回)调一次,回调**每次只做整数
+ * 自增与整数比较**,不分配;墙钟按 `WALL_CLOCK_SAMPLE_INTERVAL` **抽样读**(每若干次回调读一次
+ * `performance.now()`,不是每次)——这是 hld §5.3「回调内不得放**每次**都做的重活;时钟按抽样读」
+ * 的落点。计数状态只能住宿主闭包——`interruptHandler` 建 VM 后改不了(没有 setter)。本 tick
+ * 进入时归零,累计值在闭包内。
  *
  * API 调用计数**在 guest 运行时里**自增(hld §4.5:action/查询函数做「收集 + 界检查 + API 计数
  * 自增」),经**同一次 `__drainIntents()` 返回载荷**带回宿主(返回结构 `{ intents, apiCalls }`),
  * 宿主拿 `apiCallTickLimit` 比较后裁决。不新增桥调用、不做每次 API 调用的跨边界计数。
  *
- * **超限的后果**:任何一轨超限 → 只作废该座位本 tick 的意图(单位原地待命),不中断其他三方与
- * 引擎;产出一条 `tripped` 观测(轨名 = 预算键名),经步 0 落成 `count-exception-tick` 变更。
+ * **超限的后果**:
+ * - 事件 / API 两轨超限 → 只作废该座位本 tick 的意图(单位原地待命),不中断其他三方与
+ *   引擎;产出一条 `tripped` 观测(轨名 = 预算键名),经步 0 落成 `count-exception-tick` 变更。
+ * - 墙钟软限 → **只产一条 `wall-clock-soft` 观测**,不判罚、不进回放。
+ * - 墙钟硬超时 → 中断本 tick,交回故障位 `uncertain-timeout`,整场走**作废而非判罚**那条轨。
+ *
  * 本 tick 的计数在进入下一 tick 时重置;`exceptionTicks` 却是跨 tick 单调递增、不清零的。
  *
  * ── 内存判据(票 08):读数,不是异常 ──
@@ -74,7 +84,7 @@
  */
 
 import { QuickJS, type JSValueHandle, type MemoryUsage } from "quickjs-wasi";
-import { MEMORY_SOFT_THRESHOLD_RATIO } from "@model-war/replay";
+import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset } from "@model-war/replay";
 
 import type { Intent } from "../processor/intents.js";
 import type { PlayerIndex, Snapshot } from "../world/state.js";
@@ -90,6 +100,17 @@ export const WASI_CLOCK_MS = 1_700_000_000_000;
 
 /** 时区偏移:十进制分钟(UTC = 0)。三件套之一。`Date` 与 `getTimezoneOffset()` 由它决定。 */
 export const WASI_TIMEZONE_OFFSET_MINUTES = 0;
+
+/** 随机字节固定填充的**单字节值**。三件套之一(见本模块头注)。 */
+const WASI_RANDOM_FILL_BYTE = 0x00;
+
+/**
+ * `random_get` 的固定字节填充:**十六进制、不带 `0x` 前缀**。回放 meta 的 `wasiRandomFill` 栏取它。
+ *
+ * 由单字节值推出(而不是另写一个字面量字符串),于是「覆盖写进去的字节」与「写回放 meta 的字串」
+ * 不可能分叉。`quickjs-wasi` 默认的 `random_get` 走宿主 WebCrypto(**非确定**),所以必须显式覆盖。
+ */
+export const WASI_RANDOM_FILL = WASI_RANDOM_FILL_BYTE.toString(16).padStart(2, "0");
 
 /** 脚本入口的固定名字。载入之后引擎只调它(`function loop()`)。 */
 export const SCRIPT_ENTRY = "loop";
@@ -110,10 +131,30 @@ export type QuickJsVmOptions = {
    * 不中断。组装层读键清单的 `calibration.state`,未定值就不传这个字段(引擎不认识「未定值」)。
    */
   readonly eventTickLimit?: number;
+  /**
+   * 单 tick 墙钟软限(ms)。缺席即本轨不启用(不读钟)。软限**只产一条 `wall-clock-soft`
+   * 观测、不判罚、不进回放**(spec《双重计数与墙钟》)。
+   */
+  readonly wallClockSoftLimit?: number;
+  /**
+   * 墙钟硬超时(ms)。缺席即本轨不启用。超时中断本 tick 并交回故障位 `uncertain-timeout`,
+   * 使整场作废(不判负)——它是防宿主卡死的最后一道防线。
+   */
+  readonly wallClockHardTimeout?: number;
 };
 
 /** 控制流事件计数的粒度:WASM 侧每这么多次控制流事件(循环回边/调用/返回)触发一次回调。 */
 export const INTERRUPT_EVENT_GRANULARITY = 5000;
+
+/**
+ * 墙钟按抽样读的间隔:每这么多次**回调**读一次时钟(回调本身是每 `INTERRUPT_EVENT_GRANULARITY`
+ * 次控制流事件一次)。
+ *
+ * 这是 hld §5.3「回调内不得放**每次**都做的重活;时钟按抽样读」的落点:一次 `performance.now()`
+ * 比一次整数自增贵得多,而墙钟只观测不判罚——粒度粗一点不损失任何结论。量级取 20:以 5000/回调
+ * 的粒度计,每 10 万次控制流事件才读一次钟,对短脚本几乎免费,对死循环足够密(毫秒级)。
+ */
+export const WALL_CLOCK_SAMPLE_INTERVAL = 20;
 
 /** 控制流事件计数的轨名(与规则集预算键同名;`tripped` 观测与变更都带它)。 */
 export const EVENT_TRACK = "eventTickLimit";
@@ -121,67 +162,124 @@ export const EVENT_TRACK = "eventTickLimit";
 /** API 调用计数的轨名。 */
 export const API_CALL_TRACK = "apiCallTickLimit";
 
+/** 墙钟软限的轨名(与规则集预算键同名;观测行的 `kind` 是 `wall-clock-soft`)。 */
+export const WALL_CLOCK_TRACK = "wallClockSoftLimit";
+
 /**
- * 控制流事件计数的宿主侧状态。字段全是整数/布尔:计数回调内只做整数自增与阈值比较。
+ * 宿主侧的 tick 计数状态。字段全是整数/布尔:计数回调内只做整数自增与整数比较,
+ * 时钟按抽样读(见 `WALL_CLOCK_SAMPLE_INTERVAL`)。
  *
  * **计数状态只能住宿主闭包**:`interruptHandler` 是 `QuickJS.create()` 的构造选项,建 VM 后
  * 没有 setter。快照进、意图出那两次桥不承载计数状态。
  */
-export type EventCounter = {
-  readonly limit: number | undefined;
-  count: number;
-  tripped: boolean;
+export type TickCounter = {
+  /** 控制流事件计数的上限;缺席即本轨不启用(不比较)。 */
+  readonly eventLimit: number | undefined;
+  /** 墙钟软限(ms);缺席即本轨不启用。 */
+  readonly softLimit: number | undefined;
+  /** 墙钟硬超时(ms);缺席即本轨不启用。 */
+  readonly hardLimit: number | undefined;
+  eventCount: number;
+  eventTripped: boolean;
   armed: boolean;
+  /** 本 tick 开始时的墙钟读数(ms);`beginTick` 时取一次。 */
+  tickStart: number;
+  /** 距上一次读钟已过了几次回调。 */
+  sinceSample: number;
+  /** 软限在本 tick 内**首次**被越过时的读数(ms);`-1` 表示未越过。 */
+  softValue: number;
+  /** 本 tick 是否被墙钟硬超时截停。 */
+  hardTimedOut: boolean;
 };
 
-export const createEventCounter = (limit: number | undefined): EventCounter => ({
-  limit,
-  count: 0,
-  tripped: false,
+export const createTickCounter = (options: {
+  readonly eventLimit: number | undefined;
+  readonly softLimit: number | undefined;
+  readonly hardLimit: number | undefined;
+}): TickCounter => ({
+  eventLimit: options.eventLimit,
+  softLimit: options.softLimit,
+  hardLimit: options.hardLimit,
+  eventCount: 0,
+  eventTripped: false,
   armed: false,
+  tickStart: 0,
+  sinceSample: 0,
+  softValue: -1,
+  hardTimedOut: false,
 });
 
 /**
- * 计数回调。**唯一的动作是整数自增 + 与阈值比较**:不分配、不读时钟、不碰 guest。
+ * 计数回调。**每次调用的动作只有整数自增与整数比较**;时钟按 `WALL_CLOCK_SAMPLE_INTERVAL`
+ * 抽样读(不是每次)——这是 hld §5.3 那条硬要求的落点。
  *
  * WASM 侧每 `INTERRUPT_EVENT_GRANULARITY` 次控制流事件调它一次;返回 `true` 即中断本 tick
  * (WASM 侧抛 host `JSException: InternalError: interrupted`)。计数只在本 tick **armed** 期间
  * 发生——`loop()` 与 job 排空之外(runtime 载入、`__setSnapshot` 的 guest 代码)不计。
+ *
+ * 硬超时与事件计数都用同一个 `true` 中断本 tick;区分靠 `hardTimedOut` 标志——前者使整场作废
+ * (`uncertain-timeout`),后者只是一条 `tripped` 观测。
  */
-export const eventCounterHandler = (counter: EventCounter): boolean => {
-  if (!counter.armed || counter.limit === undefined) {
+export const tickCounterHandler = (counter: TickCounter): boolean => {
+  if (!counter.armed) {
     return false;
   }
-  counter.count += INTERRUPT_EVENT_GRANULARITY;
-  if (counter.count >= counter.limit) {
-    counter.tripped = true;
+  counter.eventCount += INTERRUPT_EVENT_GRANULARITY;
+  // 墙钟:每 `WALL_CLOCK_SAMPLE_INTERVAL` 次回调才读一次钟(不是每次)。软限只记读数,硬超时截停。
+  if (counter.softLimit !== undefined || counter.hardLimit !== undefined) {
+    counter.sinceSample += 1;
+    if (counter.sinceSample >= WALL_CLOCK_SAMPLE_INTERVAL) {
+      counter.sinceSample = 0;
+      const elapsed = performance.now() - counter.tickStart;
+      if (counter.hardLimit !== undefined && elapsed >= counter.hardLimit) {
+        counter.hardTimedOut = true;
+        return true;
+      }
+      if (
+        counter.softLimit !== undefined &&
+        counter.softValue < 0 &&
+        elapsed >= counter.softLimit
+      ) {
+        counter.softValue = elapsed;
+      }
+    }
+  }
+  if (counter.eventLimit !== undefined && counter.eventCount >= counter.eventLimit) {
+    counter.eventTripped = true;
     return true;
   }
   return false;
 };
 
-/** VM 加它的两个闭包钩:会话层需要经 `eventCounter` 开合本 tick 的计数闸门。 */
+/** VM 加它的那条闭包钩:会话层需要经 `counter` 开合本 tick 的计数闸门与读回读数。 */
 type SandboxVmHandle = {
   readonly vm: QuickJS;
-  readonly eventCounter: EventCounter;
+  readonly counter: TickCounter;
 };
 
 /**
- * 建一个被三件套钉住的 VM,并随口把事件计数闭包交出去。
+ * 建一个被三件套钉住的 VM,并随口把计数闭包交出去。
  *
- * 计数回调只有在构造时才能装上,所以「本轨启用时」才装它(缺席连回调都不装,零开销)。
+ * 计数回调只有在构造时才能装上,所以「三条轨里任一条启用时」才装它(全不启用连回调都不装,零开销)。
  */
 const createSandboxVmWithCounter = async (options: QuickJsVmOptions): Promise<SandboxVmHandle> => {
   const clockMs = options.clockMs ?? WASI_CLOCK_MS;
-  const eventCounter = createEventCounter(options.eventTickLimit);
+  const counter = createTickCounter({
+    eventLimit: options.eventTickLimit,
+    softLimit: options.wallClockSoftLimit,
+    hardLimit: options.wallClockHardTimeout,
+  });
+  // 事件计数 / 墙钟软限 / 墙钟硬超时三条轨共用同一个回调:任一条启用就装它。
+  const anyTrackEnabled =
+    options.eventTickLimit !== undefined ||
+    options.wallClockSoftLimit !== undefined ||
+    options.wallClockHardTimeout !== undefined;
   const vm = await QuickJS.create({
     wasm: options.wasm,
     timezoneOffset: options.timezoneOffsetMinutes ?? WASI_TIMEZONE_OFFSET_MINUTES,
     ...(options.memoryLimit === undefined ? {} : { memoryLimit: options.memoryLimit }),
-    // 只在本轨启用时装回调:缺席即不计数、不中断,也不付那份每次调用的税。
-    ...(options.eventTickLimit === undefined
-      ? {}
-      : { interruptHandler: () => eventCounterHandler(eventCounter) }),
+    // 三条轨全不启用时不装回调:不计数、不读钟,也不付那份每次调用的税。
+    ...(anyTrackEnabled ? { interruptHandler: () => tickCounterHandler(counter) } : {}),
     // 冻钟:覆盖 `clock_time_get`,写回固定纳秒值。`Math.random()` 的 xorshift 种子就取自这里,
     // 所以「冻钟」同时钉住了随机源——三件套里的两件是同一件事的两面。
     wasi: (memory: WebAssembly.Memory) => ({
@@ -189,9 +287,15 @@ const createSandboxVmWithCounter = async (options: QuickJsVmOptions): Promise<Sa
         new DataView(memory.buffer).setBigUint64(resultPtr, BigInt(clockMs) * 1_000_000n, true);
         return 0;
       },
+      // 随机源不靠宿主 WebCrypto(那是非确定的):ALL 覆盖为固定字节填充。WASI libc 启动期的
+      // `arc4random`/`getentropy` 与将来若加载的扩展都走这里,于是整场对局完全确定。
+      random_get: (bufPtr: number, bufLen: number): number => {
+        new Uint8Array(memory.buffer, bufPtr, bufLen).fill(WASI_RANDOM_FILL_BYTE);
+        return 0;
+      },
     }),
   });
-  return { vm, eventCounter };
+  return { vm, counter };
 };
 
 /** 建一个被三件套钉住的 VM。**只有本模块与测试用**;测试也经它拿到真实配置(见 `quickjs.test.ts`)。 */
@@ -216,14 +320,19 @@ export type SandboxSession = {
   readonly pumpJobs: () => number;
   /** 经 `__drainIntents()` 取回这一 tick 的意图与 API 调用计数(票 07 的返回载荷加栏)。 */
   readonly drainIntents: () => DrainedGuest;
-  /** 开始本 tick 的控制流事件计数(归零并 arm)。本轨未启用时是一次空操作。 */
-  readonly beginEventTick: () => void;
-  /** 结束本 tick 的计数(disarm),返回本 tick 是否被事件计数截停与读数。 */
-  readonly endEventTick: () => EventTickResult;
+  /** 开始本 tick 的计数(归零并 arm,记下墙钟起点)。三条轨均未启用时是一次空操作。 */
+  readonly beginTick: () => void;
+  /** 结束本 tick 的计数(disarm),返回本 tick 的三类读数(见 `TickReadings`)。 */
+  readonly endTick: () => TickReadings;
   /** 强制一次垃圾回收。判据读数取在它**之后**(见本模块头注《内存判据》)。 */
   readonly runGC: () => void;
   /** 读 VM 当前的内存占用快照。字段见 `MemoryUsage`;判据用的是 `mallocSize`(存活堆口径)。 */
   readonly memoryUsage: () => MemoryUsage;
+  /**
+   * 在 guest 里求一段表达式并 dump 回宿主。测试与自检用(不入缝):API 面的名字集合对不对、
+   * 有没有 `__*` 残留、某个调用会不会抛。
+   */
+  readonly probe: (code: string) => unknown;
   /** 释放 VM 与所有保留的 handle。 */
   readonly dispose: () => void;
 };
@@ -234,10 +343,16 @@ export type DrainedGuest = {
   readonly apiCalls: number;
 };
 
-/** 一个 tick 的控制流事件计数读数。`tripped` 为真即本 tick 被本轨截停。 */
-export type EventTickResult = {
-  readonly tripped: boolean;
-  readonly count: number;
+/** 一个 tick 的三类读数:事件计数截停 / 墙钟软限首越读数 / 墙钟硬超时。 */
+export type TickReadings = {
+  /** 本 tick 是否被控制流事件计数截停。 */
+  readonly eventTripped: boolean;
+  /** 本 tick 的控制流事件计数读数。 */
+  readonly eventCount: number;
+  /** 软限本 tick 首次越过的读数(ms);未越过为 `-1`。 */
+  readonly softValue: number;
+  /** 本 tick 是否被墙钟硬超时截停。 */
+  readonly hardTimedOut: boolean;
 };
 
 /** 开一次沙箱会话的完整输入。 */
@@ -246,36 +361,49 @@ export type QuickJsSessionOptions = QuickJsVmOptions & {
   readonly runtimeCode: string;
   /** 参赛脚本源码(单文件自包含,入口名固定 `function loop()`)。 */
   readonly scriptCode: string;
-  /** 本 VM 服务哪个座位:`getMyIndex()` 按它注入常量函数。 */
+  /** 本 VM 服务哪个座位:经建 VM 时的一次性 setup 载荷灌入,由 guest 的 `getMyIndex()` 读。 */
   readonly seat: PlayerIndex;
+  /**
+   * 这一局的规则集(`raw`),建 VM 时随一次性 setup 灌进 guest 供判据读射程/造价/携带上限。
+   *
+   * **缺席即判据降级**:要读规则面的那两条判据(射程/资金)跳过,交回引擎终裁。组装层拿到了
+   * 已校验的规则集,【应当】把它传进来;它缺席时脚本仍能跑完对局,只是少了那两条即时反馈。
+   */
+  readonly ruleset?: Ruleset;
 };
 
 /**
- * 开一次会话:建 VM → 载 runtime → 取桥 handle → 删桥 → 注入座位 → 载脚本 → 取入口 handle。
+ * 开一次会话:建 VM → 灌 setup → 载 runtime → 取桥 handle → 删桥 → 载脚本 → 取入口 handle。
  *
  * 载入期任一步抛异常都在这里把 VM 释放掉再抛出去:半个初始化好的 VM 不该漏出去,
  * 更不该在异常路径上把 `dispose` 变成调用方的义务。
  */
 export const openSandbox = async (options: QuickJsSessionOptions): Promise<SandboxSession> => {
-  const { vm, eventCounter } = await createSandboxVmWithCounter(options);
+  const { vm, counter } = await createSandboxVmWithCounter(options);
   try {
+    // 一次性 setup 载荷:座位 + 规则面。**在 runtime 载入之前**先放在 `__setSnapshot` 这个名字下;
+    // runtime 载入时把它读进闭包,并立刻把同一个名字换成每 tick 的桥函数。这样不必新增一个只出现
+    // 一次的注入名(那会给 tools 的构建面添一处与并行票的耦合),而名字仍由 `HOST_BRIDGE_*` 常量拼出。
+    vm.setProp(
+      vm.global,
+      HOST_BRIDGE_SET_SNAPSHOT,
+      vm.hostToHandle({
+        seat: options.seat,
+        ...(options.ruleset === undefined ? {} : { ruleset: options.ruleset }),
+      }),
+    );
     vm.evalCode(options.runtimeCode, "<sandbox-runtime>").dispose();
 
     // 桥在脚本之前取 handle、之后从全局删。名字由 `HOST_BRIDGE_*` 常量拼(见 runner/index.ts)。
     const setSnapshotHandle = vm.global.getProp(HOST_BRIDGE_SET_SNAPSHOT);
     const drainIntentsHandle = vm.global.getProp(HOST_BRIDGE_DRAIN_INTENTS);
 
-    // 删桥:脚本执行前把两个 `__*` 全局摘掉。仍以常量为准拼出删除表达式,不手写字面量。
+    // 删两个桥:脚本执行前把两个 `__*` 全局摘掉。仍以常量为准拼出删除表达式,不手写字面量。
     vm.evalCode(
       `delete globalThis[${JSON.stringify(HOST_BRIDGE_SET_SNAPSHOT)}];` +
         `delete globalThis[${JSON.stringify(HOST_BRIDGE_DRAIN_INTENTS)}];`,
       "<delete-bridges>",
     ).dispose();
-
-    // 座位自认按座位注入常量函数(runtime 是同一串字节,座位只能由宿主绑)。
-    const seatFn = vm.newFunction("getMyIndex", () => vm.newNumber(options.seat));
-    vm.setProp(vm.global, "getMyIndex", seatFn);
-    seatFn.dispose();
 
     vm.evalCode(options.scriptCode, "<script>").dispose();
     const loopHandle = vm.global.getProp(SCRIPT_ENTRY);
@@ -302,18 +430,29 @@ export const openSandbox = async (options: QuickJsSessionOptions): Promise<Sandb
       pumpJobs: () => vm.executePendingJobs(),
       runGC: () => vm.runGC(),
       memoryUsage: () => vm.getMemoryUsage(),
+      probe: (code) => vm.evalCode(code).consume((handle: JSValueHandle) => vm.dump(handle)),
       drainIntents: () =>
         vm
           .callFunction(drainIntentsHandle, vm.undefined)
           .consume((handle: JSValueHandle) => vm.dump(handle)) as DrainedGuest,
-      beginEventTick: () => {
-        eventCounter.count = 0;
-        eventCounter.tripped = false;
-        eventCounter.armed = true;
+      beginTick: () => {
+        counter.eventCount = 0;
+        counter.eventTripped = false;
+        counter.hardTimedOut = false;
+        counter.softValue = -1;
+        counter.sinceSample = 0;
+        // 本 tick 的墙钟起点每 tick 取一次(回调里按抽样读的是与它的**差值**)。
+        counter.tickStart = performance.now();
+        counter.armed = true;
       },
-      endEventTick: () => {
-        eventCounter.armed = false;
-        return { tripped: eventCounter.tripped, count: eventCounter.count };
+      endTick: () => {
+        counter.armed = false;
+        return {
+          eventTripped: counter.eventTripped,
+          eventCount: counter.eventCount,
+          softValue: counter.softValue,
+          hardTimedOut: counter.hardTimedOut,
+        };
       },
       dispose,
     };
@@ -355,10 +494,13 @@ export type QuickJsRunnerHandle = {
 /**
  * 造一个由真 VM 服务的座位执行器。
  *
- * 每 tick 的次序由 `drainIntents` 一次走完:arm 事件计数 → `loop()` → 排空到不动点 →
+ * 每 tick 的次序由 `drainIntents` 一次走完:arm 计数与墙钟起点 → `loop()` → 排空到不动点 →
  * (**本轨启用时**)强制回收后读存活堆、组装内存观测 → `__drainIntents()`(带 API 调用计数)
- * → 两条计数轨各判一次。任何一轨超限都只作废**该座位本 tick** 的意图,不中断其它三方与引擎。
- * 阈值判定不在 guest 侧,guest 吞不吞异常都改不了读数。
+ * → 三条计数轨(事件 / API / 墙钟)各判一次。
+ *
+ * **硬超时是一例外**:墙钟硬超时中断本 tick 并交回故障位 `uncertain-timeout`,整场作废
+ * (不判罚、不累加异常)。事件 / API 两轨超限则只作废**该座位本 tick** 的意图,不中断其它三方与
+ * 引擎。阈值判定不在 guest 侧,guest 吞不吞异常都改不了读数。
  */
 export const createQuickJsRunner = async (
   options: QuickJsRunnerOptions,
@@ -366,6 +508,7 @@ export const createQuickJsRunner = async (
   const session = await openSandbox(options);
   const eventTickLimit = options.eventTickLimit;
   const apiCallTickLimit = options.apiCallTickLimit;
+  const wallClockSoftLimit = options.wallClockSoftLimit;
   const ceiling = options.memoryTickCeiling;
   // 软阈是判罚线的派生量(向下取整到字节),不是独立参数:系数缺席取真源常数。
   const softThreshold =
@@ -376,22 +519,27 @@ export const createQuickJsRunner = async (
   const runner: SeatRunner = {
     setSnapshot: session.setSnapshot,
     drainIntents: () => {
-      // 事件计数:本 tick 进入时归零并 arm,`loop()` + 排空之后 disarm。回调只能在构造时装,
-      // 计数状态住宿主闭包;这里只开合闸门。
-      session.beginEventTick();
-      let event: EventTickResult;
+      // 计数与墙钟:本 tick 进入时归零并 arm、记下墙钟起点,`loop()` + 排空之后 disarm。
+      // 回调只能在构造时装,计数状态住宿主闭包;这里只开合闸门与读回读数。
+      session.beginTick();
+      let readings: TickReadings;
       try {
         session.runLoop();
         session.pumpJobs();
-        event = session.endEventTick();
+        readings = session.endTick();
       } catch (error) {
-        event = session.endEventTick();
-        // 只有「本轨截停」才吞掉异常;别的异常(脚本自己抛错等)原样冒给宿主。
-        if (!event.tripped) {
+        readings = session.endTick();
+        // 只有「本轨截停 / 硬超时」才吞掉异常;别的异常(脚本自己抛错等)原样冒给宿主。
+        if (!readings.eventTripped && !readings.hardTimedOut) {
           throw error;
         }
       }
-      if (event.tripped) {
+      if (readings.hardTimedOut) {
+        // 墙钟硬超时:**作废而非判罚**。中断本 tick、交回故障位;不产观测、不累加异常。
+        // VM 不重建(hld §5.2 的注脚);本场由 `runMatch` 标 `uncertain-timeout` 后作废。
+        return { intents: [], observations: [], fault: "uncertain-timeout" };
+      }
+      if (readings.eventTripped) {
         if (eventTickLimit === undefined) {
           // 不可能:未启用本轨时回调恒返回 false,不会 tripped。出现即是引擎缺陷,响亮地失败。
           throw new Error("事件计数被截停但本轨未启用——引擎故障");
@@ -400,11 +548,25 @@ export const createQuickJsRunner = async (
         return {
           intents: [],
           observations: [
-            { kind: "tripped", track: EVENT_TRACK, value: event.count, limit: eventTickLimit },
+            {
+              kind: "tripped",
+              track: EVENT_TRACK,
+              value: readings.eventCount,
+              limit: eventTickLimit,
+            },
           ],
         };
       }
       const observations: Observation[] = [];
+      // 墙钟软限:只披露、不罚。读数落成整数毫秒(观测不参与判罚,取整不改变任何结论)。
+      if (wallClockSoftLimit !== undefined && readings.softValue >= 0) {
+        observations.push({
+          kind: "wall-clock-soft",
+          track: WALL_CLOCK_TRACK,
+          value: Math.floor(readings.softValue),
+          limit: wallClockSoftLimit,
+        });
+      }
       if (ceiling !== undefined && softThreshold !== undefined) {
         // 读数取在「本 tick 的脚本执行结束处」:排空到不动点之后、`__drainIntents()` 之前,
         // 且必须先强制回收——读的是**存活堆**(`mallocSize`),与分配上限同一记账口径。

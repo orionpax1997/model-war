@@ -22,7 +22,7 @@ export type RulesetView = {
   readonly statsOf: (unitType: UnitType) => UnitStats;
 };
 
-/** 整数闭包断言失败时抛的错。装载期事故由调用方映射成退出码 2(02b 那一侧接线)。 */
+/** 整数闭包断言失败时抛的错。装载期事故由调用方映射成退出码 1(02b 那一侧接线)。 */
 export class RulesetLoadError extends Error {
   public constructor(message: string) {
     super(message);

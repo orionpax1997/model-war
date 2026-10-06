@@ -15,7 +15,7 @@ import { processTick } from "./index.js";
 import { loadRuleset } from "../ruleset-loader/index.js";
 import { stubRunner } from "../runner/stub.js";
 import { buildTickLine, serializeTickLine } from "../replay-writer/tick-line.js";
-import type { Observation, RunnerOutput, SeatRunner } from "../runner/index.js";
+import type { ObservationRecord, RunnerOutput, SeatRunner } from "../runner/index.js";
 import type { GameState, PlayerIndex, Site, Terrain } from "../world/state.js";
 
 const RULESET: Ruleset = {
@@ -87,7 +87,7 @@ const fakeRunner = (output: RunnerOutput): SeatRunner => ({
 const EMPTY: RunnerOutput = { intents: [], observations: [] };
 
 it("tripped 观测经步 0 落成 exceptionTicks,另外两类走观测出口", () => {
-  const recorded: Observation[] = [];
+  const recorded: ObservationRecord[] = [];
   const seat0 = fakeRunner({
     intents: [],
     observations: [
@@ -100,13 +100,20 @@ it("tripped 观测经步 0 落成 exceptionTicks,另外两类走观测出口", (
     [seat0, fakeRunner(EMPTY), fakeRunner(EMPTY), fakeRunner(EMPTY)],
     loadRuleset(RULESET),
     SINK,
-    { record: (observation) => void recorded.push(observation) },
+    { record: (record) => void recorded.push(record) },
   );
   // 「观测 → 唯一写入口」:tripped 只累加该座位的计数,别的座位不受影响。
   expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([1, 0, 0, 0]);
-  // 另外两类原样转发;tripped 不进观测出口(它已经落成状态变更)。
+  // 另外两类原样转发,并在调用点补齐 tick 与座位;tripped 不进观测出口(它已经落成状态变更)。
   expect(recorded).toEqual([
-    { kind: "wall-clock-soft", track: "wallClockSoftLimit", value: 12, limit: 10 },
+    {
+      tick: 0,
+      seat: 0,
+      kind: "wall-clock-soft",
+      track: "wallClockSoftLimit",
+      value: 12,
+      limit: 10,
+    },
   ]);
 });
 
@@ -171,4 +178,22 @@ it("exceptionTicks 随每 tick 写进回放行(该栏位在真源包已存在)",
     readonly players: readonly { readonly exceptionTicks: number }[];
   };
   expect(parsed.players.map((player) => player.exceptionTicks)).toEqual([1, 0, 0, 0]);
+});
+
+it("故障位经步 0 短路:本 tick 不写回放行,返回 uncertain-timeout(作废而非判罚)", () => {
+  // 一个直接交回故障位的假执行器:硬超时不在缝上新增方法,它就是返回载荷上的一栏。
+  const faulted = fakeRunner({ intents: [], observations: [], fault: "uncertain-timeout" });
+  const lines: string[] = [];
+  const result = processTick(
+    makeState(),
+    [faulted, fakeRunner(EMPTY), fakeRunner(EMPTY), fakeRunner(EMPTY)],
+    loadRuleset(RULESET),
+    { write: (line) => void lines.push(line) },
+  );
+  // 硬超时不是判罚:exceptionTicks 不动、状态不被推进(tick 仍是 0,不是步 6 自增过的 1)。
+  expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([0, 0, 0, 0]);
+  expect(result.state.tick).toBe(0);
+  // 本 tick 作废:步 6 被短路,没有写回放行。
+  expect(lines).toEqual([]);
+  expect(result.fault).toBe("uncertain-timeout");
 });

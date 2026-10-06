@@ -769,10 +769,24 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告 |
 | `modelwar match <input.json>` | engine | 执行一个对局(runner 与调试都走这条路径) |
 | `modelwar replay <replay.jsonl>` | apps/cli → `replay` | 终端 ASCII 回放,单步/暂停;只读回放,**不依赖 engine** |
-| `modelwar verify <replay.jsonl>` | apps/cli → engine + `replay` | 按 input.json 重新执行,逐 tick hash 比对(CI 调用) |
+| `modelwar verify <replay.jsonl>` | apps/cli → engine + `replay` | 按 input.json 重新执行,逐 tick hash 比对(CI 调用);不起子进程 |
 | `modelwar map-lint <maps/>` | apps/cli | 地图对称性与合法性校验 |
 
 > 唯一 bin 在 `apps/cli`;`index.ts` 只做路由,各子命令 `await import()` 动态加载。库包不含 `bin`。
+
+### 退出码表
+
+**全 CLI 一张表**(不只 `match` / `verify`):调度器只认退出码,细节另在 stderr 给一行 JSON。
+
+| 码 | 含义 |
+|---|---|
+| `0` | 正常。对局无论胜/负/超时/淘汰,只要产出一份合法 `result` 行即是 0 |
+| `1` | 用法错或装载期校验错(缺参、读不到文件、输入/存档/地图/规则集未过校验、沙箱字节读不到) |
+| `2` | 引擎崩溃(未捕获异常、确定性断言失败、WASM trap) |
+| `3` | 不确定超时(`nondeterministic-timeout`;墙钟硬超时) |
+| `4` | 其它内部错(如产物写盘失败) |
+
+> 「规则内结果一律 0」:一份完全正常的对局可以带着异常出局的席位,给它非零码会让赛季按 §8.4 的崩溃条款误判重跑并剔除。真源常量在 `apps/cli/src/exit-codes.ts`。
 
 ## 10. 非功能落地
 

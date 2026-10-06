@@ -82,9 +82,12 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: "verify",
     usage: "modelwar verify <replay.jsonl>",
     summary: "按 input.json 重新执行,逐 tick hash 比对",
-    provider: "@model-war/engine",
-    handler: "verifyReplay",
-    load: () => import("@model-war/engine"),
+    // 处理器住在 CLI 自己的模块里(同 `match` / `map-lint` 的先例):它复用 `match` 的组装层与
+    // engine 的 `runMatch`,而磁盘 I/O 与 ajv 校验都在这一侧。engine 的对外导出面仍恰好 `runMatch`,
+    // 故 `verify` 不是 engine 的处理器。
+    provider: "@model-war/cli",
+    handler: "runVerifyCommand",
+    load: () => import("./verify/index.js"),
   },
   {
     name: "map-lint",

@@ -23,18 +23,20 @@ import {
 
 export type { TickSink } from "./sink.js";
 
-/** 真沙箱那四栏的读数。四栏之间没有派生关系,所以是一个平铺的对象而不是四个位置参数。 */
+/** 真沙箱那五栏的读数。五栏之间没有派生关系,所以是一个平铺的对象而不是五个位置参数。 */
 export type SandboxReadings = {
   readonly quickjsWasiVersion: string;
   readonly sandboxRuntimeHash: string;
   readonly wasiClock: string;
   readonly wasiRandomFill: string;
+  /** WASI 时区偏移(十进制分钟,UTC = `"0"`)。与 `MetaHead.timezoneOffset`(装载时区)是两回事。 */
+  readonly wasiTimezoneOffset: string;
 };
 
 /**
  * meta 行里**由装载方知道**的那几栏。判别在 `runner` 上:桩执行器那一支**没有**沙箱读数可填。
  *
- * 写成判别联合而不是「四个可空栏由调用方决定填不填」,是为了让「桩跑的局没有 QuickJS 版本」
+ * 写成判别联合而不是「五个可空栏由调用方决定填不填」,是为了让「桩跑的局没有 QuickJS 版本」
  * 这件事成为**类型上无法表达错**的事实,而不是一条靠自觉的纪律——调用方在 `runner: "stub"`
  * 那一支上就算想填也**没有栏可填**。
  *
@@ -48,10 +50,10 @@ export type MetaHead = {
 } & ({ readonly runner: "stub" } | ({ readonly runner: "quickjs" } & SandboxReadings));
 
 /**
- * 拼 meta 行。**十二栏**,`runner` 是第 12 栏(hld §7.5 的十栏 + 递增的第 12 栏),
+ * 拼 meta 行。**十三栏**,`runner` 是第 13 栏(hld §7.5 的十栏 + 递增到第 13 栏),
  * 键序即写入顺序——它由下面这个对象的字面书写序承担,`meta-line.test.ts` 逐字钉住。
  *
- * 四个沙箱栏的 `null` **由本函数按 `runner` 决定**,不由调用方填:桩执行器压根没启动过 WASI,
+ * 五个沙箱栏的 `null` **由本函数按 `runner` 决定**,不由调用方填:桩执行器压根没启动过 WASI,
  * 「没测过」与「测出来是空串」在报告里必须分得开,所以未发生一律 `null`,不写 `""`、不写 `0`。
  */
 export const buildMetaLine = (
@@ -70,6 +72,7 @@ export const buildMetaLine = (
         sandboxRuntimeHash: null,
         wasiClock: null,
         wasiRandomFill: null,
+        wasiTimezoneOffset: null,
         timezoneOffset: head.timezoneOffset,
         mapHash: head.mapHash,
         seed,
@@ -84,6 +87,7 @@ export const buildMetaLine = (
         sandboxRuntimeHash: head.sandboxRuntimeHash,
         wasiClock: head.wasiClock,
         wasiRandomFill: head.wasiRandomFill,
+        wasiTimezoneOffset: head.wasiTimezoneOffset,
         timezoneOffset: head.timezoneOffset,
         mapHash: head.mapHash,
         seed,
