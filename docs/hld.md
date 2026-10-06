@@ -180,15 +180,17 @@
 | `check:selfproof` | `node packages/tools/src/selfproof/run-selfproof-gate.ts`(契约自证门禁) | **按需跑,不在 `check` 里**:拿终稿契约把 `benchmarks/` 的三份产物**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同);改契约、改 `rulesets/`、改自证桩时手工敲;反例在 `test:slow` |
 | `check:types` | `check:quick` + `tsc -b` + `oxlint --type-aware` | 改完一个 issue 跑一次 |
 | `check:deps` | `tsc -b` + dependency-cruiser(巡航 `dist` 而非 `src`,§2.2.10) | 依赖方向 |
-| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` | 全量(约 9s) |
+| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` | 完整仓库门禁(约 9s) |
+| `test` | `vitest run --project unit --project property` | 快速功能测试;不含类型检查、门禁自测或慢测试 |
+| `verify:fast` | `pnpm run check:quick && pnpm run test` | AI 实现与 spec 收口的默认快速验证入口 |
 | `test:props` | `vitest run --project property` | 长时属性测试,单独跑 |
-| `test:gates` | `vitest run --project gates`(门禁自测的快的一半:每道门禁的退出码与反向用例) | 单独跑;**不能混进 `check`**,否则 `check → gates → check` 无限套娃 |
+| `test:gates` | `vitest run --project gates`(门禁自测的快的一半:每道门禁的退出码与反向用例) | 按需单独运行;**不进默认 `test` 或 `check`**,避免快速功能测试与质量门禁自测混在一起 |
 | `test:slow` | `vitest run --project slow`(门禁自测里慢的一半:契约自证四问 + 三个反例 + 会 spawn `check` 的那一条) | 按需手工跑;**不进 `check`,也不进默认 `test`**(同套娃理由 + 耗时理由,见下) |
 | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 | — |
 
 **参赛脚本静态校验器(§6.2 那个工具)不是本仓库的门禁**:`package.json` 里没有它的 `check:*` 脚本,它也不巡航本仓库源码——它服务于生成管线,调用方式是 gen 管线以子进程 spawn 它的入口(§6.2)。**要说清的是「不进 `check`」这句限定只到「它不是一道仓库门禁」为止,不是说它的测试不跑**:`check` 含 `vitest run --project unit`,而该工具的规则与入口自测落在 `unit` 的拾取范围(`packages/*/src/**/*.test.ts`)内,所以每次 `check` 都会跑到它们。真把它们抽出去只能像 `gates` 那样单开一个 project,而那会让这些反例失去常态覆盖。
 
-> 快慢分离是关键:agent 走 `check:quick`,需要类型感知 lint 时跑 `check:types`,全量走 `check`。类型感知 lint 超过 ~10s,agent 就会"写完一起跑",反馈回路断掉。
+> 快反馈优先:AI 实现与 spec 收口统一走 `verify:fast`(格式、lint、轻量门禁 + unit/property);`check`、`test:gates`、`test:slow` 与变异测试按需运行。类型感知 lint 超过 ~10s,agent 就会"写完一起跑",反馈回路断掉。
 
 > **上表 `check` 那一行的 5.65s 是自证门禁摘出去之前的数**。摘出之后同机单次实测 **8.95s**——**它反而变慢了**,因为多了 `vitest run --project unit --project property` 的 5.2s(早先那张表的 17 个测试文件只覆盖到一部分)。不重取 5 次是因为**基线换了**:拿旧口径的中位数与新口径的单次数字相比没有意义,重测请连同下面「契约自证门禁按需跑」那一节一起当作新基线。
 
@@ -239,14 +241,12 @@ project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自�
 于是反例改用缩矩阵,判不出红时断言当场红;唯一一条关于指标的论断保留全矩阵。**这三个数字不构成
 承诺,只说明一件事**:门禁自测贵的原因是它在跑真命令,不是判据写得糙。）
 
-**慢的一半为什么连默认 `test` 也不进**:`test` 显式列举 `--project unit --project property --project
-gates` 三个 project,所以 `slow` 不在其中。理由与位置纪律分开算:套娃的理由由 unit 的 `exclude` 承担
+**慢的一半为什么连默认 `test` 也不进**:`test` 显式列举 `--project unit --project property` 两个 project,所以 `slow` 不在其中。门禁自测 `gates` 也由 `test:gates` 单独运行,不混进默认功能测试。理由与位置纪律分开算:套娃的理由由 unit 的 `exclude` 承担
 (那条与 `GATES_TEST` 同源,同一个文件被 `check` 里的 vitest 收进去就会 `check → slow → check`);
 **不进 `test` 是耗时理由**——它要 ~6 分钟,而 `test` 是「跑一遍测试」的日常入口。**这不是说它可以不跑**:
 它由 `test:slow` 落成可手工调用的入口,`gates.test.ts` 里有两条不变量盯着它(不被 unit/property/gates
-任何一个 project 拾取、默认 `test` 不含它且三个 project 一个不缺),另有 `afterAll` 兜底清理探针。
-**要跑全套的那道对局门禁**(`check:selfproof` 与它的反例)时敲两条:`pnpm run check:selfproof` 与
-`pnpm run test:slow`——现在这两样都不在 `check` 与 `test` 里,这是决策不是遗漏(上一节)。
+任何一个常跑 project 拾取、默认 `test` 只包含 unit/property 且不含 slow),另有 `afterAll` 兜底清理探针。
+改动直接影响自证门禁覆盖范围时,再按需分别运行 `pnpm run check:selfproof` 与 `pnpm run test:slow`;两者均不属于默认快速验证。
 
 **主流水线**(每次 PR 与主干 push,全部通过才可合并;**尚未建成**,当前全部以命名脚本手工触发):
 

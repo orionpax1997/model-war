@@ -17,6 +17,7 @@ Local markdown: issues live as `.scratch/<feature>/spec.md` and `.scratch/<featu
 - code-review skill:Standards 与 Spec 两个子代理都用 `review`(`.pi/agents/review.md`)派发。
 - research 任务:调研与探索一律派给 `explore` 子代理,主线程只下指令和聚合结论,不自己读文件爬代码。派发时必须在 prompt 里写明「用 codegraph 查」,探索子代理优先调用 codegraph MCP 工具(见下节),grep/find/read 只作补充。
 - 探索子代理的产出是结论 + 关键文件:行号引用,不是文件转储;不要让它整段贴源码回来。
+- implement-spec 采用快反馈：各 ticket 实现与修复期间运行 `pnpm run check:quick` 和该 ticket 的相关测试；所有 ticket 合并并完成最终 review 修复后，由主线程对整份 spec 运行一次 `pnpm run verify:fast`，再标记 PR ready。`verify:fast` 是 `check:quick`（格式、lint、轻量门禁）加默认快速 `test`（unit + property）的唯一收口命令；Vitest 会为工作区依赖做增量构建。`check` 全量门禁、`test:gates`、`test:slow`、`check:selfproof`、变异测试等专项质量检查不属于默认流程，仅当 spec 验收明确要求或改动直接影响其覆盖范围时才运行，并说明原因。
 
 ### Triage labels
 
