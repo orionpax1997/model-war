@@ -46,6 +46,10 @@ const SEATS: readonly PlayerIndex[] = [0, 1, 2, 3];
  * `.scratch/rules-landing/blind/fixture-check/tables-1336-rerun-2026-10-04.md:51`
  * 「首触(任意敌对单位 Chebyshev ≤2)| 窗口 0–40」。欠账在 gdd 那一侧(补正文是 gdd 那一格的事)。
  *
+ * 真引擎上的首触实测复核(票 11)已就地补在 `gdd.md:123` 那一段的末尾:三张真图在本判据下
+ * 的首触读数、以及必须随引用一起带的那条基线偏差(无墙夹具中位 34 vs 设计锚点 40),都在那里;
+ * 判据本身不改。夹具在 `packages/engine/src/fixtures/fixtures.test.ts`。
+ *
  * ── 为什么这个阈值**不进**规则集 ──
  * 它是**观测量**:只给事件流标一个时刻,不判胜负、不判合法、不影响移动。判据是「凡观测量不进参数表」,
  * 与真源包那个「键数是 21 不是 22」的裁决同源——所以 `rulesets/v1.json` 保持 21 键是对的,
