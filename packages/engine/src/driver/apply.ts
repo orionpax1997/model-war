@@ -100,7 +100,63 @@ export type Change =
       readonly siteId: number;
       readonly progressOwner: Owner;
       readonly progress: number;
+      /**
+       * 易主**前**该点位的属主。由占领机(`processor/capture.ts`)在算出易主时一并带出。
+       *
+       * ── 为什么旧属主是这条变更带上来的,而不是让调用方事后去状态里翻 ──
+       * a) 段一旦落地,`state` 里这个点位的 `owner` 已经是新主;谁在易主前拥有它,只有算易主的
+       * 那一处知道。生产那一格(票 06)要靠这个值把订单退款给**原主**,若让它去读落地后的状态,
+       * 「原主是谁」就成了一件靠「读的是前一份状态」隐式成立的事——那种依赖不会编译报错、
+       * 也不会在任何断言里变红,只会在某天有人调整读取时机时静默退错款。带在这一栏上是显式的。
+       * `apply()` 不读它:它是给下游消费者(生产那一格的退款)的事实,不是要落下的一栏。
+       */
+      readonly previousOwner: Owner;
       readonly newOwner?: PlayerIndex;
+    }
+  /**
+   * 在基地产线下单(票 06):**同一个变更同时落「占住队列」与「扣款」**。
+   *
+   * ── 为什么两件事必须是一条变更,而不是两条 ──
+   * 一条规则一次落子,中间没有可观察的半截状态。拆成「先扣款」「再占队列」两条变更,就打开了
+   * 一个窗口:第一条落了、第二条因为任何原因没落,
+   * 状态里就出现「扣了款却没占上队列」——它不会被任何断言发现,只会在下一 tick 表现成凭空少钱。
+   * 资金是否足够由 `checkSpawn()` 在**产生这条变更之前**判掉(票 06),所以这条变更的施加是无条件的。
+   */
+  | {
+      readonly kind: "start-production";
+      readonly siteId: number;
+      /** 付款方 = 下单那一刻该基地的属主(下过单这个前提由 `checkSpawn()` 保证)。 */
+      readonly owner: PlayerIndex;
+      readonly unitType: UnitType;
+      /** 初始剩余 tick 数,取自规则集 `spawnTicks`,代码里不出现那个数字。 */
+      readonly remainingTicks: number;
+      /** 造价,取自规则集 `cost`,同一刻从付款方资源池里扣除。 */
+      readonly cost: number;
+    }
+  /**
+   * 推进一条已有订单(票 06):`remainingTicks` 减一。
+   *
+   * 与 `start-production` 分开,是因为它**只改队列、不碰资源池**;把它并进下单那一条会让
+   * 「扣款」与「不扣款」两种语义挤进同一个变更,调用点每次都要多传一个「这次扣不扣」。
+   */
+  | {
+      readonly kind: "advance-production";
+      readonly siteId: number;
+      readonly unitType: UnitType;
+      readonly remainingTicks: number;
+    }
+  /**
+   * 取消一条产线订单(票 06):清空队列,**可**附带一次全额退款。
+   *
+   * ── 为什么取消与退款是同一条变更 ──
+   * 与 `start-production` 同理:一次落子,不留「队列清了、款没退」的半截状态。
+   * `refund` 省略就是「取消但不退款」——那正是**回归中立**那条路的形态(点位回到 -1、
+   * 没有可退的席位),归票 09;本票(基地易主)走的是带 `refund` 的那一支。
+   */
+  | {
+      readonly kind: "cancel-production";
+      readonly siteId: number;
+      readonly refund?: { readonly player: PlayerIndex; readonly amount: number };
     };
 
 /** 按数值 id 升序插入。数组短(每 tick 几百个对象),有序插入比「先插后排」少一次全数组重排。 */
@@ -159,6 +215,7 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
     case "mark-first-contact":
       return { ...state, firstContactTick: change.tick };
     case "advance-capture":
+      // `previousOwner` 只随变更单传递、不由本函数落下(见该变更的注释),故这里不读它。
       return {
         ...state,
         sites: replaceById(state.sites, change.siteId, (site) => ({
@@ -168,6 +225,47 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
           ...(change.newOwner === undefined ? {} : { owner: change.newOwner }),
         })),
       };
+    case "start-production":
+      // 占队列与扣款一次落:没有可观察的半截状态(理由见该变更的注释)。
+      return {
+        ...state,
+        sites: replaceById(state.sites, change.siteId, (site) => ({
+          ...site,
+          producing: { type: change.unitType, remainingTicks: change.remainingTicks },
+        })),
+        players: state.players.map((player) =>
+          player.index === change.owner
+            ? { ...player, resources: player.resources - change.cost }
+            : player,
+        ),
+      };
+    case "advance-production":
+      return {
+        ...state,
+        sites: replaceById(state.sites, change.siteId, (site) => ({
+          ...site,
+          producing: { type: change.unitType, remainingTicks: change.remainingTicks },
+        })),
+      };
+    case "cancel-production": {
+      const sites = replaceById(state.sites, change.siteId, (site) => ({
+        ...site,
+        producing: null,
+      }));
+      const refund = change.refund;
+      if (refund === undefined) {
+        return { ...state, sites };
+      }
+      return {
+        ...state,
+        sites,
+        players: state.players.map((player) =>
+          player.index === refund.player
+            ? { ...player, resources: player.resources + refund.amount }
+            : player,
+        ),
+      };
+    }
     default: {
       // 穷尽性靠编译期兜住:新增一种变更而这里没跟上,是编译错误而不是运行期静默不改状态。
       const unreachable: never = change;
