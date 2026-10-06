@@ -295,3 +295,39 @@ it("丢弃 vs 异常对照表里被点名的错误码与符号表一致", () => 
     );
   }
 });
+
+/**
+ * **契约面 §2.1 那份快照形状与类型面逐字段一致。**
+ *
+ * ── 它补的是哪一个洞 ──
+ * `api.md` §2.1 有一段手写的快照形状(`type Player` / `type Unit` / `type Site`),类型面
+ * (`packages/schema/script-api/index.d.ts`)里也各有一份。这段散文曾经是「等回填的承诺」,
+ * 现在它自称是类型面的投影——投影回来之后,它就不再是承诺,而是**可以被对齐**的两份形状:
+ * 字段名或次序改了任何一边,另一边就是一处会误导模型的第二家(模型照文档写、编译器照声明判)。
+ *
+ * ── 判据为什么是字段名而不是逐字文本 ──
+ * 两边本来就不逐字相同(契约面写 `owner: 0 | 1 | 2 | 3`,类型面写 `owner: PlayerIndex`;
+ * 契约面把产线订单内联成 `{ type, remainingTicks }`,类型面拆成一个具名类型)。逐字比会把
+ * 这些**有意的写法差**全判成红,而它们不改变「有哪些字段」。所以判据取**字段名与次序**:
+ * 它正好是「投影」这个词在字段这一层上的含义。
+ *
+ * 反例:把类型面 `Site` 的 `producing` 删掉一层(或改个名),本条红。
+ */
+const typeMemberNames = (source: string, typeName: string): readonly string[] => {
+  const block = new RegExp(`type ${typeName} = \\{([\\s\\S]*?)\\n\\};`).exec(source);
+  expect(block, `抽不出 \`type ${typeName} = { … }\``).not.toBeNull();
+  return (block?.[1] ?? "")
+    .split("\n")
+    .map((line) => /^\s*(?:readonly\s+)?(\w+)\??\s*:/.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined);
+};
+
+it("契约面 §2.1 的快照形状与类型面逐字段一致", () => {
+  const doc = readFileSync(API_DOC, "utf8");
+  const face = readFileSync(TYPE_FACE, "utf8");
+  for (const name of ["Player", "Unit", "Site"]) {
+    expect(typeMemberNames(doc, name), `${name}:契约面与类型面字段不一致`).toEqual(
+      typeMemberNames(face, name),
+    );
+  }
+});

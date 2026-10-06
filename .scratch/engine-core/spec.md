@@ -101,7 +101,7 @@ Status: ready-for-agent
 
 ### 执行器:缝就是两次桥调用,StubRunner 是第一个适配器
 
-`engine:runner` 的缝照 hld §4.5 原样交付:`__setSnapshot(snapshot)` 进、`__drainIntents()` 出。详见 `docs/adr/0005-runner-seam-is-the-two-bridge-calls.md`。
+`engine:runner` 的缝照 hld §4.5 原样交付:`__setSnapshot(snapshot)` 进、`__drainIntents()` 出。详见 [ADR-0005](../../docs/adr/0005-runner-seam-is-the-two-bridge-calls.md)。
 
 `StubRunner` 有一条硬约束:**必须同样做「拷一份快照、拿到 intent 数组」两件事,不能抄近路直接读引擎状态**。它一旦读真状态,测试就在验一条生产不走的路,而 FR-3 AC1 会变得无法证伪。
 
@@ -184,9 +184,9 @@ Status: ready-for-agent
 
 ### 脚本 API 的类型面归本 feature
 
-详见 `docs/adr/0006-script-api-type-surface-lands-in-engine.md`。要点:类型面描述「脚本能读到什么状态字段」与「action 的签名」,前者的源头是本 feature 的状态模型、后者的源头是 `intents` 的 `check()`/`run()`,而沙箱执行器只搬名字、不定义任何一个。`packages/schema/src/script-surface.ts` 那 22 行 `signature` 字符串在本次回填中**由类型面取代**(生成或删除,不并列存在——它自己写着「签名是**类型面**的事实」)。
+详见 [ADR-0006](../../docs/adr/0006-script-api-type-surface-lands-in-engine.md)。要点:类型面描述「脚本能读到什么状态字段」与「action 的签名」,前者的源头是本 feature 的状态模型、后者的源头是 `intents` 的 `check()`/`run()`,而沙箱执行器只搬名字、不定义任何一个。`packages/schema/src/script-surface.ts` 那 22 行 `signature` 字符串在本次回填中**由类型面取代**(生成或删除,不并列存在——它自己写着「签名是**类型面**的事实」)。
 
-连带两条:「API 误用」那条承载条款第一次有人;`docs/adr/0004` 留的那笔账(符号表注释里的「刻意为空,回填触发条件是沙箱执行器产出注入面」在 ADR-0004 之后会说错话)随本次回填销掉。
+连带两条:「API 误用」那条承载条款第一次有人;[ADR-0004](../../docs/adr/0004-contract-api-surface-lands-in-rules-landing.md) 留的那笔账(符号表注释里的「刻意为空,回填触发条件是沙箱执行器产出注入面」在 ADR-0004 之后会说错话)随本次回填销掉。
 
 **生成管线的编译步骤在本 feature 落地时解锁,不必等沙箱执行器**——`tsconfig.scripts.json` 的类型面一填,「编译通过 + 白名单反转 + API 签名」三件事同时成立。
 
@@ -206,19 +206,53 @@ Status: ready-for-agent
 
 ### 要一并修正的设计文档
 
-| 文档 | 改什么 |
-|---|---|
-| `hld.md:414` | 删 `productions: Production[]`,`Site` 上加 `producing` |
-| `hld.md:728` | tick 行删 `productions` 栏 |
-| `hld.md:726-727` | meta 行加 `runner` 栏,并说明四栏沙箱值在桩执行器下为 `null` |
-| `hld.md:734` | 补首触判据的指针与 gdd 的欠账 |
-| `hld.md:151` | 规则集装载接线完成后改「按尚未兑现记」 |
-| `hld.md:714-715` | 明确「runner」指第一个执行脚本的进程 |
-| `hld.md:632` | 「API 误用」承载方落实为类型面(ADR-0006) |
-| `hld.md:820-821`(开放项 #6 / #7) | 回放体量的存储/IO 方案需要本 feature 的实测读数作为输入,本 feature 出读数不出方案 |
-| `docs/rules-v1/api.md:148-156` | 投影回来之后那段「这一段是契约侧的声明,目前还没有对应的投影」改掉 |
-| `packages/schema/src/pending.ts` | 销掉 `archive-meta`;`match-result` 与 `replay-line` 改写成「形状已定」 |
-| `packages/schema/src/script-surface.ts` | 15 条 `signature` 由类型面取代;注释里「刻意为空」那段按 ADR-0004:17 改掉 |
+| 文档 | 改什么 | 处置(票 12 逐行对账) |
+|---|---|---|
+| `hld.md:414` | 删 `productions: Production[]`,`Site` 上加 `producing` | **已改**:删 `productions` 栏、加 `Site.producing`、删 `Production` 接口;同一代码块里 `Outcome.reason` 顺带补上第四档 `'all-eliminated'`(票 09 的取值,原注释停在三档) |
+| `hld.md:728` | tick 行删 `productions` 栏 | **已改**:tick 行只剩 `{tick, players, units, sites, events, stateHash}` |
+| `hld.md:726-727` | meta 行加 `runner` 栏,并说明四栏沙箱值在桩执行器下为 `null` | **已改**:meta 行列上 `runner`;补一段说「`runner` 是判别式,`stub` 四栏全 `null`」 |
+| `hld.md:734` | 补首触判据的指针与 gdd 的欠账 | **已改**:补 `first-contact` 判据(Chebyshev ≤ 2、整局第一次)是观测量、精确定义欠账在 gdd 一侧 |
+| `hld.md:151` | 规则集装载接线完成后改「按尚未兑现记」 | **已改**:在规则集与地图两类之外补上四类(存档元数据 / 对局输入 / 回放行 / 终局结果)的接线实况、合共六类;「为什么不完整」的理由一并改成「⑤⑥ 等赛季 I、③ 等生成管线 H」 |
+| `hld.md:714-715` | 明确「runner」指第一个执行脚本的进程 | **已改**:`hld.md:719-720` 两行重写(形状已定 + 读入端已接线;runner 消歧);`hld.md:721` 的哈希口径也一并写清(三处哈希、不含 `script.ts`、座位由下标承载) |
+| `hld.md:632` | 「API 误用」承载方落实为类型面(ADR-0006) | **已改**:改为「承载方即类型面本身」并链到 ADR-0006 |
+| `hld.md:820-821`(开放项 #6 / #7) | 回放体量的存储/IO 方案需要本 feature 的实测读数作为输入,本 feature 出读数不出方案 | **已改**:补上读数(0.307 / 0.245 ms;2 388 636 B、3 981.1 B/tick)并标「观测项不是承诺」,停止条件仍归 L |
+| `docs/rules-v1/api.md:148-156` | 投影回来之后那段「这一段是契约侧的声明,目前还没有对应的投影」改掉 | **已改**:改写成「类型面的一份投影」;并加一条机器断言(`api-doc.test.ts`)核 §2.1 快照形状与类型面逐字段一致 |
+| `packages/schema/src/pending.ts` | 销掉 `archive-meta`;`match-result` 与 `replay-line` 改写成「形状已定」 | **已改(票 01 / 09)**:三条全销、`PENDING_SHAPES` 清空为 `[]`;本票核对头注与 `PendingShapeId = never` 自洽,未再加条目 |
+| `packages/schema/src/script-surface.ts` | 15 条 `signature` 由类型面取代;注释里「刻意为空」那段按 ADR-0004:17 改掉 | **已改(票 03)**:签名删除、头注改为单向投影;本票核对自洽 |
+| `docs/diagrams/v0-milestone-dag.md` F 行 + 配套 PNG | 状态改成已收口,两处裁留在图上,PNG 与源一起更新 | **已改**:F 节点 / 节点表 / 当前 frontier / 当前位置 / mermaid classDef 全改 ✅;L 行与 `F ⇢ L` 边按票 11 修正;PNG 用 `mmdc -s 2` 重渲染(1568×2598,与源同批) |
+| 「读入端强制校验覆盖面只有两类」那段 | 覆盖面扩到四类,逐类写清接线;「为什么不完整」的理由一起改 | **已改**:与 `hld.md:151` 同一处——规则集与地图两类之外新增四类(存档元数据 / 对局输入 / 回放行 / 终局结果),逐类写清接线,理由改成「剩下三类等生成管线 H 与赛季 I」 |
+
+### 清单外一并收进的偏差(票 01–11 的 `## Answer`)与反向核对
+
+**逐票核过的契约/文档偏差,处置如下**(任务书列的只是索引,以各票 `## Answer` 为准):
+
+- 票 01:`hld.md:719`「在此之前本仓没有它的 JSON Schema,读入端不校验它」**已过时** → 本票改掉;`hld.md:720` 的「runner 启动即校验」未消歧 → 本票消歧;`input.json` 哈希三处(不含 `script.ts`)、座位轮换没落进 `input.json` → 本票写进 `hld.md:721`;`archive-meta.validation` 取 `{passed, errors}`、`generatedAt` 只 `minLength: 1` → **有意不改**(见下)。
+- 票 02:`stateHash` 载荷 / 回放行 / meta 行形状定死;`runMatch` 终局行票 09 后改用 `state.outcome`。**核过**:02 说「票 09 落地后这一行不用改」,票 09 确实只用 `state.outcome` 替换了兜底支,一致。
+- 票 06:`producing` 那节的散文承诺已由形状兑现 → 由票 06 实现,本票核对。
+- 票 07:**契约面缺口——规则集没有「能不能采集」这一栏**(`harvestRate` 是速率不是资格),映射只能由代码(类型名 `worker`)承载 → **有意不改 + 原因**(见下)。
+- 票 09:`pending.ts` 已清空 → 核对自洽;`validateReplayResultLine` 已交付但未接线 → 本票写进 `hld.md:151`(与「回放读入端校验归哪一层」一起等赛季 I)。
+- 票 11:`docs/gdd.md:123` 已追加首触复核读数与结论 → 本票**只核不写**(见下);读数文件、三条夹具已建 → hld 开放项 #6/#7 与 DAG 的 L 行 / `F ⇢ L` 边已带指针。
+
+**仓库里已记录的其它偏差,逐条验**:
+
+- **hld §4.2 vs §7.5(无效 intent vs 八种事件)**:§4.2 说无效 intent「写入当 tick 事件流」,§7.5 的八种事件里没有这一类;实现按后者(票 04 静默丢弃,不加第九种事件)。改它要动机制表述或跨进程形状,都不在本 feature 范围 → **有意不改 + 原因**,指针留在票 04 的 Answer。
+- **`docs/rules-v1/rules.md` §5 占位 vs gdd §3.2**:那笔在 gdd §8 记为 **#14**;契约面 §5 散文归规则侧下一轮。本票不碰 `docs/rules-v1/rules.md`(§5 是散文,但补它是规则侧的事)→ **有意不改 + 原因**。
+- **票 04 第三条反例的措辞不对**:票 04 的 Answer 自己更正了(那条反例实测不成立),**已由票 04 自身销掉**,无文档要改。
+- **`packages/replay` 把真源包类型原样再导出,让 engine 绕开了 manifest 声明**:更干净的路是给 engine 补一条 `@model-war/schema` 声明依赖。这处欠账不改任何可观察行为,动它会牵动包图与门禁 → **有意不改 + 原因**。
+
+**反向核对(清单里走了另一条路的行)**:逐条核过,**没有一行是「实现走了另一条路而文档不改」**。唯一的措辞级差异(`archive-meta.validation` 取 `{passed, errors}`、`generatedAt` 只 `minLength: 1`)落在 hld 没写死的地方(hld 只写「校验结果」四个字),实现的取值级取舍不构成「两边各留一份」。
+
+**有意不改的行 + 原因**(逐条):
+
+1. **`archive-meta.validation` 取 `{passed, errors}` / `generatedAt` 只 `minLength: 1`**:hld §7.4 对这两项只写「校验结果」四个字,没写字段形状;形状的家在真源包 `archive-meta.ts`。写进 hld 会让它变成真源的第二个家。**不改**。
+2. **规则集缺「能不能采集」这一栏**(票 07 的契约面缺口):这是**真缺口**不是措辞差;它归契约面那一轮(与 `rules.md` §5 一起),本 feature 改不了规则面(`rulesets/*` 不动)。**不改**。
+3. **hld §4.2 vs §7.5 无效 intent**:改它要动机制表述或跨进程事件形状,两者都不在本 feature 范围。**不改**,指针留在票 04 的 Answer。
+4. **`rules.md` §5 占位**:规则侧下一轮的事,`docs/rules-v1/rules.md` 的生成区块本票不碰。**不改**。
+5. **`packages/replay` 再导出真源包类型**:更干净是给 engine 补 `@model-war/schema` 声明依赖;这是工程结构的一处小欠账,归后续。**不改**。
+
+**两份 ADR 的链接**:本 feature 新开的是 **ADR-0005**(`runner-seam-is-the-two-bridge-calls`)与 **ADR-0006**(`script-api-type-surface-lands-in-engine`)。两份链接从里程碑 DAG 的 F 行与**本 spec** 都可达(本票把 spec 里的裸路径改成 markdown 链接)。`hld.md:632` 提到的编号是 **ADR-0006**,核对无误(票 03 一度撞号新开的 `0004-script-tsconfig-and-injection-surface.md` 已删,未重现)。
+
+**`docs/gdd.md:123` 只核不写**:票 11 已把首触复核读数与结论追加在那一节末尾,本次核对确认它**没有被顺手改成「墙是杠杆」**那类与墙无关的结论——段首仍是「**墙不是首触的杠杆**」,复核结论仍是「墙不改变首触」,基线偏差「它与墙无关」那句在。**未动一字**。
 
 ## Testing Decisions
 
