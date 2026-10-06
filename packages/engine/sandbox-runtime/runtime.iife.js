@@ -4,17 +4,23 @@
   var guest = globalThis;
   var snapshot = null;
   var pending = [];
+  var apiCalls = 0;
   guest["__setSnapshot"] = (next) => {
     snapshot = next;
     pending = [];
+    apiCalls = 0;
   };
   guest["__drainIntents"] = () => {
     const drained = pending;
     pending = [];
-    return drained;
+    return { intents: drained, apiCalls };
   };
-  guest.getTick = () => snapshot === null ? -1 : snapshot.tick;
+  guest.getTick = () => {
+    apiCalls += 1;
+    return snapshot === null ? -1 : snapshot.tick;
+  };
   guest.getObjectsByType = (kind, filter) => {
+    apiCalls += 1;
     if (snapshot === null) {
       return [];
     }
@@ -36,6 +42,7 @@
     return [];
   };
   guest.move = (unitId, dx, dy) => {
+    apiCalls += 1;
     pending = [...pending, { kind: "move", unitId, dx, dy }];
   };
 })();
