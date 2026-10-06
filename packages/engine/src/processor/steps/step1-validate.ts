@@ -2,11 +2,14 @@
  * 步 1 · validate:intent 先按单位分组、每单位只留最后一个(静默丢弃、不计异常),
  * 分组后按 `playerIndex 0..3` 再按对象数值 id 升序逐条校验;无效者丢弃(hld §4.3)。
  *
- * ── 本票的校验覆盖移动两条与攻击一条,其余三条是「尚未实现」而不是「非法」 ──
+ * ── 本票的校验覆盖移动两条、攻击一条与生产一条,其余两条是「尚未实现」而不是「非法」 ──
  *
- * 六条 intent 里,`harvest` / `transfer` / `spawnUnit` 的 `check()` 归 06–07。本步现在把这三条
- * **丢弃**(`attack` 的 `check()` 归 08,已在本步放行)。写清楚这是**尚未实现**:不写,后来者会把
- * 「一条 harvest 被丢掉」读成「harvest 是真的非法」,而那不是本层的语义。丢弃的原因是那三条尚未落地。
+ * 六条 intent 里,`harvest` / `transfer` 的 `check()` 归 07,尚未落地。本步现在把这两条
+ * **丢弃**。写清楚这是**尚未实现**:不写,后来者会把「一条 harvest 被丢掉」读成「harvest 是真的非法」,
+ * 而那不是本层的语义。丢弃的原因是那两条尚未落地。
+ *
+ * `spawnUnit` 是**玩家级**意图(不带单位 id),由 `groupIssuedIntents` 与单位级意图混在同一个序列里
+ * 按「座位 → 对象数值 id」排,且**不参与「每单位只留最后一个」那条分组**(见 intents.ts)。
  *
  * ── 丢弃为什么不发事件、不计异常 ──
  *
@@ -19,10 +22,12 @@
 import { checkAttack, isAttackIntent } from "../combat.js";
 import { groupIssuedIntents } from "../intents.js";
 import { checkMove, isMoveIntent } from "../movement.js";
+import { checkSpawn, isSpawnIntent } from "../production.js";
 import type { Step } from "../context.js";
 
 export const step1Validate: Step = (context) => {
-  // `GameState` 结构上就是 `MovementView` / `AttackView`(两型每栏 readonly),直接传,不做一层拷贝。
+  // `GameState` 结构上就是 `MovementView` / `AttackView` / `ProductionView`(每型每栏 readonly),
+  // 直接传,不做一层拷贝。
   const view = context.state;
   const intents = groupIssuedIntents(context.drained).filter(({ seat, intent }) => {
     if (isMoveIntent(intent)) {
@@ -31,7 +36,10 @@ export const step1Validate: Step = (context) => {
     if (isAttackIntent(intent)) {
       return checkAttack(view, seat, context.ruleset, intent);
     }
-    // harvest / transfer / spawnUnit 尚未实现,不是非法。静默丢弃,不发事件、不计异常(见头注)。
+    if (isSpawnIntent(intent)) {
+      return checkSpawn(view, seat, context.ruleset, intent);
+    }
+    // harvest / transfer 尚未实现,不是非法。静默丢弃,不发事件、不计异常(见头注)。
     return false;
   });
   return { ...context, intents };

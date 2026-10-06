@@ -84,15 +84,25 @@ export const captureChangeOf = (
   const progress = site.progressOwner === driver ? site.progress + 1 : 1;
   if (progress >= ruleset.raw.captureTicks) {
     // 达阈值:易主 + 整条轨道清零(理由见上)。
+    // `previousOwner` 把**易主前的属主**一并带出去:生产那一格要靠它把该基地的订单退给原主
+    // (买易主退款那一支)。这里是唯一知道旧属主的地方——a 段的变更一旦落地,状态里的 owner
+    // 已经是新主了(理由见 `driver/apply.ts` 里 `advance-capture` 的注释)。
     return {
       kind: "advance-capture",
       siteId: site.id,
       progressOwner: -1,
       progress: 0,
+      previousOwner: site.owner,
       newOwner: driver,
     };
   }
-  return { kind: "advance-capture", siteId: site.id, progressOwner: driver, progress };
+  return {
+    kind: "advance-capture",
+    siteId: site.id,
+    progressOwner: driver,
+    progress,
+    previousOwner: site.owner,
+  };
 };
 
 /**
