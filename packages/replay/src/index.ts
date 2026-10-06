@@ -6,7 +6,7 @@
  * 三行的类型与 JSON Schema 在那里,本包只做编解码、不再声明行的类型,故这里不复述字段。
  * 唯一留在本包的是 `CURRENT_SCHEMA_VERSION`——它是回放**文件格式的版本**,不是行的形状。
  *
- * 空壳阶段只落 stateHash 原语本身;行格式的编解码随回放写出路径落地。
+ * 写方向的编解码随写出路径落地,读方向是 `renderReplay`(它住在本包的理由见该文件头注)。
  *
  * ── 下面这一组再导出:真源包类型面的「传递」,不是本包的新声明 ──
  *
@@ -26,9 +26,30 @@ export type {
   MapSite,
   MapSpawnUnit,
   MapVariantSlot,
+  ReplayEvent,
+  ReplayEventKind,
+  ReplayLine,
+  ReplayMetaLine,
+  ReplayPlayer,
+  ReplayPlayerRef,
+  ReplayResultLine,
+  ReplaySeat,
+  ReplaySite,
+  ReplaySiteProduction,
+  ReplayTickLine,
+  ReplayTickPayload,
+  ReplayUnit,
+  ReplayUnitType,
   Ruleset,
   RulesetVersion,
   UnitStats,
+} from "@model-war/schema";
+
+/** 回放三行的 JSON Schema。经本包中转,理由同上面的类型面。 */
+export {
+  REPLAY_META_LINE_JSON_SCHEMA,
+  REPLAY_RESULT_LINE_JSON_SCHEMA,
+  REPLAY_TICK_LINE_JSON_SCHEMA,
 } from "@model-war/schema";
 
 /** 规则集键清单的键序。与 `Ruleset` 类型同源,派生量断言遍历它。 */

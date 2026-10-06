@@ -64,6 +64,10 @@ export type JsonValue =
 export * from "./archive-meta.js";
 export * from "./match-input.js";
 
+// 回放 JSONL 的三行(`meta` / `tick` / `result`,hld §7.5)。形状一次定死,取值由引擎写出。
+// 末行 `result` 里**终局原因的取值域**归 `match-result`(见 `pending.ts`),本模块只落行格式。
+export * from "./replay-line.js";
+
 // 各域文件(形状 / 参数清单 / 常量表)一律从这里再导出。
 export * from "./map.js";
 export * from "./pending.js";
