@@ -117,6 +117,8 @@ export const createInitialState = (ruleset: Ruleset, map: MapDefinition): GameSt
     nextId: firstUnitId(map.sites),
     outcome: null,
     firstContactTick: null,
+    // 开局四席都在,无人被淘汰——四个 `null` 即「尚无淘汰时刻」。
+    eliminatedAtTick: [null, null, null, null],
   };
   for (const site of map.sites) {
     state = apply(state, ruleset, {

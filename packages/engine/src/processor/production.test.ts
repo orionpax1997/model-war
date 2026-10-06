@@ -131,9 +131,31 @@ const makeState = (
   sites,
   nextId: 100,
   outcome: null,
+  // 与 `players[].alive` 一起派生,免得夹具里出现「已出局却没有淘汰时刻」这种真实引擎
+  // 不会产生的中间态——`eliminate-player` 是一条变更同时写两面的(见 apply.ts 那条注释)。
+  eliminatedAtTick: [0, 1, 2, 3].map((index) =>
+    (options.alive?.[index as PlayerIndex] ?? true) ? null : (options.tick ?? 0),
+  ),
   // 默认非 null:这些用例不该被「首触」事件干扰(战斗用例的同一条处置)。
   firstContactTick: 0,
 });
+
+/**
+ * 一个**不产生终局**的夹具底座:一个中立副点位 + 座位 3 的一支占位部队。
+ *
+ * 票 09 之后步 5 会**正当**判出终局,而下面三条用例把座位 0 那一格隔出来看、并对 `events`
+ * 整表断言,于是那些终局事件会挤进来:
+ * - 单点位图上,谁占了那唯一的点位就满足 gdd《胜利与淘汰》的「控制地图上全部点位」——多一个
+ *   中立副点位之后它不成立;
+ * - 只剩一个座位有单位时又触发捷径条款——座位 3 留一支部队之后它不成立。
+ * 剩下的缺口在两席显式标成早已出局(无单位、无基地、`alive=false`,与刚被淘汰的那一刻逐字一致),
+ * 步 5 开头就 `continue`。于是事件流里只剩生产自己产生的那一条。
+ *
+ * 不传这两样的用例不受影响:它们的夹具同样留空几席,但不整表断言 `events`。
+ * 号不与任何夹具对象重:全局 id 空间只有一个(票 08)。
+ */
+const DECOY_SITE = resourceSite(9, 3, 3, -1);
+const HOLDER = unit(60, 3, "worker", 7, 7);
 
 const SINK = { write: () => {} };
 
@@ -194,27 +216,29 @@ it("下单先校验资金、校验过才扣款:资金恰好等于造价时能下
 });
 
 it("资金不足:这一单无效——不占队列、不扣款、资金一个不少,且不抛错误码", () => {
-  const result = step(makeState([], [base(5, 1, 1, 0)], { resources: { 0: 3 } }), [
-    [spawn(5, "worker")],
-    [],
-    [],
-    [],
-  ]);
+  const result = step(
+    makeState([HOLDER], [base(5, 1, 1, 0), DECOY_SITE], {
+      resources: { 0: 3 },
+      alive: { 1: false, 2: false },
+    }),
+    [[spawn(5, "worker")], [], [], []],
+  );
   // 「校验推进、扣款退后」的反例(先扣再判)会让资金变成 -1、或先占上队列 → 这两条红。
   expect(result.state.sites[0]!.producing).toBeNull();
   expect(result.state.players[0]!.resources).toBe(3);
-  expect(result.state.units).toEqual([]);
+  // 只看向座位 0:这一单没成就不该凭空多出一个属于它的单位。
+  expect(result.state.units.filter((item) => item.owner === 0)).toEqual([]);
   // 静默丢弃:不发事件、不计异常(八种事件里没有「意图无效」这一类)。
   expect(result.events).toEqual([]);
 });
 
 it("产线已有订单时重复下单:静默丢弃——不扣款、队列不变(仍是原来那单)", () => {
-  const result = step(makeState([], [withProduction(base(5, 1, 1, 0), "melee", 4)]), [
-    [spawn(5, "worker")],
-    [],
-    [],
-    [],
-  ]);
+  const result = step(
+    makeState([HOLDER], [withProduction(base(5, 1, 1, 0), "melee", 4), DECOY_SITE], {
+      alive: { 1: false, 2: false },
+    }),
+    [[spawn(5, "worker")], [], [], []],
+  );
   // 新下的是 worker,但队列里还是原来的 melee(被本 tick 正常推进到 3):类型没被覆盖。
   expect(result.state.sites[0]!.producing).toEqual({ type: "melee", remainingTicks: 3 });
   // 重复的那一单没有扣款。
@@ -339,18 +363,24 @@ it("基地易主:队列取消,并把订单兵种的全额造价退给原主(不�
     RULESET.captureTicks - 1,
   );
   const driver = unit(1, 1, "worker", 2, 2);
-  const result = step(makeState([driver], [captured], { resources: { 0: 10, 1: 20 } }), [
-    [],
-    [],
-    [],
-    [],
-  ]);
+  // 座位 0 只是丢了基地,还有一支部队——按 gdd《胜利与淘汰》「**同时**无单位且无基地」不算淘汰。
+  // 这一支是刻意留的:它顺带钉住「易主退款不会把原主顺手判出局」。
+  const army = unit(2, 0, "worker", 0, 0);
+  const result = step(
+    makeState([driver, army, HOLDER], [captured, DECOY_SITE], {
+      resources: { 0: 10, 1: 20 },
+      alive: { 2: false },
+    }),
+    [[], [], [], []],
+  );
   expect(result.state.sites[0]!.owner).toBe(1);
   expect(result.state.sites[0]!.producing).toBeNull();
   // 全额 = melee.cost(8),与 remainingTicks=1 无关;退给原主(座位 0)。
   expect(result.state.players[0]!.resources).toBe(10 + 8);
   // 新主没多出一分钱。
   expect(result.state.players[1]!.resources).toBe(20);
+  // 座位 0 丢了基地但部队尚存 → 没有被顺手判出局(淘汰条件要「同时」)。
+  expect(result.state.players[0]!.alive).toBe(true);
   // 「易主退款改成不退」的反例:座位 0 仍是 10 → 上一条红。
   expect(result.events).toEqual([{ kind: "site-captured", subjectId: 5 }]);
 });

@@ -16,7 +16,7 @@
  *    面向模型层是渲染后的短句,含 JSON 指针,并**对同类错误合并成一行**
  *    (生成管线的五轮迭代预算撑不撑得住,取决于这个合并)。
  *
- * 本文件已有四份形状(地图 / 规则集 / 存档 meta / 对局输入),走的是**同一个 Ajv 实例、
+ * 本文件已有五份形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放末行 `result`),走的是**同一个 Ajv 实例、
  * 同一套投影与合并渲染**。新增一种数据形状是「再加一个 `validateXxx` + 它的装载期断言」,
  * 不是新写一份校验器:真正的风险不是校验点少,而是日后有人为了让别的包也能校验而手写一份
  * 形状 if —— 那才是第二真源。
@@ -31,6 +31,7 @@ import {
   ARCHIVE_META_JSON_SCHEMA,
   MAP_JSON_SCHEMA,
   MATCH_INPUT_JSON_SCHEMA,
+  REPLAY_RESULT_LINE_JSON_SCHEMA,
   RULESET_JSON_SCHEMA,
   RULESET_UNIT_KEYS,
   RULESET_VERSION,
@@ -39,6 +40,7 @@ import {
   type JsonValue,
   type MapDefinition,
   type MatchInput,
+  type ReplayResultLine,
   type Ruleset,
   type UnitStats,
 } from "@model-war/schema";
@@ -116,6 +118,10 @@ export type MatchInputValidation =
   | { readonly ok: true; readonly input: MatchInput }
   | ValidationRejection;
 
+export type ReplayResultLineValidation =
+  | { readonly ok: true; readonly result: ReplayResultLine }
+  | ValidationRejection;
+
 // `allErrors: true` 是合并的前提:默认的 fail-fast 只报第一条错,
 // 面向模型层就退化成「每次回喂只修一个错」,五轮预算必被吃光。
 const ajv = new Ajv({ allErrors: true });
@@ -126,9 +132,11 @@ const ajv = new Ajv({ allErrors: true });
 const checkMapShape = ajv.compile(MAP_JSON_SCHEMA as SchemaObject);
 const checkRulesetShape = ajv.compile(RULESET_JSON_SCHEMA as SchemaObject);
 // 存档 meta 与对局输入:同一实例、同一次编译(模块顶层)。新起第二个 Ajv 实例会让
-// 「唯一一份校验器」这句话当场失效,所以这两行与上面两行是同一件事的续写。
+// 「唯一一份校验器」这句话当场失效,所以这两行与上面两行是同一件事的续写。回放末行 `result`
+// 也在这里编译(同一实例)。
 const checkArchiveMetaShape = ajv.compile(ARCHIVE_META_JSON_SCHEMA as SchemaObject);
 const checkMatchInputShape = ajv.compile(MATCH_INPUT_JSON_SCHEMA as SchemaObject);
+const checkReplayResultShape = ajv.compile(REPLAY_RESULT_LINE_JSON_SCHEMA as SchemaObject);
 
 const MAJOR_OF_VERSION = /^v([0-9]+)$/;
 
@@ -630,4 +638,33 @@ export const validateMatchInput = (
   }
 
   return { ok: true, input };
+};
+
+// ── 回放末行 result(hld §7.5)──────────────────────────────────────────────────
+
+/**
+ * 校验一份回放 JSONL 的**末行 `result`**(09 票销掉 `match-result` 那一层所交付的读入端)。
+ *
+ * 形状与取值域的家都在真源包 `packages/schema/src/replay-line.ts`:类型 `ReplayResultLine`
+ * 与 JSON Schema `REPLAY_RESULT_LINE_JSON_SCHEMA`(`reason` 收成四值 `enum`、名次与领土分
+ * 都是定长四元组)。本函数是**第三层「读入端校验」**,与前四个校验器同一条缝:纯函数、不读盘、
+ * 不碰退出码,接受 / 拒绝的断言落在它自己身上。
+ *
+ * 与 `validateMap` / `validateRuleset` 不同,这份形状没有跨字段的装载期断言(哈希、版本、
+ * 派生量):`rankings` 与 `territoryScores` 的长度、取值域、`reason` 的枚举都在 JSON Schema 的
+ * 表达力之内,ajv 一层就够。真要出下一层(例如「已淘汰者领土分恒为 0」),它也应落在这里,而不是
+ * 在某个包内再写一份形状 if——那才是第二真源(见头注第 3 条)。
+ *
+ * **它目前还没有生产调用点**:`modelwar replay` 的读盘渲染器住在 `@model-war/replay`,而
+ * `packages/replay` 的依赖方向是 `schema ← replay`、**不能**反向依赖持有 ajv 的 `apps/cli`
+ * (`hld §3.2`)。接线归哪一票、以什么形态接,记在 09 票的 `## Answer` 里;本函数先把「第三层」
+ * 交付出来,它与 `validator.test.ts` 的断言就是这句话的机器形态。
+ */
+export const validateReplayResultLine = (value: JsonValue): ReplayResultLineValidation => {
+  if (!checkReplayResultShape(value)) {
+    return rejectionOf((checkReplayResultShape.errors ?? []).map(toMachineDiagnostic));
+  }
+
+  // ajv 已经保证三栏齐、类型对、取值域在枚举内,故这次认作 `ReplayResultLine` 是安全的。
+  return { ok: true, result: value as ReplayResultLine };
 };

@@ -30,6 +30,7 @@ export type {
   ReplayEventKind,
   ReplayLine,
   ReplayMetaLine,
+  ReplayOutcomeReason,
   ReplayPlayer,
   ReplayPlayerRef,
   ReplayResultLine,

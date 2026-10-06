@@ -23,10 +23,10 @@
  *
  * ── 终局行怎么来的 ──
  *
- * `processTick` 的步 7 只给**触发信号** `limitReached`,不写 `state.outcome`——名次算法归票 09。
- * 于是本函数按这个次序取终局:**若 `state.outcome` 已置(票 09 之后),直接用它**;否则退到
- * 「超时 + 全部并列」。后者对**空转对局**是诚实答案(四方领土分相同,按 gdd 的排序规则就是全部并列),
- * 而不是占位:一个 `rankings: []` 的半截 `Outcome` 会被渲染器与战报当成「这局打完了」读,那更坏。
+ * 步 5 与步 7 各自把终局写进 `state.outcome`(唯一出口),本函数只把它搬到末行 `result`。
+ * 循环跑到 `state.outcome !== null` 为止:写 `outcome` 的那一 tick 就是收官那一 tick。
+ * 「收官了却没有 `outcome`」在本函数里是一个**不该发生**的状态(步 5 / 步 7 每 tick 都判),
+ * 出现即抛,而不是伪造一个「超时 + 全部并列」的兜底——那会让引擎故障伪装成一局正常超时。
  */
 
 import type { MapDefinition, ReplayPlayerRef, ReplayResultLine, Ruleset } from "@model-war/replay";
@@ -71,13 +71,11 @@ export type RunMatchResult = {
   /**
    * 收官时的完整状态。
    *
-   * **`outcome` 此刻仍是 `null`**:本票一条游戏机制都不实现,判据与名次算法归票 09,
-   * 而步 7 只给触发信号、不写半截 `outcome`。本票的终局结论在 `result` 那一栏(它按
-   * `state.outcome` —— 票 09 之后 —— 或「超时 + 全部并列」取出)。
-   * 把「`outcome` 已置」写成事实会是句假话:读它的人会拿到 `null` 去解引用。
+   * **`outcome` 在这一刻必已置**(它就是循环的退出条件),与 `result` 是同一份终局的两条读法:
+   * `result` 是它的行格式投影,`finalState` 是引擎侧的原样。
    */
   readonly finalState: GameState;
-  /** 结算过的 tick 数。`limitReached` 时它等于 `ruleset.tickLimit`。 */
+  /** 结算过的 tick 数。超时收官时它等于 `ruleset.tickLimit`。 */
   readonly tickCount: number;
 };
 
@@ -96,40 +94,30 @@ const strategiesOf = (strategies: readonly StubStrategy[]) => {
 };
 
 /**
- * 终局行:优先用 `state.outcome`(票 09 之后),否则退到「超时 + 全部并列 + 领土分 0」。
+ * 终局行:`state.outcome` 的行格式投影。
  *
- * 后者对**空转对局**是诚实答案而不是占位:四方没有任何单位被消灭、没有任何点位易主,
- * 领土分相同,按 gdd 的排序规则(层内按领土分,仍相同则并列)就是全部并列。写成
- * `rankings: []` 才是占位——那会被渲染器与战报当成「这局打完了」读。
+ * `state.outcome` 在收官时必已置(步 5 或步 7 写下),但类型上仍可空,故这里判一次:
+ * 空即引擎故障——循环条件就是 `state.outcome === null`,能走到这里说明退出条件被绕过。
+ * 不伪造「全部并列」的兜底:伪造会把一次引擎故障伪装成一局正常超时,而报告正是靠 `reason` 分类。
  */
-const resultLineOf = (state: GameState, limitReached: boolean): ReplayResultLine => {
-  if (state.outcome !== null) {
-    return {
-      type: "result",
-      rankings: [...state.outcome.rankings],
-      reason: state.outcome.reason,
-      territoryScores: [...state.outcome.territoryScores],
-    };
+const resultLineOf = (state: GameState): ReplayResultLine => {
+  const outcome = state.outcome;
+  if (outcome === null) {
+    throw new Error("对局收官时没有终局结果——引擎故障(步 5 / 步 7 未写 state.outcome)");
   }
-  if (limitReached) {
-    return {
-      type: "result",
-      rankings: SEATS.map(() => 1),
-      reason: "timeout",
-      territoryScores: SEATS.map(() => 0),
-    };
-  }
-  // 既无 outcome 又未到 tickLimit:这不该发生(步 7 每 tick 都判),出现即引擎故障。
-  throw new Error(
-    "对局在未达 tickLimit 时收官且没有终局结果——引擎故障(步 7 的 limitReached 判定与终局行不一致)",
-  );
+  return {
+    type: "result",
+    rankings: [...outcome.rankings],
+    reason: outcome.reason,
+    territoryScores: [...outcome.territoryScores],
+  };
 };
 
 /**
  * 跑完一局:装载 → 开局 → 逐 tick 结算并写行 → 收官写末行。
  *
  * **每 tick 的结算与写行都由 `processTick` 做**(步 6 写那一行),本函数只做编排:把四个
- * 策略包成执行器、逐 tick 把上一 tick 的返回值喂给下一 tick、直到步 7 说到顶了。
+ * 策略包成执行器、逐 tick 把上一 tick 的返回值喂给下一 tick、直到某一步写下了 `state.outcome`。
  * 「tick 的结算」这条规则因此**只有一处实现**,本函数不可能与它分叉。
  */
 export const runMatch = (params: RunMatchParams): RunMatchResult => {
@@ -148,15 +136,14 @@ export const runMatch = (params: RunMatchParams): RunMatchResult => {
   sink.write(serializeMetaLine(buildMetaLine(head, seed, players)));
 
   let tickCount = 0;
-  let limitReached = false;
-  while (!limitReached) {
+  // `state.outcome !== null` 就是收官:写它的那一 tick 是最后结算的一 tick。
+  while (state.outcome === null) {
     const ticked = processTick(state, runners, view, sink);
     state = ticked.state;
     tickCount = ticked.state.tick;
-    limitReached = ticked.limitReached;
   }
 
-  const result = resultLineOf(state, limitReached);
+  const result = resultLineOf(state);
   sink.write(JSON.stringify(result));
   return { result, finalState: state, tickCount };
 };

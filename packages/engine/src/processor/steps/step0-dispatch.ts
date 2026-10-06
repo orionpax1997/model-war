@@ -18,6 +18,12 @@
  * 所以这一层现在只做「跑四个执行器、按座位收 intents」,裁决与暂停随对应的机制票落地。
  * 收集器在这一层已经是可用的——`exception` / `budgetSoftWarning` 两个具名方法挂在步 0 上,
  * 它们在那两票落地时不需要改定序规则,只需要有人调它们。
+ *
+ * ── 淘汰方不再被调用(票 09)──
+ *
+ * 淘汰方这一 tick 交回空数组、`loop()` 不被执行;但它的单位、资源仍随快照写进后续 tick 的
+ * 回放行(hld §4.3 步 5 第四条「状态保留以便重放取证」)。跳过发生在**调用点**而不是执行器里:
+ * 沙箱执行器不需要知道「谁出局了」,那是引擎状态的事。
  */
 
 import { buildSnapshot } from "../../snapshot/snapshot.js";
@@ -44,6 +50,13 @@ export const step0Dispatch: Step = (context) => {
   // 座位序 = 串行序。串行不是性能选择:四方**串行**执行是 hld §2.3 的规则,沙箱共享宿主状态时
   // 并行执行的结果不可复算,而这一层正是「四方依次拿到同一份只读快照」的那一层。
   const drained: DrainedIntents[] = SEATS.map((seat) => {
+    const player = context.state.players[seat];
+    // hld §4.3 步 5 第四条:淘汰方的 `loop()` 不再执行,但状态保留以便重放取证。
+    // 跳过时交**空数组**而不是不交条目——`DrainedIntents[]` 的四项对齐是这一层的不变量,
+    // 「这一 tick 什么都不做」本来就有一个合法表示(空数组),不必另造一个缺席。
+    if (player !== undefined && !player.alive) {
+      return { seat, intents: [] };
+    }
     const runner = runnerOf(context, seat);
     runner.setSnapshot(snapshot);
     return { seat, intents: runner.drainIntents() };

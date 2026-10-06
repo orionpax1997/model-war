@@ -28,7 +28,7 @@ import { createEventCollector } from "./events.js";
 import { EVALUATE_STAGE_NAMES, EVALUATE_STAGES } from "./steps/step5-evaluate.js";
 import { step6Emit } from "./steps/step6-emit.js";
 import { step7LoopGuard } from "./steps/step7-loop-guard.js";
-import type { GameState, PlayerIndex, Site, Unit } from "../world/state.js";
+import type { GameState, Owner, PlayerIndex, Site, Unit } from "../world/state.js";
 
 const RULESET: Ruleset = {
   tickLimit: 600,
@@ -64,12 +64,12 @@ const unit = (id: number): Unit => ({
   carrying: 0,
 });
 
-const site = (id: number): Site => ({
+const site = (id: number, owner: Owner): Site => ({
   id,
   kind: "base",
   x: id,
   y: 0,
-  owner: 0,
+  owner,
   progressOwner: -1,
   progress: 0,
   producing: null,
@@ -87,9 +87,12 @@ const makeState = (tick = 0): GameState => ({
     exceptionTicks: 0,
   })),
   units: [unit(1), unit(2)],
-  sites: [site(3), site(4)],
-  nextId: 5,
+  // 四席各持一个主基地:本文件测的是步序,需要一个「无淘汰、无全点位胜、可跑满到超时」的状态。
+  sites: [site(3, 0), site(4, 1), site(5, 2), site(6, 3)],
+  nextId: 7,
   outcome: null,
+  // 本用例四席都在,无人被淘汰。
+  eliminatedAtTick: [null, null, null, null],
   firstContactTick: null,
 });
 
@@ -122,16 +125,16 @@ it("八步按 hld §4.3 的 0–7 排,下标即步号", () => {
 it("把第七步提到第六步前面 → 变红(它确实参与计算,不是装饰)", () => {
   const { sink, lines } = collectingSink();
   const ruleset = loadRuleset(RULESET);
-  // 正常顺序:最后一个被结算的 tick 是 tickLimit-1,步 6 加一,步 7 看到 tickLimit → 超时。
+  // 正常顺序:最后一个被结算的 tick 是 tickLimit-1,步 6 加一,步 7 看到 tickLimit → 写超时 outcome。
   const correct = processTick(makeState(599), idleRunners(), ruleset, sink);
-  expect(correct.limitReached).toBe(true);
+  expect(correct.state.outcome?.reason).toBe("timeout");
   expect(correct.state.tick).toBe(600);
-  // 换序之后:步 7 先跑,它看到的是 599,于是判不出超时,收官晚一 tick。
+  // 换序之后:步 7 先跑,它看到的是 599,于是判不出超时、写不下 outcome,收官晚一 tick。
   const swapped = [step7LoopGuard, step6Emit].reduce(
     (now, step) => step(now),
     initialContext(ruleset, idleRunners(), sink, createEventCollector(), makeState(599)),
   );
-  expect(swapped.limitReached).toBe(false);
+  expect(swapped.state.outcome).toBeNull();
   // 写出的那一行也跟着错位:tick 栏从 599 变成 600。
   expect(JSON.parse(lines[0] ?? "{}")["tick"]).toBe(599);
 });

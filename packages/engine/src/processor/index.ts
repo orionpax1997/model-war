@@ -64,8 +64,6 @@ export type TickResult = {
   readonly intents: readonly IssuedIntent[];
   /** 本 tick 按座位计的寻路调用量(票 04)。预算层的输入,本层不判罚。 */
   readonly pathfindingCalls: readonly number[];
-  /** 步 7 的结论:`tick` 达 `tickLimit`。票 09 把它换成 `state.outcome`。 */
-  readonly limitReached: boolean;
 };
 
 /**
@@ -89,6 +87,5 @@ export const processTick = (
     events: context.collector.events(),
     intents: context.intents,
     pathfindingCalls: context.pathfindingCalls,
-    limitReached: context.limitReached,
   };
 };

@@ -51,6 +51,8 @@ const makeState = (tick = 7): GameState => ({
   sites: [site(3), site(4)],
   nextId: 5,
   outcome: null,
+  // 本用例四席都在,无人被淘汰。
+  eliminatedAtTick: [null, null, null, null],
   firstContactTick: null,
 });
 
