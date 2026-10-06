@@ -605,7 +605,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 | API 调用计数 | 宿主注入的 action/查询函数内自增计数器;到顶后**本 tick 内该方后续所有 intent 一并作废** | 同上。脚本 `try/catch` 捕获异常不能保留已提交的 intent——引擎按"该方本 tick 作废"处理 | ✅ 纯计数 |
 | 内存分配上限 | `memoryLimit`(VM 线性内存)——引擎分配上限,上限本身不可突破 | 超限转 JS 异常(未捕获按 §5.2 第一行处理) | ✅ |
 | 内存判据 | 软/硬双阈值;判据 = 每 tick 末 `runGC()` 后 `getMemoryUsage().mallocSize`(存活堆读数) | 硬线 `memoryTickCeiling`(ruleset 参数)超线 = 视同 §5.2 第一行;软阈值(0.8×硬,推导)仅写报告披露 `memory-pressure`。`runGC()` 固定扫描税 0.5–3.3ms/tick,入 NFR-3 标定考量 | ✅ 纯记账 |
-| 墙钟软限 | 单 tick `loop()` 执行时长(按抽样读,不逐 tick 阻塞) | 写入**观测文件** `budget-soft-warning` + 报告披露,**墙钟不进回放 events 流**;**只观测** | ✅ 不参与判罚 |
+| 墙钟软限 | 单 tick `loop()` 执行时长(按抽样读,不逐 tick 阻塞) | 写成**一条软限观测行**(观测文件 `observations.jsonl`,轨名 `wallClockSoftLimit`)+ 报告披露,**墙钟不进回放 events 流**;**只观测** | ✅ 不参与判罚 |
 | 墙钟硬超时 | 防宿主卡死的最后防线(如宿主回调卡死) | **不判负**:标记 `nondeterministic-timeout`,按 §8.4 与 `engine-crash` 同轨处理(重跑 / 剔除并披露) | 隔离出判罚路径,判罚仍可复现 |
 
 设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只作废当前对局,不改变对局内的胜负判定。
@@ -732,7 +732,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 - `schemaVersion` 由 `replay` 包 `CURRENT_SCHEMA_VERSION` 常量承担,跨版本兼容性以它为准(FR-9 AC2)。**它是回放文件格式的版本,不是行的形状**:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包,`replay` 包只做编解码、不再声明行的类型(§2.2.5、§3.1)。这一格曾经有两个家(§2.2.5 说形状在真源包、§3.1 说行格式取自 `replay` 包),按「每个事实只有一个家」留在真源包。
 - **meta 行共十二栏,`runner` 是判别式**(取值 `"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,缺这一栏就把可读性押在「四个沙箱栏同时为空」这个约定上。**`runner === "stub"` 时四个沙箱栏(`quickjsWasiVersion` / `sandboxRuntimeHash` / `wasiClock` / `wasiRandomFill`)全为 `null`**(不是空串、不是 `0`——「未发生」与「恰好是空串」要能区分),本 feature 只有 `StubRunner`,故桩回放四栏皆 `null`;`runner === "quickjs"` 时四栏都是非空字符串,填错在类型上编译不过(判别联合)。
 - 每 tick 记录足以绘制完整画面的状态:点位归属、占领进度条、单位位置血量携带、玩家资源。
-- **events 事件流**(叙事战报的统一来源):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`budget-soft-warning`、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态。
+- **events 事件流**(叙事战报的统一来源,**七种**):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态;墙钟软限与内存压力是**观测行**(`observations.jsonl`),不进事件流、更不进 `stateHash`。
 - **`first-contact` 的判据是观测量,不是规则参数**:任意敌对单位 Chebyshev ≤ 2、**整局第一次**一条,故不进 `rulesets/v1.json`(它不判胜负、不判合法、不影响移动,只给事件流标一个时刻)。判据的定性半句在 gdd 首触那一段(「首触判据吃的是接近度」),**给予它的精确定义是 gdd 那一侧的欠账**;引擎按该口径实现并在 `packages/engine/src/processor/steps/step2-movement.ts` 的注释里注明出处。
 
 ## 8. runner 与排名概要设计
