@@ -175,6 +175,23 @@ it("工具版本耦合断言:配套为 0,错位为 1", () => {
   expect(ranged.output, ranged.output).toContain("精确锁版");
 });
 
+// ── quickjs-wasi 版本耦合:改根依赖钉的版本号即红 ──────────────────────────
+
+it("quickjs-wasi 版本耦合断言:配套为 0,改根钉版即 1", () => {
+  const gate = ["packages/tools/src/gate/run-quickjs-coupling-gate.ts"] as const;
+  const aligned = run("node", [...gate]);
+  expect(aligned.status, aligned.output).toBe(0);
+  expect(aligned.output, aligned.output).toContain("quickjs-wasi 版本耦合 ok");
+
+  // 反例:把根依赖钉的版本号改掉——按新版本组合复验之前,这条必须立刻红。
+  const bumped = run("node", [...gate, "3.7.0"]);
+  expect(bumped.status, "改根钉版后必须非零退出").toBe(1);
+  expect(bumped.output, bumped.output).toContain("根依赖与冻结常量一致");
+  // 报错信息要直接告诉人跑哪个脚本、把数字写回哪一节。
+  expect(bumped.output, bumped.output).toContain("pnpm run probes:sandbox");
+  expect(bumped.output, bumped.output).toContain("docs/hld.md §5.0");
+});
+
 // ── 禁浮点门禁反例 ───────────────────────────────────────────────────────────
 
 it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", () => {

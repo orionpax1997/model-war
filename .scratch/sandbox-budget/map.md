@@ -25,7 +25,7 @@ Status: resolved
 
 - [跨边界调用形态对比](issues/03-runtime-bundle-vs-injection.md):进 v0 保留 hld §4.5 的 runtime bundle 形态,不回退逐函数注入——交叉点 ≈24–210 次调用/tick,注入形态「小赢无感、大输无上界」;打包方式留实现期。
 
-- [沙箱行为实测 harness](issues/02-sandbox-spike-harness.md):§5 断言 11 条判定——7 成立、4 不成立(中断按控制流事件非指令、深递归非 trap 且 VM 可续用无需重建、无 maxStackSize 之说)、1 缺机制(OOM 可被 guest 吞,披露需 host 兜底);数据与判定输入见 [spike/FINDINGS.md](spike/FINDINGS.md)。
+- [沙箱行为实测 harness](issues/02-sandbox-spike-harness.md):§5 断言 11 条判定——6 成立、4 不成立(中断按控制流事件非指令、深递归非 trap 且 VM 可续用无需重建、无 maxStackSize 之说)、1 缺机制(OOM 可被 guest 吞,披露需 host 兜底);数据与判定输入见 [spike/FINDINGS.md](spike/FINDINGS.md)。
 
 - [WASM trap 滥用的约束设计](issues/04-trap-abuse-countermeasures.md):滥用不成立(清记忆=自抹等价,重建逃不掉 `exceptionTicks`)→ 加代价四候选全部作废;§5.2 改写"异常不清记忆不重建、真 trap 计异常+防御性重建+扫描复核",§5.0 两处措辞修正,gdd《异常与出局》补两行;`exceptionTickLimit` 判"足"。拆出票「OOM 异常被 guest 吞掉的 host 检测兜底」。
 

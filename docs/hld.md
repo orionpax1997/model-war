@@ -556,31 +556,31 @@ type Intent =
 
 v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT 协议,零第三方依赖;版本锁定到 `package.json`,**锁定 3.6.2**(基线 ≥3.5.0:3.3.x 的 `memoryLimit` 计账与 OOM 异常形态各有回归))。相对此前候选(QuickJS 嵌入 / WASM + fuel / isolated-vm):
 
-**先交代本节行为结论的出处**:以下五条全部来自 `quickjs-wasi@3.6.2` 的实测,环境 **Node v24.15.0 / Linux x64**,主测量日期 **2026-09-24**(数据与原始输出在 `.scratch/sandbox-budget/spike/`,逐条判定见 `spike/FINDINGS.md`;#1 与 #5 另有 2026-10-01 的复核探针,探针不落库)。**这些结论只对 3.6.2 成立**,换版本即失效。复验责任见本节末“升级条款”与 §12 #8。
+**先交代本节行为结论的出处**:以下五条最初来自 `quickjs-wasi@3.6.2` 的一次 spike,环境 **Node v24.15.0 / Linux x64**,主测量日期 **2026-09-24**(数据在 `.scratch/sandbox-budget/spike/`,逐条判定见 `spike/FINDINGS.md`);**2026-10-06 按同版本组合复验**(真 VM 探针,可执行、输出落盘:`.scratch/sandbox-executor/probe-output/`,一键跑 `pnpm run probes:sandbox`),结论与 spike 一致,数字见下表。**这些结论只对 3.6.2 成立**,换版本即失效——为此 `check:quick` 里有一条版本耦合断言(`pnpm run coupling:quickjs`),根 `package.json` 一改钉版就红,报错信息指向复验脚本与本节。复验责任见本节末“升级条款”与 §12 #8。
 
 | # | 行为 | 结论 | 机制与参数落在 |
 |---|---|---|---|
-| 1 | 脚本入口契约 | 单文件 script-mode 编译产物经 `evalCode` 载入即成,`loop` 是 `function` 且 `callFunction` 调得动;带 `export` / `import` 的产物在**载入期**就取 `SyntaxError`。来源:`spike/results/m7-doc-gaps.txt`(M7.2,M7.3)+ 2026-10-01 复核探针 | §2.2.2 |
-| 2 | 深递归的失败形态 | **host 侧 `RangeError: Maximum call stack size exceeded`,`isJSException: false`**——不是 WASM RuntimeError trap,也不是 JSException;guest 吞不掉;**VM 溢出后仍可续用**。来源:`spike/results/m3-runaway.txt`(M3 deep-default/deep-guard-off,VM 续用 `eval:3`) | §5.0 崩溃语义、§5.2 |
-| 3 | `interruptHandler` 的截停能力 | 每 **5000 次控制流事件**(循环回边 / 调用 / 返回)触发一次,**不是每条字节码指令**;中断以 host 侧 `InternalError: interrupted` 呈现,**guest 不可捕获**,VM 续用;纯计数回调拖慢 ≤~3%。来源:`spike/results/m1-interrupt.txt`(M1.1 `itersPerCb: 5000.00`,M1.2 −2.5%~+2.4%,M1.3 `catchRan: NO`) | §5.0 预算可复现、§5.3 |
-| 4 | 内存读数字段名 | 判据读 `getMemoryUsage().mallocSize`(与 `memoryLimit` 同记账口径);`memoryUsedSize` 更低且不含空闲池,不作判据;读数封顶是 `memoryLimit − 最大单次分配`,**不是 `−64KB`**。来源:`spike/results/m2-memory.txt`(基线 `mallocSize:75128` vs `memoryUsedSize:64098`) + `.scratch/sandbox-budget/findings/02b-*`(02 的 `−64KB` 模型已被 02b 推翻,封顶为准操作模型) | §5.3 |
-| 5 | 宿主桥函数删除后的不可见性 | 删后脚本枚举不到、也捞不回来,闭包内的引用照常工作;但越权只表现为普通 `ReferenceError`,**被脚本 `try/catch` 吞掉时宿主零痕迹**。来源:2026-10-01 复核探针(删除模拟:`in` 为 `false`、`typeof` 为 `undefined`、按 `__` 前缀枚举为空;闭包调用照常返回;引用已删桥未捕获时 host 侧 `ReferenceError` JSException,吞掉后 `after` 标志照常置位) | §4.5 |
+| 1 | 脚本入口契约 | 单文件 script-mode 编译产物经 `evalCode` 载入即成,`loop` 是 `function` 且 `callFunction` 调得动;带 `export` / `import` 的产物在**载入期**就取 `SyntaxError`。来源:`spike/results/m7-doc-gaps.txt`(M7.2,M7.3)+ 探针 01 `probe-output/probe-01-script-entry-contract.txt` | §2.2.2 |
+| 2 | 深递归的失败形态 | **host 侧 `RangeError: Maximum call stack size exceeded`,`isJSException: false`**——不是 WASM RuntimeError trap,也不是 JSException;guest 吞不掉;**VM 溢出后仍可续用**。来源:`spike/results/m3-runaway.txt`(M3 deep-default/deep-guard-off,VM 续用 `eval:3`)+ 探针 02 `probe-output/probe-02-deep-recursion.txt` | §5.0 崩溃语义、§5.2 |
+| 3 | `interruptHandler` 的截停能力 | 每 **5000 次控制流事件**(循环回边 / 调用 / 返回)触发一次,**不是每条字节码指令**;中断以 host 侧 `InternalError: interrupted` 呈现,**guest 不可捕获**,VM 续用;纯计数回调拖慢落在噪声区间内(计时类判据是区间 **±10%**,不复述单次读数)。来源:`spike/results/m1-interrupt.txt`(M1.1 `itersPerCb: 5000.00`,M1.2 −2.5%~+2.4%,M1.3 `catchRan: NO`)+ 探针 03 `probe-output/probe-03-interrupt-granularity.txt` | §5.0 预算可复现、§5.3 |
+| 4 | 内存读数字段名 | 判据读 `getMemoryUsage().mallocSize`(与 `memoryLimit` 同记账口径);`memoryUsedSize` 更低且不含空闲池,不作判据;读数封顶是 `memoryLimit − 最大单次分配`,**不是 `−64KB`**。来源:`spike/results/m2-memory.txt`(基线 `mallocSize:75128` vs `memoryUsedSize:64098`)+ `.scratch/sandbox-budget/findings/02b-*`(02 的 `−64KB` 模型已被 02b 推翻,封顶为准操作模型)+ 探针 04 `probe-output/probe-04-memory-reading.txt` | §5.3 |
+| 5 | 宿主桥函数删除后的不可见性 | 删后脚本枚举不到、也捞不回来,闭包内的引用照常工作;但越权只表现为普通 `ReferenceError`,**被脚本 `try/catch` 吞掉时宿主零痕迹**。来源:探针 05 `probe-output/probe-05-bridge-deletion.txt`(删除后:`'__bridge' in globalThis` 为 `false`、`typeof` 为 `undefined`、按 `__` 前缀枚举为空;闭包捕获的引用照常返回;宿主仍可经 handle 调桥;裸引用 `__bridge()` 为普通 `ReferenceError`,guest 吞掉后照常继续、宿主零痕迹) | §4.5 |
 
 - **隔离**:One VM = One WASM 实例,线性内存互不可见;包只做显式 I/O(wasm 字节由调用方提供),默认无 FS/网络——满足 FR-4 AC1,且比 worker_threads 的"去全局"做法审计面更小。
-- **预算可复现**:`interruptHandler` 每 5000 次控制流事件(循环回边/调用/返回)触发一次(回调内自乘计数),与 API 调用计数构成双主判据——实测口径是**控制流事件计数**而非指令计数(直线代码不计量,由 §6.2 脚本体积上限封盲区);`memoryLimit` 超限(≥3.5.0)表现为**可捕获的 JS 异常**(`InternalError: out of memory`),内存判据锚定 tick 末存活堆读数(§5.3)——均不依赖墙钟。回调开销与粒度已实测校对(纯计数 handler 对比无 handler 拖慢 −2.5%~+2.4%,即 ≤~3%;回调摊销 1–4µs/次,故**回调内绝不能放墙钟或重活**)。
+- **预算可复现**:`interruptHandler` 每 5000 次控制流事件(循环回边/调用/返回)触发一次(回调内自乘计数),与 API 调用计数构成双主判据——实测口径是**控制流事件计数**而非指令计数(直线代码不计量,由 §6.2 脚本体积上限封盲区);`memoryLimit` 超限(≥3.5.0)表现为**可捕获的 JS 异常**(`InternalError: out of memory`),内存判据锚定 tick 末存活堆读数(§5.3)——均不依赖墙钟。回调开销与粒度已实测校对(纯计数 handler 对比无 handler,拖慢落在噪声区间内;计时类判据为区间 **±10%**,故**回调内不得放每次都做的重活,时钟按抽样读**)。
 - **崩溃语义**:WASM 执行无进程崩溃概念;死循环由中断计数截停;**深递归栈溢出实测为 host 侧 `RangeError`(`isJSException: false`),既不是 WASM RuntimeError trap 也不是 JSException,guest 吞不掉,VM 溢出后仍可续用**——所以栈溢出**不需要**防御性重建(§5.2);WASM trap 只剩引擎故障级可能,FR-4 AC3 的"一方崩溃不影响他方"降级为"一方失控只计异常分,不污染引擎与他方 VM"。
 - **记忆能力**:VM 常驻对局全程,模块级变量天然跨 tick 保留(FR-3);snapshot/restore 能力暂不用(状态以 GameState + JSONL 为准)。
 - **执行器缝**:host 侧 `SeatRunner` 接口(**两个方法** `setSnapshot` / `drainIntents`,见 `docs/adr/0005`;执行器不持生命周期,建 VM 与 `dispose` 归组装层)+ `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身:回放预置 intent、抛异常、触发 trap、超预算)。**在出现第二个真实 VM 实现之前不新增抽象层**——这条缝只让 §5.2 的四类裁决与结算管线可脱离 WASM 穷举测试。
 - **代价**:Node ≥ 22.18(**下限的成因是我们自己的代码,不是本库**,§2.2.1);`moduleLoader` 不配置(`import` 在静态校验期即拒绝,运行时 script-mode 同样把它当 `SyntaxError`);**`maxStackSize` 选项确实存在**(3.6.2 有;`0` = 关守卫,显式设值 ≤512KB),v0 **不启用**——启用会把栈溢出变成 guest 可捕获异常、可被脚本吞掉;不启用(默认或显式 `0`)则溢出为 host `RangeError`,host 必见。**上一版这里写的“无 `maxStackSize`、栈溢出表现为 WASM trap”两句都不成立**,已按实测改正。
 
-**升级条款当前是空头承诺,须写明**:"升级 `quickjs-wasi` 需重跑重放一致性测试与沙箱行为复测"这条既有条款,在**沙箱执行器落地之前没有任何可执行的东西支撑它**——重放一致性要有一个真实的对局可重跑,行为复测要有一个真实的 VM 宿主来驱动,而两者都还不存在(骨架里 `engine` 只有导出符号,没有 `QuickJsRunner`)。**复验责任挂在“实现真实沙箱执行器”那张票上**:它落地时的**第一条验收**就是按当时的版本组合把上表五条重跑一遍,并把新数字写回本节(§12 #8 记着这件事)。在那之前,本节的数字只对 3.6.2 成立,且**没有任何机器会提醒后来者它们已经过期**。
+**升级条款**:“升级 `quickjs-wasi` 需重跑重放一致性测试与沙箱行为复测”这条条款,**此前是空头承诺,现已收口**:上表五条各有可执行探针(`pnpm run probes:sandbox`,真 VM、输出落盘到 `.scratch/sandbox-executor/probe-output/`),而 `check:quick` 里的版本耦合断言(`pnpm run coupling:quickjs`)在根 `package.json` 一改钉版时就红,报错信息直接指向复验脚本与本节——**机器会提醒后来者这些结论已经过期**。升级时先跑探针、把新数字写回本节,再让断言转绿(§12 #8 记着这件事)。
 
 ### 5.1 隔离与注入
 
 - 每方一个独立 `QuickJS.create({wasm, memoryLimit, interruptHandler, wasi})` 实例;四个 VM 同进程串行执行,不共享线性内存。`wasm` 字节由 runner 层读盘传入 engine(engine 不做磁盘 I/O)+ `WebAssembly.compile` 预编译,四 VM 复用同一 `WebAssembly.Module`。
-- **WASI 覆盖**(三件套取值定为工程常量,非对局参数):`clock_time_get` 覆盖为 `1700000000000`(`Date.now()`/`new Date()` 在对局内因此定格;QuickJS 内部 PRNG 以该值播种 xorshift64*,同值即同 `Math.random()` 序列),`random_get` 覆盖为固定字节填充,`timezoneOffset` 固定为 0。三件套取值与 `quickjs-wasi` 版本号一并写入回放 meta 行(§7.5),可审计。
+- **WASI 覆盖**(三件套取值定为工程常量,非对局参数):`clock_time_get` 覆盖为 `1700000000000`(`Date.now()`/`new Date()`/`performance.now()` 在对局内因此定格;QuickJS 内部 PRNG 以该值播种 xorshift64*,同值即同 `Math.random()` 序列,故冻钟同时冻住随机源),`timezoneOffset` 固定为 0;不加载 crypto 扩展,故**不覆盖 `random_get`**。三件套取值与 `quickjs-wasi` 版本号一并写入回放 meta 行(§7.5),可审计。
 - 脚本可见全局 = runtime bundle 暴露的 API + `schema` 生成的常量表 + 纯函数子集;`fetch`/`fs`/`process` 等宿主能力一律不注入——隔离靠"不给"而非"拿掉"。**不加载任何 `.so` 扩展**(url/encoding/headers/crypto/structured-clone 均不启用)。
-- 载入次序:`evalCode(runtimeBundle)` 建 API 面 → `evalCode(script.js, {filename})` 载入选手脚本 → 每 tick `__setSnapshot(snapshot)` → `callFunction(loopFn)` → `__drainIntents()`。runtime bundle 与脚本同处一个全局环境,但 runtime 的内部计数器与宿主桥引用都在闭包内,且桥函数在初始化后被删除(§4.5)。
+- 载入次序:`evalCode(runtimeBundle)` 建 API 面 → 取两个桥的函数 handle → 从全局**删除**桥函数 → 注入按座位的 `getMyIndex` → `evalCode(script.js, {filename})` 载入选手脚本 → 取入口 handle。每 tick:`__setSnapshot(snapshot)` → `callFunction(loopFn)` → `executePendingJobs()` 排空到不动点 → `__drainIntents()`。runtime bundle 与脚本同处一个全局环境,但 runtime 的内部计数器与宿主桥引用都在闭包内,且桥函数在**载入期(脚本之前)**即被删除(§4.5);宿主仍持桥的函数 handle,照常调得动。
 - 定时器与异步调度源在 QuickJS 内默认即不存在;`vm.executePendingJobs()` 每 tick 排空。跨 tick 记忆只认模块级变量。
 
 ### 5.2 异常裁决(gdd《异常与出局》的实现化)
@@ -589,11 +589,11 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 |---|---|---|
 | `loop()` 抛异常(host 侧异常同此行:含内存超限转成的 JS 异常、深递归栈溢出的 host `RangeError`) | 本 tick 该方 intents 置空(单位原地待命);`exceptionTicks++`;达 ruleset 的 exceptionTickLimit → 判负出局(点位回归中立)。**VM 续用、记忆保留** | ✅ 计数可复现 |
 | 中断超限(`interruptHandler` 返回 true) | 同上;VM 中断后仍可用,无需重建 | ✅ |
-| WASM trap(引擎故障级;**脚本栈溢出不属此类**,实测为 host `RangeError`) | 视同该 tick 异常计一次(同第一行)+ **防御性重建**该方 VM(重载脚本,模块级记忆清零);trap 事件写入回放 events 流与报告,夜间扫描复核——同一回放不复现则事后按 §8.4 `engine-crash` 同轨处理 | ✅ 判罚可复现;复核在扫描层 |
+| WASM trap(引擎故障级;**脚本栈溢出不属此类**,实测为 host `RangeError`) | **不判罚该方**——trap 归引擎故障轨:按 §8.4 与 `engine-crash` 同轨处理(标记后**重跑一次**;再触发则记入报告的问题清单并剔除出排名,**不静默丢弃、不防御性重建该方 VM**);trap 事件写入回放 events 流与报告,夜间扫描复核 | ✅ 判罚可复现;复核在扫描层 |
 | 内存判据超限(该 tick 末存活堆读数 ≥ `memoryTickCeiling`) | 视同第一行(intents 置空 + `exceptionTicks++`);判据于每 tick 末 `runGC()` 后取 `getMemoryUsage().mallocSize`(与分配上限同记账口径),纯记账、可复现;**guest 吞掉 OOM 不影响判据**——判据锚定读数,不依赖异常可见性。残余条款:tick 内瞬时触顶后自行释放的分配不触发判据(分配上限本身不可突破),已在规则文档披露。未被 guest 捕获的超限异常仍走第一行(host 可见) | ✅ |
 | 越权调用(未定义 action / 访问已删除的宿主桥 / 访问未暴露字段) | 脚本未吞异常时视同 `loop()` 抛异常;**吞掉时 host 无感知,防线是 `__*` 静态禁令**(§4.5) | ✅ |
 
-注脚:异常/超预算不清记忆、不重建 VM;仅 WASM trap 的防御性重建会清记忆。`exceptionTicks` 是对局状态的一部分,随每 tick JSONL 持久化,VM 中断或重建后由持久化值续算,**不清零**(否则反复失控可逃逸淘汰)。**预算判据锚定 host 可直接测量的量,不依赖 guest 异常可见性**。OOM 异常身份不可靠(headroom 耗尽时 fallback 抛 `null`),引擎判定不得依赖 `e.name`。
+注脚:异常/中断/超预算不清记忆、不重建 VM;**WASM trap 归引擎故障轨、不重建该方 VM**(§5.2/§8.4)。`exceptionTicks` 是对局状态的一部分,随每 tick JSONL 持久化,VM 中断或重建后由持久化值续算,**不清零**(否则反复失控可逃逸淘汰)。**预算判据锚定 host 可直接测量的量,不依赖 guest 异常可见性**。OOM 异常身份不可靠(headroom 耗尽时 fallback 抛 `null`),引擎判定不得依赖 `e.name`。
 
 ### 5.3 计算预算(双计数主判据 + 墙钟只观测)
 
@@ -601,11 +601,11 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 | 机制 | 实现 | 判罚 | 是否影响确定性 |
 |---|---|---|---|
-| 控制流事件计数 | QuickJS `interruptHandler` 回调计数(每 5000 次控制流事件一格:循环回边/调用/返回;回调须保持轻量,计数自乘);到顶返回 true 中断本 tick。直线代码不计量,由 §6.2 脚本体积上限封盲区 | 本 tick 该方 **intents 全部丢弃** + `exceptionTicks++`(与异常同轨) | ✅ 纯计数 |
+| 控制流事件计数 | QuickJS `interruptHandler` 回调计数(每 5000 次控制流事件一格:循环回边/调用/返回;回调须保持轻量、**不得放每次都做的重活**,时钟按抽样读,计数自乘);到顶返回 true 中断本 tick。直线代码不计量,由 §6.2 脚本体积上限封盲区 | 本 tick 该方 **intents 全部丢弃** + `exceptionTicks++`(与异常同轨) | ✅ 纯计数 |
 | API 调用计数 | 宿主注入的 action/查询函数内自增计数器;到顶后**本 tick 内该方后续所有 intent 一并作废** | 同上。脚本 `try/catch` 捕获异常不能保留已提交的 intent——引擎按"该方本 tick 作废"处理 | ✅ 纯计数 |
 | 内存分配上限 | `memoryLimit`(VM 线性内存)——引擎分配上限,上限本身不可突破 | 超限转 JS 异常(未捕获按 §5.2 第一行处理) | ✅ |
 | 内存判据 | 软/硬双阈值;判据 = 每 tick 末 `runGC()` 后 `getMemoryUsage().mallocSize`(存活堆读数) | 硬线 `memoryTickCeiling`(ruleset 参数)超线 = 视同 §5.2 第一行;软阈值(0.8×硬,推导)仅写报告披露 `memory-pressure`。`runGC()` 固定扫描税 0.5–3.3ms/tick,入 NFR-3 标定考量 | ✅ 纯记账 |
-| 墙钟软限 | 单 tick `loop()` 执行时长 | 写入回放 events 流 `budget-soft-warning` + 报告披露;**只观测** | ✅ 不参与判罚 |
+| 墙钟软限 | 单 tick `loop()` 执行时长(按抽样读,不逐 tick 阻塞) | 写入**观测文件** `budget-soft-warning` + 报告披露,**墙钟不进回放 events 流**;**只观测** | ✅ 不参与判罚 |
 | 墙钟硬超时 | 防宿主卡死的最后防线(如宿主回调卡死) | **不判负**:标记 `nondeterministic-timeout`,按 §8.4 与 `engine-crash` 同轨处理(重跑 / 剔除并披露) | 隔离出判罚路径,判罚仍可复现 |
 
 设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只作废当前对局,不改变对局内的胜负判定。
@@ -821,4 +821,4 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 5c | oxfmt 0.x 风险 | **已收口为接受风险**:官方称 JS/TS 已 100% 通过 Prettier conformance,未兑现的只是 1.0 发布;由 caret + lockfile + `oxfmt --check` 门禁兜住(ADR-0002)。**不设降级到 Prettier 的退路**。本项关闭。 |
 | 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**观测项不是承诺**,不裁「优化到什么程度算完」——停止条件归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
 | 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**观测项不是承诺**,不裁方案——存储/IO 方案归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
-| 8 | 沙箱行为五条结论的复验 | §5 上表五条只对 `quickjs-wasi@3.6.2` 成立;实现真实沙箱执行器的 ticket 落地时第一条验收即按当时版本组合重跑五条并写回 §5。在那之前升级条款为空头承诺(§5.0 “升级条款”段)。 |
+| 8 | 沙箱行为五条结论的复验 | **已收口**:五条各有可执行探针(`pnpm run probes:sandbox`,输出落盘 `.scratch/sandbox-executor/probe-output/`),2026-10-06 按 `quickjs-wasi@3.6.2` 复验并写回 §5.0;`check:quick` 的版本耦合断言(`pnpm run coupling:quickjs`)在根钉版一改即红并指向复验脚本与 §5.0。本项关闭。 |

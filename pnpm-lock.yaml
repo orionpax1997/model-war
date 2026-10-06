@@ -261,6 +261,9 @@ importers:
       oxc-parser:
         specifier: ^0.152.0
         version: 0.152.0
+      quickjs-wasi:
+        specifier: 3.6.2
+        version: 3.6.2
 
 packages:
 

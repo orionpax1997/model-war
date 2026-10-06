@@ -1,0 +1,12 @@
+=== 探针 04 memory-reading（docs/hld.md:566） ===
+── 读数口径：getMemoryUsage() 的字段与空 VM 基线 ──
+✓ 有 mallocSize 字段（判据读数）：mallocSize = 75128
+✓ 有 objCount 字段，没有 objectCount（对象数是 objCount）：objCount = 187，objectCount 不存在
+✓ 空 VM 基线 mallocSize === 75128：实测 75128
+✓ 空 VM 基线 memoryUsedSize === 64098：实测 64098
+✓ mallocSize > memoryUsedSize（后者不含空闲池，不作判据）：75128 > 64098
+── 封顶：memoryLimit = 8388608 字节时的表现 ──
+✓ 小额分配成功：new Array(100000)
+✓ 超限为可捕获的 InternalError: out of memory：InternalError: out of memory
+✓ 超限后读数不越过 memoryLimit（封顶 = limit − 最大单次分配）：实测 1181636 < 8388608
+✓ VM 超限后仍可续用：eval 7*6

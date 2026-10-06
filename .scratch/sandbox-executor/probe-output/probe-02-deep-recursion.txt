@@ -1,0 +1,7 @@
+=== 探针 02 deep-recursion（docs/hld.md:564） ===
+── 深递归溢出是 host 侧 RangeError，不是 JSException，且 VM 可续用 ──
+✓ 溢出抛 host RangeError：RangeError: Maximum call stack size exceeded: RangeError
+✓ isJSException === false（host 异常，guest 吞不掉）：isJSException = false
+✓ message 为 Maximum call stack size exceeded：Maximum call stack size exceeded
+✓ VM 溢出后仍可续用：eval 1+1
+✓ executePendingJobs 返回 0（无残留 job）：drain 到不动点

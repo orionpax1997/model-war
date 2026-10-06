@@ -1,0 +1,9 @@
+=== 探针 03 interrupt-granularity（docs/hld.md:565） ===
+── 粒度：每 5000 次控制流事件一次回调（差分测量，与相位无关） ──
+✓ 多 50000 次回边恰好多 10 次回调：实测差分 10 次回调（每 5000 次事件一格）
+── 中断语义：host InternalError，guest try/catch 体不执行，VM 续用 ──
+✓ 中断以 host InternalError: interrupted 呈现：InternalError: interrupted
+✓ guest try/catch 体不执行：__ran = "start"
+✓ VM 中断后仍可续用：回调触发 3 次
+── 计时：纯计数回调的拖慢落在区间 ±10% ──
+✓ 拖慢绝对值 ≤ 10%（计时类判据用区间）：交错采样中位拖慢 -6.04%（无回调 258.8ms / 计数回调 243.2ms；本轮触发 4401 次）

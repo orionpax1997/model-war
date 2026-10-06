@@ -1,0 +1,6 @@
+=== 探针 01 script-entry-contract（docs/hld.md:563） ===
+── 单文件 script-mode 产物可载入，loop 是 function 且可调用 ──
+✓ loop 是 function：typeof loop = function
+✓ callFunction(loop) 调得动：返回 1
+✓ 带 export 的产物载入期即 SyntaxError：SyntaxError: unsupported keyword: export
+✓ 带 import 的产物载入期即 SyntaxError：SyntaxError: Unexpected identifier 'x'

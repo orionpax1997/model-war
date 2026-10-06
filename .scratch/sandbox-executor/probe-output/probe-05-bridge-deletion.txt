@@ -1,0 +1,9 @@
+=== 探针 05 bridge-deletion（docs/hld.md:567） ===
+── 删桥后：枚举不到、捞不回来，闭包通道仍可用 ──
+✓ 按 __ 前缀枚举为空：枚举到 []
+✓ typeof __bridge === 'undefined'：typeof = undefined
+✓ '__bridge' in globalThis === false（捞不回来）：in 运算
+✓ 闭包通道仍可用：捕获的引用照常返回
+✓ 宿主仍可经 handle 调桥：返回 123
+✓ 越权是普通 ReferenceError：ReferenceError: __bridge is not defined
+✓ guest 吞掉时宿主零痕迹（无异常逃逸）：try/catch 吞掉后照常继续
