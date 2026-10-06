@@ -57,7 +57,16 @@ export type Change =
       readonly carrying?: number;
     }
   | { readonly kind: "destroy-unit"; readonly unitId: number }
-  | { readonly kind: "move-unit"; readonly unitId: number; readonly x: number; readonly y: number };
+  | { readonly kind: "move-unit"; readonly unitId: number; readonly x: number; readonly y: number }
+  /**
+   * 记下首触发生的 tick(票 04)。
+   *
+   * ── 为什么这条要进变更表,而不在步 2 里直接赋一栏 ──
+   * 「唯一写入口」这句话不是只对玩家可见的状态字段成立,而是对**整份 `GameState`** 成立。
+   * 首触记忆是跨 tick 的状态,那就必须与别的状态走同一条登记:想写它,先在这里列一项。
+   * 不开「步 2 直接展开状态对象写一栏」这条旁路,否则「有哪些写操作」就不再是一张可枚举的表。
+   */
+  | { readonly kind: "mark-first-contact"; readonly tick: number };
 
 /** 按数值 id 升序插入。数组短(每 tick 几百个对象),有序插入比「先插后排」少一次全数组重排。 */
 const insertById = <T extends { readonly id: number }>(
@@ -106,6 +115,8 @@ export const apply = (state: GameState, ruleset: Ruleset, change: Change): GameS
           y: change.y,
         })),
       };
+    case "mark-first-contact":
+      return { ...state, firstContactTick: change.tick };
     default: {
       // 穷尽性靠编译期兜住:新增一种变更而这里没跟上,是编译错误而不是运行期静默不改状态。
       const unreachable: never = change;

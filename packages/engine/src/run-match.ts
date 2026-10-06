@@ -32,6 +32,7 @@
 import type { MapDefinition, ReplayPlayerRef, ReplayResultLine, Ruleset } from "@model-war/replay";
 
 import { processTick } from "./processor/index.js";
+import { createRandom, fillVariantWalls } from "./driver/random.js";
 import { stubRunner, type StubStrategy } from "./runner/stub.js";
 import { buildMetaLine, serializeMetaLine, type MetaHead } from "./replay-writer/meta-line.js";
 import type { TickSink } from "./replay-writer/sink.js";
@@ -135,7 +136,11 @@ export const runMatch = (params: RunMatchParams): RunMatchResult => {
   const { ruleset, map, seed, head, players, strategies, sink } = params;
   const view: RulesetView = loadRuleset(ruleset);
 
-  let state = createInitialState(ruleset, map);
+  // 种子驱动的变体墙在开局前填一次(hld §7.3「地图 + 种子 → 地形是纯函数」)。这一步曾经缺失:
+  // `fillVariantWalls` 写好了却没人调,于是地形与种子对不上、`getTerrainAt` 无源。
+  // 消费顺序由 `fillVariantWalls` 自己保证(槽位声明序),这里只管把填好的地图交给开局。
+  const filledMap = fillVariantWalls(createRandom(seed), map).map;
+  let state = createInitialState(ruleset, filledMap);
   const runners = strategiesOf(strategies);
 
   // meta 行:第一 tick 之前落一次(hld §7.5)。十二栏的键序由 `buildMetaLine` 承担;

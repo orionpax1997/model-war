@@ -39,6 +39,8 @@ const site = (id: number): Site => ({
 
 const makeState = (tick = 7): GameState => ({
   tick,
+  size: 8,
+  terrain: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => false)),
   players: [0, 1, 2, 3].map((index) => ({
     index: index as PlayerIndex,
     resources: 16,
@@ -49,6 +51,7 @@ const makeState = (tick = 7): GameState => ({
   sites: [site(3), site(4)],
   nextId: 5,
   outcome: null,
+  firstContactTick: null,
 });
 
 const NO_EVENTS: readonly Event[] = [];

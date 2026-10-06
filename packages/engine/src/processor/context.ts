@@ -20,7 +20,7 @@
 import type { RulesetView } from "../ruleset-loader/index.js";
 import type { SeatRunner } from "../runner/index.js";
 import type { TickSink } from "../replay-writer/index.js";
-import type { DrainedIntents, Intent } from "./intents.js";
+import type { DrainedIntents, IssuedIntent } from "./intents.js";
 import type { EventCollector } from "./events.js";
 import type { GameState } from "../world/state.js";
 
@@ -35,9 +35,17 @@ export type TickContext = {
   readonly collector: EventCollector;
   /** 步 0 之后:各座位交回的 intents,按 `playerIndex 0..3` 串行排列。 */
   readonly drained: readonly DrainedIntents[];
-  /** 步 1 之后:分组并定序的 intents(校验与执行的落点,本票只到定序)。 */
-  readonly intents: readonly Intent[];
+  /** 步 1 之后:分组、定序并**带上座位**的 intent(校验的落点;本票只留移动两条)。 */
+  readonly intents: readonly IssuedIntent[];
   readonly state: GameState;
+  /**
+   * 寻路调用量,下标即座位(票 04)。
+   *
+   * 这是给预算层的**账**,不是罚:hld §4.7 要求寻路计入脚本 API 调用预算,而本层不实现预算判罚
+   * (§5.3:判据锚定 host 侧可测量量,预算层落地时把它并进 `apiCallTickLimit` 的记账)。
+   * 挂在上下文里而不是步 2 的局部量里,是因为 `TickResult` 要把它交给测试与将来的预算层。
+   */
+  readonly pathfindingCalls: readonly number[];
   /** 步 7 的结论:`tick` 达 `tickLimit` 即真。名次排序随判据一起落进票 09,本票不写终局。 */
   readonly limitReached: boolean;
 };
@@ -59,6 +67,7 @@ export const initialContext = (
   collector,
   drained: [],
   intents: [],
+  pathfindingCalls: [0, 0, 0, 0],
   state,
   limitReached: false,
 });

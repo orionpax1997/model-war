@@ -17,10 +17,29 @@ import {
   type Owner,
   type PlayerIndex,
   type Site,
+  type Terrain,
   type UnitType,
 } from "./state.js";
 
 const SEATS: readonly PlayerIndex[] = [0, 1, 2, 3];
+
+/**
+ * 地图书写里的墙格字符。与 `driver/random.ts` 的填充同一枚 `#`。
+ *
+ * 它是**地图格式**的一份事实,而地图格式的家在 `packages/schema`(`MapDefinition.terrain`
+ * 的 JSON Schema 里那句 `'.'=平原,'#'=墙`)。这里不把它再命名一次成"真源":
+ * 它只是把那一份说明转成布尔格时用到的字面量。
+ */
+const WALL_CHAR = "#";
+
+/**
+ * 地图的行字符串 → 状态的布尔格(见 `world/state.ts` 的 `Terrain` 注释)。
+ *
+ * 用 `split("")` 而不是 `[...row]`:地形字符只有 `#` 与 `.` 两个 ASCII,两者逐字相同,
+ * 与 `driver/random.ts` 的同一处理同源。
+ */
+const toTerrain = (rows: readonly string[]): Terrain =>
+  rows.map((row) => row.split("").map((cell) => cell === WALL_CHAR));
 
 const isPlayerIndex = (value: number): value is PlayerIndex => SEATS.includes(value as PlayerIndex);
 
@@ -56,6 +75,8 @@ const mainBaseOf = (sites: readonly Site[], owner: PlayerIndex): Site => {
 export const createInitialState = (ruleset: Ruleset, map: MapDefinition): GameState => {
   let state: GameState = {
     tick: 0,
+    size: map.size,
+    terrain: toTerrain(map.terrain),
     players: SEATS.map((index) => ({
       index,
       resources: ruleset.initialResources,
@@ -66,6 +87,7 @@ export const createInitialState = (ruleset: Ruleset, map: MapDefinition): GameSt
     sites: [],
     nextId: peekNextId(createIdGen()),
     outcome: null,
+    firstContactTick: null,
   };
   for (const site of map.sites) {
     state = apply(state, ruleset, {

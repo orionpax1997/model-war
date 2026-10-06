@@ -49,6 +49,8 @@ const site = (id: number): Site => ({
 
 const makeState = (): GameState => ({
   tick: 3,
+  size: 5,
+  terrain: Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => false)),
   players: [0, 1, 2, 3].map((index) => ({
     index: index as PlayerIndex,
     resources: 16,
@@ -59,13 +61,15 @@ const makeState = (): GameState => ({
   sites: [site(3), site(4)],
   nextId: 5,
   outcome: null,
+  firstContactTick: null,
 });
 
 /**
  * 树里对象/数组节点的个数:顶层 1 + players 数组 1 + 4 个玩家 + units 数组 1 + 2 个单位
- * + sites 数组 1 + 2 个点位 = 12。标量(`tick` 与各个字段)不是节点,`freezeDeep` 直接返回。
+ * + sites 数组 1 + 2 个点位 + terrain 数组 1 + 5 行 = 18。标量(`tick` / `size` 与各个字段)
+ * 不是节点,`freezeDeep` 直接返回。
  */
-const NODES = 12;
+const NODES = 18;
 
 /** 注释里本来就会提到 `stateHash` 与「规范化」——**要判的是代码有没有共用,不是文字有没有提到**。 */
 const stripComments = (source: string): string =>

@@ -10,17 +10,93 @@
 
 **Blocked by:** 02（脊柱）, 03（脚本 API 的类型面回填）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `move` 与 `moveTo` 两条意图各有 `check()` 与 `run()`。`check()` 的入参**只读**（只读视图 + 规则集 + 意图）,类型里没有写入口;`run()` 拿唯一写入口
-- [ ] **占位基准**:一轮结算只以该轮开始时的占位为准。单位离开本轮所在的格子,不会使该格在本轮对后来者变为可进入;同一格至多一个单位成功进入
-- [ ] **同格竞争**按轮转优先级 `(tick + playerIndex) mod 4` 取胜者,其余**原地不动**(不尝试次优目标——规则面最小)。该序列是全序,无平局
-- [ ] **交换/穿行**（A→B 同时 B→A）与**链式移动**（A→B 同时 B→C）按占位基准判定:本轮被占则 A 移动失败,B 是否成功只取决于 C,二者互不牵连。**不需要链式裁决,也不存在环形追逐**——这条要有用例钉住,它是「没有裁决」而不是「裁决得对」
-- [ ] 己方单位之间同样按此裁决(无友军穿越)
-- [ ] `moveTo` 等价于本 tick 的一步 `move`,参与同一套裁决;**路径不跨 tick 缓存,每 tick 重算**
-- [ ] 寻路:八邻域展开顺序固定（固定方向表）,平手按 id 破;启发式**整数化**的切比雪夫距离(×2 与步长同量纲,避免浮点)。**引擎源码里一个浮点字面量都不许有**,禁浮点门禁会直接拦
-- [ ] 寻路调用量**计入脚本 API 调用预算**,防止用寻路做算力攻击
-- [ ] `first-contact` 事件:任意敌对单位切比雪夫距离 ≤ 2 时,**全局**记一条（不是每对玩家各一条）
-- [ ] 事件进**第二步**的槽位,并按「步内按对象数值 id 升序」定序
-- [ ] **参数在界、属主正确、目标格合法**的判据在 `check()` 里,无效意图丢弃。**丢弃不触发异常判罚**——异常判罚只针对脚本抛异常与超预算
-- [ ] 每条判据各有一个能被弄红的反例：把轮转优先级改成常量 → 竞争用例红;把基准改成「结算后的占位」→ 交换/穿行用例红;把启发式改成普通切比雪夫 → 浮点门禁红
+- [x] `move` 与 `moveTo` 两条意图各有 `check()` 与 `run()`。`check()` 的入参**只读**（只读视图 + 意图）,类型里没有写入口;`run()` 拿唯一写入口 → `packages/engine/src/processor/movement.ts:88`(`checkMove`)/`:129`(`runMove`),视图 `:40`。落子唯一出口仍是 `apply()`(`driver/apply.ts`)
+- [x] **占位基准**:一轮结算只以该轮开始时的占位为准。单位离开本轮所在的格子,不会使该格在本轮对后来者变为可进入;同一格至多一个单位成功进入 → `movement.ts:78`(`isOccupied` 以 `view.units` 为准),步 2 先算全轮候选再落子(`steps/step2-movement.ts:130-154`)。用例「交换」「链式」「链式移不动」「友军」「同格竞争」
+- [x] **同格竞争**按轮转优先级 `(tick + playerIndex) mod 4` 取胜者,其余**原地不动** → `steps/step2-movement.ts:63`(`priorityOf`)/`:71`(`winnersOf`,值大者胜)。用例「同格竞争:…换一个 tick 胜者轮转」
+- [x] **交换/穿行**与**链式移动**按占位基准判定,不需要链式裁决 → `movement.ts:120`(`candidateInto`);用例「交换」「链式(A→B 同时 B→C)」「链式移不动:C 也被占时 B 同样失败」
+- [x] 己方单位之间同样按此裁决(无友军穿越) → 同一条 `isOccupied`(不分属主);用例「己方单位同样互相挡路」
+- [x] `moveTo` 等价于本 tick 的一步 `move`,参与同一套裁决;路径不跨 tick 缓存 → `movement.ts:150-157` 每轮现调 `findPath`;用例「moveTo 每 tick 只走一步,且每 tick 重算路径」
+- [x] 寻路:八邻域固定方向表(`pathfinding/find-path.ts:56`),平手按线性下标破(`find-path.ts:96`),启发式整数 Chebyshev×2(`:39` `STEP=2`、`:47` `HEURISTIC_SCALE=2`)。禁浮点门禁 30 文件 0 违规 → 证据见 `## Answer`
+- [x] 寻路调用量**计入脚本 API 调用预算** → 本票只交付「账」:`context.ts:48` / `index.ts:66` 的 `pathfindingCalls`,按座位计数;用例「寻路调用量按座位记账」「骑兵的 moveTo 两轮都算」「moveTo 不可达 A* 照记」
+- [x] `first-contact` 事件:任意敌对单位切比雪夫距离 ≤ 2 时,**全局**记一条 → `steps/step2-movement.ts:54`(`FIRST_CONTACT_CHEBYSHEV`)、`:100-118`(选取主体)、`:158-165`(整局一条,记忆进状态);用例三条
+- [x] 事件进**第二步**的槽位,并按「步内按对象数值 id 升序」定序 → 收集器 `events.ts` 的 `STEP_OF` 已把 `first-contact` 挂步 2;主体按单位数值 id 升序取(`step2-movement.ts:111`)
+- [x] **参数在界、属主正确、目标格合法**的判据在 `check()` 里,无效意图丢弃;丢弃不触发异常判罚 → `movement.ts:88-118`;步 1 过滤(`steps/step1-validate.ts:22-31`)。用例「未实现的四条意图静默丢弃」「参数不在界/属主不对」「目标格是墙」
+- [x] 每条判据各有一个能被弄红的反例 → 实测读数见 `## Answer`(轮转优先常量、占位基准改成空、启发式×4、引入 `Math.sqrt`/`1.5`);票面第三条反例「启发式改成普通切比雪夫→浮点门禁红」**不成立**,已在 Answer 记录
+
+## Answer
+
+### 交付物(改动文件)
+
+新增:`packages/engine/src/pathfinding/find-path.ts`、`pathfinding/index.ts`、`processor/movement.ts`、`processor/movement.test.ts`、`pathfinding/find-path.test.ts`。
+修改:`world/state.ts`(地形/尺寸/首触记忆进状态与快照)、`world/initial-state.ts`(地形转换落库)、`driver/apply.ts`(登记 `mark-first-contact`)、`snapshot/snapshot.ts`(快照显式加 `size`/`terrain`)、`run-match.ts`(接上 `fillVariantWalls`)、`processor/intents.ts`(带座位的 `IssuedIntent`/`groupIssuedIntents`)、`processor/context.ts`、`processor/index.ts`(`intents` 型改带座位、加 `pathfindingCalls`)、`processor/steps/step1-validate.ts`、`processor/steps/step2-movement.ts`。
+夹具同步(机械):`processor/step-order.test.ts`、`snapshot/read-only-isolation.test.ts`、`snapshot/traversal-independence.test.ts`(节点数 12→18)、`replay-writer/tick-line.test.ts`、`runner/stub.test.ts` 各补 `size`/`terrain`/`firstContactTick`。
+
+### 裁法一:地形住在 `GameState`(hld §4.4 的前置缺口)
+
+- `GameState` 增 `size: number` 与 `terrain`。地形取 **`readonly (readonly boolean[])[]`,`, true=墙**（`world/state.ts:36`）：引擎唯一会问的问题是「(x,y) 是不是墙」,布尔格让读取退化成一次下标,不把地图的书写格式带进状态读取路径；转换只在 `createInitialState` 那一次(`world/initial-state.ts:41` `toTerrain`)。
+- 快照也加 `size`/`terrain`(`snapshot/snapshot.ts:50-51`),**逐字写在 `Snapshot` 里而不是 `Pick`**(`world/state.ts:168-173`)——地形进快照是为了 `getTerrainAt`,不是因为「顺手多带一路板面」。
+- **tick 行不写地形、`stateHash` 也不算它**:`replay-writer/tick-line.ts` 的 `tickPayload` 仍是逐字列出 `{type,tick,players,units,sites,events}`,与 `nextId`/`outcome` 同一理由(地形由 meta 行的 `mapHash`+`seed` 唯一确定,每 tick 重写 600 遍是纯浪费)。`terrain` 字段注释里写了这句,免得后来者以为漏了。
+- 开局链路接上 `fillVariantWalls`(`run-match.ts:142`):这一步**此前缺失**(函数写好但无人调,地形与种子对不上、`getTerrainAt` 无源)。种子消费顺序不动(`fillVariantWalls` 自持)。
+- `apply()` **不新增改地形的变更**:地形一局不变,`createInitialState` 造初始字面量时直接写。
+
+### 裁法二:骑兵二次移动(票面清单之外的补入项)
+
+**这是票面清单之外的补入项**,依据是 `rules.md` §3 与 gdd C5(骑兵速度 = 2 × 其他兵种、其余为 1),理由是**移动机制归本票而 12 张票无人认领**。实现:移动轮数 = 全场最大 `speed`(`movement.ts:169` `maxMoveRounds`),每轮跑同一套裁决;**第 N 轮的基准是第 N−1 轮结算之后的状态**,`tick` 值两轮相同(取 `state.tick`,步 6 才加一)。用例「骑兵一 tick 走两格,其余兵种一 tick 一格」钉住。
+
+### 裁法三:`first-contact` 的跨 tick 记忆
+
+- 收集器每 tick 新建,「全局一条」需要一个跨 tick 的家 → 进 `GameState`:`firstContactTick: number | null`(`world/state.ts:153`)。**选「时刻」而非布尔**:叙事时间线要标的是时刻,`null` 与数字的区分同时承担「有没有发生过」;它**不进快照**(与 `nextId`/`outcome` 同列)。写入走 `apply()` 新登记的 `Change`(`driver/apply.ts:69`/`:118`)。
+- 事件主体 `subjectId` = 按单位数值 id 升序遍历,取**第一个**存在敌对单位与之 Chebyshev ≤ 2 的单位(`step2-movement.ts:111`),与「步内按对象数值 id 升序」同源。
+- 判定时点:**移动结算之后**(`step2-movement.ts:158`),记的是「真的碰上了」的位置。
+- 出处:`first-contact` 阈值的原文在 `.scratch/rules-landing/blind/fixture-check/tables-1336-rerun-2026-10-04.md:51`(注释 `step2-movement.ts:48-54` 逐字注明)。**欠账在 gdd 那一侧**(补正文是 gdd 那一格的事)。
+- **阈值不进规则集**:它是观测量(只给事件流标一个时刻,不判胜负/合法/移动),判据是「凡观测量不进参数表」——所以 `rulesets/v1.json` 保持 21 键是对的,它不是「21 不是 22」那个裁决的反例。这句理由写进了注释。
+
+### 裁法四:`check()`/`run()` 两相位(票面 §5 的收口)
+
+- 「一轮只以该轮开始时的占位为准」使逐 intent 就地写状态不可能,故分两相位:`check()` 只读地判「参数在界/属主正确/目标格合法」;`run()` 在只读基准上算一个候选变更,落子唯一出口仍是 `apply()`。
+- **偏差**:`check()` 不收规则集(任务书说收)。三条判据一条都不用到规则集取值,收进来是一个不读的栏;`run()` 才需要它(骑兵轮数由 `speed` 决定)。已在 `movement.ts:86-90` 注释说明。
+- **偏差**:`runMove` 的签名是 `(view, seat, ruleset, round, intent)`——比任务书的 `run(baseline, ruleset, intent)` 多了 `seat`(属主与轮转优先都要它)与 `round`(骑兵第几轮)。返回值仍是「候选变更或 `null`」。
+- **同座位多单位争同一格**:票面说「序列全序、无平局」只对跨座位成立;同一座位的两个单位优先值相同(同 tick 同座位)。补的裁决是「按意图确定序取先者」,而意图序是 `(seat, 单位 id)` 升序(`winnersOf` 的严格 `>` 保持先到者,`step2-movement.ts:71-84`),即**低 id 胜**。
+- **四条未实现的 intent 静默丢弃**:`attack`/`harvest`/`transfer`/`spawnUnit` 的 `check()` 归 05–09,本票丢弃;`step1-validate.ts` 注释写明这是「尚未实现」而不是「非法」。**文档不一致**:hld §4.2 说无效 intent「写入当 tick 事件流(调试可观测)」,而 hld §7.5 的八种事件里没有「意图无效」这一类、收集器也无对应方法——本票按后者办(静默丢弃),**不自行加第九种事件**(那改跨进程形状)。已记进 `step1-validate.ts` 头注。
+- 停滞:`TickContext.intents`/`TickResult.intents` 型由 `Intent[]` 改为带座位的 `IssuedIntent[]`(`processor/intents.ts:83`),否则步 2 拿不到 `playerIndex`。保留 `groupIntents`(丢座位的投影)以免改动 02 的 `intents.test.ts`。
+
+### 裁法五:寻路细节(`pathfinding/`)
+
+- 纯模块(吃地形+尺寸+起点+终点),**同一实现**将给沙箱 `findPath` 复用(hld §4.7),`find-path.ts` 头注写明。
+- 八邻域固定方向表 `as const`,注释「表的顺序是确定性的一部分,改序即改结果」。
+- 平手:`f` 相同按格子**线性下标** `y*size+x` 升序(`find-path.ts:96`)。票面说的「平手按 id 破」是宽泛说法——格子没有对象 id,本仓对应它的确定序就是线性下标。
+- 全整数:直走斜走同为 `STEP=2`,启发式 `2*Chebyshev`。**斜走只看目标格**(`find-path.ts:76-82`):两墙夹角的对角格**可通行**(不防割角)——v1 CostMatrix 无此条,显式定死并配用例「斜走只看目标格」。
+
+### 裁法六:寻路调用量只账不罚(hld §4.7 / §5.3)
+
+engine 不实现预算判罚(判据锚定 host 侧可测量量)。本票交付**账**:步 2 每次 A* 调用自增按座位计数器(`step2-movement.ts:138-147`),挂到 `TickResult.pathfindingCalls`(`index.ts:66`)。将来 `QuickJsRunner` 落地时把它并进 `apiCallTickLimit` 的记账。反向钉:`move` +0(用例「寻路调用量按座位记账」)。调用量恰好等于 `findPath` 的调用:步 2 只在 `check` 放行且 `speed > round` 时计一笔,与 `runMove` 里 `findPath` 的调用点一致。
+
+### 实测反例读数(改一行→跑一次→红;已全部还原)
+
+| 改动 | 命令 | 读数 |
+|---|---|---|
+| 轮转优先改成常量 `0` | `vitest --project unit movement.test.ts` | `1 failed \| 15 passed`,同格竞争用例红:`expected 1 to be +0`(常量让座位 0 先到者胜) |
+| 占位基准改成「空」(等价于单位离开即释放,即结算后占位) | 同上 | `4 failed \| 12 passed`,交换/链式/链式移不动/友军四条红:`expected 1 to be +0` |
+| 启发式倍率 `HEURISTIC_SCALE` 2→4(可采纳性失效) | `vitest --project unit find-path.test.ts` | `1 failed \| 6 passed`,「绕墙走最短路」红:`expected [Array(8)] to have a length of 7 but got 8`,返回 `(2,6)(1,5)(0,4)(0,3)(1,2)(1,1)(2,0)(3,0)` |
+| `HEURISTIC_SCALE` 2→1(普通切比雪夫;票面说这里门禁会红) | `check:no-float` + 同 pathfinding 用例 | 门禁 **exit 0「检查 30 个文件,无违规」**;用例 **7 passed**——**票面这条反例的表述不成立**,它没引入浮点、也未破坏可采纳性 |
+| `HEURISTIC_SCALE = Math.sqrt(4)` | `check:no-float` | **exit 1**:`find-path.ts:47:25 math-member \`Math.sqrt\` 不是允许名单内的 \`Math\` 成员`,1 处违规 |
+| `STEP = 1.5` | `check:no-float` | **exit 1**:`find-path.ts:39:14 float-literal \`1.5\` …`,1 处违规 |
+| 还原后复核 | `check:no-float` | exit 0,30 文件 0 违规 |
+
+### 门禁与用例数字
+
+- `pnpm run check` → **exit 0**(check:types 含 fmt/lint/coupling/no-float/lint:types;unit+property;check:deps「90 modules, 157 dependencies,no violations」;check:declared-deps;check:drift「无漂移」;check:bench 三份绿)。
+- `pnpm vitest run --project unit --project property` → **exit 0,Test Files 50 passed(50),Tests 548 passed(548)**。
+- `check:no-float` → 30 文件 0 违规。
+- 本票两条新用例文件单跑:movement 16 + find-path 7 = **23 passed**。
+
+### 留给后续票的话
+
+- 05–09 补 `attack`/`harvest`/`transfer`/`spawnUnit` 的 `check()`/`run()` 时,接手的是 `step1-validate.ts` 的过滤点(现已就位,只放行移动两条)与 `IssuedIntent` 的座位栏。
+- 预算层落地时把 `TickResult.pathfindingCalls`(按座位)并进 `apiCallTickLimit` 的记账——本层只记账不判罚。
+- 沙箱 `findPath` 脚本 API 应 import `pathfinding/index.ts` 的**同一实现**(hld §4.7),不要另写一份,否则脚本查询结果与引擎实际移动会分叉。
+- gdd 那一侧欠的正文:首触判据(Chebyshev ≤ 2、整局一条)的精确定义,出处见本票 `## Answer`。
+- `Snapshot` 已显式加 `size`/`terrain`;后来者给状态加栏若想让脚本可见,须在 `Snapshot` 里**显式**再写一次(不是 `Pick`)。
+
