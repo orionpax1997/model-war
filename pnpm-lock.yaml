@@ -226,6 +226,9 @@ importers:
       '@model-war/replay':
         specifier: workspace:*
         version: link:../replay
+      quickjs-wasi:
+        specifier: 3.6.2
+        version: 3.6.2
 
   packages/gen:
     dependencies:

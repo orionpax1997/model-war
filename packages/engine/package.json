@@ -13,6 +13,7 @@
     }
   },
   "dependencies": {
-    "@model-war/replay": "workspace:*"
+    "@model-war/replay": "workspace:*",
+    "quickjs-wasi": "3.6.2"
   }
 }
