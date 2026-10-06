@@ -5,19 +5,32 @@
  * 意图在该交回的 tick 交回。`StubRunner` 的对应断言在 `stub.test.ts`,两边的「缝只有两个方法」
  * 是同一条纪律的两个适配器。
  *
+ * 下面《内存判据(票 08)》那一组接着钉内存裁据:读数取在 tick 末强制回收之后的存活堆上、
+ * 与 guest 异常可见性无关、软阈只观测、已接受的残余不判。
+ *
  * 测试文件可以读盘与引 esbuild(依赖门禁只管运行时代码):wasm 与 runtime bundle 都在这里现造。
  */
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
 import { expect, it, beforeAll } from "vitest";
+import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset } from "@model-war/replay";
 import type { QuickJS } from "quickjs-wasi";
 
-import type { Snapshot } from "../world/state.js";
+import { processTick } from "../processor/index.js";
+import { loadRuleset } from "../ruleset-loader/index.js";
+import { stubRunner } from "./stub.js";
+import type { GameState, PlayerIndex, Site, Snapshot, Terrain } from "../world/state.js";
 import { HOST_BRIDGE_DRAIN_INTENTS, HOST_BRIDGE_SET_SNAPSHOT } from "./index.js";
-import { WASI_CLOCK_MS, createQuickJsRunner, createSandboxVm, openSandbox } from "./quickjs.js";
+import {
+  MEMORY_TRACK,
+  WASI_CLOCK_MS,
+  createQuickJsRunner,
+  createSandboxVm,
+  openSandbox,
+} from "./quickjs.js";
 
 /** 一份最小快照:预览桥/骨架即可,不含任何对象。 */
 const snapshotOf = (tick: number): Snapshot => ({
@@ -213,4 +226,321 @@ it("三件套:对局内、跨 VM、跨重跑三个维度得到同一序列", asy
   // 那条序列不是一片常量:随机数确实在变,所以上面的相等有内容。
   const randoms = (sequenceOfFirst as [number, number, number][]).map((sample) => sample[1]);
   expect(new Set(randoms).size).toBeGreaterThan(1);
+});
+
+// ── 内存判据(票 08) ──────────────────────────────────────────────────────────
+//
+// 判据读数 = 每 tick 末**强制 `runGC()` 之后**的存活堆(`mallocSize`)。夹具在
+// `fixtures/guest/memory-*.js`,与 `march.js` 同列一行账:会被反复跑,读数才可比。
+
+const readFixture = (name: string): string =>
+  readFileSync(fileURLToPath(new URL(`../fixtures/guest/${name}`, import.meta.url)), "utf8");
+
+const HOARD_SCRIPT = readFixture("memory-hoard.js");
+const SWALLOW_SCRIPT = readFixture("memory-swallow.js");
+const TRANSIENT_SCRIPT = readFixture("memory-transient.js");
+
+const MIB = 1 << 20;
+
+/** 空脚本跑一 tick、强制回收之后的存活堆读数(bytes);用作判罚线的基线。 */
+const baselineAliveHeap = (memoryLimit?: number): Promise<number> =>
+  aliveHeapAfterTick("function loop() {}", memoryLimit);
+
+/** 开一个会话跑完一 tick 的脚本执行、强制回收之后读存活堆读数(bytes)。 */
+const aliveHeapAfterTick = async (scriptCode: string, memoryLimit?: number): Promise<number> => {
+  const session = await openSandbox({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode,
+    seat: 0,
+    ...(memoryLimit === undefined ? {} : { memoryLimit }),
+  });
+  try {
+    session.setSnapshot(snapshotOf(0));
+    session.runLoop();
+    session.pumpJobs();
+    session.runGC();
+    return session.memoryUsage().mallocSize;
+  } finally {
+    session.dispose();
+  }
+};
+
+/** 造一个座位 0 的真执行器、跑一 tick、交回载荷(观测搭同一次返回回来)。 */
+const drainOneTick = async (
+  scriptCode: string,
+  options: {
+    readonly memoryLimit?: number;
+    readonly memoryTickCeiling?: number;
+    readonly softThresholdRatio?: number;
+  } = {},
+) => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode,
+    seat: 0,
+    ...options,
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    return runner.drainIntents();
+  } finally {
+    dispose();
+  }
+};
+
+/** 读数落盘目录。**只有设了才写**——check 链上不该有文件副作用(与 `fixtures.test.ts` 同一约定)。 */
+const readingsRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+const writeReading = (name: string, value: unknown): void => {
+  const dir = process.env["MW_READINGS_DIR"];
+  if (dir === undefined) {
+    return;
+  }
+  mkdirSync(`${readingsRoot}${dir}`, { recursive: true });
+  writeFileSync(
+    `${readingsRoot}${dir}/${name}.json`,
+    `${JSON.stringify(value, null, 2)}\n`,
+    "utf8",
+  );
+};
+
+it("内存判据:撑内存夹具在 tick 末强制回收之后按存活堆读数被判定(tripped)", async () => {
+  const ceiling = (await baselineAliveHeap()) + MIB;
+  const output = await drainOneTick(HOARD_SCRIPT, { memoryTickCeiling: ceiling });
+  const tripped = output.observations[0];
+  if (tripped === undefined) {
+    throw new Error("撑内存夹具没有被判定");
+  }
+  expect(tripped).toMatchObject({ kind: "tripped", track: MEMORY_TRACK, limit: ceiling });
+  // 读数在判罚线之上,不是「恰好相等」的边界巧合。
+  expect(tripped.value).toBeGreaterThan(ceiling);
+});
+
+it("判据读数用的是存活堆字段 mallocSize(不是 memoryUsedSize、不是 objCount)", async () => {
+  const ceiling = (await baselineAliveHeap()) + MIB;
+  const output = await drainOneTick(HOARD_SCRIPT, { memoryTickCeiling: ceiling });
+  const tripped = output.observations[0];
+  if (tripped === undefined) {
+    throw new Error("撑内存夹具没有被判定");
+  }
+  // 另开一个同配置会话,停在同一处(loop → pumpJobs → runGC)读整张 `MemoryUsage`:
+  // 观测值必须落在 `mallocSize` 那一格,另两个口径都不是判据读数。
+  const session = await openSandbox({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: HOARD_SCRIPT,
+    seat: 0,
+  });
+  try {
+    session.setSnapshot(snapshotOf(0));
+    session.runLoop();
+    session.pumpJobs();
+    session.runGC();
+    const usage = session.memoryUsage();
+    expect(tripped.value).toBe(usage.mallocSize);
+    // 「存活堆」与「活对象占用」「活对象数」不是一个量:若读错字段,这两条会分开。
+    expect(usage.mallocSize).not.toBe(usage.memoryUsedSize);
+    expect(usage.mallocSize).not.toBe(usage.objCount);
+  } finally {
+    session.dispose();
+  }
+});
+
+it("判据不依赖 guest 异常可见性:把分配上限的 OOM 吞掉的同款夹具照样被判", async () => {
+  const memoryLimit = 16 * MIB;
+  const ceiling = (await baselineAliveHeap(memoryLimit)) + MIB;
+  // 夹具在 guest 内 `try/catch` 吞掉 OOM:runLoop 不抛,宿主拿到的是一次正常交回。
+  // 判据照样从存活堆读数判出——宿主全程没有读、也没有捕获 guest 异常。
+  const output = await drainOneTick(SWALLOW_SCRIPT, { memoryLimit, memoryTickCeiling: ceiling });
+  const tripped = output.observations[0];
+  if (tripped === undefined) {
+    throw new Error("吞掉 OOM 的同款夹具没有被判定");
+  }
+  expect(tripped).toMatchObject({ kind: "tripped", track: MEMORY_TRACK, limit: ceiling });
+  expect(tripped.value).toBeGreaterThan(ceiling);
+});
+
+it("分配上限超限转成 guest 可见的可捕获异常(与读数判据是两件事)", async () => {
+  // 这一条**不**断言判据:它单独钉「分配上限(硬)」那一层——超限在 guest 里是可捕获的
+  // `InternalError`,与「判据锚定读数、guest 吞不吞异常都判」互为两件事。
+  const vm = await createSandboxVm({ wasm: wasmModule, memoryLimit: 8 * MIB });
+  try {
+    const caught = vm
+      .evalCode(
+        "(() => {" +
+          "  try {" +
+          "    const chunks = [];" +
+          "    for (;;) chunks.push(new Array(65536).fill(1));" +
+          "    return 'no-throw';" +
+          "  } catch (error) {" +
+          "    return error.name + ': ' + error.message;" +
+          "  }" +
+          "})()",
+      )
+      .consume((handle) => vm.dump(handle));
+    expect(caught).toBe("InternalError: out of memory");
+  } finally {
+    vm.dispose();
+  }
+});
+
+it("已接受的残余:tick 内瞬时借满后自行释放的分配不被判(不是漏判)", async () => {
+  const ceiling = (await baselineAliveHeap()) + MIB;
+  // `memory-transient.js` 与 `memory-hoard.js` 的分配量刻意一致:攥住会判(上面那条),
+  // 借完即还在读数那一刻已不可达、已被回收,于是不判。两条合起来才说明 residual 不是空断言。
+  const output = await drainOneTick(TRANSIENT_SCRIPT, { memoryTickCeiling: ceiling });
+  expect(output.observations).toEqual([]);
+});
+
+it("未定值规则集(判罚线字段缺席)下本轨不启用:不产观测、不判负", async () => {
+  // 组装层读键清单的两态字段,未定值就不传 `memoryTickCeiling`。同一个撑内存夹具此时什么都不报。
+  const output = await drainOneTick(HOARD_SCRIPT);
+  expect(output.observations).toEqual([]);
+});
+
+it("软阈值是判罚线的推导项:只发 memory-pressure、不判罚", async () => {
+  const hoard = await aliveHeapAfterTick(HOARD_SCRIPT);
+  // 判罚线略高于存活堆:读数落在 [软阈, 判罚线) 里,只披露。
+  const ceiling = hoard + MIB;
+  const output = await drainOneTick(HOARD_SCRIPT, { memoryTickCeiling: ceiling });
+  const pressure = output.observations[0];
+  if (pressure === undefined) {
+    throw new Error("软阈值没有产生 memory-pressure");
+  }
+  expect(pressure).toMatchObject({ kind: "memory-pressure", track: MEMORY_TRACK });
+  // 软阈 = `floor(MEMORY_SOFT_THRESHOLD_RATIO × 判罚线)`:它是推导量,不是独立参数键。
+  expect(pressure.limit).toBe(Math.floor(MEMORY_SOFT_THRESHOLD_RATIO * ceiling));
+  expect(pressure.value).toBeGreaterThanOrEqual(pressure.limit);
+  expect(pressure.value).toBeLessThan(ceiling);
+});
+
+it("软阈系数可显式覆写(显式覆写点,不是第二个必须标定的数)", async () => {
+  const hoard = await aliveHeapAfterTick(HOARD_SCRIPT);
+  const ceiling = hoard + MIB;
+  const output = await drainOneTick(HOARD_SCRIPT, {
+    memoryTickCeiling: ceiling,
+    softThresholdRatio: 0.5,
+  });
+  const pressure = output.observations[0];
+  if (pressure === undefined) {
+    throw new Error("软阈值没有产生 memory-pressure");
+  }
+  expect(pressure).toMatchObject({ kind: "memory-pressure", track: MEMORY_TRACK });
+  expect(pressure.limit).toBe(Math.floor(0.5 * ceiling));
+});
+
+it("每 tick 末的强制回收有开销:读数记录在案(不是免费动作)", async () => {
+  // 这条用例把「强制回收的每 tick 开销」量出来并落到 runs/ 的读数文件(只在设了
+  // `MW_READINGS_DIR` 时写)。它不是性能门禁——门禁归性能标定;这里只保证这条开销在账上。
+  const ceiling = (await baselineAliveHeap()) + MIB;
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: "function loop() {}",
+    seat: 0,
+    memoryTickCeiling: ceiling,
+  });
+  try {
+    const warmup = 50;
+    for (let i = 0; i < warmup; i++) {
+      runner.setSnapshot(snapshotOf(i));
+      runner.drainIntents();
+    }
+    const samples = 500;
+    const started = performance.now();
+    for (let i = 0; i < samples; i++) {
+      runner.setSnapshot(snapshotOf(i));
+      runner.drainIntents();
+    }
+    const microsPerTick = ((performance.now() - started) / samples) * 1000;
+    writeReading("t08-gc-overhead", { samples, microsPerTick });
+    // 读数存在即有账:每 tick 一次的强制回收不是零成本动作。
+    expect(microsPerTick).toBeGreaterThan(0);
+  } finally {
+    dispose();
+  }
+});
+
+// ── 判定 → 累加异常计数(经步 0 的唯一写入口) ───────────────────────────────
+//
+// 观测不自己写状态:`tripped` 搭同一次返回载荷回到步 0,由它落成一条 `count-exception-tick`
+// 变更(票 02 已接通的路径)。这里用真执行器把那条路径端到端跑一遍。
+
+const RULESET: Ruleset = {
+  tickLimit: 600,
+  captureTicks: 10,
+  initialResources: 16,
+  harvestRate: 1,
+  carryLimit: 20,
+  resourcePerSite: 200,
+  worker: { cost: 4, hp: 2, damage: 0, range: 1, speed: 1, spawnTicks: 2 },
+  melee: { cost: 8, hp: 12, damage: 3, range: 1, speed: 1, spawnTicks: 4 },
+  ranged: { cost: 12, hp: 4, damage: 2, range: 2, speed: 1, spawnTicks: 6 },
+  cavalry: { cost: 16, hp: 6, damage: 2, range: 1, speed: 2, spawnTicks: 8 },
+  baseScore: 4,
+  resourceScore: 1,
+  unitCostDivisor: 6,
+  exceptionTickLimit: 0,
+  eventTickLimit: 0,
+  apiCallTickLimit: 0,
+  memoryLimit: 0,
+  memoryTickCeiling: 0,
+  wallClockSoftLimit: 0,
+  wallClockHardTimeout: 0,
+  scriptSizeLimit: 0,
+};
+
+/** 四席各一个哨兵基地:没有它,空状态会在步 5 把所有席位淘汰掉,凭空多出状态变化。 */
+const SEAT_BASES: readonly Site[] = [0, 1, 2, 3].map((seat) => ({
+  id: 900 + seat,
+  kind: "base",
+  x: 900 + seat,
+  y: 900,
+  owner: seat as PlayerIndex,
+  progressOwner: -1,
+  progress: 0,
+  producing: null,
+}));
+
+const plain = (size: number): Terrain =>
+  Array.from({ length: size }, () => Array.from({ length: size }, () => false));
+
+const makeState = (): GameState => ({
+  tick: 0,
+  size: 8,
+  terrain: plain(8),
+  players: [0, 1, 2, 3].map((index) => ({
+    index: index as PlayerIndex,
+    resources: 16,
+    alive: true,
+    exceptionTicks: 0,
+  })),
+  units: [],
+  sites: SEAT_BASES,
+  nextId: 100,
+  outcome: null,
+  eliminatedAtTick: [null, null, null, null],
+  firstContactTick: null,
+  economyDeadAtTick: [null, null, null, null],
+});
+
+it("撑内存的座位经步 0 累加 exceptionTicks(观测 → 唯一写入口)", async () => {
+  const ceiling = (await baselineAliveHeap()) + MIB;
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: HOARD_SCRIPT,
+    seat: 0,
+    memoryTickCeiling: ceiling,
+  });
+  try {
+    const idle = stubRunner(() => []);
+    const result = processTick(makeState(), [runner, idle, idle, idle], loadRuleset(RULESET), {
+      write: () => {},
+    });
+    expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([1, 0, 0, 0]);
+  } finally {
+    dispose();
+  }
 });
