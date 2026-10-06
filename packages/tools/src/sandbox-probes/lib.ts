@@ -46,14 +46,29 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * 深递归栈溢出是 host 侧 `RangeError`(没有 `dispose`),而中断与内存超限是 `JSException`
  * (有 `dispose`)——两者的分界就在这一个布尔上。
  */
+/**
+ * 把一个 `unknown` 落成可读文本。**不对 `unknown` 直接 `String()`**——那会把对象打印成
+ * `[object Object]`(lint 的 `no-base-to-string` 正是拦这个)。字符串原样返回,原始值直接转,
+ * 其余走 `JSON.stringify`。
+ */
+const textOf = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return JSON.stringify(value) ?? "";
+};
+
 export const errInfo = (error: unknown): ErrInfo => {
   const name = isRecord(error) && typeof error["name"] === "string" ? error["name"] : "";
-  const message = isRecord(error) ? String(error["message"] ?? error) : String(error);
+  const message = textOf((isRecord(error) ? error["message"] : error) ?? error);
   const ctor =
-    isRecord(error) && isRecord(error["constructor"]) ? String(error["constructor"]["name"]) : "";
+    isRecord(error) && isRecord(error["constructor"]) ? textOf(error["constructor"]["name"]) : "";
   const dispose = isRecord(error) ? error["dispose"] : undefined;
   const info: ErrInfo = {
-    ctor: ctor === "" ? String(error) : ctor,
+    ctor: ctor === "" ? textOf(error) : ctor,
     name,
     message: message.slice(0, 200),
     isJSException: typeof dispose === "function",

@@ -11,11 +11,11 @@
  *    数字即红),也核「本次重算的每一 tick hash 与存档逐项相同」;
  * 3. 比末行 `result`。
  *
- * ── 为什么不起子进程、退出码只有 0/1 ──
+ * ── 为什么不起子进程、退出码 ──
  *
- * `verify` 复用 `assemble` + `executeMatch`(引擎的 `runMatch`),不 spawn。装载/校验/比对
- * 任何一处不过都归「用法或校验错」(1),成功为 0;引擎在重算时崩溃(未捕获异常)才退 2。
- * 它是 CI 的入口,调用方只认退出码。
+ * `verify` 复用 `assemble` + `executeMatch`(引擎的 `runMatch`),不 spawn。
+ * 比对结论一致为 0、不一致或用法/校验错为 1;重算时的引擎故障按其性质分码——未捕获异常 2、
+ * 不确定超时 3(hld §9 的退出码表)。它是 CI 的入口,调用方只认退出码。
  */
 
 import { readFileSync } from "node:fs";
@@ -31,6 +31,7 @@ import {
 import { splitArgs } from "../args.js";
 import {
   EXIT_ENGINE_FAULT,
+  EXIT_NONDETERMINISTIC_TIMEOUT,
   EXIT_OK,
   EXIT_USAGE_OR_VALIDATION,
   reportFailure,
@@ -176,9 +177,9 @@ export const runVerifyCommand = async (args: readonly string[]): Promise<number>
   }
   if (executed.status === "uncertain-timeout") {
     // 存档回放是「跑完的一局」,重算却硬超时——环境变了或引擎坏了。不静默换、也不当成比对差异:
-    // 按引擎故障轨处理(与「重算时未捕获异常」同一码)。
+    // 按全局退出码表的「不确定超时」轨(3),与 `match` 同一码。
     const failure: CommandFailure = {
-      exitCode: EXIT_ENGINE_FAULT,
+      exitCode: EXIT_NONDETERMINISTIC_TIMEOUT,
       message: `重算遇到不确定超时(第 ${String(executed.tick)} tick)——存档回放本不应硬超时`,
     };
     reportFailure(COMMAND, failure);

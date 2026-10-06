@@ -284,20 +284,37 @@ const writeMatchInput = (
       | "ruleset"
       | "dropArchive"
       | "sandboxHash";
+    /** 用一份**真实基准脚本**当四席的执行体(目录名,如 `cell-a-melee-pressure`)。
+     * 给了它就覆盖默认的 `function loop(){ return []; }` 夹具。 */
+    readonly cell?: string;
+    /** 用一段自定义 `script.js` 当执行体(四席相同);与 `cell` 互斥,二选一。 */
+    readonly script?: string;
   } = {},
 ): string => {
   const root = mkdtempSync(`${scratch}/root-`);
   const mapBytes = readFileSync(mapPath);
   const mapSha = options.tamper === "mapSha" ? "d".repeat(64) : sha256Hex(mapBytes);
 
+  // 执行体:默认空转夹具;给了基准目录就读它的**入库产物**(`script.js` 是真沙箱跑的那份),
+  // 给了自定义脚本就用它。基准脚本走 CLI 公开面(而不是引擎内部 API)正是本票要的端到端那条。
+  const defaultScript = `function loop(){ return []; }\n`;
+  const scriptJs =
+    options.script ??
+    (options.cell === undefined
+      ? defaultScript
+      : readFileSync(join(repoRoot, "benchmarks", options.cell, "script.js"), "utf8"));
+  const scriptTs =
+    options.cell === undefined
+      ? defaultScript
+      : readFileSync(join(repoRoot, "benchmarks", options.cell, "script.ts"), "utf8");
+
   const models = ["alpha", "beta", "gamma", "delta"];
   const archives = models.map((model, seat) => {
     const archivePath = `archive/${model}/r1`;
     const dir = join(root, archivePath);
     mkdirSync(dir, { recursive: true });
-    const scriptJs = `function loop(){ return []; }\n`;
     writeFileSync(join(dir, "script.js"), scriptJs);
-    writeFileSync(join(dir, "script.ts"), `function loop(){ return []; }\n`);
+    writeFileSync(join(dir, "script.ts"), scriptTs);
     const scriptSha = sha256Hex(scriptJs);
     const meta = {
       model,
@@ -551,3 +568,85 @@ it(
     expect(verified.stderr).toContain("执行方式不一致");
   },
 );
+
+// ── 真实基准脚本:CLI 公开面完整跑通(match 写回放 → verify 复算) ─────────────────
+
+/**
+ * 本票要求「至少一份**真实基准脚本**」走 CLI 公开面(`match` 写回放、`verify` 复算)全绿。
+ * 它**不是**夹具脚本、**不是**桩:夹具脚本只用得到极少几个注入面符号,而真实基准脚本要用
+ * 完整注入面——它能跑通,就是「注入面铺全」那张票的独立证据(见 spec《Solution》)。
+ * 执行体取 `benchmarks/<舱>/script.js` 这份**入库产物**(真沙箱编译执行的那一份)。
+ */
+it(
+  "真实基准脚本 cell-a:match 写回放 → verify 复算一致,退出 0(真沙箱)",
+  { timeout: 120_000 },
+  () => {
+    const inputPath = writeMatchInput({ cell: "cell-a-melee-pressure" });
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const matched = run(["match", inputPath, "--root", root]);
+    expect(matched.status, matched.stderr).toBe(0);
+
+    const replayPath = join(inputPath, "..", "replay.jsonl");
+    const lines = readFileSync(replayPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    // 真沙箱的一整场:meta 在前、600 个 tick、末行 result。
+    expect(lines[0]?.["type"]).toBe("meta");
+    expect(lines[0]?.["runner"]).toBe("quickjs");
+    expect(lines.at(-1)?.["type"]).toBe("result");
+    expect(lines.length).toBeGreaterThan(2);
+
+    // 复算:按 input.json 重新执行,逐 tick 与末行都一致。
+    const verified = run(["verify", replayPath, "--root", root]);
+    expect(verified.status, verified.stderr).toBe(0);
+    expect(verified.stdout).toContain("逐项一致");
+  },
+);
+
+/**
+ * 三份基准脚本作为夹具在真沙箱里各跑完整场:**含 `cell-c`**。
+ *
+ * `cell-c`(占点不采集)在真规则下**不累积占领进度**——它的占领机制是猜的(契约 §5 未排期),
+ * 那笔账归「占领契约补齐」节点,不是本 feature 的缺口(spec《Out of Scope》)。本票要证的是
+ * 它**仍能跑完**(产出合法 result 行),不假装它不存在,也不被它拖住。
+ */
+const BENCHMARK_CELLS = [
+  "cell-a-melee-pressure",
+  "cell-b-expansion-economy",
+  "cell-c-claim-no-harvest",
+] as const;
+
+it.each(BENCHMARK_CELLS)(
+  "真实基准脚本 %s 作为夹具在真沙箱里跑完整场,退出 0",
+  { timeout: 120_000 },
+  (cell) => {
+    const inputPath = writeMatchInput({ cell });
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const matched = run(["match", inputPath, "--root", root]);
+    // 「跑完整场」的判据 = 产出了一份合法的末行 result(规则内结果一律 0)。
+    expect(matched.status, matched.stderr).toBe(0);
+    const lines = readFileSync(join(inputPath, "..", "replay.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines[0]?.["type"]).toBe("meta");
+    expect(lines[0]?.["runner"]).toBe("quickjs");
+    expect(lines.at(-1)?.["type"]).toBe("result");
+  },
+);
+
+// ── 退出码表:引擎故障(2)在真沙箱上的一次实证 ────────────────────────────────
+
+it("`match` 遇到引擎故障(真沙箱宿主 RangeError)退 2,不静默 0", { timeout: 120_000 }, () => {
+  // 深递归栈溢出实测为 host 侧 `RangeError: Maximum call stack size exceeded`
+  // (`isJSException: false`,见 hld §5.0 第 2 行):它既不是 guest 可捕获异常、也不在判罚轨,
+  // 而是引擎故障 → 退出码 2(stderr 另给一行 JSON)。
+  const inputPath = writeMatchInput({
+    script: "function loop(){ return (function f(){ return f(); })(); }\n",
+  });
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const result = run(["match", inputPath, "--root", root]);
+  expect(result.status, result.stderr).toBe(2);
+  expect(result.stderr).toContain("引擎故障");
+});
