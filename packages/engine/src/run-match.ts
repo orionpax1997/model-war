@@ -67,7 +67,14 @@ export type RunMatchParams = {
 export type RunMatchResult = {
   /** 回放末行 `result`(hld §7.5)。 */
   readonly result: ReplayResultLine;
-  /** 收官时的完整状态。`outcome` 此刻**已置**(见文件头注的取终局次序)。 */
+  /**
+   * 收官时的完整状态。
+   *
+   * **`outcome` 此刻仍是 `null`**:本票一条游戏机制都不实现,判据与名次算法归票 09,
+   * 而步 7 只给触发信号、不写半截 `outcome`。本票的终局结论在 `result` 那一栏(它按
+   * `state.outcome` —— 票 09 之后 —— 或「超时 + 全部并列」取出)。
+   * 把「`outcome` 已置」写成事实会是句假话:读它的人会拿到 `null` 去解引用。
+   */
   readonly finalState: GameState;
   /** 结算过的 tick 数。`limitReached` 时它等于 `ruleset.tickLimit`。 */
   readonly tickCount: number;

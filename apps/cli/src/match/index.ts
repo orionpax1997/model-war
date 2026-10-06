@@ -111,15 +111,44 @@ const idleStrategy = () => () => [];
  * **仓库根**的 `maps/` 与 `rulesets/` 取(用 `--root` 覆盖,测试用)。回放写到
  * `<input 所在目录>/replay.jsonl`。
  */
+/**
+ * 从参数里摘出 `--root <值>`,返回剩下的位置参数。
+ *
+ * 不能写成 `args.filter((arg) => !arg.startsWith("-"))`:`--root` 的**值**不以 `-` 开头,
+ * 于是它会被当成位置参数。`match --root <根> <input>` 那一序下 `positional[0]` 就成了根目录
+ * （一个目录被当成 `input.json` 去 `JSON.parse`）。用法串把 `<input.json>` 写在前面只是
+ * 惯例,不是解析器的免责理由——参数顺序不该决定命令能不能跑。
+ */
+const splitArgs = (
+  args: readonly string[],
+): { readonly root: string | undefined; readonly positional: readonly string[] } => {
+  const positional: string[] = [];
+  let root: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--root") {
+      root = args[index + 1];
+      // 跳过 `--root` 与它的值;缺值时下一条会被当成位置参数,与不写 `--root` 同义。
+      if (root !== undefined) {
+        index += 1;
+      }
+      continue;
+    }
+    if (arg !== undefined && !arg.startsWith("-")) {
+      positional.push(arg);
+    }
+  }
+  return { root, positional };
+};
+
 export const runMatchCommand = async (args: readonly string[]): Promise<number> => {
-  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const { root: rootArg, positional } = splitArgs(args);
   const inputPath = positional[0];
   if (inputPath === undefined) {
     process.stderr.write("用法:modelwar match <input.json> [--root <仓库根>]\n");
     return EXIT_LOAD_REJECTED;
   }
-  const rootIndex = args.indexOf("--root");
-  const root = resolve(rootIndex === -1 ? process.cwd() : (args[rootIndex + 1] ?? process.cwd()));
+  const root = resolve(rootArg ?? process.cwd());
 
   try {
     return runMatchLoaded(inputPath, root);

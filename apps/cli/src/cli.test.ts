@@ -357,6 +357,21 @@ it("`match` 跑完一整场到超时,退出 0,回放落盘且能被 `replay` 渲
   expect(shown.stdout).toContain("runner stub");
 });
 
+/**
+ * `--root` 写在位置参数**前面**也要能跑。
+ *
+ * 反例:把参数摘取写成 `args.filter((arg) => !arg.startsWith("-"))`,`--root` 的**值**
+ * 不以 `-` 开头,于是它被当成位置参数、`positional[0]` 成了根目录——一个目录被拿去
+ * `JSON.parse`。用法串把 `<input.json>` 写在前面只是惯例,参数顺序不该决定命令能不能跑。
+ */
+it("`match` 的 `--root` 写在 <input.json> 前面也能跑,退出 0", () => {
+  const inputPath = writeMatchInput();
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const result = run(["match", "--root", root, inputPath]);
+  expect(result.status, result.stderr).toBe(0);
+  expect(readFileSync(join(inputPath, "..", "replay.jsonl"), "utf8")).not.toBe("");
+});
+
 it("`match` 装载期拒跑一律退 2:缺档 / 哈希不符 / 规则集版本不一致,一条都不静默 0", () => {
   for (const tamper of ["dropArchive", "scriptSha", "metaSha", "mapSha", "ruleset"] as const) {
     const inputPath = writeMatchInput({ tamper });
