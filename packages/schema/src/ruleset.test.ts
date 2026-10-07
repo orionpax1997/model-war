@@ -78,14 +78,14 @@ const EXPECTED_KEYS: readonly string[] = [
 
 const EXPECTED_FINAL_KEYS: readonly string[] = [
   ...EXPECTED_KEYS.slice(0, 13),
-  // 预算键分批落定稿(票 05 落计数与异常三键):每批落定后这里要跟着走。
+  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键):每批落定后这里要跟着走。
   "exceptionTickLimit",
   "eventTickLimit",
   "apiCallTickLimit",
-];
-const EXPECTED_UNDETERMINED_KEYS: readonly string[] = [
   "memoryLimit",
   "memoryTickCeiling",
+];
+const EXPECTED_UNDETERMINED_KEYS: readonly string[] = [
   "wallClockSoftLimit",
   "wallClockHardTimeout",
   "scriptSizeLimit",
@@ -138,7 +138,7 @@ it("仍是未定值的预算键标为未定值,占位取 0,且 0 是合法取值
 it("键清单区分「未定的值」与「一个真的 0」:同一个取值,渲染不同", () => {
   // 判据只能来自键自己身上那个 `state`,不能来自「值是不是 0」——
   // 否则标定完成后某个预算上限恰好是 0,文档就会开始骗人。
-  const undetermined = RULESET_KEY_CATALOG.memoryLimit;
+  const undetermined = RULESET_KEY_CATALOG.scriptSizeLimit;
   const realZero = RULESET_KEY_CATALOG.initialResources;
   expect(undetermined.calibration.state).toBe("undetermined");
   expect(realZero.calibration.state).toBe("final");
