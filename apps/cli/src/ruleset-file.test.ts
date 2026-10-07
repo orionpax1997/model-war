@@ -95,8 +95,10 @@ const UNDETERMINED_KEYS = RULESET_KEYS.filter(
 );
 
 /**
- * 13 个定稿键的终值,**逐字抄自标定环交接单 §1**(`resourcePerSite` 是票 09 改值后的 200,
- * 不是草案里的 125;四条兵种线的 `spawnTicks` 与 `⌈cost × α⌉` 一致,下面另有断言逐条对)。
+ * 定稿键的终值,**逐字抄自标定环交接单 §1 与预算标定读数**(`resourcePerSite` 是票 09 改值后的
+ * 200,不是草案里的 125;预算键的终值由读数按 spec《Implementation Decisions》第 1 条的规则代入,
+ * 算式记在 `.scratch/budget-calibration/readings.md` 的「终值推导」节;四条兵种线的 `spawnTicks`
+ * 与 `⌈cost × α⌉` 一致,下面另有断言逐条对)。
  *
  * **这份抄本存在的唯一理由是把「文件里的数 = 交接单的数」变成机器可判的**,取值真源仍是
  * `rulesets/v1.json`;抄本与文件不一致时红的是下面那条断言,而不是一次看不出所以然的失败。
@@ -118,10 +120,12 @@ const FINAL_VALUES: Partial<Ruleset> = {
   baseScore: 4,
   resourceScore: 1,
   unitCostDivisor: 6,
-  // 预算键分批落定稿(票 05 落计数与异常三键);仍为未定值的键不在这里。
+  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键);仍为未定值的键不在这里。
   exceptionTickLimit: 3,
   eventTickLimit: 10000,
   apiCallTickLimit: 300,
+  memoryLimit: 4194304,
+  memoryTickCeiling: 524288,
 };
 
 /**
