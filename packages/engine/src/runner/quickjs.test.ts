@@ -473,6 +473,53 @@ it("每 tick 末的强制回收有开销:读数记录在案(不是免费动作)"
   }
 });
 
+it("稳态:空脚本连跑约 600 tick,tick 末存活堆不随 tick 增长(斜率≈0、窗口极差≈0)", async () => {
+  // 这是「两 tick 同值」那组先例在存活堆上的缺口对位:现有先例断的是计数逐 tick 重置,
+  // 而快照 handle 泄漏(曾实测 +360 B / +5 对象每 tick)只会从**存活堆**读数上显形。
+  // 断的是随 tick 的变化率与窗口极差,**不是绝对字节数**——绝对值随快照结构变化。
+  const totalTicks = 600;
+  // 基线与本用例同口径(每 tick 末强制回收后的 `mallocSize`),给极差一个随运行环境浮动的
+  // 参照,而不是写死一个字节数。
+  const baseline = await baselineAliveHeap();
+  const session = await openSandbox({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: "function loop() {}",
+    seat: 0,
+  });
+  try {
+    const ticks: number[] = [];
+    const aliveHeaps: number[] = [];
+    for (let tick = 0; tick < totalTicks; tick++) {
+      session.setSnapshot(snapshotOf(tick));
+      session.runLoop();
+      session.pumpJobs();
+      session.runGC();
+      // 只取后半段稳态窗口:前半段是对象图构建期,读数本就会动。
+      if (tick >= totalTicks / 2) {
+        ticks.push(tick);
+        aliveHeaps.push(session.memoryUsage().mallocSize);
+      }
+      session.drainIntents();
+    }
+    const count = aliveHeaps.length;
+    const meanTick = ticks.reduce((sum, value) => sum + value, 0) / count;
+    const meanHeap = aliveHeaps.reduce((sum, value) => sum + value, 0) / count;
+    const slope =
+      ticks.reduce(
+        (sum, value, index) => sum + (value - meanTick) * (aliveHeaps[index]! - meanHeap),
+        0,
+      ) / ticks.reduce((sum, value) => sum + (value - meanTick) ** 2, 0);
+    const range = Math.max(...aliveHeaps) - Math.min(...aliveHeaps);
+    // 泄漏时斜率约 +360 B/tick;修好后应为 0。
+    expect(Math.abs(slope)).toBeLessThan(1);
+    // 窗口极差同样约 0:泄漏 300 tick 会积出约 108 KB,远超基线的 1%。
+    expect(range).toBeLessThan(baseline / 100);
+  } finally {
+    session.dispose();
+  }
+}, 60_000);
+
 // ── 双计数(票 07):控制流事件计数 + API 调用计数 ────────────────────────────
 //
 // 两个计数都是**宿主 authored 的纯整数计数**,互为盲区:纯计算死循环由事件计数抓,API 轰炸由

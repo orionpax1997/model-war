@@ -422,7 +422,12 @@ export const openSandbox = async (options: QuickJsSessionOptions): Promise<Sandb
 
     return {
       setSnapshot: (snapshot) => {
-        vm.callFunction(setSnapshotHandle, vm.undefined, vm.hostToHandle(snapshot)).dispose();
+        // 参数 handle 是**调用方拥有、必须释放**的(`hostToHandle` 交回一个独立 handle,
+        // `callFunction` 不会替我们释放参数);只释放返回值会让每 tick 漏掉一份快照连同它引用
+        // 的整棵 guest 对象图。`consume` 在 `fn` 返回/抛出后都释放,故参数与返回值各释放一次。
+        vm.hostToHandle(snapshot).consume((handle) =>
+          vm.callFunction(setSnapshotHandle, vm.undefined, handle).dispose(),
+        );
       },
       runLoop: () => {
         vm.callFunction(loopHandle, vm.undefined).dispose();
