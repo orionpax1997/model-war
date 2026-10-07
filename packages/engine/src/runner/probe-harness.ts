@@ -5,9 +5,11 @@
  *
  * 它逐条**镜像** `createQuickJsRunner.drainIntents` 的每 tick 次序
  * (`beginTick → loop → pumpJobs → endTick → runGC → memoryUsage → drainIntents`),
- * 只在中间多记一笔读数;**不改任何判定**——交回载荷里 `observations` 恒为空,没有一条轨会因为
- * 这条探针而截停或放行。它与真执行器的唯一区别是「无条件测量」:内存判据只在
- * `memoryTickCeiling` 启用时才强制回收并读堆,而探针量的是读数本身,不受判定开关约束。
+ * 只在中间多记一笔读数。**不给出任何阈值时**它不改判定——交回载荷里 `observations` 恒为空,
+ * 没有一条轨会因为这条探针而截停或放行(诚实量测);**给出阈值时**它与真执行器同构地判一次
+ * (`tripped` 观测按同一套次序落地),此时它可直接当座位执行器塞进对局、驱动 `exceptionTicks`。
+ * 它与真执行器的另一处区别是「无条件测量」:内存判据只在 `memoryTickCeiling` 启用时才强制回收
+ * 并读堆,而探针量的是读数本身,不受判定开关约束。
  *
  * 它返回的是一个普通 `SeatRunner`(两个方法),因此可以直接当座位执行器塞进四人对局
  * (spec 缝 A);本模块不做磁盘 I/O,读盘与落盘留给 `*.test.ts`(引擎运行时源码禁 `node:*`)。
@@ -23,11 +25,19 @@
  *   `eventCount` 只作附栏,论证只用格数。
  */
 
-import type { Ruleset } from "@model-war/replay";
+import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset } from "@model-war/replay";
 
-import type { PlayerIndex } from "../world/state.js";
-import type { RunnerOutput, SeatRunner } from "./index.js";
-import { INTERRUPT_EVENT_GRANULARITY, openSandbox, type TickReadings } from "./quickjs.js";
+import type { PlayerIndex, Snapshot } from "../world/state.js";
+import type { Observation, RunnerOutput, SeatRunner } from "./index.js";
+import {
+  API_CALL_TRACK,
+  EVENT_TRACK,
+  INTERRUPT_EVENT_GRANULARITY,
+  MEMORY_TRACK,
+  createQuickJsRunner,
+  openSandbox,
+  type TickReadings,
+} from "./quickjs.js";
 
 /** 「本轨永不截停」的极大事件上限:它的唯一作用是让计数回调被装上(见头注坑①)。 */
 export const NEVER_EVENT_LIMIT = Number.MAX_SAFE_INTEGER;
@@ -73,6 +83,19 @@ export type ProbeSeatOptions = {
   /** 墙钟硬超时(ms)。缺席即本轨不启用。 */
   readonly wallClockHardTimeout?: number;
   /**
+   * API 调用计数上限(次/tick)。给定时本探针与 `createQuickJsRunner` **同构**地判一次 API 轨
+   * (`drained.apiCalls >= 上限` → 一条 `tripped` 观测);缺席即本轨不判。它是**探针用的有限上限**,
+   * 不是一个建议阈值。
+   */
+  readonly apiCallTickLimit?: number;
+  /**
+   * 内存判罚线(bytes,tick 末存活堆 `mallocSize`)。给定时本探针与 `createQuickJsRunner` 同构地判
+   * 一次内存轨(达线报 `tripped`、达软阈报 `memory-pressure`);缺席即本轨不判。**探针用它驱动内存轨。**
+   */
+  readonly memoryTickCeiling?: number;
+  /** 软阈系数:软阈 = 该系数 × `memoryTickCeiling`。缺席取真源包的 `MEMORY_SOFT_THRESHOLD_RATIO`。 */
+  readonly softThresholdRatio?: number;
+  /**
    * 事件计数上限。
    *
    * - `undefined`(默认)取 `NEVER_EVENT_LIMIT`:装回调、拿事件读数(见头注坑①)。
@@ -95,6 +118,15 @@ export type ProbeSeat = {
  * 开一条仪表化会话。`dispose` 归调用方;交回的 `runner` 与 `createQuickJsRunner` 逐条同序。
  */
 export const createProbeSeat = async (options: ProbeSeatOptions): Promise<ProbeSeat> => {
+  // 判定阈值:给出时才判(与真执行器同一套次序);不给时观测恒空、纯量测。
+  const judgeEventLimit =
+    options.eventTickLimit === null ? undefined : (options.eventTickLimit ?? NEVER_EVENT_LIMIT);
+  const ceiling = options.memoryTickCeiling;
+  const softThreshold =
+    ceiling === undefined
+      ? undefined
+      : Math.floor((options.softThresholdRatio ?? MEMORY_SOFT_THRESHOLD_RATIO) * ceiling);
+  const apiCallTickLimit = options.apiCallTickLimit;
   const session = await openSandbox({
     wasm: options.wasm,
     runtimeCode: options.runtimeCode,
@@ -151,16 +183,173 @@ export const createProbeSeat = async (options: ProbeSeatOptions): Promise<ProbeS
         hardTimedOut: tick.hardTimedOut,
         error,
       });
-      // 早退分支与真执行器同构(见 `createQuickJsRunner`),交回载荷不带观测:探针不判定。
+      // 早退分支与真执行器同构(见 `createQuickJsRunner`);给出阈值时交回 `tripped` 观测,
+      // 不给阈值时观测恒空——两种形态的次序完全一致,只是观测这一栏内容不同。
       if (tick.hardTimedOut) {
         return { intents: [], observations: [], fault: "uncertain-timeout" };
       }
       if (tick.eventTripped) {
-        return { intents: [], observations: [] };
+        if (judgeEventLimit === undefined) {
+          throw new Error("事件计数被截停但本轨未启用——引擎故障");
+        }
+        return {
+          intents: [],
+          observations: [
+            { kind: "tripped", track: EVENT_TRACK, value: tick.eventCount, limit: judgeEventLimit },
+          ],
+        };
       }
-      return { intents: drained.intents, observations: [] };
+      const observations: Observation[] = [];
+      if (ceiling !== undefined) {
+        if (usage.mallocSize >= ceiling) {
+          observations.push({
+            kind: "tripped",
+            track: MEMORY_TRACK,
+            value: usage.mallocSize,
+            limit: ceiling,
+          });
+        } else if (softThreshold !== undefined && usage.mallocSize >= softThreshold) {
+          observations.push({
+            kind: "memory-pressure",
+            track: MEMORY_TRACK,
+            value: usage.mallocSize,
+            limit: softThreshold,
+          });
+        }
+      }
+      if (apiCallTickLimit !== undefined && drained.apiCalls >= apiCallTickLimit) {
+        observations.push({
+          kind: "tripped",
+          track: API_CALL_TRACK,
+          value: drained.apiCalls,
+          limit: apiCallTickLimit,
+        });
+        return { intents: [], observations };
+      }
+      return { intents: drained.intents, observations };
     },
   };
 
   return { runner, readings, dispose: session.dispose };
+};
+
+/** 一份最小快照:探针脚本不读状态;即使读,拿到的也是一个空世界。 */
+export const emptySnapshot = (tick: number): Snapshot => ({
+  tick,
+  size: 0,
+  terrain: [],
+  players: [],
+  units: [],
+  sites: [],
+});
+
+/**
+ * 死循环探针:只烧控制流事件(循环回边 + 调用 + 返回),**零 API、零分配**。
+ * 截停它的只可能是事件计数轨(两条计数轨互为盲区的另一半见 API 轰炸探针);
+ * 真实截停点是 `ceil(limit / 中断粒度) × 中断粒度`。
+ */
+export const EVENT_SPIN_PROBE_SCRIPT = [
+  "function burn(n) { var acc = 0; for (var i = 0; i < n; i += 1) { acc = (acc + 1) % 7; } return acc; }",
+  "function loop() { for (;;) { burn(1000); } }",
+].join("\n");
+
+/**
+ * API 轰炸探针:一个 tick 内有界地打 `callsPerTick` 次查询 API,之后返回。
+ *
+ * **为什么必须有界**:API 调用计数在 guest 侧自增、只在 `loop()` 返回后经 `__drainIntents()`
+ * 回到宿主才判——无限循环会让这条轨永远没有判定点,最后被墙钟硬超时截停。有界返回让
+ * **API 计数轨**成为截停者。它只烧 API(不产生回边洪流),与死循环探针互为盲区。
+ */
+export const apiBombProbeScript = (callsPerTick: number): string =>
+  [
+    "function loop() {",
+    `  for (var i = 0; i < ${String(callsPerTick)}; i += 1) { getTick(); }`,
+    "}",
+  ].join("\n");
+
+/**
+ * 撑内存探针:第一 tick 种下一大块跨 tick 存活的堆,之后一动不动地攥着。
+ * 判据读数取在 tick 末强制回收之后,存活堆因此逐 tick 压在线之上——内存轨每 tick 触发一次。
+ */
+export const MEMORY_HOARD_PROBE_SCRIPT = [
+  "var hoard = null;",
+  "function loop() {",
+  "  if (hoard === null) {",
+  "    hoard = [];",
+  "    for (var i = 0; i < 240000; i += 1) { hoard.push({ i: i }); }",
+  "  }",
+  "}",
+].join("\n");
+
+/**
+ * 叠加探针:同一个 tick 里既攥住跨 tick 存活的堆(内存判罚线),又打满 API 调用(API 轨)。
+ * 它用来量「同 tick 最多叠加两次异常」:内存与 API 两条轨都在 `tripped` 之前返回,故一次 tick
+ * 落两条 `count-exception-tick`。事件轨不参与(它在内存 / API 之前早退)。
+ */
+export const MEMORY_API_PROBE_SCRIPT = [
+  "var hoard = null;",
+  "function loop() {",
+  "  if (hoard === null) {",
+  "    hoard = [];",
+  "    for (var i = 0; i < 240000; i += 1) { hoard.push({ i: i }); }",
+  "  }",
+  "  for (var j = 0; j < 60000; j += 1) { getTick(); }",
+  "}",
+].join("\n");
+
+/** 一条判定式探针跑一个 tick 的结论:**哪些轨截停了它、截停读数是多少、花了多久**。 */
+export type BudgetProbeVerdict = {
+  /** 本 tick 触限的轨(**真执行器** `createQuickJsRunner` 给的 `tripped` 观测,一条轨一项)。 */
+  readonly trips: readonly { readonly track: string; readonly value: number }[];
+  /** 本 tick 的墙钟(ms):只包住 `setSnapshot` → `drainIntents` 这一次调用,**不含建 VM**。 */
+  readonly wallMs: number;
+  /** 硬超时导致的整场作废(它看起来像「被抓住」,所以与 `trips` 分列)。 */
+  readonly timedOut: boolean;
+};
+
+/**
+ * 用**真执行器**跑一个 tick 的判定式预算探针(截停轨 / 读数 / 墙钟由它给出)。
+ *
+ * 它用 `createQuickJsRunner` 而不是 `createProbeSeat`:探针要的不是「量一笔读数」而是
+ * 「这条轨到底截没截停它」,那件事的唯一权威是引擎自己的判定路径。探针阈值全是**有限上限**
+ * (测试参数,不是建议值),所以截停者一定是一条计数 / 判罚轨,而不是墙钟硬超时。
+ */
+export const runBudgetProbeTick = async (options: {
+  readonly wasm: WebAssembly.Module | ArrayBufferView | ArrayBuffer;
+  readonly runtimeCode: string;
+  readonly scriptCode: string;
+  readonly seat?: PlayerIndex;
+  readonly eventTickLimit?: number;
+  readonly apiCallTickLimit?: number;
+  readonly memoryTickCeiling?: number;
+  readonly wallClockHardTimeout?: number;
+}): Promise<BudgetProbeVerdict> => {
+  const handle = await createQuickJsRunner({
+    wasm: options.wasm,
+    runtimeCode: options.runtimeCode,
+    scriptCode: options.scriptCode,
+    seat: options.seat ?? 0,
+    ...(options.eventTickLimit === undefined ? {} : { eventTickLimit: options.eventTickLimit }),
+    ...(options.apiCallTickLimit === undefined
+      ? {}
+      : { apiCallTickLimit: options.apiCallTickLimit }),
+    ...(options.memoryTickCeiling === undefined
+      ? {}
+      : { memoryTickCeiling: options.memoryTickCeiling }),
+    ...(options.wallClockHardTimeout === undefined
+      ? {}
+      : { wallClockHardTimeout: options.wallClockHardTimeout }),
+  });
+  try {
+    handle.runner.setSnapshot(emptySnapshot(0));
+    const started = performance.now();
+    const output = handle.runner.drainIntents();
+    const wallMs = performance.now() - started;
+    const trips = output.observations
+      .filter((observation) => observation.kind === "tripped")
+      .map((observation) => ({ track: observation.track, value: observation.value }));
+    return { trips, wallMs, timedOut: output.fault !== undefined };
+  } finally {
+    handle.dispose();
+  }
 };

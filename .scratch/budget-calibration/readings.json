@@ -5,7 +5,8 @@
     "quickjsWasiVersion": "3.6.2",
     "interruptEventGranularity": 5000,
     "rerunCommand": "pnpm run probes:budget",
-    "scope": "各一次会话、无地图与规则集参与(探针脚本不读状态、不判据);读数取在 tick 末强制回收之后的存活堆 mallocSize,与内存判据同口径。整数会随运行环境微动,量级稳定。"
+    "scope": "各一次会话、无地图与规则集参与(探针脚本不读状态、不判据);读数取在 tick 末强制回收之后的存活堆 mallocSize,与内存判据同口径。整数会随运行环境微动,量级稳定。",
+    "probeScope": "三类预算探针:对抗两条走真执行器 `runBudgetProbeTick`(截停轨由引擎给出),三轨异常探针经 `processTick` 步 0 累加 `exceptionTicks`,诚实侧则用仪表化探针座位跑三份基准脚本。事件读数一律按**格数**记(eventCount / 中断粒度),不按事件数记:wasm 侧计数器跨调用不清零、有相位残留。"
   },
   "allocationCeiling": {
     "memoryLimitBytes": 8388608,
@@ -54,5 +55,710 @@
       118384
     ],
     "samples": 3
+  },
+  "adversarialProbes": {
+    "spin": {
+      "label": "死循环探针(只烧控制流事件,零 API、零分配)",
+      "stoppingTrack": "eventTickLimit",
+      "probeLimit": 50000,
+      "samples": [
+        {
+          "stoppedBy": "eventTickLimit",
+          "value": 50000,
+          "wallMs": 3.3736659999999574,
+          "perMs": 14820.672822976736
+        },
+        {
+          "stoppedBy": "eventTickLimit",
+          "value": 50000,
+          "wallMs": 3.375622000000021,
+          "perMs": 14812.085002408352
+        },
+        {
+          "stoppedBy": "eventTickLimit",
+          "value": 50000,
+          "wallMs": 3.418643999999972,
+          "perMs": 14625.681995551573
+        },
+        {
+          "stoppedBy": "eventTickLimit",
+          "value": 50000,
+          "wallMs": 3.3823260000000346,
+          "perMs": 14782.72644328178
+        },
+        {
+          "stoppedBy": "eventTickLimit",
+          "value": 50000,
+          "wallMs": 3.4133359999999584,
+          "perMs": 14648.426055917322
+        }
+      ],
+      "perMsMin": 14625.681995551573,
+      "perMsMedian": 14782.72644328178,
+      "perMsMax": 14820.672822976736
+    },
+    "apiBomb": {
+      "label": "API 轰炸探针(只烧 API 调用)",
+      "stoppingTrack": "apiCallTickLimit",
+      "probeLimit": 50000,
+      "samples": [
+        {
+          "stoppedBy": "apiCallTickLimit",
+          "value": 200000,
+          "wallMs": 34.79274499999997,
+          "perMs": 5748.324830363347
+        },
+        {
+          "stoppedBy": "apiCallTickLimit",
+          "value": 200000,
+          "wallMs": 33.73917200000005,
+          "perMs": 5927.827748707043
+        },
+        {
+          "stoppedBy": "apiCallTickLimit",
+          "value": 200000,
+          "wallMs": 33.742525,
+          "perMs": 5927.238699534193
+        },
+        {
+          "stoppedBy": "apiCallTickLimit",
+          "value": 200000,
+          "wallMs": 33.51421000000005,
+          "perMs": 5967.617914908325
+        },
+        {
+          "stoppedBy": "apiCallTickLimit",
+          "value": 200000,
+          "wallMs": 33.62840200000005,
+          "perMs": 5947.353668485339
+        }
+      ],
+      "perMsMin": 5748.324830363347,
+      "perMsMedian": 5927.827748707043,
+      "perMsMax": 5967.617914908325
+    }
+  },
+  "exceptionProbe": {
+    "ticks": 8,
+    "tracks": {
+      "eventTickLimit": {
+        "script": "EVENT_SPIN_PROBE_SCRIPT",
+        "probeLimit": 50000,
+        "totalExceptions": 8,
+        "perTick": [
+          [
+            1,
+            0,
+            0,
+            0
+          ],
+          [
+            2,
+            0,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            0,
+            0
+          ],
+          [
+            4,
+            0,
+            0,
+            0
+          ],
+          [
+            5,
+            0,
+            0,
+            0
+          ],
+          [
+            6,
+            0,
+            0,
+            0
+          ],
+          [
+            7,
+            0,
+            0,
+            0
+          ],
+          [
+            8,
+            0,
+            0,
+            0
+          ]
+        ]
+      },
+      "memoryTickCeiling": {
+        "script": "MEMORY_HOARD_PROBE_SCRIPT",
+        "probeLimit": 1166960,
+        "totalExceptions": 8,
+        "perTick": [
+          [
+            1,
+            0,
+            0,
+            0
+          ],
+          [
+            2,
+            0,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            0,
+            0
+          ],
+          [
+            4,
+            0,
+            0,
+            0
+          ],
+          [
+            5,
+            0,
+            0,
+            0
+          ],
+          [
+            6,
+            0,
+            0,
+            0
+          ],
+          [
+            7,
+            0,
+            0,
+            0
+          ],
+          [
+            8,
+            0,
+            0,
+            0
+          ]
+        ]
+      },
+      "apiCallTickLimit": {
+        "script": "apiBombProbeScript(2000)",
+        "probeLimit": 500,
+        "totalExceptions": 8,
+        "perTick": [
+          [
+            1,
+            0,
+            0,
+            0
+          ],
+          [
+            2,
+            0,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            0,
+            0
+          ],
+          [
+            4,
+            0,
+            0,
+            0
+          ],
+          [
+            5,
+            0,
+            0,
+            0
+          ],
+          [
+            6,
+            0,
+            0,
+            0
+          ],
+          [
+            7,
+            0,
+            0,
+            0
+          ],
+          [
+            8,
+            0,
+            0,
+            0
+          ]
+        ]
+      }
+    },
+    "stacking": {
+      "memoryAndApiPerTick": 2,
+      "eventEarlyReturnPerTick": 1,
+      "maxAdditionsPerTick": 2,
+      "note": "同 tick 最多叠加两次:事件轨截停后立即早退(不排内存 / API 判定),故最多 +1;内存判罚线与 API 轨可以在同一 tick 各报一条 tripped,故 (+内存, +API) 可叠到 +2。"
+    }
+  },
+  "honestSide": {
+    "matches": [
+      {
+        "id": "cell-a-melee-pressure-open-clash",
+        "cells": [
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure"
+        ],
+        "map": "open-clash",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 2317.550287,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 198056,
+            "loopMsPeak": 1.1438779999998587
+          },
+          {
+            "ticks": 578,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197808,
+            "loopMsPeak": 0.22908299999994597
+          },
+          {
+            "ticks": 180,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197728,
+            "loopMsPeak": 0.22999099999992723
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197728,
+            "loopMsPeak": 0.3003919999998743
+          }
+        ]
+      },
+      {
+        "id": "cell-a-melee-pressure-corridor-split",
+        "cells": [
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure"
+        ],
+        "map": "corridor-split",
+        "status": "completed",
+        "tickCount": 363,
+        "matchWallMs": 1624.0457310000002,
+        "seatPeaks": [
+          {
+            "ticks": 357,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 40,
+            "mallocSizePeak": 198048,
+            "loopMsPeak": 0.21092399999997724
+          },
+          {
+            "ticks": 363,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 84,
+            "mallocSizePeak": 198144,
+            "loopMsPeak": 0.22182000000066182
+          },
+          {
+            "ticks": 363,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197968,
+            "loopMsPeak": 0.19248499999957858
+          },
+          {
+            "ticks": 293,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197888,
+            "loopMsPeak": 0.1794249999998101
+          }
+        ]
+      },
+      {
+        "id": "cell-a-melee-pressure-fortress-core",
+        "cells": [
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure",
+          "cell-a-melee-pressure"
+        ],
+        "map": "fortress-core",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 2276.076491,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 198056,
+            "loopMsPeak": 0.18836499999997613
+          },
+          {
+            "ticks": 587,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197808,
+            "loopMsPeak": 0.16608499999983906
+          },
+          {
+            "ticks": 181,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197728,
+            "loopMsPeak": 0.17579300000033982
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 33,
+            "mallocSizePeak": 197728,
+            "loopMsPeak": 0.18012300000009418
+          }
+        ]
+      },
+      {
+        "id": "cell-b-expansion-economy-open-clash",
+        "cells": [
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy"
+        ],
+        "map": "open-clash",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 3661.3022459999993,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.28432799999973213
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201368,
+            "loopMsPeak": 0.29571300000043266
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 92,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.30493100000057893
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 92,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.30018199999904027
+          }
+        ]
+      },
+      {
+        "id": "cell-b-expansion-economy-corridor-split",
+        "cells": [
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy"
+        ],
+        "map": "corridor-split",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 3652.2068149999996,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201368,
+            "loopMsPeak": 0.2191660000007687
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201368,
+            "loopMsPeak": 0.24724199999945995
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.2489880000011908
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 92,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.2290130000001227
+          }
+        ]
+      },
+      {
+        "id": "cell-b-expansion-economy-fortress-core",
+        "cells": [
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy",
+          "cell-b-expansion-economy"
+        ],
+        "map": "fortress-core",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 3589.809083,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.23767299999963143
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201368,
+            "loopMsPeak": 0.22524200000043493
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 92,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.23334299999987707
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 88,
+            "mallocSizePeak": 201384,
+            "loopMsPeak": 0.26484200000049896
+          }
+        ]
+      },
+      {
+        "id": "cell-c-claim-no-harvest-open-clash",
+        "cells": [
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest"
+        ],
+        "map": "open-clash",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 2594.1930479999974,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.27175699999861536
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.31764299999849754
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.2573689999990165
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.2660990000003949
+          }
+        ]
+      },
+      {
+        "id": "cell-c-claim-no-harvest-corridor-split",
+        "cells": [
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest"
+        ],
+        "map": "corridor-split",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 2700.892423000001,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.2660299999988638
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.2762960000000021
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196308,
+            "loopMsPeak": 0.26337599999897066
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.25883600000088336
+          }
+        ]
+      },
+      {
+        "id": "cell-c-claim-no-harvest-fortress-core",
+        "cells": [
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest",
+          "cell-c-claim-no-harvest"
+        ],
+        "map": "fortress-core",
+        "status": "completed",
+        "tickCount": 600,
+        "matchWallMs": 2702.9207160000005,
+        "seatPeaks": [
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.27336300000024494
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.25904500000251574
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.26386400000046706
+          },
+          {
+            "ticks": 600,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 131,
+            "mallocSizePeak": 196228,
+            "loopMsPeak": 0.26917199999661534
+          }
+        ]
+      },
+      {
+        "id": "mixed-a-b-c-a-open-clash",
+        "cells": [
+          "cell-a-melee-pressure",
+          "cell-b-expansion-economy",
+          "cell-c-claim-no-harvest",
+          "cell-a-melee-pressure"
+        ],
+        "map": "open-clash",
+        "status": "completed",
+        "tickCount": 328,
+        "matchWallMs": 1432.6763119999996,
+        "seatPeaks": [
+          {
+            "ticks": 328,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 115,
+            "mallocSizePeak": 198488,
+            "loopMsPeak": 0.272106000000349
+          },
+          {
+            "ticks": 310,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 76,
+            "mallocSizePeak": 201056,
+            "loopMsPeak": 0.20373000000108732
+          },
+          {
+            "ticks": 328,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 133,
+            "mallocSizePeak": 196928,
+            "loopMsPeak": 0.267985000002227
+          },
+          {
+            "ticks": 132,
+            "eventGridPeak": 1,
+            "apiCallsPeak": 39,
+            "mallocSizePeak": 198304,
+            "loopMsPeak": 0.16489799999908428
+          }
+        ]
+      }
+    ],
+    "globalWorst": {
+      "eventGridPeak": 1,
+      "apiCallsPeak": 133,
+      "mallocSizePeak": 201384,
+      "loopMsPeak": 1.1438779999998587,
+      "matchWallMs": 3661.3022459999993
+    },
+    "perTickEventGrid": {
+      "p50": 0,
+      "p95": 1,
+      "max": 1
+    },
+    "sampleNote": "样本薄:三份基准脚本只覆盖两个模型档(commandcode/deepseek/deepseek-v4.1-flash 与 minimax-cn/MiniMax-M3),其中 cell-c 的模型是**降级产物**(本机未配 Claude provider,按 J 的口径归 wizard)。三份脚本的策略标签只描述行为、不是能力评级,故诚实侧峰值只作量级参考, 不代表任何模型档的真实强度分布。"
   }
 }
