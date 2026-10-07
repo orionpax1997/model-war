@@ -65,37 +65,37 @@
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.3736659999999574,
-          "perMs": 14820.672822976736
+          "wallMs": 3.3483830000000125,
+          "perMs": 14932.580890537258
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.375622000000021,
-          "perMs": 14812.085002408352
+          "wallMs": 3.280006999999955,
+          "perMs": 15243.869906375408
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.418643999999972,
-          "perMs": 14625.681995551573
+          "wallMs": 3.2700199999999313,
+          "perMs": 15290.426358248895
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.3823260000000346,
-          "perMs": 14782.72644328178
+          "wallMs": 3.2806359999999586,
+          "perMs": 15240.947182192913
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.4133359999999584,
-          "perMs": 14648.426055917322
+          "wallMs": 3.3066180000000713,
+          "perMs": 15121.190291711628
         }
       ],
-      "perMsMin": 14625.681995551573,
-      "perMsMedian": 14782.72644328178,
-      "perMsMax": 14820.672822976736
+      "perMsMin": 14932.580890537258,
+      "perMsMedian": 15240.947182192913,
+      "perMsMax": 15290.426358248895
     },
     "apiBomb": {
       "label": "API 轰炸探针(只烧 API 调用)",
@@ -105,37 +105,37 @@
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 34.79274499999997,
-          "perMs": 5748.324830363347
+          "wallMs": 32.84644700000001,
+          "perMs": 6088.9386301051045
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 33.73917200000005,
-          "perMs": 5927.827748707043
+          "wallMs": 32.482987000000094,
+          "perMs": 6157.069237505757
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 33.742525,
-          "perMs": 5927.238699534193
+          "wallMs": 32.55869699999994,
+          "perMs": 6142.7519657804605
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 33.51421000000005,
-          "perMs": 5967.617914908325
+          "wallMs": 32.47893699999997,
+          "perMs": 6157.837000638296
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 33.62840200000005,
-          "perMs": 5947.353668485339
+          "wallMs": 32.48892500000011,
+          "perMs": 6155.943910117043
         }
       ],
-      "perMsMin": 5748.324830363347,
-      "perMsMedian": 5927.827748707043,
-      "perMsMax": 5967.617914908325
+      "perMsMin": 6088.9386301051045,
+      "perMsMedian": 6155.943910117043,
+      "perMsMax": 6157.837000638296
     }
   },
   "exceptionProbe": {
@@ -327,35 +327,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2317.550287,
+        "matchWallMs": 2319.4861069999997,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 198056,
-            "loopMsPeak": 1.1438779999998587
+            "loopMsPeak": 1.5154399999998986
           },
           {
             "ticks": 578,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197808,
-            "loopMsPeak": 0.22908299999994597
+            "loopMsPeak": 0.3595479999999043
           },
           {
             "ticks": 180,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.22999099999992723
+            "loopMsPeak": 0.25618200000008073
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.3003919999998743
+            "loopMsPeak": 0.17991400000005342
           }
         ]
       },
@@ -370,35 +370,35 @@
         "map": "corridor-split",
         "status": "completed",
         "tickCount": 363,
-        "matchWallMs": 1624.0457310000002,
+        "matchWallMs": 1628.6822869999996,
         "seatPeaks": [
           {
             "ticks": 357,
             "eventGridPeak": 1,
             "apiCallsPeak": 40,
             "mallocSizePeak": 198048,
-            "loopMsPeak": 0.21092399999997724
+            "loopMsPeak": 0.1797750000000633
           },
           {
             "ticks": 363,
             "eventGridPeak": 1,
             "apiCallsPeak": 84,
             "mallocSizePeak": 198144,
-            "loopMsPeak": 0.22182000000066182
+            "loopMsPeak": 0.493785000000571
           },
           {
             "ticks": 363,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197968,
-            "loopMsPeak": 0.19248499999957858
+            "loopMsPeak": 0.1718829999999798
           },
           {
             "ticks": 293,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197888,
-            "loopMsPeak": 0.1794249999998101
+            "loopMsPeak": 0.24458799999956682
           }
         ]
       },
@@ -413,35 +413,35 @@
         "map": "fortress-core",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2276.076491,
+        "matchWallMs": 2181.734676,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 198056,
-            "loopMsPeak": 0.18836499999997613
+            "loopMsPeak": 0.1641989999998259
           },
           {
             "ticks": 587,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197808,
-            "loopMsPeak": 0.16608499999983906
+            "loopMsPeak": 0.15302499999961583
           },
           {
             "ticks": 181,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.17579300000033982
+            "loopMsPeak": 0.157774000000245
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.18012300000009418
+            "loopMsPeak": 0.170205000000351
           }
         ]
       },
@@ -456,35 +456,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 3661.3022459999993,
+        "matchWallMs": 3629.030952000001,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.28432799999973213
+            "loopMsPeak": 0.4194729999999254
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.29571300000043266
+            "loopMsPeak": 0.3748439999999391
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.30493100000057893
+            "loopMsPeak": 0.29843699999946693
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.30018199999904027
+            "loopMsPeak": 0.41179000000011
           }
         ]
       },
@@ -499,35 +499,35 @@
         "map": "corridor-split",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 3652.2068149999996,
+        "matchWallMs": 3593.339057000001,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.2191660000007687
+            "loopMsPeak": 0.226079000000027
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.24724199999945995
+            "loopMsPeak": 0.3014390000007552
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.2489880000011908
+            "loopMsPeak": 0.22831500000029337
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.2290130000001227
+            "loopMsPeak": 0.30269700000098965
           }
         ]
       },
@@ -542,35 +542,35 @@
         "map": "fortress-core",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 3589.809083,
+        "matchWallMs": 3561.034096999998,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.23767299999963143
+            "loopMsPeak": 0.3943299999991723
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.22524200000043493
+            "loopMsPeak": 0.32686200000171084
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.23334299999987707
+            "loopMsPeak": 0.40222200000062003
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 88,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.26484200000049896
+            "loopMsPeak": 0.45607100000052014
           }
         ]
       },
@@ -585,35 +585,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2594.1930479999974,
+        "matchWallMs": 2550.7521419999975,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.27175699999861536
+            "loopMsPeak": 0.26686699999845587
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.31764299999849754
+            "loopMsPeak": 0.254785000000993
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.2573689999990165
+            "loopMsPeak": 0.4525080000021262
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.2660990000003949
+            "loopMsPeak": 0.337547999999515
           }
         ]
       },
@@ -628,35 +628,35 @@
         "map": "corridor-split",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2700.892423000001,
+        "matchWallMs": 2659.7952179999993,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.2660299999988638
+            "loopMsPeak": 0.26582000000053085
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.2762960000000021
+            "loopMsPeak": 0.2453559999994468
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196308,
-            "loopMsPeak": 0.26337599999897066
+            "loopMsPeak": 0.2689630000022589
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.25883600000088336
+            "loopMsPeak": 0.2585560000006808
           }
         ]
       },
@@ -671,35 +671,35 @@
         "map": "fortress-core",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2702.9207160000005,
+        "matchWallMs": 2684.74396,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.27336300000024494
+            "loopMsPeak": 0.28537599999981467
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.25904500000251574
+            "loopMsPeak": 0.25429600000279606
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.26386400000046706
+            "loopMsPeak": 0.24766099999760627
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.26917199999661534
+            "loopMsPeak": 0.24863900000127614
           }
         ]
       },
@@ -714,35 +714,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 328,
-        "matchWallMs": 1432.6763119999996,
+        "matchWallMs": 1410.2205240000003,
         "seatPeaks": [
           {
             "ticks": 328,
             "eventGridPeak": 1,
             "apiCallsPeak": 115,
             "mallocSizePeak": 198488,
-            "loopMsPeak": 0.272106000000349
+            "loopMsPeak": 0.31470899999840185
           },
           {
             "ticks": 310,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201056,
-            "loopMsPeak": 0.20373000000108732
+            "loopMsPeak": 0.23655599999983679
           },
           {
             "ticks": 328,
             "eventGridPeak": 1,
             "apiCallsPeak": 133,
             "mallocSizePeak": 196928,
-            "loopMsPeak": 0.267985000002227
+            "loopMsPeak": 0.25625200000285986
           },
           {
             "ticks": 132,
             "eventGridPeak": 1,
             "apiCallsPeak": 39,
             "mallocSizePeak": 198304,
-            "loopMsPeak": 0.16489799999908428
+            "loopMsPeak": 0.25457599999936065
           }
         ]
       }
@@ -751,8 +751,8 @@
       "eventGridPeak": 1,
       "apiCallsPeak": 133,
       "mallocSizePeak": 201384,
-      "loopMsPeak": 1.1438779999998587,
-      "matchWallMs": 3661.3022459999993
+      "loopMsPeak": 1.5154399999998986,
+      "matchWallMs": 3629.030952000001
     },
     "perTickEventGrid": {
       "p50": 0,
