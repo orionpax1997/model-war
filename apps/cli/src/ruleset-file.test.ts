@@ -118,6 +118,10 @@ const FINAL_VALUES: Partial<Ruleset> = {
   baseScore: 4,
   resourceScore: 1,
   unitCostDivisor: 6,
+  // 预算键分批落定稿(票 05 落计数与异常三键);仍为未定值的键不在这里。
+  exceptionTickLimit: 3,
+  eventTickLimit: 10000,
+  apiCallTickLimit: 300,
 };
 
 /**

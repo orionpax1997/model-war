@@ -171,8 +171,9 @@
 
 | 脚本 | 实际内容 | 用途 |
 |---|---|---|
-| `check:quick` | `oxfmt --check` + `oxlint` + 工具版本耦合断言 + 禁浮点门禁 | agent 每轮编辑循环 |
+| `check:quick` | `oxfmt --check` + `oxlint` + 工具版本耦合断言 + 禁浮点门禁 + 预算结构门禁 | agent 每轮编辑循环 |
 | `check:no-float` | `node packages/tools/src/gate/run-no-float-gate.ts`(禁浮点门禁) | 仓库源码禁浮点字面量 |
+| `check:budget` | `node packages/tools/src/gate/run-budget-gate.ts`(预算结构门禁) | 挂在 `check:quick`:**已定稿**的预算键满足各自的结构约束(事件计数上限是中断粒度的整数倍;中断粒度常量与它在文档里的三处副本逐字一致);**零构建**,只读规则集取值、键清单源码与文档文本;读到零个预算键 / 零个已定稿键按失败处理 |
 | `generate` | `tsc -b packages/schema && node packages/tools/src/generate/run-generate.ts && tsc -b` | 重跑生成器,产出全部生成物并入库(§3.1);**要一次构建**,故不是门禁而是提交前的动作 |
 | `check:declared-deps` | `node packages/tools/src/gate/run-declared-deps-gate.ts` | 挂在 `check` 末尾:工具包运行时源码里 import 的第三方包必须在它自己的 `package.json` 里声明(§3.2);**零构建**,与读 `dist` 的 `check:deps` 互补 |
 | `check:drift` | `node packages/tools/src/generate/run-drift-gate.ts`(生成物漂移检查) | 挂在 `check` 末尾,**不进 `check:quick`**:它需要一次 `tsc -b`(生产函数 import 真源包),而 `check:types` 里已经有,快门禁的零构建性质因此不受影响 |
@@ -222,7 +223,7 @@
 `契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`)同时盯着两半——「不在 `check` 里」与
 「有独立脚本 + `test:slow` 里的三个反例」,少任何一半,这个决定就没有代价交换。
 
-**快门禁与末尾复核不受影响**:`check:quick` 那四项一项没动;`check` 末尾的提交内容复核仍是
+**快门禁与末尾复核不受影响**:`check:quick` 那几项一项没动;`check` 末尾的提交内容复核仍是
 `check:drift` + `check:bench`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`)。哪一道该进哪一层由它的
 耗时与覆盖面决定,不由它在表里的位置决定。
 

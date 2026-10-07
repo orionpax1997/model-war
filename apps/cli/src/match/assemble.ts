@@ -156,8 +156,8 @@ const BUDGET_FIELDS = [
  * 从规则集与键清单解析**已启用**的预算轨。字段缺席即该轨不启用(不是「值 0 即不启用」)。
  *
  * 判据是键清单里那一个两态字段 `calibration.state`:未定值(`undetermined`)就不传这个字段——
- * 引擎不认识「未定值」这个概念(spec《未定值与预算配置》)。当前 v1 的八个预算键全是未定值,
- * 于是交出去的是一个空对象:四轨全不启用。
+ * 引擎不认识「未定值」这个概念(spec《未定值与预算配置》)。当前 v1 已定稿计数与异常三键,
+ * 故 7 个预算字段里只有这三项进预算;其余键定稿后自动带上对应轨,无需改这里的逻辑。
  */
 const budgetOf = (ruleset: Ruleset): NonNullable<RunMatchParams["budget"]> => {
   const budget: Record<string, number> = {};

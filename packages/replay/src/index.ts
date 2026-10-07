@@ -59,6 +59,13 @@ export {
 /** 规则集键清单的键序。与 `Ruleset` 类型同源,派生量断言遍历它。 */
 export { RULESET_KEYS, RULESET_UNIT_KEYS } from "@model-war/schema";
 
+/**
+ * 规则集键清单本体。`calibration.state` 是「未定值 / 终值」的唯一判据,引擎侧的动态失配断言
+ * 按它组装预算(哪些轨启用),不能按「值是不是 0」推。经本包中转的理由同上几条:引擎 manifest
+ * 上只有本包这一个真源依赖。
+ */
+export { RULESET_KEY_CATALOG } from "@model-war/schema";
+
 /** 规则集版本真源(hld §7.1 三处一致)。经本包中转,理由见文件头。 */
 export { RULESET_VERSION } from "@model-war/schema";
 

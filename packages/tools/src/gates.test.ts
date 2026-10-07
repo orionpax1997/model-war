@@ -873,6 +873,39 @@ it("生成物漂移检查:手改数值表区块正文 → 变红,手改表外散
   expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
 });
 
+// ── 预算结构门禁:已定稿预算键的结构断言(票 05)────────────────────────────
+
+it("预算结构门禁:改一个预算取值(不是中断粒度的整数倍)→ 变红,按字节还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例落在**数据文件**上(与数值表那一节同族):把事件计数上限改成一个不是中断粒度整数倍的数。
+  // 门禁读的正是磁盘上那份 JSON,所以改完立刻可判、不需要先 `tsc -b`。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"eventTickLimit": 10000', '"eventTickLimit": 9999'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "事件计数上限不是中断粒度整数倍时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名那个键").toContain("eventTickLimit");
+  expect(violated.output, "报告必须说清是整数倍这一条").toContain("整数倍");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它必须挂在默认的快门禁上,否则改预算取值时没人拦。
+  expect(scripts["check:quick"] ?? "", "预算结构门禁不在快门禁里").toContain("check:budget");
+  // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "预算结构门禁被挪进了按需门禁").not.toContain(
+    "check:budget",
+  );
+  expect(scripts["test:slow"] ?? "", "预算结构门禁被挪进了慢链").not.toContain("check:budget");
+  expect(scripts["test"] ?? "", "预算结构门禁被挪进了默认测试").not.toContain("check:budget");
+  // 末尾那组仍是「提交内容对不对」的复核:结构门禁不属于那里。
+  expect(tailSteps(), "预算结构门禁被挪进了全量门禁末尾复核组").not.toContain("check:budget");
+});
+
 // ── 生成物漂移检查:API 面的表(真源是符号表与后果行,落在契约文档的正文里) ─────────
 
 /** 注入面符号表那一件的真源:它渲染成契约文档里的一段区块,而它的落点是一份手写散文夹着的文档。 */

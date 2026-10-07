@@ -39,7 +39,7 @@ type Assert<T extends true> = T;
  */
 export type RulesetCatalogKeysMatchType = Assert<Equals<RulesetKey, RequiredKeysOf<Ruleset>>>;
 
-// ── 数目:13 个定稿 + 8 个预算 = 21 ──────────────────────────────────────────
+// ── 数目:21 键,按标定状态分两半(定稿 / 未定)─────────────────────────────
 
 /**
  * 21 个键的**字面清单**。写成字面量而不是从清单里数,是因为「数出来是 21」这条断言
@@ -76,8 +76,20 @@ const EXPECTED_KEYS: readonly string[] = [
   "scriptSizeLimit",
 ];
 
-const EXPECTED_FINAL_KEYS: readonly string[] = EXPECTED_KEYS.slice(0, 13);
-const EXPECTED_UNDETERMINED_KEYS: readonly string[] = EXPECTED_KEYS.slice(13);
+const EXPECTED_FINAL_KEYS: readonly string[] = [
+  ...EXPECTED_KEYS.slice(0, 13),
+  // 预算键分批落定稿(票 05 落计数与异常三键):每批落定后这里要跟着走。
+  "exceptionTickLimit",
+  "eventTickLimit",
+  "apiCallTickLimit",
+];
+const EXPECTED_UNDETERMINED_KEYS: readonly string[] = [
+  "memoryLimit",
+  "memoryTickCeiling",
+  "wallClockSoftLimit",
+  "wallClockHardTimeout",
+  "scriptSizeLimit",
+];
 
 const keysWith = (state: "final" | "undetermined"): readonly string[] =>
   RULESET_KEYS.filter((key) => RULESET_KEY_CATALOG[key].calibration.state === state);
@@ -89,9 +101,11 @@ it("键清单就是 21 个键,不多不少,顺序即书写序", () => {
   expect(Object.keys(RULESET_KEY_CATALOG)).toEqual([...RULESET_KEYS]);
 });
 
-it("13 个定稿键 + 8 个预算键,按标定状态分得开", () => {
+it("定稿键与未定键按标定状态分得开(预算键分批落定稿)", () => {
   expect(keysWith("final")).toEqual(EXPECTED_FINAL_KEYS);
   expect(keysWith("undetermined")).toEqual(EXPECTED_UNDETERMINED_KEYS);
+  // 两半合起来仍是 21 键,不多不少。
+  expect(EXPECTED_FINAL_KEYS.length + EXPECTED_UNDETERMINED_KEYS.length).toBe(RULESET_KEYS.length);
 });
 
 it("内存软阈不入键清单(它是派生展示项,入表不入 schema)", () => {
@@ -111,7 +125,7 @@ it("内存软阈不入键清单(它是派生展示项,入表不入 schema)", () 
 
 // ── 「未定值」是判别式的,不是一个标志位 ───────────────────────────────────
 
-it("8 个预算键标为未定值,占位取 0,且 0 是合法取值", () => {
+it("仍是未定值的预算键标为未定值,占位取 0,且 0 是合法取值", () => {
   expect(UNDETERMINED_VALUE).toBe(0);
   for (const key of EXPECTED_UNDETERMINED_KEYS) {
     const entry = RULESET_KEY_CATALOG[key as RulesetKey];
@@ -124,7 +138,7 @@ it("8 个预算键标为未定值,占位取 0,且 0 是合法取值", () => {
 it("键清单区分「未定的值」与「一个真的 0」:同一个取值,渲染不同", () => {
   // 判据只能来自键自己身上那个 `state`,不能来自「值是不是 0」——
   // 否则标定完成后某个预算上限恰好是 0,文档就会开始骗人。
-  const undetermined = RULESET_KEY_CATALOG.exceptionTickLimit;
+  const undetermined = RULESET_KEY_CATALOG.memoryLimit;
   const realZero = RULESET_KEY_CATALOG.initialResources;
   expect(undetermined.calibration.state).toBe("undetermined");
   expect(realZero.calibration.state).toBe("final");
