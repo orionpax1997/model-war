@@ -299,8 +299,15 @@ export const MEMORY_API_PROBE_SCRIPT = [
 
 /** 一条判定式探针跑一个 tick 的结论:**哪些轨截停了它、截停读数是多少、花了多久**。 */
 export type BudgetProbeVerdict = {
-  /** 本 tick 触限的轨(**真执行器** `createQuickJsRunner` 给的 `tripped` 观测,一条轨一项)。 */
-  readonly trips: readonly { readonly track: string; readonly value: number }[];
+  /**
+   * 本 tick 触限的轨(**真执行器** `createQuickJsRunner` 给的 `tripped` 观测,一条轨一项)。
+   * `limit` 是那条轨的阈值(供断言「是哪条轨、截在哪个阈上」)。
+   */
+  readonly trips: readonly {
+    readonly track: string;
+    readonly value: number;
+    readonly limit: number;
+  }[];
   /** 本 tick 的墙钟(ms):只包住 `setSnapshot` → `drainIntents` 这一次调用,**不含建 VM**。 */
   readonly wallMs: number;
   /** 硬超时导致的整场作废(它看起来像「被抓住」,所以与 `trips` 分列)。 */
@@ -347,7 +354,11 @@ export const runBudgetProbeTick = async (options: {
     const wallMs = performance.now() - started;
     const trips = output.observations
       .filter((observation) => observation.kind === "tripped")
-      .map((observation) => ({ track: observation.track, value: observation.value }));
+      .map((observation) => ({
+        track: observation.track,
+        value: observation.value,
+        limit: observation.limit,
+      }));
     return { trips, wallMs, timedOut: output.fault !== undefined };
   } finally {
     handle.dispose();

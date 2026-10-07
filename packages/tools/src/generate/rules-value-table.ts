@@ -40,7 +40,7 @@ import {
   RULESET_UNIT_KEYS,
   SPAWN_TICKS_COEFFICIENT,
 } from "@model-war/schema";
-import type { Ruleset, RulesetKey, UnitStats } from "@model-war/schema";
+import type { Ruleset, RulesetKey, RulesetKeyCalibration, UnitStats } from "@model-war/schema";
 
 import { sectionMarker } from "./section.ts";
 import { tableCell } from "./emit.ts";
@@ -173,6 +173,16 @@ const unitTable = (truth: Ruleset): string[] => {
 };
 
 /**
+ * 一个键的标定状态是不是未定值。
+ *
+ * 抽成函数是为了在某个键落定稿之后,`RULESET_KEY_CATALOG.<键>.calibration.state` 被 TS 收窄成
+ * 字面量 `"final"`,直接写 `=== "undetermined"` 会被报成「两边无交集」。参数的联合类型让这两个
+ * 状态仍可比较,而判据仍是键自己身上的那一个。
+ */
+const isUndetermined = (calibration: RulesetKeyCalibration): boolean =>
+  calibration.state === "undetermined";
+
+/**
  * 派生量表:**入表不入键清单**。
  *
  * 这一节存在的理由是「推导展示项」有两种相反的失败:漏掉它,模型看不到软阈这条线;
@@ -185,7 +195,7 @@ const derivedTable = (truth: Ruleset): string[] => [
   // 软阈跟着它依赖的那个键走:那个键还是未定值时软阈也渲染成「未定」,
   // 而不是把系数乘未定值占位算出一个看着像真的 0。
   `| 内存软阈 | \`MEMORY_SOFT_THRESHOLD_RATIO × memoryTickCeiling\` | ${
-    RULESET_KEY_CATALOG.memoryTickCeiling.calibration.state === "undetermined"
+    isUndetermined(RULESET_KEY_CATALOG.memoryTickCeiling.calibration)
       ? UNDETERMINED_LABEL
       : `${Math.floor(MEMORY_SOFT_THRESHOLD_RATIO * integerOf(truth, "memoryTickCeiling"))}`
   } |`,

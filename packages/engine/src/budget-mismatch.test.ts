@@ -1,6 +1,7 @@
 /**
- * 动态失配断言(票 05):**同一组终值预算下**,计数轨的探针必被正确的那条轨截停,而三份基准脚本
- * 必不被截停。它是「终值仍自洽」的常驻守卫——引擎或契约变了而终值没重标,它会红。
+ * 动态失配断言(票 05 计数轨 / 票 06 内存轨):**同一组终值预算下**,计数与内存轨的探针必被正确
+ * 的那条轨截停,而三份基准脚本必不被截停、也不产内存压力观测。它是「终值仍自洽」的常驻守卫——
+ * 引擎或契约变了而终值没重标,它会红。
  *
  * ── 为什么是双向,以及为什么必须指定轨名 ──
  *
@@ -12,14 +13,14 @@
  * ── 预算怎么来 ──
  *
  * 与组装层同一条判据:逐键读 `RULESET_KEY_CATALOG[键].calibration.state`,只有 `final` 才进预算。
- * 票 05 落定的是计数与异常三键,所以当前 v1 组装出来的预算**只含**这三项;其余五键仍是未定值,
- * 对应的轨不启用(字段缺席即不启用,不是「值为 0 即不启用」)。
+ * 票 05 落定的是计数与异常三键、票 06 落定内存两键,所以当前 v1 组装出来的预算含这五项;其余键
+ * 仍是未定值,对应的轨不启用(字段缺席即不启用,不是「值为 0 即不启用」)。
  *
- * ── 票 06 的扩展缝 ──
+ * ── 两条内存路各自独立 ──
  *
- * 内存腿(判罚线 / 分配上限)在票 06 落定后,在这里追加:①`memoryTickCeiling` 探针必须被内存轨
- * 截停(同样带轨名与读数);②基准脚本的存活堆峰值必须低于判罚线(不被截停)。`runBenchmarkMatch`
- * 已经能带任何 `BudgetConfig` 跑,不为内存腿改装。
+ * **分配上限**(`memoryLimit`,硬)超限在 guest 里是可捕获的 `InternalError`;**判罚线**
+ * (`memoryTickCeiling`,读数)是 tick 末 `runGC()` 后的一次存活堆判定。两者各有一条用例,并且
+ * 在同一个夹具里同时在场时互不干扰(一条路把异常交给 guest 吞,另一条照常判读数)。
  *
  * ── 为什么用真执行器,而不是复用 `createProbeSeat` ──
  *
@@ -46,17 +47,22 @@ import { runMatch } from "./index.js";
 import type { Observation, SeatRunner } from "./runner/index.js";
 import {
   EVENT_SPIN_PROBE_SCRIPT,
+  MEMORY_HOARD_PROBE_SCRIPT,
   apiBombProbeScript,
+  createProbeSeat,
+  emptySnapshot,
   runBudgetProbeTick,
 } from "./runner/probe-harness.js";
 import {
   API_CALL_TRACK,
   EVENT_TRACK,
   INTERRUPT_EVENT_GRANULARITY,
+  MEMORY_TRACK,
   WASI_CLOCK_MS,
   WASI_RANDOM_FILL,
   WASI_TIMEZONE_OFFSET_MINUTES,
   createQuickJsRunner,
+  createSandboxVm,
 } from "./runner/quickjs.js";
 import type { GameState, PlayerIndex } from "./world/state.js";
 
@@ -139,13 +145,15 @@ type BenchmarkOutcome = {
   readonly status: string;
   /** 本场里执行器报出的全部 `tripped` 观测(**带轨名与截停读数**)。 */
   readonly trips: readonly Observation[];
+  /** 本场里执行器报出的全部 `memory-pressure` 观测(只观测不判罚;终值下应当为空)。 */
+  readonly pressures: readonly Observation[];
   readonly finalState?: GameState;
 };
 
 /**
  * 用真执行器跑一场混编基准对局。四个座位各一个 `createQuickJsRunner`,阈值取自传入的预算;
- * 外层包一层,把每条 `tripped` 观测收下来(它们不走 `runMatch` 的可选观测出口——`tripped` 是唯一
- * 写入口 `apply()` 的输入,不是披露行)。
+ * 外层包一层,把每条 `tripped` 观测与 `memory-pressure` 观测收下来(`tripped` 是唯一写入口
+ * `apply()` 的输入,`memory-pressure` 是只披露不判罚的那一类)。
  */
 const runBenchmarkMatch = async (
   scenario: { readonly id: string; readonly map: string; readonly cells: readonly string[] },
@@ -166,10 +174,15 @@ const runBenchmarkMatch = async (
         ...(budget.apiCallTickLimit === undefined
           ? {}
           : { apiCallTickLimit: budget.apiCallTickLimit }),
+        ...(budget.memoryLimit === undefined ? {} : { memoryLimit: budget.memoryLimit }),
+        ...(budget.memoryTickCeiling === undefined
+          ? {}
+          : { memoryTickCeiling: budget.memoryTickCeiling }),
       }),
     ),
   );
   const trips: Observation[] = [];
+  const pressures: Observation[] = [];
   const runners: SeatRunner[] = handles.map((handle) => ({
     setSnapshot: handle.runner.setSnapshot,
     drainIntents: () => {
@@ -177,6 +190,8 @@ const runBenchmarkMatch = async (
       for (const observation of output.observations) {
         if (observation.kind === "tripped") {
           trips.push(observation);
+        } else if (observation.kind === "memory-pressure") {
+          pressures.push(observation);
         }
       }
       return output;
@@ -199,8 +214,8 @@ const runBenchmarkMatch = async (
       sink: { write: () => {} },
     });
     return result.status === "completed"
-      ? { status: result.status, trips, finalState: result.finalState }
-      : { status: result.status, trips };
+      ? { status: result.status, trips, pressures, finalState: result.finalState }
+      : { status: result.status, trips, pressures };
   } finally {
     for (const handle of handles) {
       handle.dispose();
@@ -208,24 +223,23 @@ const runBenchmarkMatch = async (
   }
 };
 
-// ── 组装:当前 v1 只启用三个已定稿键的轨 ─────────────────────────────────────
+// ── 组装:当前 v1 只启用五个已定稿键的轨 ─────────────────────────────────────
 
-it("当前 v1 组装出的预算只含三个已定稿键,未定键的轨不启用", () => {
+it("当前 v1 组装出的预算只含五个已定稿键,未定键的轨不启用", () => {
   expect(Object.keys(BUDGET).sort()).toEqual([
     "apiCallTickLimit",
     "eventTickLimit",
     "exceptionTickLimit",
+    "memoryLimit",
+    "memoryTickCeiling",
   ]);
   expect(BUDGET.eventTickLimit).toBe(10_000);
   expect(BUDGET.apiCallTickLimit).toBe(300);
   expect(BUDGET.exceptionTickLimit).toBe(3);
-  // 其余五键仍是未定值:字段缺席 = 该轨不启用(不是「值为 0 即不启用」)。
-  for (const field of [
-    "memoryLimit",
-    "memoryTickCeiling",
-    "wallClockSoftLimit",
-    "wallClockHardTimeout",
-  ] as const) {
+  expect(BUDGET.memoryLimit).toBe(4 * 1024 * 1024);
+  expect(BUDGET.memoryTickCeiling).toBe(512 * 1024);
+  // 其余两键仍是未定值:字段缺席 = 该轨不启用(不是「值为 0 即不启用」)。
+  for (const field of ["wallClockSoftLimit", "wallClockHardTimeout"] as const) {
     expect(BUDGET[field], `${field} 仍是未定值,不该进预算`).toBeUndefined();
   }
 });
@@ -262,13 +276,123 @@ it("计数两轨:终值下死循环探针被事件计数轨截停、API 轰炸�
   expect(api.trips.map((trip) => trip.track)).toEqual([API_CALL_TRACK]);
 }, 120_000);
 
+// ── 正向:内存判罚线抓住撑内存探针(带轨名、阈值与截停读数)─────────────────────
+
+it("内存判罚线:撑内存探针被内存轨截停(带轨名与阈值,且非硬超时)", async () => {
+  const ceiling = required(BUDGET.memoryTickCeiling, "memoryTickCeiling");
+  const probe = await runBudgetProbeTick({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: MEMORY_HOARD_PROBE_SCRIPT,
+    memoryTickCeiling: ceiling,
+  });
+  // 硬超时会作废整场却看起来像「抓住了」:它必须缺席。
+  expect(probe.timedOut, "撑内存探针被硬超时截停,不是被内存判罚线截停").toBe(false);
+  const memoryTrips = probe.trips.filter((trip) => trip.track === MEMORY_TRACK);
+  expect(memoryTrips.length, `内存轨没有截停撑内存探针:${JSON.stringify(probe.trips)}`).toBe(1);
+  expect(memoryTrips[0]?.track).toBe(MEMORY_TRACK);
+  expect(memoryTrips[0]?.limit).toBe(ceiling);
+  expect(memoryTrips[0]?.value).toBeGreaterThanOrEqual(ceiling);
+  // 只被内存轨截停,没有被别的轨连带截停。
+  expect(probe.trips.map((trip) => trip.track)).toEqual([MEMORY_TRACK]);
+}, 120_000);
+
+// ── 两条内存路各自独立:分配上限(硬)vs 判罚线(读数)────────────────────────
+
+/**
+ * 两条内存路共存时的夹具:先攥住 2 MiB(远低于 4 MiB 分配上限,却高于 512 KiB 判罚线),
+ * 再一次性申请 8 MiB 撞上分配上限;捕获后经一笔 `move` 交回哨兵(它只在 guest 吞掉异常时才出现)。
+ */
+const TWO_MEMORY_PATHS_SCRIPT = [
+  "var hoard = [];",
+  "var caught = false;",
+  "function loop() {",
+  "  if (hoard.length === 0) {",
+  "    for (var i = 0; i < 8; i += 1) { hoard.push(new Uint8Array(262144)); }",
+  "  }",
+  "  if (!caught) {",
+  "    try {",
+  "      var big = new Uint8Array(8 * 1024 * 1024);",
+  "      if (big.byteLength === 0) { return; }",
+  "    } catch (_error) {",
+  "      caught = true;",
+  "      move(1, 0, 0);",
+  "    }",
+  "  }",
+  "}",
+].join("\n");
+
+it("两条内存路各自独立:分配上限超限是 guest 可捕获异常,判罚线是另一条轨,互不干扰", async () => {
+  const limit = required(BUDGET.memoryLimit, "memoryLimit");
+  const ceiling = required(BUDGET.memoryTickCeiling, "memoryTickCeiling");
+
+  // 路 (a):**分配上限**——超限在 guest 里是可捕获的 `InternalError`(脚本可见)。
+  // 这一侧不启用判罚线,所以异常来自上限本身,与判罚线无关。
+  const vm = await createSandboxVm({ wasm: wasmModule, memoryLimit: limit });
+  try {
+    const caught = vm
+      .evalCode(
+        "(() => {" +
+          "  try {" +
+          "    const chunks = [];" +
+          "    for (;;) chunks.push(new Array(65536).fill(1));" +
+          "    return 'no-throw';" +
+          "  } catch (error) {" +
+          "    return error.name + ': ' + error.message;" +
+          "  }" +
+          "})()",
+      )
+      .consume((handle) => vm.dump(handle));
+    expect(caught, "分配上限超限在 guest 内必须是可捕获的 InternalError").toBe(
+      "InternalError: out of memory",
+    );
+  } finally {
+    vm.dispose();
+  }
+
+  // 路 (b):**判罚线**——tick 末存活堆越线被判。同一条会话里两条路同时在场:
+  // 攥住的 2 MiB 越过判罚线触发 `tripped`;随后撞上分配上限的异常被 guest 吞掉(哨兵 `move`)
+  // 而不会冒成宿主异常——所以 `drainIntents` 正常交回,判罚线照常说话。两条路互不干扰。
+  const seat = await createProbeSeat({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: TWO_MEMORY_PATHS_SCRIPT,
+    seat: 0,
+    memoryLimit: limit,
+    memoryTickCeiling: ceiling,
+  });
+  try {
+    seat.runner.setSnapshot(emptySnapshot(0));
+    const output = seat.runner.drainIntents(); // 这里不抛 = guest 吞掉了上限异常
+    const tripped = output.observations.find(
+      (observation) => observation.kind === "tripped" && observation.track === MEMORY_TRACK,
+    );
+    if (tripped === undefined) {
+      throw new Error(`撑内存夹具没有被判罚线抓住:${JSON.stringify(output.observations)}`);
+    }
+    expect(tripped).toMatchObject({ kind: "tripped", track: MEMORY_TRACK, limit: ceiling });
+    expect(tripped.value).toBeGreaterThanOrEqual(ceiling);
+    expect(
+      output.intents.some((intent) => intent.kind === "move"),
+      "guest 没有捕获分配上限异常(哨兵缺失),两条内存路互相干扰了",
+    ).toBe(true);
+  } finally {
+    seat.dispose();
+  }
+}, 120_000);
+
 // ── 反向:同一组终值下,三份基准脚本一条轨都不截停 ─────────────────────────
 
-it("反向:三份基准脚本在终值下不被任何轨截停(贴边但安全)", async () => {
+it("反向:三份基准脚本在终值下不被任何轨截停、也不产内存压力观测(贴边但安全)", async () => {
   const outcome = await runBenchmarkMatch(MIXED_SCENARIO, BUDGET);
   expect(outcome.status, "基准脚本在终值预算下必须跑出正常终局,不是硬超时作废").toBe("completed");
-  // 「被抓住」必须指定轨名:终值下一条 tripped 都不该有。
+  // 「被抓住」必须指定轨名:终值下一条 tripped 都不该有(含内存轨)。
   expect(outcome.trips, `基准脚本被截停:${JSON.stringify(outcome.trips)}`).toEqual([]);
+  // 内存压力是只观测不判罚的那一类;终值下一条都不该有(软阈高于诚实峰值)。
+  expect(
+    outcome.pressures,
+    `基准脚本产出了内存压力观测:${JSON.stringify(outcome.pressures)}`,
+  ).toEqual([]);
   const finalState = outcome.finalState;
   if (finalState === undefined) {
     throw new Error("completed 的对局必须带 finalState");
@@ -306,4 +430,16 @@ it("反向用例:抬高上限放探针过去、压低上限截停基准脚本(�
   expect(eventTrips[0]?.value).toBeGreaterThanOrEqual(INTERRUPT_EVENT_GRANULARITY);
   // 截停者仍是计数轨本人,不是硬超时(硬超时那条走 `uncertain-timeout` 故障位)。
   expect(outcome.status).toBe("completed");
+
+  // ③ 把内存判罚线压到诚实峰值之下:同一场基准对局立刻被内存轨截停——「基准脚本不产内存观测」
+  // 因此不是空断言。100000 低于诚实存活堆峰值(约 201384)、也高于它的 0.8 倍软阈(80000)。
+  const lowMemory: BudgetConfig = { ...BUDGET, memoryTickCeiling: 100_000 };
+  const memoryOutcome = await runBenchmarkMatch(MIXED_SCENARIO, lowMemory);
+  const memoryTrips = memoryOutcome.trips.filter((trip) => trip.track === MEMORY_TRACK);
+  expect(
+    memoryTrips.length,
+    `压低内存判罚线后基准脚本竟没被内存轨截停:${JSON.stringify(memoryOutcome.trips)}`,
+  ).toBeGreaterThan(0);
+  expect(memoryTrips[0]?.limit).toBe(100_000);
+  expect(memoryTrips[0]?.value).toBeGreaterThanOrEqual(100_000);
 }, 180_000);

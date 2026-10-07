@@ -38,7 +38,9 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
+  MEMORY_SOFT_THRESHOLD_RATIO,
   QUICKJS_WASI_VERSION,
+  RULESET_KEY_CATALOG,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
   SANDBOX_RUNTIME_HASH,
   type MapDefinition,
@@ -834,6 +836,111 @@ const buildReport = (): Report => {
   };
 };
 
+// ── 终值推导(由读数按 spec《Implementation Decisions》第 1 条的规则代入)────────────────
+//
+// 这一段是**生成代码**,不是手写段落:它从上面的读数里重算每个已定稿预算键的终值。票 05 当时把
+// 推导手写进了 `readings.md`,而重跑探针会把那份文件整个覆盖——所以推导必须留在这里。
+// 终值的家仍是 `rulesets/v1.json`;这里渲染的是「读数 × 系数」的算式与代入结果,并核一次
+// 它是否与规则集里的取值一致(不一致会把两者都写出来,而不是静默)。
+
+/** 八个预算键的书写序(与键清单、`rulesets/v1.json` 一致)。 */
+const BUDGET_KEY_NAMES = [
+  "exceptionTickLimit",
+  "eventTickLimit",
+  "apiCallTickLimit",
+  "memoryLimit",
+  "memoryTickCeiling",
+  "wallClockSoftLimit",
+  "wallClockHardTimeout",
+  "scriptSizeLimit",
+] as const;
+
+/** 向上取整到 `multiple` 的整数倍。 */
+const roundUpTo = (value: number, multiple: number): number =>
+  Math.ceil(value / multiple) * multiple;
+/** 不小于 `value` 的最小 2 的幂。 */
+const pow2AtLeast = (value: number): number => {
+  let power = 1;
+  while (power < value) {
+    power *= 2;
+  }
+  return power;
+};
+
+/** 判罚线的峰值系数(取整到 64 KiB)。 */
+const MEMORY_CEILING_PEAK_MULTIPLE = 2.5;
+const MEMORY_CEILING_ROUND_BYTES = 64 * 1024;
+/** 分配上限的两个下界系数:≥ 该系数 × 判罚线 / ≥ 该系数 × 诚实峰值。 */
+const MEMORY_LIMIT_CEILING_FACTOR = 8;
+const MEMORY_LIMIT_PEAK_FACTOR = 16;
+
+type Derivation = {
+  readonly key: string;
+  readonly rule: string;
+  readonly reading: string;
+  readonly arithmetic: string;
+  readonly derived: number;
+};
+
+/** 把读数代入取值规则,重算已定稿与待定稿的预算键终值。 */
+const derivationsOf = (report: Report): readonly Derivation[] => {
+  const worst = report.honestSide.globalWorst;
+  const stacking = report.exceptionProbe.stacking.maxAdditionsPerTick;
+  const granularity = report.meta.interruptEventGranularity;
+  const peak = worst.mallocSizePeak;
+
+  const exceptionTickLimit = 1 + stacking;
+  const eventTickLimit = (worst.eventGridPeak + 1) * granularity;
+  const apiCallTickLimit = Math.ceil((worst.apiCallsPeak * 2) / 100) * 100;
+  const memoryTickCeiling = roundUpTo(
+    MEMORY_CEILING_PEAK_MULTIPLE * peak,
+    MEMORY_CEILING_ROUND_BYTES,
+  );
+  const memoryLimit = pow2AtLeast(
+    Math.max(MEMORY_LIMIT_CEILING_FACTOR * memoryTickCeiling, MEMORY_LIMIT_PEAK_FACTOR * peak),
+  );
+
+  return [
+    {
+      key: "exceptionTickLimit",
+      rule: "容错 1 次 + 同 tick 最大叠加数",
+      reading: `同 tick 最大叠加 = ${String(stacking)}(内存 + API 可叠;事件轨早退)`,
+      arithmetic: `1 + ${String(stacking)}`,
+      derived: exceptionTickLimit,
+    },
+    {
+      key: "eventTickLimit",
+      rule: "中断粒度的整数倍,取诚实全局峰值所在格的**下一格**",
+      reading: `诚实事件格数峰值 = ${String(worst.eventGridPeak)} 格(p95 已满一格)`,
+      arithmetic: `(${String(worst.eventGridPeak)} + 1) × ${String(granularity)}`,
+      derived: eventTickLimit,
+    },
+    {
+      key: "apiCallTickLimit",
+      rule: "诚实全局峰值 × 2,向上取整到整百",
+      reading: `诚实 API 峰值 = ${String(worst.apiCallsPeak)}`,
+      arithmetic: `⌈${String(worst.apiCallsPeak)} × 2 ÷ 100⌉ × 100`,
+      derived: apiCallTickLimit,
+    },
+    {
+      key: "memoryTickCeiling",
+      rule: "2.5 × 诚实存活堆峰值,向上取整到 64 KiB",
+      reading: `诚实存活堆峰值 = ${String(peak)} bytes`,
+      arithmetic: `⌈2.5 × ${String(peak)} ÷ 65536⌉ × 65536`,
+      derived: memoryTickCeiling,
+    },
+    {
+      key: "memoryLimit",
+      rule: "2 的幂,≥ 8 × 判罚线且 ≥ 16 × 诚实峰值",
+      reading:
+        `8 × ${String(memoryTickCeiling)} = ${String(MEMORY_LIMIT_CEILING_FACTOR * memoryTickCeiling)}` +
+        `;16 × ${String(peak)} = ${String(MEMORY_LIMIT_PEAK_FACTOR * peak)}`,
+      arithmetic: `2^⌈log2 max(8 × ${String(memoryTickCeiling)}, 16 × ${String(peak)})⌉`,
+      derived: memoryLimit,
+    },
+  ];
+};
+
 const renderReadingsMarkdown = (report: Report): string => {
   const capRows = report.allocationCeiling.shapes.map(
     (shape) =>
@@ -878,6 +985,33 @@ const renderReadingsMarkdown = (report: Report): string => {
   );
 
   const grid = report.honestSide.perTickEventGrid;
+
+  // 终值推导(生成代码):按读数重算已定稿预算键的终值,并与规则集取值对照。
+  const derivations = derivationsOf(report);
+  const derivationByKey = new Map(derivations.map((derivation) => [derivation.key, derivation]));
+  const finalKeys = BUDGET_KEY_NAMES.filter(
+    (key) => RULESET_KEY_CATALOG[key].calibration.state === "final",
+  );
+  const undeterminedKeyNames = BUDGET_KEY_NAMES.filter(
+    (key) => RULESET_KEY_CATALOG[key].calibration.state !== "final",
+  );
+  const derivationRows = finalKeys.map((key) => {
+    const declared = RULESET[key];
+    const derivation = derivationByKey.get(key);
+    if (derivation === undefined) {
+      return `| \`${key}\` | (本键已定稿,但它的推导尚未并入渲染器) | — | — | **${String(declared)}** |`;
+    }
+    const finalCell =
+      derivation.derived === declared
+        ? `**${String(declared)}**`
+        : `**${String(declared)}**(重算 ${String(derivation.derived)},与规则集不一致)`;
+    return `| \`${key}\` | ${derivation.rule} | ${derivation.reading} | \`${derivation.arithmetic}\` | ${finalCell} |`;
+  });
+  const honestPeak = report.honestSide.globalWorst.mallocSizePeak;
+  const derivedCeiling = derivationByKey.get("memoryTickCeiling")?.derived ?? 0;
+  const derivedLimit = derivationByKey.get("memoryLimit")?.derived ?? 0;
+  const softThreshold = Math.floor(MEMORY_SOFT_THRESHOLD_RATIO * derivedCeiling);
+
   return [
     "# 预算标定探针读数(票 03:探针骨架 + 两个量测探针;票 04:三类预算探针 + 诚实侧基准)",
     "",
@@ -1003,6 +1137,38 @@ const renderReadingsMarkdown = (report: Report): string => {
     "### 样本与风险(如实记录)",
     "",
     report.honestSide.sampleNote,
+    "",
+    "## 终值推导(由读数按规则代入;本节由渲染器生成)",
+    "",
+    "> 本节是**生成代码**产出的,不是手写:重跑 `pnpm run probes:budget` 会按同一批读数重算。",
+    "> 终值的家仍是 `rulesets/v1.json`;这里渲染的是 spec《Implementation Decisions》第 1 条的",
+    "> 取值规则与代入算式,并核对代入结果与规则集取值是否一致。",
+    "",
+    "| 键 | 取值规则 | 代入的读数 | 算式 | 终值(规则集) |",
+    "|---|---|---|---|---|",
+    ...derivationRows,
+    "",
+    `本节只覆盖**当前已定稿**的预算键(${String(finalKeys.length)} 个);仍未定稿的 ${String(
+      undeterminedKeyNames.length,
+    )} 个(\`${undeterminedKeyNames.join("、")}\`)待对应票落定后并入。`,
+    "",
+    "内存两键的约束核对(与 `check:budget` 门禁同一组判据;两个「未定」不是一件事:",
+    "**分配上限未定 = VM 不设任何上限;判罚线未定 = 该轨不启用**):",
+    "",
+    `- 软阈 = floor(${String(MEMORY_SOFT_THRESHOLD_RATIO)} × 判罚线 ${String(derivedCeiling)}) = **${String(
+      softThreshold,
+    )}**,${softThreshold > honestPeak ? "严格高于" : "**未**严格高于"}诚实存活堆峰值 ${String(
+      honestPeak,
+    )}。`,
+    `- 判罚线 ≤ 分配上限的一半:${String(derivedCeiling)} ≤ ${String(Math.floor(derivedLimit / 2))} → ${
+      derivedCeiling * 2 <= derivedLimit ? "成立" : "**不成立**"
+    }。`,
+    `- 分配上限 ≥ 8 × 判罚线:${String(derivedLimit)} ≥ ${String(
+      8 * derivedCeiling,
+    )} → ${derivedLimit >= 8 * derivedCeiling ? "成立" : "**不成立**"}。`,
+    `- 0.8 × 判罚线 ≥ 1.5 × 诚实峰值:${String(Math.floor(MEMORY_SOFT_THRESHOLD_RATIO * derivedCeiling))} ≥ ${String(
+      Math.ceil(1.5 * honestPeak),
+    )} → ${MEMORY_SOFT_THRESHOLD_RATIO * derivedCeiling >= 1.5 * honestPeak ? "成立" : "**不成立**"}。`,
     "",
   ].join("\n");
 };

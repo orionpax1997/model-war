@@ -50,8 +50,8 @@
 
 | 探针 | 截停轨(引擎给) | 探针用上限(测试参数) | 次数 | 每毫秒烧多少(中位数与范围) | 各次截停读数 |
 |---|---|---|---|---|---|
-| 死循环探针(只烧控制流事件,零 API、零分配) | `eventTickLimit` | 50000 | 5 | 14782.7 (14625.7–14820.7) | 50000 / 50000 / 50000 / 50000 / 50000 |
-| API 轰炸探针(只烧 API 调用) | `apiCallTickLimit` | 50000 | 5 | 5927.8 (5748.3–5967.6) | 200000 / 200000 / 200000 / 200000 / 200000 |
+| 死循环探针(只烧控制流事件,零 API、零分配) | `eventTickLimit` | 50000 | 5 | 15240.9 (14932.6–15290.4) | 50000 / 50000 / 50000 / 50000 / 50000 |
+| API 轰炸探针(只烧 API 调用) | `apiCallTickLimit` | 50000 | 5 | 6155.9 (6088.9–6157.8) | 200000 / 200000 / 200000 / 200000 / 200000 |
 
 两条探针互为盲区,这正是两条计数轨都必须存在的理由:死循环探针一个 API 都不调(烧的是控制流事件),
 API 轰炸探针不产生回边洪流(烧的是 API 调用)。**「被抓住」指定了轨名**:两者都截停于各自的计数轨,
@@ -83,24 +83,24 @@ API 轰炸探针不产生回边洪流(烧的是 API 调用)。**「被抓住」�
 
 | 场次 | 状态 | tick | 单局墙钟 ms | 事件格数峰值 | API 峰值 | 存活堆峰值(bytes) | 单 tick 墙钟峰值 ms |
 |---|---|---|---|---|---|---|---|
-| cell-a-melee-pressure-open-clash | completed | 600 | 2318 | 1 | 33 | 198056 | 1.14 |
-| cell-a-melee-pressure-corridor-split | completed | 363 | 1624 | 1 | 84 | 198144 | 0.22 |
-| cell-a-melee-pressure-fortress-core | completed | 600 | 2276 | 1 | 33 | 198056 | 0.19 |
-| cell-b-expansion-economy-open-clash | completed | 600 | 3661 | 1 | 92 | 201384 | 0.30 |
-| cell-b-expansion-economy-corridor-split | completed | 600 | 3652 | 1 | 92 | 201384 | 0.25 |
-| cell-b-expansion-economy-fortress-core | completed | 600 | 3590 | 1 | 92 | 201384 | 0.26 |
-| cell-c-claim-no-harvest-open-clash | completed | 600 | 2594 | 1 | 131 | 196228 | 0.32 |
-| cell-c-claim-no-harvest-corridor-split | completed | 600 | 2701 | 1 | 131 | 196308 | 0.28 |
-| cell-c-claim-no-harvest-fortress-core | completed | 600 | 2703 | 1 | 131 | 196228 | 0.27 |
-| mixed-a-b-c-a-open-clash | completed | 328 | 1433 | 1 | 133 | 201056 | 0.27 |
+| cell-a-melee-pressure-open-clash | completed | 600 | 2319 | 1 | 33 | 198056 | 1.52 |
+| cell-a-melee-pressure-corridor-split | completed | 363 | 1629 | 1 | 84 | 198144 | 0.49 |
+| cell-a-melee-pressure-fortress-core | completed | 600 | 2182 | 1 | 33 | 198056 | 0.17 |
+| cell-b-expansion-economy-open-clash | completed | 600 | 3629 | 1 | 92 | 201384 | 0.42 |
+| cell-b-expansion-economy-corridor-split | completed | 600 | 3593 | 1 | 92 | 201384 | 0.30 |
+| cell-b-expansion-economy-fortress-core | completed | 600 | 3561 | 1 | 92 | 201384 | 0.46 |
+| cell-c-claim-no-harvest-open-clash | completed | 600 | 2551 | 1 | 131 | 196228 | 0.45 |
+| cell-c-claim-no-harvest-corridor-split | completed | 600 | 2660 | 1 | 131 | 196308 | 0.27 |
+| cell-c-claim-no-harvest-fortress-core | completed | 600 | 2685 | 1 | 131 | 196228 | 0.29 |
+| mixed-a-b-c-a-open-clash | completed | 328 | 1410 | 1 | 133 | 201056 | 0.31 |
 
 **全局最坏(所有场次、所有座位的峰值里再取最坏):**
 
 - 存活堆峰值:**201384** 字节。
 - API 调用峰值:**133**。
 - 事件格数峰值:**1** 格(= 5000 次控制流事件)。
-- 单 tick 墙钟峰值:**1.14** ms。
-- 单局墙钟最坏:**3661** ms。
+- 单 tick 墙钟峰值:**1.52** ms。
+- 单局墙钟最坏:**3629** ms。
 
 单局墙钟这一栏是**给节点 L 的输入指针**:NFR-3 的「对局平均墙钟 `X`」归 L 定(K 只交读数,不取值)。
 
@@ -113,24 +113,26 @@ API 轰炸探针不产生回边洪流(烧的是 API 调用)。**「被抓住」�
 
 样本薄:三份基准脚本只覆盖两个模型档(commandcode/deepseek/deepseek-v4.1-flash 与 minimax-cn/MiniMax-M3),其中 cell-c 的模型是**降级产物**(本机未配 Claude provider,按 J 的口径归 wizard)。三份脚本的策略标签只描述行为、不是能力评级,故诚实侧峰值只作量级参考, 不代表任何模型档的真实强度分布。
 
-## 终值推导(票 05:计数与异常三键由读数按规则代入)
+## 终值推导(由读数按规则代入;本节由渲染器生成)
 
-> 本节是票 05 追加的**算式与代入**,不是第二处取值真源——终值的家仍是 `rulesets/v1.json`。
-> 上面的各表是读数,这一节把它们代入 spec《Implementation Decisions》第 1 条的取值规则;
-> 重采读数后可据此直接重算。
+> 本节是**生成代码**产出的,不是手写:重跑 `pnpm run probes:budget` 会按同一批读数重算。
+> 终值的家仍是 `rulesets/v1.json`;这里渲染的是 spec《Implementation Decisions》第 1 条的
+> 取值规则与代入算式,并核对代入结果与规则集取值是否一致。
 
-| 键 | 取值规则 | 代入的读数 | 算式 | 终值 |
+| 键 | 取值规则 | 代入的读数 | 算式 | 终值(规则集) |
 |---|---|---|---|---|
-| `eventTickLimit` | 中断粒度的整数倍,取诚实全局峰值所在格的**下一格** | 诚实事件格数峰值 = **1 格**(p95 已满一格) | (1 + 1) × 5000 | **10000** |
-| `apiCallTickLimit` | 诚实全局峰值 × 2,向上取整到整百 | 诚实 API 峰值 = **133** | ⌈133 × 2 ÷ 100⌉ × 100 = 3 × 100 | **300** |
-| `exceptionTickLimit` | 容错 1 次 + 同 tick 最大叠加数 | 同 tick 最大叠加 = **2**(内存 + API 可叠;事件轨早退) | 1 + 2 | **3** |
+| `exceptionTickLimit` | 容错 1 次 + 同 tick 最大叠加数 | 同 tick 最大叠加 = 2(内存 + API 可叠;事件轨早退) | `1 + 2` | **3** |
+| `eventTickLimit` | 中断粒度的整数倍,取诚实全局峰值所在格的**下一格** | 诚实事件格数峰值 = 1 格(p95 已满一格) | `(1 + 1) × 5000` | **10000** |
+| `apiCallTickLimit` | 诚实全局峰值 × 2,向上取整到整百 | 诚实 API 峰值 = 133 | `⌈133 × 2 ÷ 100⌉ × 100` | **300** |
+| `memoryLimit` | 2 的幂,≥ 8 × 判罚线且 ≥ 16 × 诚实峰值 | 8 × 524288 = 4194304;16 × 201384 = 3222144 | `2^⌈log2 max(8 × 524288, 16 × 201384)⌉` | **4194304** |
+| `memoryTickCeiling` | 2.5 × 诚实存活堆峰值,向上取整到 64 KiB | 诚实存活堆峰值 = 201384 bytes | `⌈2.5 × 201384 ÷ 65536⌉ × 65536` | **524288** |
 
-三条语气要点:
+本节只覆盖**当前已定稿**的预算键(5 个);仍未定稿的 3 个(`wallClockSoftLimit、wallClockHardTimeout、scriptSizeLimit`)待对应票落定后并入。
 
-- `eventTickLimit` 取 **5000 会误杀正常脚本**:它的有效分辨率是一整格,而诚实局事件读数的 p95 恰好
-  填满一格(见上文「诚实局事件读数的分布」)。所以贴边安全的最小值是第二格,即 10000。
-- `apiCallTickLimit` 的 300 与 spec 示范值 400 的差来自**重采读数**:诚实 API 峰值从旧读数的 179
-  降到 133,133 × 2 = 266 → 整百 300。规则本身(× 2、取整百)未变。
-- `exceptionTickLimit` **拒绝取 1**:1 会把「tick 内瞬时借满即还」这个已接受的残余当成出局条件。
-  「容错 1 + 同 tick 最大叠加 2」= 3 正是「一次偶发不判负」的额度。
+内存两键的约束核对(与 `check:budget` 门禁同一组判据;两个「未定」不是一件事:
+**分配上限未定 = VM 不设任何上限;判罚线未定 = 该轨不启用**):
 
+- 软阈 = floor(0.8 × 判罚线 524288) = **419430**,严格高于诚实存活堆峰值 201384。
+- 判罚线 ≤ 分配上限的一半:524288 ≤ 2097152 → 成立。
+- 分配上限 ≥ 8 × 判罚线:4194304 ≥ 4194304 → 成立。
+- 0.8 × 判罚线 ≥ 1.5 × 诚实峰值:419430 ≥ 302076 → 成立。

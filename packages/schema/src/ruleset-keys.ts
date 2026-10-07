@@ -273,8 +273,9 @@ export const RULESET_KEY_CATALOG = {
   },
 
   // ── 8 个预算键(handoff §2.1;第 9 行「内存软阈」是派生展示项,明令不入键清单)──────
-  // 它们全部必填。标定状态逐键表达:计数与异常三键已定稿(票 05),内存与墙钟五键仍是未定值,
-  // 终值归《预算与性能终值》图(K 节点)。未定值的取值仍是占位 `0`(机制已定、终值待标)。
+  // 它们全部必填。标定状态逐键表达:计数与异常三键已定稿(票 05)、内存两键已定稿(票 06),
+  // 墙钟两键与体积键仍是未定值,终值归《预算与性能终值》图(K 节点)。未定值的取值仍是占位 `0`
+  // (机制已定、终值待标)。
   //
   // 判据**只是** `calibration.state`,不是「值是不是 0」:上面的 `worker.damage` 就是真的 0,
   // 而它所在的键标着 final。「未定」与「一个真的 0」是两件事。
@@ -320,7 +321,7 @@ export const RULESET_KEY_CATALOG = {
     valueType: "integer",
     unit: "bytes",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description: "VM 线性内存的分配上限(bytes)。上限本身不可突破,超限转成可捕获的 JS 异常。",
     schema: { type: "integer", minimum: 0, description: "VM 线性内存的分配上限(bytes)。" },
   },
@@ -328,7 +329,7 @@ export const RULESET_KEY_CATALOG = {
     valueType: "integer",
     unit: "bytes",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description:
       "内存判据的判罚线(bytes):每 tick 末 `runGC()` 后的存活堆读数达它即视同一次异常。" +
       "软阈是它的 `MEMORY_SOFT_THRESHOLD_RATIO` 倍,是**纯展示项**、不入键清单。",
