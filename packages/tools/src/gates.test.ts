@@ -892,6 +892,38 @@ it("预算结构门禁:改一个预算取值(不是中断粒度的整数倍)→ 
   expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
 });
 
+it("预算结构门禁:内存夹逼被弄红——判罚线超过分配上限的一半 / 分配上限不足 8 倍 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:把判罚线抬到等于分配上限——既破了「判罚线 ≤ 分配上限的一半」,也破了「分配上限 ≥ 8 × 判罚线」。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"memoryTickCeiling": 524288', '"memoryTickCeiling": 4194304'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "判罚线越过分配上限的一半时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名内存两键").toContain("memoryTickCeiling");
+  expect(violated.output, "报告必须说清是夹逼这一条").toContain("内存夹逼");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁:软阈(推导项)低于诚实存活堆峰值 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:判罚线取 250000。它仍满足夹逼(≤ 分配上限的一半、≥ 8 倍的反面也成立),但
+  // 0.8 × 250000 = 200000 低于诚实峰值 201384——正常脚本会开始产内存压力观测。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"memoryTickCeiling": 524288', '"memoryTickCeiling": 250000'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "软阈低于诚实峰值时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须说清是软阈下界这一条").toContain("软阈下界");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
 it("预算结构门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它必须挂在默认的快门禁上,否则改预算取值时没人拦。

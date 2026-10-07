@@ -15,7 +15,10 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { INTERRUPT_EVERY_EVENTS } from "../sandbox-probes/constants.ts";
+import {
+  HONEST_ALIVE_HEAP_PEAK_BYTES,
+  INTERRUPT_EVERY_EVENTS,
+} from "../sandbox-probes/constants.ts";
 import { checkBudget } from "./budget-gate.ts";
 
 /** 本文件在 `<repo>/packages/tools/src/gate/` 下,上溯四层是仓库根。 */
@@ -23,6 +26,7 @@ const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
 const RULESET_JSON = "rulesets/v1.json";
 const RULESET_KEYS_SOURCE = "packages/schema/src/ruleset-keys.ts";
+const RULESET_SOURCE = "packages/schema/src/ruleset.ts";
 const QUICKJS_SOURCE = "packages/engine/src/runner/quickjs.ts";
 const HLD_DOC = "docs/hld.md";
 
@@ -40,9 +44,11 @@ const main = (): number => {
   const report = checkBudget({
     budgetValues,
     rulesetKeysSource: read(RULESET_KEYS_SOURCE),
+    rulesetSource: read(RULESET_SOURCE),
     quickjsSource: read(QUICKJS_SOURCE),
     hldSource: read(HLD_DOC),
     interruptEveryEvents: INTERRUPT_EVERY_EVENTS,
+    honestAliveHeapPeakBytes: HONEST_ALIVE_HEAP_PEAK_BYTES,
   });
 
   // 防假绿:读到 0 个预算键、或 0 个已定稿的预算键,都按失败处理——此时报「干净」什么也没断言。

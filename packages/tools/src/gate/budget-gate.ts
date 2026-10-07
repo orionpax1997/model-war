@@ -3,9 +3,10 @@
  *
  * ── 它断言什么,不断言什么 ──
  *
- * 只承担**结构性**断言:已定稿的预算键满足它们各自的形状约束(票 05 的「事件计数上限是中断粒度
- * 的整数倍」),以及中断粒度这个常量与它在文档里的三处副本逐字一致。它**不做**「取值是否贴边」
- * 这类结论性判断——那是动态失配断言(默认 `test` 项目)的活。重活(真引擎失配)留在那边。
+ * 只承担**结构性**断言:已定稿的预算键满足它们各自的形状约束(事件计数上限是中断粒度的
+ * 整数倍(票 05),内存两键的夹逼与软阈下界(票 06)),以及中断粒度这个常量与它在文档里的三处
+ * 副本逐字一致。它**不做**「取值是否贴边」这类结论性判断——那是动态失配断言(默认 `test` 项目)
+ * 的活。重活(真引擎失配)留在那边。
  *
  * ── 为什么零 import、为什么读源码文本 ──
  *
@@ -48,12 +49,19 @@ export type BudgetGateInput = {
   readonly budgetValues: Readonly<Record<string, number | undefined>>;
   /** `packages/schema/src/ruleset-keys.ts` 的源码文本。 */
   readonly rulesetKeysSource: string;
+  /** `packages/schema/src/ruleset.ts` 的源码文本(读软阈系数 `MEMORY_SOFT_THRESHOLD_RATIO`)。 */
+  readonly rulesetSource: string;
   /** `packages/engine/src/runner/quickjs.ts` 的源码文本。 */
   readonly quickjsSource: string;
   /** `docs/hld.md` 的文本。 */
   readonly hldSource: string;
   /** 探针侧冻结常量 `INTERRUPT_EVERY_EVENTS`(由薄壳相对 import 传入)。 */
   readonly interruptEveryEvents: number;
+  /**
+   * 诚实侧基准脚本的存活堆峰值(bytes,探针侧冻结常量 `HONEST_ALIVE_HEAP_PEAK_BYTES`,由薄壳传入)。
+   * 软阈(推导项)必须严格高于它,否则正常脚本会开始产内存压力观测。
+   */
+  readonly honestAliveHeapPeakBytes: number;
 };
 
 /** 一条已经查清原因的不通过。`check` 是判据名,`detail` 指名键名 / 常量与期望。 */
@@ -93,6 +101,12 @@ const quickjsGranularityOf = (source: string): number | null => {
   return match === null ? null : Number(match[1]);
 };
 
+/** 真源包源码里 `MEMORY_SOFT_THRESHOLD_RATIO = <n>` 的取值;读不到返回 `null`。 */
+const softThresholdRatioOf = (source: string): number | null => {
+  const match = /MEMORY_SOFT_THRESHOLD_RATIO\s*=\s*(\d+(?:\.\d+)?)/.exec(source);
+  return match === null ? null : Number(match[1]);
+};
+
 /** 文档里每一处「<n> 次控制流事件」的 n(三处副本靠这个模式定位)。 */
 const granularityCopiesIn = (source: string): readonly number[] =>
   [...source.matchAll(/(\d+)\s*次控制流事件/g)].map((match) => Number(match[1]));
@@ -100,8 +114,8 @@ const granularityCopiesIn = (source: string): readonly number[] =>
 /**
  * 跑一次结构门禁,收集全部不通过项;空 `violations` 即通过。
  *
- * 结构上只对**已定稿**的预算键做形状断言;未定键整段跳过(它们的轨本就未启用)。票 06/07 要加的
- * 硬下界/夹逼(内存两键、软阈、体积上限、墙钟)在这里追加一段即可,不必改上面的骨架。
+ * 结构上只对**已定稿**的预算键做形状断言;未定键整段跳过(它们的轨本就未启用)。票 07 要加的
+ * 硬下界/夹逼(体积上限、墙钟)在这里追加一段即可,不必改上面的骨架。
  */
 export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
   const violations: BudgetGateViolation[] = [];
@@ -175,7 +189,7 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
   }
 
   // 结构断言 #1(票 05):eventTickLimit 必须是中断粒度的整数倍——它的有效分辨率是一整格,
-  // 小于一格的取值彼此等价。票 06/07 的内存两键、软阈、体积与墙钟约束在此处顺次追加。
+  // 小于一格的取值彼此等价。
   if (states.get("eventTickLimit") === "final" && granularity !== null) {
     const limit = input.budgetValues.eventTickLimit;
     if (limit !== undefined && Number.isInteger(limit)) {
@@ -188,6 +202,64 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
             `eventTickLimit=${limit} 不是中断粒度 ${granularity} 的整数倍` +
             "(有效分辨率是一整格,小于一格的取值彼此等价)",
         });
+      }
+    }
+  }
+
+  // 结构断言 #2(票 06):内存两键的夹逼与软阈下界。
+  //
+  // 两个「未定」不是一件事,写在这里以区别于「值域约束」:**分配上限未定 = VM 不设任何上限;
+  // 判罚线未定 = 该轨不启用**。两种「无保护」的形态不同,键落定后才各归其位。
+  //
+  // 上界换形态:原式「`memoryLimit` − 最大单次分配」不可执行(封顶依分配形态从约 96% 到
+  // 「上限 − 请求量」都有,「最大单次分配」没有可代入定值),改成与分配形态无关的
+  // 「判罚线 ≤ 分配上限的一半」。
+  const softRatio = softThresholdRatioOf(input.rulesetSource);
+  if (softRatio === null) {
+    violations.push({
+      check: "软阈系数",
+      detail: "ruleset.ts 里读不到 MEMORY_SOFT_THRESHOLD_RATIO",
+    });
+  }
+  if (states.get("memoryLimit") === "final" && states.get("memoryTickCeiling") === "final") {
+    const limit = input.budgetValues.memoryLimit;
+    const ceiling = input.budgetValues.memoryTickCeiling;
+    if (
+      limit !== undefined &&
+      ceiling !== undefined &&
+      Number.isInteger(limit) &&
+      Number.isInteger(ceiling) &&
+      limit > 0 &&
+      ceiling > 0
+    ) {
+      // 上界:判罚线 ≤ 分配上限的一半(与分配形态无关,无探针时也站得住)。
+      if (ceiling * 2 > limit) {
+        violations.push({
+          check: "内存夹逼",
+          detail:
+            `memoryTickCeiling=${ceiling} 超过 memoryLimit=${limit} 的一半` +
+            "(上界:判罚线 ≤ 分配上限的一半)",
+        });
+      }
+      // 下界:分配上限 ≥ 8 × 判罚线(粗保护,不是判罚线)。
+      if (limit < 8 * ceiling) {
+        violations.push({
+          check: "内存夹逼",
+          detail: `memoryLimit=${limit} 小于 8 × memoryTickCeiling=${ceiling}`,
+        });
+      }
+      // 软阈(由系数推出的那个数,**不是键**)必须严格高于诚实存活堆峰值——否则正常脚本会开始
+      // 产内存压力观测(噪声)。它与引擎的取整口径一致:向下取整到字节。
+      if (softRatio !== null) {
+        const softThreshold = Math.floor(softRatio * ceiling);
+        if (softThreshold <= input.honestAliveHeapPeakBytes) {
+          violations.push({
+            check: "软阈下界",
+            detail:
+              `软阈 floor(${softRatio} × memoryTickCeiling=${ceiling})=${softThreshold} 未严格高于` +
+              `诚实存活堆峰值 ${input.honestAliveHeapPeakBytes}`,
+          });
+        }
       }
     }
   }
