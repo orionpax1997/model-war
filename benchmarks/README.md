@@ -22,12 +22,12 @@
 
 | 目录 | 策略标签(行为描述) | 标签的行为依据 | 模型标识 | 生成参数 | 静态校验结果 | 契约版本 | 源码体积 | 产物体积 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `cell-a-melee-pressure/` | A 爆兵压制:留 2 个农民,其余全投近战 | 每个自家基地先读 `producing`,空才下单;农民下限 2;农民满载回家 `transfer`、否则在自家资源点 `harvest`;战斗单位取**全场最近的敌方单位**,射程内 `attack`、射程外 `moveTo` 追 | `commandcode/deepseek-v4.1-flash` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;10.7 min;0 轮调错 | 零违规(err 0 / warn 0) | `v1` | 8751 字节 | 8831 字节 |
-| `cell-b-expansion-economy/` | B 扩张运营:6 农 + 6 近战达标后转军事 | 目标 6 农民 + 6 近战,都达标后继续出近战;农民满载交付 → 有己方有储量的矿就采 → **没有可采的己方矿就去占最近的中立矿**,走到相邻格后本 tick 不提交意图;战斗单位射程内 `attack`,否则追最近敌方单位 | `minimax-cn/MiniMax-M3` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;13.4 min;0 轮调错 | 零违规(err 0 / warn 0) | `v1` | 6972 字节 | 7209 字节 |
-| `cell-c-claim-no-harvest/` | C 占点(不采集):零农民纯近战占点 | 只造 `melee`,每个空产线一单,余额 < 8 停手;**全程不造农民、不调 `harvest`、不调 `transfer`**;开局 16 资源出 2 个近战后归零,**经济死亡且不可逆**,靠占点与残兵继续;射程内有敌人就 `attack`,否则用 `getTerrainAt` 在点位周围找一格 `plain` 落脚并 `moveTo` 过去,进到相邻格后原地驻守让占领进度累积 | `commandcode/deepseek-v4.1-flash` | `--thinking low`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;13.0 min;0 轮调错 | 零违规(err 0 / warn 0) | `v1` | 5143 字节 | 5850 字节 |
+| `cell-a-melee-pressure/` | A 爆兵压制:留 2 个农民,其余全投近战 | 每个自家基地先读 `producing`,空才下单;农民下限 2;农民满载回家 `transfer`、否则在自家资源点 `harvest`;战斗单位取**全场最近的敌方单位**,射程内 `attack`、射程外 `moveTo` 追 | `commandcode/deepseek-v4.1-flash` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;10.7 min;0 轮调错 | 零违规(err 0 / warn 0) | `v1` | 5968 字节 | 6310 字节 |
+| `cell-b-expansion-economy/` | B 扩张运营:6 农 + 6 近战达标后转军事 | 目标 6 农民 + 6 近战,都达标后继续出近战;农民满载交付 → 有己方有储量的矿就采 → **没有可采的己方矿就去占最近的中立矿**,走到相邻格后本 tick 不提交意图;战斗单位射程内 `attack`,否则追最近敌方单位 | `minimax-cn/MiniMax-M3` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;13.4 min;0 轮调错 | 零违规(err 0 / warn 0) | `v1` | 6675 字节 | 7579 字节 |
+| `cell-c-claim-no-harvest/` | C 占点(不采集):零农民纯近战占点 | 只造 `melee`,每个空产线一单,余额 < 8 停手;**全程不造农民、不调 `harvest`、不调 `transfer`**;开局 16 资源出 2 个近战后归零,**经济死亡且不可逆**,靠占点与残兵继续;射程内有敌人就 `attack`,否则用 `getTerrainAt` 在点位周围找一格 `plain` 落脚并 `moveTo` 过去,进到相邻格后原地驻守让占领进度累积 | `commandcode/deepseek-v4.1-flash` | `--thinking low`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;13.0 min;0 轮调错 | 零违规(err 0 / warn 0) | `v1` | 5104 字节 | 5556 字节 |
 
 **体积是分列记录的**:脚本体积上限(`scriptSizeLimit`)的取值要以这三份的最大值为下限,
-所以两个数各自单列一栏,而不是合成一个「大小」。当前最大值是产物侧的 8831 字节(cell-a)。
+所以两个数各自单列一栏,而不是合成一个「大小」。当前最大值是产物侧的 7579 字节(cell-b)。
 
 **静态校验结果那一栏的口径**:它是盲写那一轮的一次性静态校验器给出的
 (`.scratch/rules-landing/blind/static-check.ts`,零违规 err 0 / warn 0),判的是能静态判的四层:
