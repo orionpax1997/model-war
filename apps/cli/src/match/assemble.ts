@@ -37,6 +37,7 @@ import {
   type ReplayResultLine,
   type ReplaySeat,
   type Ruleset,
+  type RulesetKeyCalibration,
 } from "@model-war/schema";
 import { runMatch, type RunMatchParams } from "@model-war/engine";
 import {
@@ -156,13 +157,16 @@ const BUDGET_FIELDS = [
  * 从规则集与键清单解析**已启用**的预算轨。字段缺席即该轨不启用(不是「值 0 即不启用」)。
  *
  * 判据是键清单里那一个两态字段 `calibration.state`:未定值(`undetermined`)就不传这个字段——
- * 引擎不认识「未定值」这个概念(spec《未定值与预算配置》)。当前 v1 已定稿计数与异常三键,
- * 故 7 个预算字段里只有这三项进预算;其余键定稿后自动带上对应轨,无需改这里的逻辑。
+ * 引擎不认识「未定值」这个概念(spec《未定值与预算配置》)。票 07 之后八键全部定稿,七项运行时字段
+ * 都进预算;判据仍读 `state` 而不是「值是不是 0」,失效后回未定值时会自动把对应轨摘下。
  */
 const budgetOf = (ruleset: Ruleset): NonNullable<RunMatchParams["budget"]> => {
   const budget: Record<string, number> = {};
   for (const field of BUDGET_FIELDS) {
-    if (RULESET_KEY_CATALOG[field].calibration.state === "undetermined") {
+    // 把标定状态当作两态联合读:`BUDGET_FIELDS` 当前每一项都已定稿,直接与 `"undetermined"`
+    // 比较会被 TS 报成「两边无交集」,而机制本身仍要保留(失效后可退回未定值)。
+    const calibration = RULESET_KEY_CATALOG[field].calibration as RulesetKeyCalibration;
+    if (calibration.state === "undetermined") {
       continue;
     }
     budget[field] = ruleset[field];

@@ -4,9 +4,10 @@
  * ── 它断言什么,不断言什么 ──
  *
  * 只承担**结构性**断言:已定稿的预算键满足它们各自的形状约束(事件计数上限是中断粒度的
- * 整数倍(票 05),内存两键的夹逼与软阈下界(票 06)),以及中断粒度这个常量与它在文档里的三处
- * 副本逐字一致。它**不做**「取值是否贴边」这类结论性判断——那是动态失配断言(默认 `test` 项目)
- * 的活。重活(真引擎失配)留在那边。
+ * 整数倍(票 05),内存两键的夹逼与软阈下界(票 06),体积上限 ≥ 基准产物最大值与
+ * 硬超时 ≥ 20 × 软限(票 07)),以及中断粒度这个常量与它在文档里的三处副本逐字一致。它
+ * **不做**「取值是否贴边」这类结论性判断——那是动态失配断言(默认 `test` 项目)的活。重活
+ * (真引擎失配)留在那边。
  *
  * ── 为什么零 import、为什么读源码文本 ──
  *
@@ -62,6 +63,13 @@ export type BudgetGateInput = {
    * 软阈(推导项)必须严格高于它,否则正常脚本会开始产内存压力观测。
    */
   readonly honestAliveHeapPeakBytes: number;
+  /**
+   * 三份基准产物(`benchmarks/<cell>/script.js`)的最大字节数,由薄壳从磁盘现算。
+   * `scriptSizeLimit` 的硬下界依据——它也是 `check:selfproof` 在占位期当地板值的那个数。
+   */
+  readonly maxBenchmarkArtifactBytes: number;
+  /** 基准产物个数(防假绿的计数口:读到 0 个产物时下界断言失效,按失败处理)。 */
+  readonly benchmarkArtifacts: number;
 };
 
 /** 一条已经查清原因的不通过。`check` 是判据名,`detail` 指名键名 / 常量与期望。 */
@@ -261,6 +269,50 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
           });
         }
       }
+    }
+  }
+
+  // 结构断言 #3(票 07):体积上限 ≥ 基准产物最大值——它是唯一能封「直线代码不计量」盲区的键,
+  // 且 `check:selfproof` 在占位期拿这个最大值当地板值;终值低于它会红在一条**不在默认链上**的
+  // 门禁里(只会在有人手跑时才发现),所以这条下界必须由本门禁带着。
+  if (states.get("scriptSizeLimit") === "final") {
+    const size = input.budgetValues.scriptSizeLimit;
+    if (size !== undefined && Number.isInteger(size) && size < input.maxBenchmarkArtifactBytes) {
+      violations.push({
+        check: "体积上限",
+        detail:
+          `scriptSizeLimit=${size} 小于基准产物最大值 ${input.maxBenchmarkArtifactBytes} 字节` +
+          "(低于它会把 `check:selfproof` 的静态校验弄红,而那条不在默认链上)",
+      });
+    }
+    if (input.benchmarkArtifacts === 0) {
+      violations.push({
+        check: "防假绿",
+        detail: "一个基准产物都没读到,scriptSizeLimit 的下界断言失效",
+      });
+    }
+  }
+
+  // 结构断言 #4(票 07):硬超时 ≥ 20 × 软限——硬超时是成本兜底(触发即整场作废并重跑),
+  // 软限只观测。这条关系防止「盲目放大」(成本失控)与「宁小勿大」(把偶发负载当判据)两种相反的错误。
+  if (
+    states.get("wallClockSoftLimit") === "final" &&
+    states.get("wallClockHardTimeout") === "final"
+  ) {
+    const soft = input.budgetValues.wallClockSoftLimit;
+    const hard = input.budgetValues.wallClockHardTimeout;
+    if (
+      soft !== undefined &&
+      hard !== undefined &&
+      Number.isInteger(soft) &&
+      Number.isInteger(hard) &&
+      soft > 0 &&
+      hard < 20 * soft
+    ) {
+      violations.push({
+        check: "墙钟硬超时",
+        detail: `wallClockHardTimeout=${hard} 小于 20 × wallClockSoftLimit=${soft}(=${20 * soft})`,
+      });
     }
   }
 

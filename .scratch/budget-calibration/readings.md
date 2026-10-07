@@ -50,8 +50,8 @@
 
 | 探针 | 截停轨(引擎给) | 探针用上限(测试参数) | 次数 | 每毫秒烧多少(中位数与范围) | 各次截停读数 |
 |---|---|---|---|---|---|
-| 死循环探针(只烧控制流事件,零 API、零分配) | `eventTickLimit` | 50000 | 5 | 15240.9 (14932.6–15290.4) | 50000 / 50000 / 50000 / 50000 / 50000 |
-| API 轰炸探针(只烧 API 调用) | `apiCallTickLimit` | 50000 | 5 | 6155.9 (6088.9–6157.8) | 200000 / 200000 / 200000 / 200000 / 200000 |
+| 死循环探针(只烧控制流事件,零 API、零分配) | `eventTickLimit` | 50000 | 5 | 14266.6 (8034.5–14942.9) | 50000 / 50000 / 50000 / 50000 / 50000 |
+| API 轰炸探针(只烧 API 调用) | `apiCallTickLimit` | 50000 | 5 | 5006.9 (4511.8–5248.2) | 200000 / 200000 / 200000 / 200000 / 200000 |
 
 两条探针互为盲区,这正是两条计数轨都必须存在的理由:死循环探针一个 API 都不调(烧的是控制流事件),
 API 轰炸探针不产生回边洪流(烧的是 API 调用)。**「被抓住」指定了轨名**:两者都截停于各自的计数轨,
@@ -83,24 +83,24 @@ API 轰炸探针不产生回边洪流(烧的是 API 调用)。**「被抓住」�
 
 | 场次 | 状态 | tick | 单局墙钟 ms | 事件格数峰值 | API 峰值 | 存活堆峰值(bytes) | 单 tick 墙钟峰值 ms |
 |---|---|---|---|---|---|---|---|
-| cell-a-melee-pressure-open-clash | completed | 600 | 2319 | 1 | 33 | 198056 | 1.52 |
-| cell-a-melee-pressure-corridor-split | completed | 363 | 1629 | 1 | 84 | 198144 | 0.49 |
-| cell-a-melee-pressure-fortress-core | completed | 600 | 2182 | 1 | 33 | 198056 | 0.17 |
-| cell-b-expansion-economy-open-clash | completed | 600 | 3629 | 1 | 92 | 201384 | 0.42 |
-| cell-b-expansion-economy-corridor-split | completed | 600 | 3593 | 1 | 92 | 201384 | 0.30 |
-| cell-b-expansion-economy-fortress-core | completed | 600 | 3561 | 1 | 92 | 201384 | 0.46 |
-| cell-c-claim-no-harvest-open-clash | completed | 600 | 2551 | 1 | 131 | 196228 | 0.45 |
-| cell-c-claim-no-harvest-corridor-split | completed | 600 | 2660 | 1 | 131 | 196308 | 0.27 |
-| cell-c-claim-no-harvest-fortress-core | completed | 600 | 2685 | 1 | 131 | 196228 | 0.29 |
-| mixed-a-b-c-a-open-clash | completed | 328 | 1410 | 1 | 133 | 201056 | 0.31 |
+| cell-a-melee-pressure-open-clash | completed | 600 | 2441 | 1 | 33 | 198056 | 1.08 |
+| cell-a-melee-pressure-corridor-split | completed | 363 | 1728 | 1 | 84 | 198144 | 0.54 |
+| cell-a-melee-pressure-fortress-core | completed | 600 | 2332 | 1 | 33 | 198056 | 0.53 |
+| cell-b-expansion-economy-open-clash | completed | 600 | 3801 | 1 | 92 | 201384 | 0.65 |
+| cell-b-expansion-economy-corridor-split | completed | 600 | 3794 | 1 | 92 | 201384 | 0.63 |
+| cell-b-expansion-economy-fortress-core | completed | 600 | 3755 | 1 | 92 | 201384 | 0.78 |
+| cell-c-claim-no-harvest-open-clash | completed | 600 | 2668 | 1 | 131 | 196228 | 0.47 |
+| cell-c-claim-no-harvest-corridor-split | completed | 600 | 2787 | 1 | 131 | 196308 | 0.32 |
+| cell-c-claim-no-harvest-fortress-core | completed | 600 | 2783 | 1 | 131 | 196228 | 0.37 |
+| mixed-a-b-c-a-open-clash | completed | 328 | 1478 | 1 | 133 | 201056 | 0.31 |
 
 **全局最坏(所有场次、所有座位的峰值里再取最坏):**
 
 - 存活堆峰值:**201384** 字节。
 - API 调用峰值:**133**。
 - 事件格数峰值:**1** 格(= 5000 次控制流事件)。
-- 单 tick 墙钟峰值:**1.52** ms。
-- 单局墙钟最坏:**3629** ms。
+- 单 tick 墙钟峰值:**1.08** ms。
+- 单局墙钟最坏:**3801** ms。
 
 单局墙钟这一栏是**给节点 L 的输入指针**:NFR-3 的「对局平均墙钟 `X`」归 L 定(K 只交读数,不取值)。
 
@@ -126,8 +126,26 @@ API 轰炸探针不产生回边洪流(烧的是 API 调用)。**「被抓住」�
 | `apiCallTickLimit` | 诚实全局峰值 × 2,向上取整到整百 | 诚实 API 峰值 = 133 | `⌈133 × 2 ÷ 100⌉ × 100` | **300** |
 | `memoryLimit` | 2 的幂,≥ 8 × 判罚线且 ≥ 16 × 诚实峰值 | 8 × 524288 = 4194304;16 × 201384 = 3222144 | `2^⌈log2 max(8 × 524288, 16 × 201384)⌉` | **4194304** |
 | `memoryTickCeiling` | 2.5 × 诚实存活堆峰值,向上取整到 64 KiB | 诚实存活堆峰值 = 201384 bytes | `⌈2.5 × 201384 ÷ 65536⌉ × 65536` | **524288** |
+| `wallClockSoftLimit` | max(50 ms, 20 × 诚实单 tick 墙钟 p95) | 观测机制下界 50 ms(读钟每约 10 万控制流事件一次,短脚本抽样不到)主导;诚实单 tick 墙钟 p95 低于下界 ÷ 20 | `max(50, 20 × p95)` | **50** |
+| `wallClockHardTimeout` | 2 的幂,≥ 20 × 软限且 ≥ 200 × 诚实单 tick 墙钟峰值 | 20 × 软限 50 = 1000;200 × 诚实单 tick 墙钟峰值远小、未主导 | `2^⌈log2 max(20 × 50, 200 × peak)⌉` | **1024** |
+| `scriptSizeLimit` | 2 的幂,≥ 4 × 基准产物最大值 | 基准产物最大值 = 7579 bytes | `2^⌈log2(4 × 7579)⌉` | **32768** |
 
-本节只覆盖**当前已定稿**的预算键(5 个);仍未定稿的 3 个(`wallClockSoftLimit、wallClockHardTimeout、scriptSizeLimit`)待对应票落定后并入。
+本节覆盖**全部 8 个已定稿的预算键**;未定键集为空(票 07 收口)。
+
+### 墙钟硬超时的取值调和(1024 ms vs 示范值 1000 ms)
+
+spec《Implementation Decisions》第 1 条的规则文本写「2 的幂,≥ 200 × 诚实单 tick 峰值,
+≥ 100 × 软限」,而它自己的代入示范值是 1000 ms——1000 既不是 2 的幂,也不 ≥ 100 × 50(= 5000)。
+能同时满足「2 的幂」「示范值约一秒」「§4『宁小勿大』的成本兜底口径」的唯一读法,是把
+「≥ 100 × 软限」读作「≥ 20 × 软限」之笔误(20 × 50 = 1000)。据此取值:
+`wallClockHardTimeout` = 满足 ≥ 20 × 软限与 ≥ 200 × 诚实单 tick 峰值的最小 2 的幂 = **1024 ms**。
+不取 1000(非 2 的幂),也不盲目放大到 8192。
+
+墙钟两键与体积键的约束核对(与 `check:budget` 门禁同一组判据):
+
+- 硬超时 ≥ 20 × 软限:1024 ≥ 1000 → 成立。
+- 硬超时 ≥ 200 × 诚实单 tick 墙钟峰值且是 2 的幂:成立。
+- 体积上限 ≥ 基准产物最大值:32768 ≥ 7579 → 成立。
 
 内存两键的约束核对(与 `check:budget` 门禁同一组判据;两个「未定」不是一件事:
 **分配上限未定 = VM 不设任何上限;判罚线未定 = 该轨不启用**):

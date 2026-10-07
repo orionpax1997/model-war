@@ -120,12 +120,16 @@ const FINAL_VALUES: Partial<Ruleset> = {
   baseScore: 4,
   resourceScore: 1,
   unitCostDivisor: 6,
-  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键);仍为未定值的键不在这里。
+  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键,票 07 落墙钟两键与体积键);
+  // 票 07 之后八键全部定稿,未定键集为空。
   exceptionTickLimit: 3,
   eventTickLimit: 10000,
   apiCallTickLimit: 300,
   memoryLimit: 4194304,
   memoryTickCeiling: 524288,
+  wallClockSoftLimit: 50,
+  wallClockHardTimeout: 1024,
+  scriptSizeLimit: 32768,
 };
 
 /**
@@ -229,8 +233,8 @@ it("定稿键逐字取终值抄本(抄本与定稿键集完全重合,不数数)"
   expect(FINAL_VALUES.resourcePerSite).not.toBe(125);
 });
 
-it("未定键各取自己身上标定的占位值,不硬编未定键的数量", () => {
-  // 八个预算键分三批落定稿,未定键数会从 8 一路变到 0;这里不写死它,分组取自标定状态本身。
+it("未定键各取自己身上标定的占位值(票 07 之后未定键集为空,这条仍守不变量)", () => {
+  // 八个预算键分三批落定稿,未定键数从 8 一路变到 0;这里不写死它,分组取自标定状态本身。
   for (const key of UNDETERMINED_KEYS) {
     const calibration = RULESET_KEY_CATALOG[key].calibration;
     // 判据是键自己的标定状态,不是「值是不是 0」:占位值从键身上取,不是一个字面量。
@@ -242,23 +246,28 @@ it("未定键各取自己身上标定的占位值,不硬编未定键的数量", 
   }
 });
 
-it("反向用例:把一个未定键临时切成定稿,判据就要终值而不是接受占位值", () => {
-  // 判据按标定状态分组,所以「切成定稿」只改状态、不改取值(V1 里那份仍是占位值)。
-  // 本地复现:在 `ruleset-keys.ts` 里把某个预算键的 `calibration` 改成 `{ state: "final" }`——
-  // 上面「定稿键逐字取终值抄本」那条随即要求补终值,而不是拿占位值蒙混过去。
-  const key = UNDETERMINED_KEYS[0];
+it("反向用例:把标定状态翻一个方向,判据就换一套取值(未定↔定稿可逆)", () => {
+  // 票 07 收口后未定键集为空,所以反向用例改成从**定稿键**出发:把某个定稿键的标定临时切成
+  // 「未定」,同一份判据就不再接受它的终值,而是要求它取占位值——证明判据读的是键自己身上的
+  // `state`,不是「值是不是 0」(落库文件里那份终值不因这次临时切换而变)。
+  expect(UNDETERMINED_KEYS).toEqual([]);
+  const key = FINAL_KEYS[0];
   if (key === undefined) {
-    throw new Error("没有未定键,反向用例没法做");
+    throw new Error("没有定稿键,反向用例没法做");
+  }
+  const calibration = RULESET_KEY_CATALOG[key].calibration;
+  if (calibration.state !== "final") {
+    throw new Error(`${key} 不在定稿那半,反向用例的前提不成立`);
   }
 
-  // 正方向:未定状态 → 占位值,且与落库文件里的那份一致。
-  expect(valueForCalibration(key, RULESET_KEY_CATALOG[key].calibration)).toEqual(V1[key]);
-  expect(V1[key]).toBe(UNDETERMINED_VALUE);
+  // 正方向:定稿状态 → 终值,且与落库文件里的那份一致。
+  expect(valueForCalibration(key, calibration)).toEqual(V1[key]);
 
-  // 切成定稿 → 同一份判据不再接受占位值,而是抛「要一个终值」。
-  expect(() => valueForCalibration(key, { state: "final" })).toThrow(
-    new RegExp(`定稿键 ${key} 要一个终值`),
+  // 切成未定 → 同一份判据不再认终值,而是回到占位值;未定键在落库文件里的取值必须仍是占位。
+  expect(valueForCalibration(key, { state: "undetermined", placeholder: UNDETERMINED_VALUE })).toBe(
+    UNDETERMINED_VALUE,
   );
+  expect(valueForCalibration(key, calibration)).not.toBe(UNDETERMINED_VALUE);
 });
 
 it("「未定」由标定状态判别,不由值是不是 0 推断——这份文件里就有一个真的 0", () => {

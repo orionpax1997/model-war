@@ -4,6 +4,7 @@
     "sandboxRuntimeArtifact": "packages/engine/sandbox-runtime/runtime.iife.js",
     "quickjsWasiVersion": "3.6.2",
     "interruptEventGranularity": 5000,
+    "benchmarkMaxProductBytes": 7579,
     "rerunCommand": "pnpm run probes:budget",
     "scope": "各一次会话、无地图与规则集参与(探针脚本不读状态、不判据);读数取在 tick 末强制回收之后的存活堆 mallocSize,与内存判据同口径。整数会随运行环境微动,量级稳定。",
     "probeScope": "三类预算探针:对抗两条走真执行器 `runBudgetProbeTick`(截停轨由引擎给出),三轨异常探针经 `processTick` 步 0 累加 `exceptionTicks`,诚实侧则用仪表化探针座位跑三份基准脚本。事件读数一律按**格数**记(eventCount / 中断粒度),不按事件数记:wasm 侧计数器跨调用不清零、有相位残留。"
@@ -65,37 +66,37 @@
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.3483830000000125,
-          "perMs": 14932.580890537258
+          "wallMs": 6.223163999999997,
+          "perMs": 8034.498207021384
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.280006999999955,
-          "perMs": 15243.869906375408
+          "wallMs": 3.983249999999998,
+          "perMs": 12552.56386116865
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.2700199999999313,
-          "perMs": 15290.426358248895
+          "wallMs": 3.5046899999999823,
+          "perMs": 14266.597045673156
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.2806359999999586,
-          "perMs": 15240.947182192913
+          "wallMs": 3.4838770000000068,
+          "perMs": 14351.827001929145
         },
         {
           "stoppedBy": "eventTickLimit",
           "value": 50000,
-          "wallMs": 3.3066180000000713,
-          "perMs": 15121.190291711628
+          "wallMs": 3.3460779999999204,
+          "perMs": 14942.86744062786
         }
       ],
-      "perMsMin": 14932.580890537258,
-      "perMsMedian": 15240.947182192913,
-      "perMsMax": 15290.426358248895
+      "perMsMin": 8034.498207021384,
+      "perMsMedian": 14266.597045673156,
+      "perMsMax": 14942.86744062786
     },
     "apiBomb": {
       "label": "API 轰炸探针(只烧 API 调用)",
@@ -105,37 +106,37 @@
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 32.84644700000001,
-          "perMs": 6088.9386301051045
+          "wallMs": 38.73841900000002,
+          "perMs": 5162.833310259768
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 32.482987000000094,
-          "perMs": 6157.069237505757
+          "wallMs": 38.108160999999996,
+          "perMs": 5248.219666123486
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 32.55869699999994,
-          "perMs": 6142.7519657804605
+          "wallMs": 39.94452700000011,
+          "perMs": 5006.943754772699
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 32.47893699999997,
-          "perMs": 6157.837000638296
+          "wallMs": 43.126056999999946,
+          "perMs": 4637.567491968956
         },
         {
           "stoppedBy": "apiCallTickLimit",
           "value": 200000,
-          "wallMs": 32.48892500000011,
-          "perMs": 6155.943910117043
+          "wallMs": 44.32846299999983,
+          "perMs": 4511.773846072686
         }
       ],
-      "perMsMin": 6088.9386301051045,
-      "perMsMedian": 6155.943910117043,
-      "perMsMax": 6157.837000638296
+      "perMsMin": 4511.773846072686,
+      "perMsMedian": 5006.943754772699,
+      "perMsMax": 5248.219666123486
     }
   },
   "exceptionProbe": {
@@ -327,35 +328,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2319.4861069999997,
+        "matchWallMs": 2440.535017,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 198056,
-            "loopMsPeak": 1.5154399999998986
+            "loopMsPeak": 1.0845130000000154
           },
           {
             "ticks": 578,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197808,
-            "loopMsPeak": 0.3595479999999043
+            "loopMsPeak": 0.29641099999980725
           },
           {
             "ticks": 180,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.25618200000008073
+            "loopMsPeak": 0.20645399999989422
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.17991400000005342
+            "loopMsPeak": 0.6181739999997262
           }
         ]
       },
@@ -370,35 +371,35 @@
         "map": "corridor-split",
         "status": "completed",
         "tickCount": 363,
-        "matchWallMs": 1628.6822869999996,
+        "matchWallMs": 1727.7105249999995,
         "seatPeaks": [
           {
             "ticks": 357,
             "eventGridPeak": 1,
             "apiCallsPeak": 40,
             "mallocSizePeak": 198048,
-            "loopMsPeak": 0.1797750000000633
+            "loopMsPeak": 0.21336799999971845
           },
           {
             "ticks": 363,
             "eventGridPeak": 1,
             "apiCallsPeak": 84,
             "mallocSizePeak": 198144,
-            "loopMsPeak": 0.493785000000571
+            "loopMsPeak": 0.332868999999846
           },
           {
             "ticks": 363,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197968,
-            "loopMsPeak": 0.1718829999999798
+            "loopMsPeak": 0.44021599999996397
           },
           {
             "ticks": 293,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197888,
-            "loopMsPeak": 0.24458799999956682
+            "loopMsPeak": 0.5381359999992128
           }
         ]
       },
@@ -413,35 +414,35 @@
         "map": "fortress-core",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2181.734676,
+        "matchWallMs": 2332.194066,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 198056,
-            "loopMsPeak": 0.1641989999998259
+            "loopMsPeak": 0.19304399999964517
           },
           {
             "ticks": 587,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197808,
-            "loopMsPeak": 0.15302499999961583
+            "loopMsPeak": 0.1597990000000209
           },
           {
             "ticks": 181,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.157774000000245
+            "loopMsPeak": 0.5340149999992718
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 33,
             "mallocSizePeak": 197728,
-            "loopMsPeak": 0.170205000000351
+            "loopMsPeak": 0.3213449999993827
           }
         ]
       },
@@ -456,35 +457,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 3629.030952000001,
+        "matchWallMs": 3800.519042000001,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.4194729999999254
+            "loopMsPeak": 0.29194099999949685
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.3748439999999391
+            "loopMsPeak": 0.4378420000011829
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.29843699999946693
+            "loopMsPeak": 0.3293069999999716
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.41179000000011
+            "loopMsPeak": 0.6500229999983276
           }
         ]
       },
@@ -499,35 +500,35 @@
         "map": "corridor-split",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 3593.339057000001,
+        "matchWallMs": 3793.7099690000014,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.226079000000027
+            "loopMsPeak": 0.4743689999995695
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.3014390000007552
+            "loopMsPeak": 0.3992889999990439
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.22831500000029337
+            "loopMsPeak": 0.6144039999999222
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.30269700000098965
+            "loopMsPeak": 0.6258579999994254
           }
         ]
       },
@@ -542,35 +543,35 @@
         "map": "fortress-core",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 3561.034096999998,
+        "matchWallMs": 3754.721445000001,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.3943299999991723
+            "loopMsPeak": 0.7799999999988358
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201368,
-            "loopMsPeak": 0.32686200000171084
+            "loopMsPeak": 0.4164700000001176
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 92,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.40222200000062003
+            "loopMsPeak": 0.6547719999980472
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 88,
             "mallocSizePeak": 201384,
-            "loopMsPeak": 0.45607100000052014
+            "loopMsPeak": 0.7316690000006929
           }
         ]
       },
@@ -585,35 +586,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2550.7521419999975,
+        "matchWallMs": 2668.1581430000006,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.26686699999845587
+            "loopMsPeak": 0.4666869999964547
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.254785000000993
+            "loopMsPeak": 0.2780430000020715
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.4525080000021262
+            "loopMsPeak": 0.2646329999988666
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.337547999999515
+            "loopMsPeak": 0.25101400000130525
           }
         ]
       },
@@ -628,35 +629,35 @@
         "map": "corridor-split",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2659.7952179999993,
+        "matchWallMs": 2787.319212000002,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.26582000000053085
+            "loopMsPeak": 0.30011300000114716
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.2453559999994468
+            "loopMsPeak": 0.3173639999986335
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196308,
-            "loopMsPeak": 0.2689630000022589
+            "loopMsPeak": 0.29096300000310293
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.2585560000006808
+            "loopMsPeak": 0.2776240000021062
           }
         ]
       },
@@ -671,35 +672,35 @@
         "map": "fortress-core",
         "status": "completed",
         "tickCount": 600,
-        "matchWallMs": 2684.74396,
+        "matchWallMs": 2783.481373999999,
         "seatPeaks": [
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.28537599999981467
+            "loopMsPeak": 0.36911699999836856
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.25429600000279606
+            "loopMsPeak": 0.2612100000005739
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.24766099999760627
+            "loopMsPeak": 0.26323499999853084
           },
           {
             "ticks": 600,
             "eventGridPeak": 1,
             "apiCallsPeak": 131,
             "mallocSizePeak": 196228,
-            "loopMsPeak": 0.24863900000127614
+            "loopMsPeak": 0.2570899999991525
           }
         ]
       },
@@ -714,35 +715,35 @@
         "map": "open-clash",
         "status": "completed",
         "tickCount": 328,
-        "matchWallMs": 1410.2205240000003,
+        "matchWallMs": 1477.999749999999,
         "seatPeaks": [
           {
             "ticks": 328,
             "eventGridPeak": 1,
             "apiCallsPeak": 115,
             "mallocSizePeak": 198488,
-            "loopMsPeak": 0.31470899999840185
+            "loopMsPeak": 0.3052110000026005
           },
           {
             "ticks": 310,
             "eventGridPeak": 1,
             "apiCallsPeak": 76,
             "mallocSizePeak": 201056,
-            "loopMsPeak": 0.23655599999983679
+            "loopMsPeak": 0.20296199999938835
           },
           {
             "ticks": 328,
             "eventGridPeak": 1,
             "apiCallsPeak": 133,
             "mallocSizePeak": 196928,
-            "loopMsPeak": 0.25625200000285986
+            "loopMsPeak": 0.26379499999893596
           },
           {
             "ticks": 132,
             "eventGridPeak": 1,
             "apiCallsPeak": 39,
             "mallocSizePeak": 198304,
-            "loopMsPeak": 0.25457599999936065
+            "loopMsPeak": 0.15903099999923143
           }
         ]
       }
@@ -751,8 +752,8 @@
       "eventGridPeak": 1,
       "apiCallsPeak": 133,
       "mallocSizePeak": 201384,
-      "loopMsPeak": 1.5154399999998986,
-      "matchWallMs": 3629.030952000001
+      "loopMsPeak": 1.0845130000000154,
+      "matchWallMs": 3800.519042000001
     },
     "perTickEventGrid": {
       "p50": 0,

@@ -273,9 +273,9 @@ export const RULESET_KEY_CATALOG = {
   },
 
   // ── 8 个预算键(handoff §2.1;第 9 行「内存软阈」是派生展示项,明令不入键清单)──────
-  // 它们全部必填。标定状态逐键表达:计数与异常三键已定稿(票 05)、内存两键已定稿(票 06),
-  // 墙钟两键与体积键仍是未定值,终值归《预算与性能终值》图(K 节点)。未定值的取值仍是占位 `0`
-  // (机制已定、终值待标)。
+  // 它们全部必填。标定状态逐键表达:计数与异常三键(票 05)、内存两键(票 06)、墙钟两键与体积键
+  // (票 07)已全部定稿;`rulesets/v1.json` 就地写入终值(ADR-0009),键的 `calibration.state`
+  // 由未定值翻成定稿,面向模型的数值表随之从「未定」渲染成数字。
   //
   // 判据**只是** `calibration.state`,不是「值是不是 0」:上面的 `worker.damage` 就是真的 0,
   // 而它所在的键标着 final。「未定」与「一个真的 0」是两件事。
@@ -343,7 +343,7 @@ export const RULESET_KEY_CATALOG = {
     valueType: "integer",
     unit: "milliseconds",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description:
       "单 tick `loop()` 的墙钟软限(ms)。**只观测**:写进观测文件披露,不参与判罚,也不进回放。",
     schema: { type: "integer", minimum: 0, description: "单 tick loop() 的墙钟软限(ms,只观测)。" },
@@ -352,7 +352,7 @@ export const RULESET_KEY_CATALOG = {
     valueType: "integer",
     unit: "milliseconds",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description:
       "墙钟硬超时(ms),**只作废该场**:标记 `nondeterministic-timeout` 后按重跑 / 剔除处理," +
       "不判负(墙钟受机器负载影响,参与判罚会破坏可复算性)。",
@@ -362,7 +362,7 @@ export const RULESET_KEY_CATALOG = {
     valueType: "integer",
     unit: "bytes",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description:
       "顶层脚本体积上限(bytes),封「直线代码不计量、大循环体放大每格工作量」的计数盲区。" +
       "它是**规则集里的数值键**,与沙箱注入的 API 名表是两件事(hld §6.2 的「不进名单」说的是后者)。",

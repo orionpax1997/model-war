@@ -78,18 +78,18 @@ const EXPECTED_KEYS: readonly string[] = [
 
 const EXPECTED_FINAL_KEYS: readonly string[] = [
   ...EXPECTED_KEYS.slice(0, 13),
-  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键):每批落定后这里要跟着走。
+  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键,票 07 落墙钟两键与体积键):
+  // 票 07 之后八键全部定稿,未定键集为空。
   "exceptionTickLimit",
   "eventTickLimit",
   "apiCallTickLimit",
   "memoryLimit",
   "memoryTickCeiling",
-];
-const EXPECTED_UNDETERMINED_KEYS: readonly string[] = [
   "wallClockSoftLimit",
   "wallClockHardTimeout",
   "scriptSizeLimit",
 ];
+const EXPECTED_UNDETERMINED_KEYS: readonly string[] = [];
 
 const keysWith = (state: "final" | "undetermined"): readonly string[] =>
   RULESET_KEYS.filter((key) => RULESET_KEY_CATALOG[key].calibration.state === state);
@@ -125,12 +125,15 @@ it("内存软阈不入键清单(它是派生展示项,入表不入 schema)", () 
 
 // ── 「未定值」是判别式的,不是一个标志位 ───────────────────────────────────
 
-it("仍是未定值的预算键标为未定值,占位取 0,且 0 是合法取值", () => {
+it("票 07 收口:未定键集为空,21 键全部定稿;占位常量的语义仍保留", () => {
   expect(UNDETERMINED_VALUE).toBe(0);
-  for (const key of EXPECTED_UNDETERMINED_KEYS) {
+  expect(EXPECTED_UNDETERMINED_KEYS).toEqual([]);
+  expect(keysWith("undetermined")).toEqual([]);
+  // 八个预算键全部落定稿——判据是键自己身上那个 `state`,不是「值是不是 0」。
+  for (const key of EXPECTED_KEYS.slice(13)) {
     const entry = RULESET_KEY_CATALOG[key as RulesetKey];
-    expect(entry.calibration).toEqual({ state: "undetermined", placeholder: 0 });
-    // 占位必须真的过得了形状:否则「填 0 就能先跑起来」这句话是假的。
+    expect(entry.calibration).toEqual({ state: "final" });
+    // 占位必须真的过得了形状:否则「先填占位跑起来」这句话只对计数类键成立。
     expect(entry.schema).toMatchObject({ type: "integer", minimum: 0 });
   }
 });
@@ -138,17 +141,19 @@ it("仍是未定值的预算键标为未定值,占位取 0,且 0 是合法取值
 it("键清单区分「未定的值」与「一个真的 0」:同一个取值,渲染不同", () => {
   // 判据只能来自键自己身上那个 `state`,不能来自「值是不是 0」——
   // 否则标定完成后某个预算上限恰好是 0,文档就会开始骗人。
-  const undetermined = RULESET_KEY_CATALOG.scriptSizeLimit;
+  // 票 07 之后未定键集为空,但这条区分仍是判据本身:`initialResources` 是真的 0(下界 0)。
   const realZero = RULESET_KEY_CATALOG.initialResources;
-  expect(undetermined.calibration.state).toBe("undetermined");
   expect(realZero.calibration.state).toBe("final");
-  // 两者下界都是 0,即**取值 0 在两种键上都合法**:合法的 0 不构成「未定」的证据。
-  expect(undetermined.schema).toMatchObject({ minimum: 0 });
+  // 下界是 0:取值 0 在它身上合法,合法的 0 不构成「未定」的证据。
   expect(realZero.schema).toMatchObject({ minimum: 0 });
-
-  // 反例的手法:把 `initialResources` 也标成未定,「区分」这件事就只剩取值可依,
-  // 而此时 initialResources 填 0 与填 16 会被渲染成同一种东西——本条的另一半(下界)也就不再有意义。
-  expect(EXPECTED_FINAL_KEYS).toContain("initialResources");
+  // `scriptSizeLimit` 曾是「未定值」的样本,票 07 落定后它 now final——这正是「状态可变、判据是状态」的证据:
+  // 同一个键,标定状态改了,面向模型的渲染就跟着改。
+  expect(RULESET_KEY_CATALOG.scriptSizeLimit.calibration).toEqual({ state: "final" });
+  // 两态判别联合仍然在,`UNDETERMINED_VALUE`(占位)仍取 0;它与一个真的 0 是两个概念。
+  expect(UNDETERMINED_VALUE).toBe(0);
+  const undetermined = { state: "undetermined", placeholder: 0 } as const;
+  // 断言走 `as string`:`state` 是字面量联合,直接比两个无交集的字面量会被 TS 报成「两边无交集」。
+  expect(undetermined.state as string).not.toBe(realZero.calibration.state as string);
 });
 
 // ── 每条清单条目自身完整:四样东西缺一不可 ──────────────────────────────────

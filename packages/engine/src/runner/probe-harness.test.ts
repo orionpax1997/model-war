@@ -114,6 +114,14 @@ const head = {
 const FROZEN_EMPTY_VM_MALLOC_SIZE = 75_128;
 const FROZEN_EMPTY_VM_SOURCE = "packages/tools/src/sandbox-probes/constants.ts:54";
 
+/**
+ * 三份基准产物的字节数(`benchmarks/<cell>/script.js`)。`scriptSizeLimit` 的下界依据是它们
+ * 的最大值,与 `check:selfproof` 在占位期拿来做地板值的是同一批文件;现算而不抄 7579。
+ */
+const BENCHMARK_MAX_PRODUCT_BYTES = Math.max(
+  ...CELLS.map((cell) => readFileSync(`${root}benchmarks/${cell}/script.js`).byteLength),
+);
+
 /** 样本规模:默认小,读数时按 env 放大。非法值退回默认,不静默取 0(与 `fixtures.test.ts` 同形)。 */
 const envN = (name: string, fallback: number): number => {
   const raw = process.env[name];
@@ -787,6 +795,8 @@ type Report = {
     readonly sandboxRuntimeArtifact: string;
     readonly quickjsWasiVersion: string;
     readonly interruptEventGranularity: number;
+    /** 三份基准产物的最大字节数;`scriptSizeLimit` 的下界依据(与 `check:selfproof` 同一批文件)。 */
+    readonly benchmarkMaxProductBytes: number;
     readonly rerunCommand: string;
     readonly scope: string;
     readonly probeScope: string;
@@ -824,6 +834,7 @@ const buildReport = (): Report => {
       sandboxRuntimeArtifact: SANDBOX_RUNTIME_ARTIFACT_PATH,
       quickjsWasiVersion: QUICKJS_WASI_VERSION,
       interruptEventGranularity: INTERRUPT_EVENT_GRANULARITY,
+      benchmarkMaxProductBytes: BENCHMARK_MAX_PRODUCT_BYTES,
       rerunCommand: "pnpm run probes:budget",
       scope: SCOPE,
       probeScope: PROBE_SCOPE,
@@ -873,6 +884,13 @@ const MEMORY_CEILING_ROUND_BYTES = 64 * 1024;
 /** 分配上限的两个下界系数:≥ 该系数 × 判罚线 / ≥ 该系数 × 诚实峰值。 */
 const MEMORY_LIMIT_CEILING_FACTOR = 8;
 const MEMORY_LIMIT_PEAK_FACTOR = 16;
+/** 墙钟软限的观测机制下界(ms):读钟的粒度是每约 10 万控制流事件一次,低于它软限等于不存在。 */
+const WALL_CLOCK_SOFT_FLOOR_MS = 50;
+/** 硬超时相对软限 / 诚实单 tick 墙钟峰值的下界系数(取值调和见渲染末尾的注释)。 */
+const WALL_CLOCK_HARD_SOFT_FACTOR = 20;
+const WALL_CLOCK_HARD_PEAK_FACTOR = 200;
+/** 体积上限相对基准产物最大值的下界系数。 */
+const SCRIPT_SIZE_ARTIFACT_FACTOR = 4;
 
 type Derivation = {
   readonly key: string;
@@ -888,6 +906,7 @@ const derivationsOf = (report: Report): readonly Derivation[] => {
   const stacking = report.exceptionProbe.stacking.maxAdditionsPerTick;
   const granularity = report.meta.interruptEventGranularity;
   const peak = worst.mallocSizePeak;
+  const tickWallPeak = worst.loopMsPeak;
 
   const exceptionTickLimit = 1 + stacking;
   const eventTickLimit = (worst.eventGridPeak + 1) * granularity;
@@ -898,6 +917,21 @@ const derivationsOf = (report: Report): readonly Derivation[] => {
   );
   const memoryLimit = pow2AtLeast(
     Math.max(MEMORY_LIMIT_CEILING_FACTOR * memoryTickCeiling, MEMORY_LIMIT_PEAK_FACTOR * peak),
+  );
+  // 软限的规则项是「20 × 诚实 p95」;读数里诚实单 tick 墙钟只记峰值(它是 p95 的上界),
+  // 而它远低于机制下界 ÷ 20,所以 50 ms 那个机制下界总是主导。
+  const wallClockSoftLimit = Math.max(
+    WALL_CLOCK_SOFT_FLOOR_MS,
+    WALL_CLOCK_HARD_SOFT_FACTOR * tickWallPeak,
+  );
+  const wallClockHardTimeout = pow2AtLeast(
+    Math.max(
+      WALL_CLOCK_HARD_SOFT_FACTOR * wallClockSoftLimit,
+      WALL_CLOCK_HARD_PEAK_FACTOR * tickWallPeak,
+    ),
+  );
+  const scriptSizeLimit = pow2AtLeast(
+    SCRIPT_SIZE_ARTIFACT_FACTOR * report.meta.benchmarkMaxProductBytes,
   );
 
   return [
@@ -937,6 +971,31 @@ const derivationsOf = (report: Report): readonly Derivation[] => {
         `;16 × ${String(peak)} = ${String(MEMORY_LIMIT_PEAK_FACTOR * peak)}`,
       arithmetic: `2^⌈log2 max(8 × ${String(memoryTickCeiling)}, 16 × ${String(peak)})⌉`,
       derived: memoryLimit,
+    },
+    {
+      key: "wallClockSoftLimit",
+      rule: "max(50 ms, 20 × 诚实单 tick 墙钟 p95)",
+      reading:
+        "观测机制下界 50 ms(读钟每约 10 万控制流事件一次,短脚本抽样不到)主导;" +
+        "诚实单 tick 墙钟 p95 低于下界 ÷ 20",
+      arithmetic: "max(50, 20 × p95)",
+      derived: wallClockSoftLimit,
+    },
+    {
+      key: "wallClockHardTimeout",
+      rule: "2 的幂,≥ 20 × 软限且 ≥ 200 × 诚实单 tick 墙钟峰值",
+      reading:
+        `20 × 软限 ${String(wallClockSoftLimit)} = ${String(WALL_CLOCK_HARD_SOFT_FACTOR * wallClockSoftLimit)};` +
+        "200 × 诚实单 tick 墙钟峰值远小、未主导",
+      arithmetic: `2^⌈log2 max(20 × ${String(wallClockSoftLimit)}, 200 × peak)⌉`,
+      derived: wallClockHardTimeout,
+    },
+    {
+      key: "scriptSizeLimit",
+      rule: "2 的幂,≥ 4 × 基准产物最大值",
+      reading: `基准产物最大值 = ${String(report.meta.benchmarkMaxProductBytes)} bytes`,
+      arithmetic: `2^⌈log2(4 × ${String(report.meta.benchmarkMaxProductBytes)})⌉`,
+      derived: scriptSizeLimit,
     },
   ];
 };
@@ -1008,8 +1067,12 @@ const renderReadingsMarkdown = (report: Report): string => {
     return `| \`${key}\` | ${derivation.rule} | ${derivation.reading} | \`${derivation.arithmetic}\` | ${finalCell} |`;
   });
   const honestPeak = report.honestSide.globalWorst.mallocSizePeak;
+  const tickWallPeak = report.honestSide.globalWorst.loopMsPeak;
   const derivedCeiling = derivationByKey.get("memoryTickCeiling")?.derived ?? 0;
   const derivedLimit = derivationByKey.get("memoryLimit")?.derived ?? 0;
+  const derivedSoft = derivationByKey.get("wallClockSoftLimit")?.derived ?? 0;
+  const derivedHard = derivationByKey.get("wallClockHardTimeout")?.derived ?? 0;
+  const derivedSize = derivationByKey.get("scriptSizeLimit")?.derived ?? 0;
   const softThreshold = Math.floor(MEMORY_SOFT_THRESHOLD_RATIO * derivedCeiling);
 
   return [
@@ -1148,9 +1211,36 @@ const renderReadingsMarkdown = (report: Report): string => {
     "|---|---|---|---|---|",
     ...derivationRows,
     "",
-    `本节只覆盖**当前已定稿**的预算键(${String(finalKeys.length)} 个);仍未定稿的 ${String(
-      undeterminedKeyNames.length,
-    )} 个(\`${undeterminedKeyNames.join("、")}\`)待对应票落定后并入。`,
+    undeterminedKeyNames.length === 0
+      ? `本节覆盖**全部 ${String(finalKeys.length)} 个已定稿的预算键**;未定键集为空(票 07 收口)。`
+      : `本节只覆盖**当前已定稿**的预算键(${String(finalKeys.length)} 个);仍未定稿的 ${String(
+          undeterminedKeyNames.length,
+        )} 个(\`${undeterminedKeyNames.join("、")}\`)待对应票落定后并入。`,
+    "",
+    "### 墙钟硬超时的取值调和(1024 ms vs 示范值 1000 ms)",
+    "",
+    "spec《Implementation Decisions》第 1 条的规则文本写「2 的幂,≥ 200 × 诚实单 tick 峰值,",
+    "≥ 100 × 软限」,而它自己的代入示范值是 1000 ms——1000 既不是 2 的幂,也不 ≥ 100 × 50(= 5000)。",
+    "能同时满足「2 的幂」「示范值约一秒」「§4『宁小勿大』的成本兜底口径」的唯一读法,是把",
+    "「≥ 100 × 软限」读作「≥ 20 × 软限」之笔误(20 × 50 = 1000)。据此取值:",
+    `\`wallClockHardTimeout\` = 满足 ≥ 20 × 软限与 ≥ 200 × 诚实单 tick 峰值的最小 2 的幂 = **${String(
+      derivedHard,
+    )} ms**。`,
+    "不取 1000(非 2 的幂),也不盲目放大到 8192。",
+    "",
+    "墙钟两键与体积键的约束核对(与 `check:budget` 门禁同一组判据):",
+    "",
+    `- 硬超时 ≥ 20 × 软限:${String(derivedHard)} ≥ ${String(20 * derivedSoft)} → ${
+      derivedHard >= 20 * derivedSoft ? "成立" : "**不成立**"
+    }。`,
+    `- 硬超时 ≥ 200 × 诚实单 tick 墙钟峰值且是 2 的幂:${
+      200 * tickWallPeak <= derivedHard && (derivedHard & (derivedHard - 1)) === 0
+        ? "成立"
+        : "**不成立**"
+    }。`,
+    `- 体积上限 ≥ 基准产物最大值:${String(derivedSize)} ≥ ${String(
+      report.meta.benchmarkMaxProductBytes,
+    )} → ${derivedSize >= report.meta.benchmarkMaxProductBytes ? "成立" : "**不成立**"}。`,
     "",
     "内存两键的约束核对(与 `check:budget` 门禁同一组判据;两个「未定」不是一件事:",
     "**分配上限未定 = VM 不设任何上限;判罚线未定 = 该轨不启用**):",
