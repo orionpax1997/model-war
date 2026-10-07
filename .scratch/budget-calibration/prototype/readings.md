@@ -1,5 +1,12 @@
 # PROTOTYPE 读数(一次性)
 
+> **失效声明(整份读数只能作量级参考,不是标定依据)。** 下表取自**打过补丁的构建**——第 3 节
+> 结论所依赖的「空脚本存活堆 600 tick 完全平」来自一份本地打过泄漏补丁、验证完即撤销的
+> `packages/engine/dist/runner/quickjs.js`(见第 6 节);其 `sandboxRuntimeHash` 是**伪造值**
+> `prototype-not-a-real-hash`(见 `readings-probe.mjs` 的 `head()`)。因此这批数**过不了 `verify`**,
+> 也不得作为任何键的取值依据,只用于说明泄漏的量级与墙钟代价。快照泄漏一旦修复,这批数
+> 再也复现不出来。
+
 种子 20260101;事件计数粒度 5000;每 tick 末 runGC 后读 mallocSize。
 
 | 场景 | 状态 | tick | 墙钟 ms | event p50/p95/max | api p50/p95/max | malloc p50/p95/max | loopMs p50/p95/max | error | hardTO |
