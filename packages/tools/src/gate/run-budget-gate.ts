@@ -12,7 +12,7 @@
  * 退出码是这个门禁对外的全部契约:0 = 干净,1 = 有违规(或门禁本身失效)。
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -29,8 +29,29 @@ const RULESET_KEYS_SOURCE = "packages/schema/src/ruleset-keys.ts";
 const RULESET_SOURCE = "packages/schema/src/ruleset.ts";
 const QUICKJS_SOURCE = "packages/engine/src/runner/quickjs.ts";
 const HLD_DOC = "docs/hld.md";
+const BENCHMARKS_DIR = "benchmarks";
 
 const read = (relative: string): string => readFileSync(`${repoRoot}${relative}`, "utf8");
+
+/**
+ * 基准产物的字节数。**与 `check:selfproof` 用的是同一批文件**(`benchmarks/<cell>/script.js`),
+ * 但这里现算而不抄常量:算出来的最大值是 `scriptSizeLimit` 的硬下界,抄一份就会与磁盘分叉。
+ * 读目录而不另列名字清单:多列一份 `BENCHMARK_NAMES` 就是多一处会悄悄过期的真源。
+ */
+const benchmarkArtifactSizes = (): readonly number[] => {
+  const dir = `${repoRoot}${BENCHMARKS_DIR}`;
+  const sizes: number[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const product = `${dir}/${entry.name}/script.js`;
+    if (existsSync(product)) {
+      sizes.push(readFileSync(product).byteLength);
+    }
+  }
+  return sizes;
+};
 
 const main = (): number => {
   const ruleset = JSON.parse(read(RULESET_JSON)) as Record<string, unknown>;
@@ -41,6 +62,7 @@ const main = (): number => {
     }
   }
 
+  const artifactSizes = benchmarkArtifactSizes();
   const report = checkBudget({
     budgetValues,
     rulesetKeysSource: read(RULESET_KEYS_SOURCE),
@@ -49,6 +71,8 @@ const main = (): number => {
     hldSource: read(HLD_DOC),
     interruptEveryEvents: INTERRUPT_EVERY_EVENTS,
     honestAliveHeapPeakBytes: HONEST_ALIVE_HEAP_PEAK_BYTES,
+    maxBenchmarkArtifactBytes: artifactSizes.length === 0 ? 0 : Math.max(...artifactSizes),
+    benchmarkArtifacts: artifactSizes.length,
   });
 
   // 防假绿:读到 0 个预算键、或 0 个已定稿的预算键,都按失败处理——此时报「干净」什么也没断言。

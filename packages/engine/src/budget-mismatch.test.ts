@@ -13,8 +13,14 @@
  * ── 预算怎么来 ──
  *
  * 与组装层同一条判据:逐键读 `RULESET_KEY_CATALOG[键].calibration.state`,只有 `final` 才进预算。
- * 票 05 落定的是计数与异常三键、票 06 落定内存两键,所以当前 v1 组装出来的预算含这五项;其余键
- * 仍是未定值,对应的轨不启用(字段缺席即不启用,不是「值为 0 即不启用」)。
+ * 票 05/06/07 之后八键全部落定稿,所以当前 v1 组装出来的预算含七个**运行时**轨(体积键是编译期
+ * 的事,不在字段清单里,不启用任何运行时轨);未定键集为空,「字段缺席即不启用」的机制仍由组装层
+ * 保留(见 `apps/cli/src/match/assemble.ts`)。
+ *
+ * ── 墙钟两键:硬超时作废而非判罚,软限只披露 ──
+ *
+ * 硬超时触发只作废整场:不产 `tripped` 观测(走 `uncertain-timeout` 故障位)、不累加异常、不判负,
+ * 也不重建 VM。软限只产一条 `wall-clock-soft` 披露观测,不参与判罚。两者都与计数轨的 `tripped` 分列。
  *
  * ── 两条内存路各自独立 ──
  *
@@ -44,6 +50,8 @@ import {
 
 import type { BudgetConfig } from "./budget.js";
 import { runMatch } from "./index.js";
+import { processTick } from "./processor/index.js";
+import { loadRuleset } from "./ruleset-loader/index.js";
 import type { Observation, SeatRunner } from "./runner/index.js";
 import {
   EVENT_SPIN_PROBE_SCRIPT,
@@ -58,13 +66,15 @@ import {
   EVENT_TRACK,
   INTERRUPT_EVENT_GRANULARITY,
   MEMORY_TRACK,
+  WALL_CLOCK_TRACK,
   WASI_CLOCK_MS,
   WASI_RANDOM_FILL,
   WASI_TIMEZONE_OFFSET_MINUTES,
   createQuickJsRunner,
   createSandboxVm,
 } from "./runner/quickjs.js";
-import type { GameState, PlayerIndex } from "./world/state.js";
+import { stubRunner } from "./runner/stub.js";
+import type { GameState, PlayerIndex, Site } from "./world/state.js";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const wasmPath = fileURLToPath(import.meta.resolve("quickjs-wasi/quickjs.wasm"));
@@ -101,7 +111,12 @@ const BUDGET_FIELDS = [
 const budgetOf = (ruleset: Ruleset): BudgetConfig => {
   const assembled: Record<string, number> = {};
   for (const field of BUDGET_FIELDS) {
-    if (RULESET_KEY_CATALOG[field].calibration.state === "undetermined") {
+    // 把标定状态当作两态联合读:`BUDGET_FIELDS` 当前每一项都已定稿,直接与 `"undetermined"`
+    // 比较会被 TS 报成「两边无交集」,而机制本身仍要保留(失效后可退回未定值)。
+    const calibration = RULESET_KEY_CATALOG[field].calibration as {
+      readonly state: "final" | "undetermined";
+    };
+    if (calibration.state === "undetermined") {
       continue;
     }
     assembled[field] = ruleset[field];
@@ -110,6 +125,38 @@ const budgetOf = (ruleset: Ruleset): BudgetConfig => {
 };
 
 const BUDGET = budgetOf(RULESET);
+
+/** 四席各一个哨兵基地:没有它,空状态会在步 5 把所有席位淘汰掉,凭空多出状态变化。 */
+const SEAT_BASES: readonly Site[] = [0, 1, 2, 3].map((seat) => ({
+  id: 900 + seat,
+  kind: "base",
+  x: 900 + seat,
+  y: 900,
+  owner: seat as PlayerIndex,
+  progressOwner: -1,
+  progress: 0,
+  producing: null,
+}));
+
+/** 一个最小可结算状态:四席都在、各带一个哨兵基地。 */
+const makeState = (): GameState => ({
+  tick: 0,
+  size: 8,
+  terrain: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => false)),
+  players: [0, 1, 2, 3].map((index) => ({
+    index: index as PlayerIndex,
+    resources: 16,
+    alive: true,
+    exceptionTicks: 0,
+  })),
+  units: [],
+  sites: SEAT_BASES,
+  nextId: 100,
+  outcome: null,
+  eliminatedAtTick: [null, null, null, null],
+  firstContactTick: null,
+  economyDeadAtTick: [null, null, null, null],
+});
 
 /** 三份基准脚本的目录名。 */
 const CELLS = [
@@ -223,25 +270,28 @@ const runBenchmarkMatch = async (
   }
 };
 
-// ── 组装:当前 v1 只启用五个已定稿键的轨 ─────────────────────────────────────
+// ── 组装:当前 v1 已定稿八键,运行时预算含其中七个(体积键不进预算)────────────────
 
-it("当前 v1 组装出的预算只含五个已定稿键,未定键的轨不启用", () => {
+it("当前 v1 组装出的预算含七个已定稿的运行时轨,编译期的体积键不进预算", () => {
   expect(Object.keys(BUDGET).sort()).toEqual([
     "apiCallTickLimit",
     "eventTickLimit",
     "exceptionTickLimit",
     "memoryLimit",
     "memoryTickCeiling",
+    "wallClockHardTimeout",
+    "wallClockSoftLimit",
   ]);
   expect(BUDGET.eventTickLimit).toBe(10_000);
   expect(BUDGET.apiCallTickLimit).toBe(300);
   expect(BUDGET.exceptionTickLimit).toBe(3);
   expect(BUDGET.memoryLimit).toBe(4 * 1024 * 1024);
   expect(BUDGET.memoryTickCeiling).toBe(512 * 1024);
-  // 其余两键仍是未定值:字段缺席 = 该轨不启用(不是「值为 0 即不启用」)。
-  for (const field of ["wallClockSoftLimit", "wallClockHardTimeout"] as const) {
-    expect(BUDGET[field], `${field} 仍是未定值,不该进预算`).toBeUndefined();
-  }
+  expect(BUDGET.wallClockSoftLimit).toBe(50);
+  expect(BUDGET.wallClockHardTimeout).toBe(1024);
+  // 体积上限是编译期的事:它**不在**组装层的运行时预算字段清单里,翻成定稿也不启用任何运行时轨。
+  expect(Object.keys(BUDGET)).not.toContain("scriptSizeLimit");
+  expect(RULESET_KEY_CATALOG.scriptSizeLimit.calibration.state).toBe("final");
 });
 
 // ── 正向:计数两轨各抓住一个探针(带轨名与截停读数)───────────────────────────
@@ -442,4 +492,148 @@ it("反向用例:抬高上限放探针过去、压低上限截停基准脚本(�
   ).toBeGreaterThan(0);
   expect(memoryTrips[0]?.limit).toBe(100_000);
   expect(memoryTrips[0]?.value).toBeGreaterThanOrEqual(100_000);
+}, 180_000);
+
+// ── 墙钟两键(票 07):硬超时作废而非判罚,软限只披露 ─────────────────────────
+
+/**
+ * 一段**有界但慢**的脚本:迭代约 200 万次后才交回一笔 move。它产生足够多的循环回边,
+ * 使墙钟能被抽到样(每 `WALL_CLOCK_SAMPLE_INTERVAL` 次回调读一次钟),而自己会终止——
+ * 于是越了软限就产一条披露观测,不必靠硬超时截停。
+ */
+const SLOW_TICK_SCRIPT = [
+  "function burn(n) { var acc = 0; for (var i = 0; i < n; i += 1) { acc = (acc + 1) % 7; } return acc; }",
+  "function loop() { move(burn(2000000), 1, 0); }",
+].join("\n");
+
+it("墙钟软限只披露不判罚:慢脚本产出一条 wall-clock-soft 观测、不累加异常、不判负", async () => {
+  const soft = required(BUDGET.wallClockSoftLimit, "wallClockSoftLimit");
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: SLOW_TICK_SCRIPT,
+    seat: 0,
+    wallClockSoftLimit: soft,
+  });
+  try {
+    runner.setSnapshot(emptySnapshot(0));
+    const output = runner.drainIntents();
+    // 软限只观测:不是故障位,意图照常交回(与 `tripped` 的「意图全部作废」相反)。
+    expect(output.fault).toBeUndefined();
+    expect(output.observations).toHaveLength(1);
+    expect(output.observations[0]).toMatchObject({
+      kind: "wall-clock-soft",
+      track: WALL_CLOCK_TRACK,
+      limit: soft,
+    });
+    expect(output.observations[0]?.value).toBeGreaterThanOrEqual(soft);
+    expect(output.intents.length, "软限不判罚,意图照常交回").toBeGreaterThan(0);
+
+    // 经步 0:软限观测只被记录,不落成 `count-exception-tick`——异常计数不变、不判负。
+    const idle = stubRunner(() => []);
+    const recorded: { kind: string }[] = [];
+    const tick = processTick(
+      makeState(),
+      [runner, idle, idle, idle],
+      loadRuleset(RULESET),
+      { write: () => {} },
+      { record: (record) => recorded.push(record) },
+      { exceptionTickLimit: required(BUDGET.exceptionTickLimit, "exceptionTickLimit") },
+    );
+    expect(tick.fault).toBeNull();
+    expect(tick.state.players.map((player) => player.exceptionTicks)).toEqual([0, 0, 0, 0]);
+    expect(tick.state.players.every((player) => player.alive)).toBe(true);
+    expect(
+      recorded.map((record) => record.kind),
+      "软限只写一条披露观测",
+    ).toEqual(["wall-clock-soft"]);
+  } finally {
+    dispose();
+  }
+}, 120_000);
+
+it("墙钟硬超时只作废整场:不产 tripped 观测、不累加异常、不判负、不重建 VM", async () => {
+  const hard = required(BUDGET.wallClockHardTimeout, "wallClockHardTimeout");
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: EVENT_SPIN_PROBE_SCRIPT,
+    seat: 0,
+    wallClockHardTimeout: hard,
+  });
+  try {
+    runner.setSnapshot(emptySnapshot(0));
+    const output = runner.drainIntents();
+    // 硬超时走故障位,不是一条 `tripped` 观测;它看起来像「抓住了」,所以必须与计数轨分列。
+    expect(output.fault).toBe("uncertain-timeout");
+    expect(output.observations, "硬超时不产任何观测").toEqual([]);
+    expect(output.intents).toEqual([]);
+
+    // 经步 0:故障位短路本 tick,不累加异常、不判负、不写观测。
+    const idle = stubRunner(() => []);
+    const recorded: unknown[] = [];
+    const tick = processTick(
+      makeState(),
+      [runner, idle, idle, idle],
+      loadRuleset(RULESET),
+      { write: () => {} },
+      { record: (record) => recorded.push(record) },
+      { exceptionTickLimit: required(BUDGET.exceptionTickLimit, "exceptionTickLimit") },
+    );
+    expect(tick.fault).toBe("uncertain-timeout");
+    expect(
+      tick.state.players.map((player) => player.exceptionTicks),
+      "硬超时不累加异常",
+    ).toEqual([0, 0, 0, 0]);
+    expect(
+      tick.state.players.every((player) => player.alive),
+      "硬超时不判负",
+    ).toBe(true);
+    expect(recorded, "硬超时不写观测").toEqual([]);
+
+    // 不重建 VM:同一个 handle 仍然可用(故障位既不 dispose 也不另起一个 VM)。
+    runner.setSnapshot(emptySnapshot(1));
+    expect(runner.drainIntents().fault, "同一 handle 应仍在工作,证明 VM 没被重建").toBe(
+      "uncertain-timeout",
+    );
+
+    // 经 runMatch:整场作废,只写 meta 行、不写末行 result(因此没有任何判负/终局)。
+    const map = JSON.parse(readFileSync(`${root}maps/open-clash.json`, "utf8")) as MapDefinition;
+    const lines: string[] = [];
+    const players = [0, 1, 2, 3].map((seat) => ({
+      model: "probe",
+      archiveRef: `probe/${seat}`,
+      seat: seat as PlayerIndex,
+    }));
+    const { runner: timeoutRunner, dispose: disposeTimeout } = await createQuickJsRunner({
+      wasm: wasmModule,
+      runtimeCode,
+      scriptCode: EVENT_SPIN_PROBE_SCRIPT,
+      seat: 0,
+      wallClockHardTimeout: hard,
+    });
+    try {
+      const result = runMatch({
+        ruleset: RULESET,
+        map,
+        seed: SEED,
+        head,
+        players,
+        runners: [timeoutRunner, idle, idle, idle],
+        budget: {
+          wallClockHardTimeout: hard,
+          exceptionTickLimit: required(BUDGET.exceptionTickLimit, "exceptionTickLimit"),
+        },
+        sink: { write: (line) => void lines.push(line) },
+      });
+      expect(result.status).toBe("uncertain-timeout");
+      // 只写了 meta 行(第一 tick 之前落一次),没有末行 result——「不可信」不是一种合法的胜负。
+      expect(lines).toHaveLength(1);
+      expect((JSON.parse(lines[0] ?? "{}") as { type?: string }).type).toBe("meta");
+    } finally {
+      disposeTimeout();
+    }
+  } finally {
+    dispose();
+  }
 }, 180_000);

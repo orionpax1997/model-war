@@ -45,7 +45,7 @@
   "apiCallTickLimit": 300,
   "memoryLimit": 4194304,
   "memoryTickCeiling": 524288,
-  "wallClockSoftLimit": 0,
-  "wallClockHardTimeout": 0,
-  "scriptSizeLimit": 0
+  "wallClockSoftLimit": 50,
+  "wallClockHardTimeout": 1024,
+  "scriptSizeLimit": 32768
 }
