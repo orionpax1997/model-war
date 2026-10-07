@@ -1,0 +1,25 @@
+# cell-a 运行记录（blind-run.sh run 的透传输出 + 本次执行备注）
+
+## 首次 `run`（2026-10-07T09:41Z 起）：无 stdout，未产出脚本
+- 舱内 pi 正常读到 input/ 四份文件（会话见 session/*.jsonl）。
+- 模型在读完全文后的「思考」阶段连撞两次 provider error，随后一次 stopReason=length
+  （output=32000、reasoning=32000，输出预算整个花在思考上，未吐出任何脚本）。
+- `run` 的 tee 因此是空的；work/ 未落任何文件。
+
+## 续跑（`pi --continue`，同 session，thinking=high）：产出 script.v1.ts
+- 追加一句「上次输出撞长度上限被截断，请直接产出成品」，pi 在同一会话上继续，
+  写出 work/script.v1.ts（249 行）与 work/FIXES.md（v1 初版，无修改）。
+- 这不是静态校验回喂轮次：没有任何校验错误被回喂，属于「单次生成被输出上限截断后的续写」。
+
+## 编译（派生运行配置 run.json）
+- `work/script.ts`（= script.v1.ts 的冻结副本，编译输入）→ `work/script.js`，6310 字节。
+- tsc 退出码 0（类型面已回填，无诊断）。
+
+## 静态校验
+- `run-validate-script.ts work/script.js --max-bytes 6310 --phase freeze` → 退出码 0，零违规。
+- `static-check.ts cell-a`（复用的一次性校验器，读编译产物）→ err 0 / warn 0，47 个自由标识符。
+- 0 轮直交：无静态校验错误回喂。
+
+## 反向对照（.scratch/contract-closure/blind/reverse-control/，非交付目录）
+- static-check.ts → 22 err（+2 warn），判红。
+- `run-validate-script.ts ... --phase freeze` → 退出码 1，3 类 8 处（模块系统 3 / 禁列全局名 4 / 宿主桥前缀 1）。

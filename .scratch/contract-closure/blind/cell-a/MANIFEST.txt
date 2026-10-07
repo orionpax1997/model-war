@@ -1,0 +1,1 @@
+strategy=A risks=none contract=final

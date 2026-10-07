@@ -1,0 +1,9 @@
+{
+  "//": "由 tsconfig.scripts.json 派生的运行配置:只覆盖 files / outDir(外加 rootDir——TS7 在 files 的公共源目录与 outDir 不同层时强制要 rootDir,不留它直接 TS5011),把 work/script.ts 编译成同目录同名的 work/script.js。基座自己 files:[] 会报 TS18002(拒绝被直接跑),所以必须派生。",
+  "extends": "../../../../tsconfig.scripts.json",
+  "compilerOptions": {
+    "rootDir": "work",
+    "outDir": "work"
+  },
+  "files": ["work/script.ts"]
+}

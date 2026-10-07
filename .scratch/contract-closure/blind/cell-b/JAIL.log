@@ -1,3 +1,6 @@
+`script.ts` 全文如下（与 `work/script.v1.ts` 一字不差）：
+
+```typescript
 // script.ts - Strategy B: 扩张运营
 // 优先占领资源点与扩张经济，攒够家底再转军事
 
@@ -242,3 +245,6 @@ function moveToBaseAdj(
   }
   moveToAdjOf(w, bx, by);
 }
+```
+
+初版已落盘至 `work/script.v1.ts`（244 行，未改一字），后续校验只动 `work/` 内的文件并把修改追加到 `work/FIXES.md`。

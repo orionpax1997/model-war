@@ -98,8 +98,8 @@ function loop() {
       if (claimed[k] === 1) {
         continue;
       }
-      const d = getRange(u.x, u.y, tgtX[k]!, tgtY[k]!);
-      const score = tgtP[k]! * 100000 + d;
+      const d = getRange(u.x, u.y, tgtX[k], tgtY[k]);
+      const score = tgtP[k] * 100000 + d;
       if (pick === -1 || score < pickScore) {
         pick = k;
         pickScore = score;
@@ -108,8 +108,8 @@ function loop() {
     if (pick === -1) {
       // 所有点位都有人认领:允许重复,别让单位闲着。
       for (let k = 0; k < tgtX.length; k += 1) {
-        const d = getRange(u.x, u.y, tgtX[k]!, tgtY[k]!);
-        const score = tgtP[k]! * 100000 + d;
+        const d = getRange(u.x, u.y, tgtX[k], tgtY[k]);
+        const score = tgtP[k] * 100000 + d;
         if (pick === -1 || score < pickScore) {
           pick = k;
           pickScore = score;
@@ -123,7 +123,7 @@ function loop() {
         // 已站在点位格上:原地即驱动占领,不再提交移动。
         continue;
       }
-      moveTo(u.id, tgtX[pick]!, tgtY[pick]!);
+      moveTo(u.id, tgtX[pick], tgtY[pick]);
       continue;
     }
 

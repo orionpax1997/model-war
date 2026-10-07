@@ -1,3 +1,12 @@
+已按 `PROMPT.base.md` 契约完成初版。
+
+- 复数取向：**C 占点不采集**（不建采集农民，产能全部给近战，靠 `moveTo` 送单位上点位格触发被动占领）
+- 初版原文：`work/script.v1.ts`
+- 同内容工作副本：`work/script.ts`
+- 校验日志：`work/FIXES.md`
+- 静态自检通过：无模块语法/动态求值/非确定源/宿主桥；只调 `api.md` §3 名字；`getMyIndex()` 唯一自认；每单位每 tick 至多一条单位级意图；下单先读 `producing`；并用仓内自带 tsc 配 stub 类型面跑 `--strict --noUnusedLocals`，0 错误。
+
+```ts
 // script.ts —— 策略取向 C:占点不采集。
 // 占领是位置触发的被动结算:把单位送上可占领点位格,靠进度扩张局面。
 // 不建采集农民,产能全部给近战单位。
@@ -98,8 +107,8 @@ function loop() {
       if (claimed[k] === 1) {
         continue;
       }
-      const d = getRange(u.x, u.y, tgtX[k]!, tgtY[k]!);
-      const score = tgtP[k]! * 100000 + d;
+      const d = getRange(u.x, u.y, tgtX[k], tgtY[k]);
+      const score = tgtP[k] * 100000 + d;
       if (pick === -1 || score < pickScore) {
         pick = k;
         pickScore = score;
@@ -108,8 +117,8 @@ function loop() {
     if (pick === -1) {
       // 所有点位都有人认领:允许重复,别让单位闲着。
       for (let k = 0; k < tgtX.length; k += 1) {
-        const d = getRange(u.x, u.y, tgtX[k]!, tgtY[k]!);
-        const score = tgtP[k]! * 100000 + d;
+        const d = getRange(u.x, u.y, tgtX[k], tgtY[k]);
+        const score = tgtP[k] * 100000 + d;
         if (pick === -1 || score < pickScore) {
           pick = k;
           pickScore = score;
@@ -123,7 +132,7 @@ function loop() {
         // 已站在点位格上:原地即驱动占领,不再提交移动。
         continue;
       }
-      moveTo(u.id, tgtX[pick]!, tgtY[pick]!);
+      moveTo(u.id, tgtX[pick], tgtY[pick]);
       continue;
     }
 
@@ -176,3 +185,6 @@ function nearestFoeId(
   }
   return best;
 }
+```
+
+等待静态校验回喂后，我会只在 `work/` 内改文件并把每轮改动记入 `work/FIXES.md`。
