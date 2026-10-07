@@ -2,11 +2,16 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import type { MapDefinition } from "@model-war/schema";
+import {
+  QUICKJS_WASI_WASM_PATH,
+  SANDBOX_RUNTIME_ARTIFACT_PATH,
+  SANDBOX_RUNTIME_HASH,
+} from "@model-war/schema";
 
 /**
  * 命令行的外部可观察行为只有两件:帮助信息列出哪几条子命令,以及未实现的子命令怎么退。
@@ -22,10 +27,10 @@ const mapPath = fileURLToPath(new URL("../../../maps/open-clash.json", import.me
 const COMMANDS = ["gen", "run", "match", "replay", "verify", "map-lint"] as const;
 
 /**
- * 尚未落地的子命令。`map-lint` / `replay` / `match` 不在其中:三者已实现,被下面各自那组断言盯着。
- * 这张名单会随实现推进缩短——把一条命令搬出这张名单是“它有断言了”的信号。
+ * 尚未落地的子命令。`map-lint` / `replay` / `match` / `verify` 不在其中:四者已实现,被下面各自那组断言盯着。
+ * 这张名单会随实现推进缩短——把一条命令搬出这张名单是"它有断言了"的信号。
  */
-const UNIMPLEMENTED = ["gen", "run", "verify"] as const;
+const UNIMPLEMENTED = ["gen", "run"] as const;
 
 let bundle = "";
 let scratch = "";
@@ -243,10 +248,10 @@ it("`replay` 不再走「未实现」那条路径:渲染器住在 replay 包(pro
   expect(result.stdout).toContain("runner stub");
 });
 
-it("`replay` 读不到文件或缺参时按装载期拒跑退 2,不静默返回成功", () => {
+it("`replay` 读不到文件或缺参时按装载期拒跑退 1,不静默返回成功", () => {
   // 静默 0 的反例:这两条一起红——自动化流程把「没跑成」读成「跑通了」。
-  expect(run(["replay", join(scratch, "no-such-replay.jsonl")]).status).toBe(2);
-  expect(run(["replay"]).status).toBe(2);
+  expect(run(["replay", join(scratch, "no-such-replay.jsonl")]).status).toBe(1);
+  expect(run(["replay"]).status).toBe(1);
 });
 
 it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
@@ -262,7 +267,8 @@ it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
 
 const sha256Hex = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
-const stubRuntimeHash = sha256Hex("stub-runner/v1");
+// 真沙箱 runtime 的实测哈希 = 入库产物字节的 sha256(真源在 `@model-war/schema`,由 check:runtime 盯住)。
+const sandboxRuntimeHash = SANDBOX_RUNTIME_HASH;
 
 /**
  * 在临时目录里造一份**合法**的对局输入(4 份存档三件套 + input.json)。
@@ -271,21 +277,44 @@ const stubRuntimeHash = sha256Hex("stub-runner/v1");
  */
 const writeMatchInput = (
   options: {
-    readonly tamper?: "mapSha" | "scriptSha" | "metaSha" | "ruleset" | "dropArchive";
+    readonly tamper?:
+      | "mapSha"
+      | "scriptSha"
+      | "metaSha"
+      | "ruleset"
+      | "dropArchive"
+      | "sandboxHash";
+    /** 用一份**真实基准脚本**当四席的执行体(目录名,如 `cell-a-melee-pressure`)。
+     * 给了它就覆盖默认的 `function loop(){ return []; }` 夹具。 */
+    readonly cell?: string;
+    /** 用一段自定义 `script.js` 当执行体(四席相同);与 `cell` 互斥,二选一。 */
+    readonly script?: string;
   } = {},
 ): string => {
   const root = mkdtempSync(`${scratch}/root-`);
   const mapBytes = readFileSync(mapPath);
   const mapSha = options.tamper === "mapSha" ? "d".repeat(64) : sha256Hex(mapBytes);
 
+  // 执行体:默认空转夹具;给了基准目录就读它的**入库产物**(`script.js` 是真沙箱跑的那份),
+  // 给了自定义脚本就用它。基准脚本走 CLI 公开面(而不是引擎内部 API)正是本票要的端到端那条。
+  const defaultScript = `function loop(){ return []; }\n`;
+  const scriptJs =
+    options.script ??
+    (options.cell === undefined
+      ? defaultScript
+      : readFileSync(join(repoRoot, "benchmarks", options.cell, "script.js"), "utf8"));
+  const scriptTs =
+    options.cell === undefined
+      ? defaultScript
+      : readFileSync(join(repoRoot, "benchmarks", options.cell, "script.ts"), "utf8");
+
   const models = ["alpha", "beta", "gamma", "delta"];
   const archives = models.map((model, seat) => {
     const archivePath = `archive/${model}/r1`;
     const dir = join(root, archivePath);
     mkdirSync(dir, { recursive: true });
-    const scriptJs = `function loop(){ return []; }\n`;
     writeFileSync(join(dir, "script.js"), scriptJs);
-    writeFileSync(join(dir, "script.ts"), `function loop(){ return []; }\n`);
+    writeFileSync(join(dir, "script.ts"), scriptTs);
     const scriptSha = sha256Hex(scriptJs);
     const meta = {
       model,
@@ -298,7 +327,8 @@ const writeMatchInput = (
       validation: { passed: true, errors: [] },
       tscVersion: "7.0.2",
       scriptSha256: scriptSha,
-      sandboxRuntimeHash: stubRuntimeHash,
+      sandboxRuntimeHash:
+        options.tamper === "sandboxHash" && seat === 0 ? "0".repeat(64) : sandboxRuntimeHash,
     };
     const metaBytes = `${JSON.stringify(meta, null, 2)}\n`;
     writeFileSync(join(dir, "meta.json"), metaBytes);
@@ -332,30 +362,51 @@ const writeMatchInput = (
     join(root, "rulesets", "v1.json"),
     readFileSync(fileURLToPath(new URL("../../../rulesets/v1.json", import.meta.url))),
   );
+
+  // 真沙箱把 runtime bundle 与 wasm 当**安装根下的资源**读(路径真源在 `@model-war/schema`);
+  // 物化进临时 root,于是 `--root` 就是这一局的安装根,测试不必依赖仓库根的 node_modules 布局。
+  const artifactPath = join(root, SANDBOX_RUNTIME_ARTIFACT_PATH);
+  mkdirSync(dirname(artifactPath), { recursive: true });
+  writeFileSync(artifactPath, readFileSync(join(repoRoot, SANDBOX_RUNTIME_ARTIFACT_PATH)));
+  const wasmPath = join(root, QUICKJS_WASI_WASM_PATH);
+  mkdirSync(dirname(wasmPath), { recursive: true });
+  writeFileSync(wasmPath, readFileSync(join(repoRoot, QUICKJS_WASI_WASM_PATH)));
+
   return inputPath;
 };
 
-it("`match` 跑完一整场到超时,退出 0,回放落盘且能被 `replay` 渲染(演示态)", () => {
-  const inputPath = writeMatchInput();
-  const runDir = join(inputPath, "..");
-  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
-  const result = run(["match", inputPath, "--root", root]);
-  // 「规则内结果一律 0」:超时是**合法结果**,不是失败。
-  expect(result.status, result.stderr).toBe(0);
-  const replayPath = join(runDir, "replay.jsonl");
-  const lines = readFileSync(replayPath, "utf8")
-    .trim()
-    .split("\n")
-    .map((l) => JSON.parse(l));
-  expect(lines[0].type).toBe("meta");
-  expect(lines.at(-1).type).toBe("result");
-  // 600 tick + meta + result。
-  expect(lines).toHaveLength(602);
-  // 回放能渲染:第二条命令看得到画面。
-  const shown = run(["replay", replayPath]);
-  expect(shown.status).toBe(0);
-  expect(shown.stdout).toContain("runner stub");
-});
+it(
+  "`match` 跑完一整场到超时,退出 0,回放落盘且能被 `replay` 渲染(真沙箱)",
+  { timeout: 120_000 },
+  () => {
+    const inputPath = writeMatchInput();
+    const runDir = join(inputPath, "..");
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const result = run(["match", inputPath, "--root", root]);
+    // 「规则内结果一律 0」:超时是**合法结果**,不是失败。
+    expect(result.status, result.stderr).toBe(0);
+    const replayPath = join(runDir, "replay.jsonl");
+    const lines = readFileSync(replayPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    expect(lines[0].type).toBe("meta");
+    // 真沙箱:runner 是 quickjs,五个沙箱栏都是真值(不是 null)。
+    expect(lines[0].runner).toBe("quickjs");
+    expect(lines[0].sandboxRuntimeHash).toBe(sandboxRuntimeHash);
+    expect(lines[0].quickjsWasiVersion).toBeTruthy();
+    expect(lines[0].wasiClock).toBeTruthy();
+    expect(lines[0].wasiRandomFill).toBeTruthy();
+    expect(lines[0].wasiTimezoneOffset).toBeTruthy();
+    expect(lines.at(-1).type).toBe("result");
+    // 600 tick + meta + result。
+    expect(lines).toHaveLength(602);
+    // 回放能渲染:第二条命令看得到画面。
+    const shown = run(["replay", replayPath]);
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toContain("runner quickjs");
+  },
+);
 
 /**
  * `--root` 写在位置参数**前面**也要能跑。
@@ -364,7 +415,7 @@ it("`match` 跑完一整场到超时,退出 0,回放落盘且能被 `replay` 渲
  * 不以 `-` 开头,于是它被当成位置参数、`positional[0]` 成了根目录——一个目录被拿去
  * `JSON.parse`。用法串把 `<input.json>` 写在前面只是惯例,参数顺序不该决定命令能不能跑。
  */
-it("`match` 的 `--root` 写在 <input.json> 前面也能跑,退出 0", () => {
+it("`match` 的 `--root` 写在 <input.json> 前面也能跑,退出 0", { timeout: 120_000 }, () => {
   const inputPath = writeMatchInput();
   const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
   const result = run(["match", "--root", root, inputPath]);
@@ -372,22 +423,230 @@ it("`match` 的 `--root` 写在 <input.json> 前面也能跑,退出 0", () => {
   expect(readFileSync(join(inputPath, "..", "replay.jsonl"), "utf8")).not.toBe("");
 });
 
-it("`match` 装载期拒跑一律退 2:缺档 / 哈希不符 / 规则集版本不一致,一条都不静默 0", () => {
-  for (const tamper of ["dropArchive", "scriptSha", "metaSha", "mapSha", "ruleset"] as const) {
+it("`match` 装载期拒跑一律退 1:缺档 / 哈希不符 / 规则集版本不一致,一条都不静默 0", () => {
+  for (const tamper of [
+    "dropArchive",
+    "scriptSha",
+    "metaSha",
+    "mapSha",
+    "ruleset",
+    // 存档 meta 记的沙箱 runtime hash 与本仓入库产物不符:拒跑,不静默换。
+    "sandboxHash",
+  ] as const) {
     const inputPath = writeMatchInput({ tamper });
     const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
     const result = run(["match", inputPath, "--root", root]);
-    expect(result.status, `${tamper} 应当按装载期拒跑退 2,stderr:\n${result.stderr}`).toBe(2);
+    expect(result.status, `${tamper} 应当按装载期拒跑退 1,stderr:\n${result.stderr}`).toBe(1);
   }
-  // 缺参也退 2(不是 0,也不是别的)。
-  expect(run(["match"]).status).toBe(2);
-  // 读不到输入文件也退 2。
-  expect(run(["match", join(scratch, "no-such-input.json")]).status).toBe(2);
+  // 缺参也退 1(不是 0,也不是别的)。
+  expect(run(["match"]).status).toBe(1);
+  // 读不到输入文件也退 1。
+  expect(run(["match", join(scratch, "no-such-input.json")]).status).toBe(1);
 });
 
-it("`match` 不再走「未实现」那条路径:处理器住在 CLI 的 match 模块", () => {
+it("`match` 不再走「未实现」那条路径:处理器住在 CLI 的 match 模块", { timeout: 120_000 }, () => {
   const inputPath = writeMatchInput();
   const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
   const result = run(["match", inputPath, "--root", root]);
   expect(result.stderr).not.toContain("未实现");
+});
+
+// ── `verify`:按 input.json 重新执行 → 逐 tick hash 比对 ───────────────────────
+
+/** 跑一局拿到回放路径与它的 root。返回 `[replayPath, root]`。 */
+const matchToReplay = (): readonly [string, string] => {
+  const inputPath = writeMatchInput();
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const matched = run(["match", inputPath, "--root", root]);
+  expect(matched.status, matched.stderr).toBe(0);
+  return [join(inputPath, "..", "replay.jsonl"), root];
+};
+
+/** 读回放为可改的对象数组,改完写回同一个目录(verify 按 `dirname(replay)/input.json` 找输入)。 */
+const editReplay = (
+  replayPath: string,
+  mutate: (lines: Record<string, unknown>[]) => void,
+): void => {
+  const lines = readFileSync(replayPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  mutate(lines);
+  writeFileSync(replayPath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+};
+
+it(
+  "`verify` 按 input.json 重新执行:match → verify 逐 tick 一致,退出 0",
+  { timeout: 120_000 },
+  () => {
+    const [replayPath, root] = matchToReplay();
+    const verified = run(["verify", replayPath, "--root", root]);
+    expect(verified.status, verified.stderr).toBe(0);
+    expect(verified.stdout).toContain("逐项一致");
+  },
+);
+
+it("`verify` 读不到回放或缺参时按装载期拒跑退 1", () => {
+  expect(run(["verify", join(scratch, "no-such-replay.jsonl")]).status).toBe(1);
+  expect(run(["verify"]).status).toBe(1);
+});
+
+it(
+  "`verify` 改回放里一个数字即红:改一个 tick 的 stateHash(与自己载荷不符)退 1",
+  { timeout: 120_000 },
+  () => {
+    const [replayPath, root] = matchToReplay();
+    editReplay(replayPath, (lines) => {
+      const tick = lines[1];
+      if (tick === undefined) {
+        throw new Error("回放没有 tick 行");
+      }
+      // 改最后一位:stateHash 不再等于它自己载荷的摘要。
+      const hash = String(tick["stateHash"]);
+      tick["stateHash"] = `${hash.slice(0, -1)}${hash.endsWith("0") ? "1" : "0"}`;
+    });
+    expect(run(["verify", replayPath, "--root", root]).status).toBe(1);
+  },
+);
+
+it("`verify` 改末行 result 的一个数字即红,退 1", { timeout: 120_000 }, () => {
+  const [replayPath, root] = matchToReplay();
+  editReplay(replayPath, (lines) => {
+    const result = lines.at(-1);
+    const rankings = result?.["rankings"];
+    if (result === undefined || !Array.isArray(rankings)) {
+      throw new Error("回放没有末行 result");
+    }
+    rankings[0] = Number(rankings[0]) + 1;
+  });
+  expect(run(["verify", replayPath, "--root", root]).status).toBe(1);
+});
+
+it(
+  "`verify` 核 meta 的运行时 hash 与本次执行是否一致:不一致即报错退 1,不静默换",
+  { timeout: 120_000 },
+  () => {
+    const [replayPath, root] = matchToReplay();
+    editReplay(replayPath, (lines) => {
+      const meta = lines[0];
+      if (meta === undefined) {
+        throw new Error("回放没有 meta 行");
+      }
+      // 形状仍合法(64 位十六进制),但与本次产物 hash 不同。
+      meta["sandboxRuntimeHash"] = "0".repeat(64);
+    });
+    const verified = run(["verify", replayPath, "--root", root]);
+    expect(verified.status).toBe(1);
+    expect(verified.stderr).toContain("sandboxRuntimeHash");
+  },
+);
+
+it(
+  "`verify` 核 meta 的执行方式:存档写 stub 与本次真沙箱不符即退 1,不静默换",
+  { timeout: 120_000 },
+  () => {
+    const [replayPath, root] = matchToReplay();
+    editReplay(replayPath, (lines) => {
+      const meta = lines[0];
+      if (meta === undefined) {
+        throw new Error("回放没有 meta 行");
+      }
+      // 形状仍合法(stub 那一支要求五个沙箱栏全为 null),但与本次真沙箱执行不符。
+      meta["runner"] = "stub";
+      for (const field of [
+        "quickjsWasiVersion",
+        "sandboxRuntimeHash",
+        "wasiClock",
+        "wasiRandomFill",
+        "wasiTimezoneOffset",
+      ]) {
+        meta[field] = null;
+      }
+    });
+    const verified = run(["verify", replayPath, "--root", root]);
+    expect(verified.status).toBe(1);
+    expect(verified.stderr).toContain("执行方式不一致");
+  },
+);
+
+// ── 真实基准脚本:CLI 公开面完整跑通(match 写回放 → verify 复算) ─────────────────
+
+/**
+ * 本票要求「至少一份**真实基准脚本**」走 CLI 公开面(`match` 写回放、`verify` 复算)全绿。
+ * 它**不是**夹具脚本、**不是**桩:夹具脚本只用得到极少几个注入面符号,而真实基准脚本要用
+ * 完整注入面——它能跑通,就是「注入面铺全」那张票的独立证据(见 spec《Solution》)。
+ * 执行体取 `benchmarks/<舱>/script.js` 这份**入库产物**(真沙箱编译执行的那一份)。
+ */
+it(
+  "真实基准脚本 cell-a:match 写回放 → verify 复算一致,退出 0(真沙箱)",
+  { timeout: 120_000 },
+  () => {
+    const inputPath = writeMatchInput({ cell: "cell-a-melee-pressure" });
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const matched = run(["match", inputPath, "--root", root]);
+    expect(matched.status, matched.stderr).toBe(0);
+
+    const replayPath = join(inputPath, "..", "replay.jsonl");
+    const lines = readFileSync(replayPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    // 真沙箱的一整场:meta 在前、600 个 tick、末行 result。
+    expect(lines[0]?.["type"]).toBe("meta");
+    expect(lines[0]?.["runner"]).toBe("quickjs");
+    expect(lines.at(-1)?.["type"]).toBe("result");
+    expect(lines.length).toBeGreaterThan(2);
+
+    // 复算:按 input.json 重新执行,逐 tick 与末行都一致。
+    const verified = run(["verify", replayPath, "--root", root]);
+    expect(verified.status, verified.stderr).toBe(0);
+    expect(verified.stdout).toContain("逐项一致");
+  },
+);
+
+/**
+ * 三份基准脚本作为夹具在真沙箱里各跑完整场:**含 `cell-c`**。
+ *
+ * `cell-c`(占点不采集)在真规则下**不累积占领进度**——它的占领机制是猜的(契约 §5 未排期),
+ * 那笔账归「占领契约补齐」节点,不是本 feature 的缺口(spec《Out of Scope》)。本票要证的是
+ * 它**仍能跑完**(产出合法 result 行),不假装它不存在,也不被它拖住。
+ */
+const BENCHMARK_CELLS = [
+  "cell-a-melee-pressure",
+  "cell-b-expansion-economy",
+  "cell-c-claim-no-harvest",
+] as const;
+
+it.each(BENCHMARK_CELLS)(
+  "真实基准脚本 %s 作为夹具在真沙箱里跑完整场,退出 0",
+  { timeout: 120_000 },
+  (cell) => {
+    const inputPath = writeMatchInput({ cell });
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const matched = run(["match", inputPath, "--root", root]);
+    // 「跑完整场」的判据 = 产出了一份合法的末行 result(规则内结果一律 0)。
+    expect(matched.status, matched.stderr).toBe(0);
+    const lines = readFileSync(join(inputPath, "..", "replay.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines[0]?.["type"]).toBe("meta");
+    expect(lines[0]?.["runner"]).toBe("quickjs");
+    expect(lines.at(-1)?.["type"]).toBe("result");
+  },
+);
+
+// ── 退出码表:引擎故障(2)在真沙箱上的一次实证 ────────────────────────────────
+
+it("`match` 遇到引擎故障(真沙箱宿主 RangeError)退 2,不静默 0", { timeout: 120_000 }, () => {
+  // 深递归栈溢出实测为 host 侧 `RangeError: Maximum call stack size exceeded`
+  // (`isJSException: false`,见 hld §5.0 第 2 行):它既不是 guest 可捕获异常、也不在判罚轨,
+  // 而是引擎故障 → 退出码 2(stderr 另给一行 JSON)。
+  const inputPath = writeMatchInput({
+    script: "function loop(){ return (function f(){ return f(); })(); }\n",
+  });
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const result = run(["match", inputPath, "--root", root]);
+  expect(result.status, result.stderr).toBe(2);
+  expect(result.stderr).toContain("引擎故障");
 });

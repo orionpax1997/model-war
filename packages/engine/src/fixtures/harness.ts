@@ -30,7 +30,7 @@ import type {
 } from "@model-war/replay";
 
 import { runMatch } from "../index.js";
-import type { StubStrategy } from "../runner/stub.js";
+import { stubRunner, type StubStrategy } from "../runner/stub.js";
 import type { GameState, PlayerIndex } from "../world/state.js";
 
 /** 四个座位,下标即 `playerIndex`(hld §2.3)。 */
@@ -87,9 +87,16 @@ export const playMatch = (input: FixtureMatchInput): FixtureMatch => {
     seed: input.seed,
     head: { runner: "stub", timezoneOffset: "+00:00", mapHash: FIXTURE_MAP_HASH },
     players: proxyPlayers(),
-    strategies: input.strategies,
+    // 夹具走桩路径:每个座位用一份 `stubRunner` 把普通 TS 策略包成执行器(不经 VM)。
+    runners: input.strategies.map((strategy) => stubRunner(strategy)),
+    // 桩不启用任何预算轨;观测出口也不需要(桩不产出观测)。
+    budget: {},
     sink: { write: (line) => void lines.push(line) },
   });
+  if (outcome.status !== "completed") {
+    // 桩执行器不装墙钟硬超时回调,故它交不出故障位。真出现了就是引擎缺陷,响亮地失败。
+    throw new Error("夹具对局遇到不确定超时——桩路径不应产生故障位(引擎缺陷)");
+  }
   return {
     lines,
     parsed: lines.map((line) => JSON.parse(line) as ReplayLine),

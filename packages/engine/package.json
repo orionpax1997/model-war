@@ -10,9 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./runner": {
+      "types": "./dist/runner/quickjs.d.ts",
+      "default": "./dist/runner/quickjs.js"
     }
   },
   "dependencies": {
-    "@model-war/replay": "workspace:*"
+    "@model-war/replay": "workspace:*",
+    "quickjs-wasi": "3.6.2"
   }
 }

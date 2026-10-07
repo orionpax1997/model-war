@@ -16,7 +16,7 @@
  *    面向模型层是渲染后的短句,含 JSON 指针,并**对同类错误合并成一行**
  *    (生成管线的五轮迭代预算撑不撑得住,取决于这个合并)。
  *
- * 本文件已有五份形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放末行 `result`),走的是**同一个 Ajv 实例、
+ * 本文件已有七份形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放 meta 行 / 回放末行 `result` / 观测行),走的是**同一个 Ajv 实例、
  * 同一套投影与合并渲染**。新增一种数据形状是「再加一个 `validateXxx` + 它的装载期断言」,
  * 不是新写一份校验器:真正的风险不是校验点少,而是日后有人为了让别的包也能校验而手写一份
  * 形状 if —— 那才是第二真源。
@@ -31,6 +31,8 @@ import {
   ARCHIVE_META_JSON_SCHEMA,
   MAP_JSON_SCHEMA,
   MATCH_INPUT_JSON_SCHEMA,
+  OBSERVATION_LINE_JSON_SCHEMA,
+  REPLAY_META_LINE_JSON_SCHEMA,
   REPLAY_RESULT_LINE_JSON_SCHEMA,
   RULESET_JSON_SCHEMA,
   RULESET_UNIT_KEYS,
@@ -40,6 +42,8 @@ import {
   type JsonValue,
   type MapDefinition,
   type MatchInput,
+  type ObservationLine,
+  type ReplayMetaLine,
   type ReplayResultLine,
   type Ruleset,
   type UnitStats,
@@ -122,6 +126,14 @@ export type ReplayResultLineValidation =
   | { readonly ok: true; readonly result: ReplayResultLine }
   | ValidationRejection;
 
+export type ReplayMetaLineValidation =
+  | { readonly ok: true; readonly meta: ReplayMetaLine }
+  | ValidationRejection;
+
+export type ObservationLineValidation =
+  | { readonly ok: true; readonly observation: ObservationLine }
+  | ValidationRejection;
+
 // `allErrors: true` 是合并的前提:默认的 fail-fast 只报第一条错,
 // 面向模型层就退化成「每次回喂只修一个错」,五轮预算必被吃光。
 const ajv = new Ajv({ allErrors: true });
@@ -136,7 +148,12 @@ const checkRulesetShape = ajv.compile(RULESET_JSON_SCHEMA as SchemaObject);
 // 也在这里编译(同一实例)。
 const checkArchiveMetaShape = ajv.compile(ARCHIVE_META_JSON_SCHEMA as SchemaObject);
 const checkMatchInputShape = ajv.compile(MATCH_INPUT_JSON_SCHEMA as SchemaObject);
+// 回放的两行(meta / 末行 `result`)也在这里编译(同一实例)。`meta` 行是 `verify` 的装载期入口:
+// 执行方式 / 版本 / hash / 三件套的耦合由 JSON Schema 的 if/then 表达,ajv 一层就够。
+const checkReplayMetaShape = ajv.compile(REPLAY_META_LINE_JSON_SCHEMA as SchemaObject);
 const checkReplayResultShape = ajv.compile(REPLAY_RESULT_LINE_JSON_SCHEMA as SchemaObject);
+// 观测行:回放之外那份 `observations.jsonl` 的一行(墙钟软限 / 内存压力两类只披露的观测)。
+const checkObservationShape = ajv.compile(OBSERVATION_LINE_JSON_SCHEMA as SchemaObject);
 
 const MAJOR_OF_VERSION = /^v([0-9]+)$/;
 
@@ -640,6 +657,27 @@ export const validateMatchInput = (
   return { ok: true, input };
 };
 
+// ── 回放 meta 行(hld §7.5)──────────────────────────────────────────────────────
+
+/**
+ * 校验一份回放 JSONL 的**第 1 行 `meta`**(`verify` 的装载期入口)。
+ *
+ * 形状与耦合的家都在真源包 `packages/schema/src/replay-line.ts`:类型 `ReplayMetaLine`
+ * (判别联合)与 JSON Schema `REPLAY_META_LINE_JSON_SCHEMA`(`runner` 与五个沙箱栏的耦合由
+ * `if/then` 表达)。本函数是**读入端校验**那一层:纯函数、不读盘、不碰退出码。
+ *
+ * 与另几个校验器同一条缝:ajv 一层就够,没有跨字段的装载期断言(那类判据是纯结构之外的,
+ * 如「meta 的读数与本次执行是否一致」归 `verify`,不在这个纯函数里)。
+ */
+export const validateReplayMetaLine = (value: JsonValue): ReplayMetaLineValidation => {
+  if (!checkReplayMetaShape(value)) {
+    return rejectionOf((checkReplayMetaShape.errors ?? []).map(toMachineDiagnostic));
+  }
+
+  // ajv 已经保证十三栏齐、类型对、判别耦合成立,故这次认作 `ReplayMetaLine` 是安全的。
+  return { ok: true, meta: value as ReplayMetaLine };
+};
+
 // ── 回放末行 result(hld §7.5)──────────────────────────────────────────────────
 
 /**
@@ -667,4 +705,24 @@ export const validateReplayResultLine = (value: JsonValue): ReplayResultLineVali
 
   // ajv 已经保证三栏齐、类型对、取值域在枚举内,故这次认作 `ReplayResultLine` 是安全的。
   return { ok: true, result: value as ReplayResultLine };
+};
+
+// ── 观测行(09 票:observations.jsonl 的一行)─────────────────────────────────────
+
+/**
+ * 校验一行观测。形状的家在真源包 `packages/schema/src/observation-line.ts`
+ * (`ObservationLine` 与 `OBSERVATION_LINE_JSON_SCHEMA`)。
+ *
+ * 与另几份校验器同一条缝:纯函数、不读盘、不碰退出码。这份形状没有跨字段的装载期断言:
+ * 六栏的形状、`kind` 的两值枚举、`value`/`limit` 的非负整数都在 JSON Schema 的表达力之内,
+ * ajv 一层就够。「每玩家每类只记首条」是**写出侧的去重**(它不在单行的形状里),由
+ * `apps/cli/src/match/observations.ts` 的纯函数与它的单测钉住,不在这里。
+ */
+export const validateObservationLine = (value: JsonValue): ObservationLineValidation => {
+  if (!checkObservationShape(value)) {
+    return rejectionOf((checkObservationShape.errors ?? []).map(toMachineDiagnostic));
+  }
+
+  // ajv 已经保证六栏齐、类型对、取值域在枚举内,故这次认作 `ObservationLine` 是安全的。
+  return { ok: true, observation: value as ObservationLine };
 };

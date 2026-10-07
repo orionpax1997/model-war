@@ -60,3 +60,20 @@ it("参赛脚本的编译产物入库:脚本 tsconfig 的 outDir 落在 dist 之
   // 反面:同一个产物换个目录名就入库不了。这条不是装饰,它是上面那条成立的原因。
   expect(isIgnored("dist/probe.js")).toBe(true);
 });
+
+it("沙箱 runtime bundle 产物入库:落点不在任何 dist/ 下", () => {
+  // 回放 meta 那一栏 `sandboxRuntimeHash` 必须能被第三方凭存档复算,前提是产物是提交物——
+  // 所以它的落点必须过得了 git check-ignore(与 script-products 同一条纪律,ADR 0007)。
+  expect(isIgnored("packages/engine/sandbox-runtime/runtime.iife.js")).toBe(false);
+  // 反面:同一份产物若落在 dist/ 下就被忽略,入库无从谈起。
+  expect(isIgnored("packages/engine/sandbox-runtime/dist/runtime.iife.js")).toBe(true);
+});
+
+it("沙箱行为探针输出入库:落点不被忽略", () => {
+  // 探针输出落盘的唯一理由是「可复核」:指得出某个读数出自哪次运行。若落点被 `.gitignore` 吞掉,
+  // 它就又变成 spike 里那个「引用了输出、而输出无处可查」的缺口(票 10)。
+  expect(isIgnored(".scratch/sandbox-executor/probe-output/probes.txt")).toBe(false);
+  expect(
+    isIgnored(".scratch/sandbox-executor/probe-output/probe-03-interrupt-granularity.txt"),
+  ).toBe(false);
+});

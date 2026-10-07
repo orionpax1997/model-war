@@ -13,7 +13,7 @@ import { expect, it } from "vitest";
 import type { MapDefinition, ReplayLine, Ruleset } from "@model-war/replay";
 
 import { runMatch } from "./index.js";
-import type { StubStrategy } from "./runner/stub.js";
+import { stubRunner, type StubStrategy } from "./runner/stub.js";
 
 /**
  * 本文件在 `packages/engine/src/`,到仓库根是三层:`src` → `engine` → `packages` → 根。
@@ -26,6 +26,9 @@ const MAP = JSON.parse(read("maps/open-clash.json")) as MapDefinition;
 
 /** 空策略:什么都不交回,于是世界空转——本票要的正是这一局。 */
 const idle = (): StubStrategy => () => [];
+
+/** 四个座位的空桩执行器。 */
+const idleRunners = () => [0, 1, 2, 3].map(() => stubRunner(idle()));
 
 const collect = () => {
   const lines: string[] = [];
@@ -47,7 +50,8 @@ it("跑完一整场到超时:meta 行在前、600 个 tick 行、result 行收�
     seed: 20260101,
     head: { runner: "stub", timezoneOffset: "+08:00", mapHash: "a".repeat(64) },
     players,
-    strategies: [idle(), idle(), idle(), idle()],
+    runners: idleRunners(),
+    budget: {},
     sink,
   });
 
@@ -56,6 +60,9 @@ it("跑完一整场到超时:meta 行在前、600 个 tick 行、result 行收�
   expect(lines).toHaveLength(1 + RULESET.tickLimit + 1);
   expect(parsed[0]?.type).toBe("meta");
   expect(parsed.at(-1)?.type).toBe("result");
+  if (outcome.status !== "completed") {
+    throw new Error("桩路径不应产生故障位");
+  }
   expect(outcome.tickCount).toBe(RULESET.tickLimit);
   // tick 行从 0 到 599,逐个不缺不多(少一格就说明有一 tick 没被结算或没被写出)。
   const tickNumbers = parsed
@@ -78,10 +85,14 @@ it("末行 result:空转对局按 gdd 是全部并列的超时(不是空排名�
     seed: 1,
     head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "b".repeat(64) },
     players,
-    strategies: [idle(), idle(), idle(), idle()],
+    runners: idleRunners(),
+    budget: {},
     sink,
   });
-  const result = outcome.result;
+  const result = outcome.status === "completed" ? outcome.result : undefined;
+  if (result === undefined) {
+    throw new Error("桩路径不应产生故障位");
+  }
   expect(result.reason).toBe("timeout");
   // 全部并列是空转对局的**诚实答案**(四方领土分相同),而空数组会被叙事战报读成「打完了」。
   expect(result.rankings).toEqual([1, 1, 1, 1]);
@@ -99,7 +110,8 @@ it("meta 行落一次且在第一个 tick 之前;桩执行器的四个沙箱栏�
     seed: 20260101,
     head: { runner: "stub", timezoneOffset: "+08:00", mapHash: "c".repeat(64) },
     players,
-    strategies: [idle(), idle(), idle(), idle()],
+    runners: idleRunners(),
+    budget: {},
     sink,
   });
   const metaLines = lines.filter((line) => JSON.parse(line).type === "meta");
@@ -119,7 +131,8 @@ it("同种子两次跑,回放逐行相同(复算的前提:确定性)", () => {
     seed: 20260101,
     head: { runner: "stub" as const, timezoneOffset: "+08:00" as const, mapHash: "d".repeat(64) },
     players,
-    strategies: [idle(), idle(), idle(), idle()],
+    runners: idleRunners(),
+    budget: {},
   };
   runMatch({ ...params, sink: first.sink });
   runMatch({ ...params, sink: second.sink });

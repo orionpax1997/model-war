@@ -1,0 +1,54 @@
+沙箱行为复验探针 · 2026-10-06
+冻结版本组合：quickjs-wasi@3.6.2 / Node 大版本 24 / Node v24.15.0 / linux-x64
+探针输出落盘：.scratch/sandbox-executor/probe-output/
+本次运行环境：Node 24.15.0 / linux-x64
+
+=== 探针 01 script-entry-contract（docs/hld.md:563） ===
+── 单文件 script-mode 产物可载入，loop 是 function 且可调用 ──
+✓ loop 是 function：typeof loop = function
+✓ callFunction(loop) 调得动：返回 1
+✓ 带 export 的产物载入期即 SyntaxError：SyntaxError: unsupported keyword: export
+✓ 带 import 的产物载入期即 SyntaxError：SyntaxError: Unexpected identifier 'x'
+
+=== 探针 02 deep-recursion（docs/hld.md:564） ===
+── 深递归溢出是 host 侧 RangeError，不是 JSException，且 VM 可续用 ──
+✓ 溢出抛 host RangeError：RangeError: Maximum call stack size exceeded: RangeError
+✓ isJSException === false（host 异常，guest 吞不掉）：isJSException = false
+✓ message 为 Maximum call stack size exceeded：Maximum call stack size exceeded
+✓ VM 溢出后仍可续用：eval 1+1
+✓ executePendingJobs 返回 0（无残留 job）：drain 到不动点
+
+=== 探针 03 interrupt-granularity（docs/hld.md:565） ===
+── 粒度：每 5000 次控制流事件一次回调（差分测量，与相位无关） ──
+✓ 多 50000 次回边恰好多 10 次回调：实测差分 10 次回调（每 5000 次事件一格）
+── 中断语义：host InternalError，guest try/catch 体不执行，VM 续用 ──
+✓ 中断以 host InternalError: interrupted 呈现：InternalError: interrupted
+✓ guest try/catch 体不执行：__ran = "start"
+✓ VM 中断后仍可续用：回调触发 3 次
+── 计时：纯计数回调的拖慢落在区间 ±10% ──
+✓ 拖慢绝对值 ≤ 10%（计时类判据用区间）：交错采样中位拖慢 -6.04%（无回调 258.8ms / 计数回调 243.2ms；本轮触发 4401 次）
+
+=== 探针 04 memory-reading（docs/hld.md:566） ===
+── 读数口径：getMemoryUsage() 的字段与空 VM 基线 ──
+✓ 有 mallocSize 字段（判据读数）：mallocSize = 75128
+✓ 有 objCount 字段，没有 objectCount（对象数是 objCount）：objCount = 187，objectCount 不存在
+✓ 空 VM 基线 mallocSize === 75128：实测 75128
+✓ 空 VM 基线 memoryUsedSize === 64098：实测 64098
+✓ mallocSize > memoryUsedSize（后者不含空闲池，不作判据）：75128 > 64098
+── 封顶：memoryLimit = 8388608 字节时的表现 ──
+✓ 小额分配成功：new Array(100000)
+✓ 超限为可捕获的 InternalError: out of memory：InternalError: out of memory
+✓ 超限后读数不越过 memoryLimit（封顶 = limit − 最大单次分配）：实测 1181636 < 8388608
+✓ VM 超限后仍可续用：eval 7*6
+
+=== 探针 05 bridge-deletion（docs/hld.md:567） ===
+── 删桥后：枚举不到、捞不回来，闭包通道仍可用 ──
+✓ 按 __ 前缀枚举为空：枚举到 []
+✓ typeof __bridge === 'undefined'：typeof = undefined
+✓ '__bridge' in globalThis === false（捞不回来）：in 运算
+✓ 闭包通道仍可用：捕获的引用照常返回
+✓ 宿主仍可经 handle 调桥：返回 123
+✓ 越权是普通 ReferenceError：ReferenceError: __bridge is not defined
+✓ guest 吞掉时宿主零痕迹（无异常逃逸）：try/catch 吞掉后照常继续
+
+=== 汇总：30/30 项通过 ===

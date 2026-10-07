@@ -23,7 +23,8 @@ import { initialContext, type Step, type TickContext } from "./context.js";
 import type { IssuedIntent } from "./intents.js";
 import type { TickSink } from "../replay-writer/index.js";
 import type { RulesetView } from "../ruleset-loader/index.js";
-import type { SeatRunner } from "../runner/index.js";
+import type { ObservationSink, RunnerFault, SeatRunner } from "../runner/index.js";
+import type { BudgetConfig } from "../budget.js";
 import type { GameState } from "../world/state.js";
 import { step0Dispatch } from "./steps/step0-dispatch.js";
 import { step1Validate } from "./steps/step1-validate.js";
@@ -64,28 +65,41 @@ export type TickResult = {
   readonly intents: readonly IssuedIntent[];
   /** 本 tick 按座位计的寻路调用量(票 04)。预算层的输入,本层不判罚。 */
   readonly pathfindingCalls: readonly number[];
+  /**
+   * 步 0 置上的故障位(目前只有墙钟硬超时 `uncertain-timeout`),没有时为 `null`。
+   * 非空即本 tick 作废:`runMatch` 见它即停並把整场标为不确定超时,不写末行 `result`。
+   */
+  readonly fault: RunnerFault | null;
 };
 
 /**
  * 结算一个 tick。
  *
  * `runners` 按 `playerIndex 0..3` 对齐(下标即座位),`sink` 收步 6 写出的那一行。
+ * `observations` 是可选的观测出口:缺席时那两类观测静默丢弃(引擎单测不必关心它)。
+ * `budget` 是可选的预算配置:缺席即不启用任何预算轨(步 5 的淘汰判定因此不生效)。
  * 返回值是**新状态**:调用方拿着旧状态继续读不算错,但下一 tick 必须用返回值(hld §4.1)。
+ *
+ * **故障短路**:步 0 置上 `fault` 后(墙钟硬超时),reduce 不再往下走——本 tick 不写回放行、
+ * 不产生事件也不产生终局。这是「作废而非判罚」在管线里的落点(见 `context.ts` 与步 0 头注)。
  */
 export const processTick = (
   state: GameState,
   runners: readonly SeatRunner[],
   ruleset: RulesetView,
   sink: TickSink,
+  observations?: ObservationSink,
+  budget: BudgetConfig = {},
 ): TickResult => {
   const context = STEPS.reduce<TickContext>(
-    (now, step) => step(now),
-    initialContext(ruleset, runners, sink, createEventCollector(), state),
+    (now, step) => (now.fault === null ? step(now) : now),
+    initialContext(ruleset, runners, sink, createEventCollector(), state, observations, budget),
   );
   return {
     state: context.state,
     events: context.collector.events(),
     intents: context.intents,
     pathfindingCalls: context.pathfindingCalls,
+    fault: context.fault,
   };
 };

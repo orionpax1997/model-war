@@ -53,6 +53,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { afterAll, expect, it } from "vitest";
+import { SANDBOX_RUNTIME_ARTIFACT_PATH } from "@model-war/schema";
 
 import {
   VIOLATING_SCRIPT_PROBE_PATH,
@@ -172,6 +173,23 @@ it("工具版本耦合断言:配套为 0,错位为 1", () => {
   const ranged = run("node", [...gate, "^7.0.0", "7.0.2003"]);
   expect(ranged.status, "范围锁版必须非零退出").toBe(1);
   expect(ranged.output, ranged.output).toContain("精确锁版");
+});
+
+// ── quickjs-wasi 版本耦合:改根依赖钉的版本号即红 ──────────────────────────
+
+it("quickjs-wasi 版本耦合断言:配套为 0,改根钉版即 1", () => {
+  const gate = ["packages/tools/src/gate/run-quickjs-coupling-gate.ts"] as const;
+  const aligned = run("node", [...gate]);
+  expect(aligned.status, aligned.output).toBe(0);
+  expect(aligned.output, aligned.output).toContain("quickjs-wasi 版本耦合 ok");
+
+  // 反例:把根依赖钉的版本号改掉——按新版本组合复验之前,这条必须立刻红。
+  const bumped = run("node", [...gate, "3.7.0"]);
+  expect(bumped.status, "改根钉版后必须非零退出").toBe(1);
+  expect(bumped.output, bumped.output).toContain("根依赖与冻结常量一致");
+  // 报错信息要直接告诉人跑哪个脚本、把数字写回哪一节。
+  expect(bumped.output, bumped.output).toContain("pnpm run probes:sandbox");
+  expect(bumped.output, bumped.output).toContain("docs/hld.md §5.0");
 });
 
 // ── 禁浮点门禁反例 ───────────────────────────────────────────────────────────
@@ -1136,6 +1154,48 @@ it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
   // 它要 spawn 一次 tsc,与快门禁的零构建性质不相容(理由同 check:drift)。
   expect(manifest().scripts["check:quick"]).not.toContain("check:bench");
   expect(manifest().scripts["check:types"]).not.toContain("check:bench");
+});
+
+// ── runtime bundle 门禁反例:手改入库产物一个字节即红 ─────────────────────────
+
+/**
+ * 反例手法:改入库产物里的**一个字节**,不改源码。
+ *
+ * 选产物而不是源码:改源码那一步,任何「产物是构建出来的」机制都会跟着变红,
+ * 证明不了「入库的产物没人再动过」这一件——而那正是产物入库的理由(第三方凭存档复算)。
+ */
+it("runtime bundle 门禁:手改入库产物一个字节 → 红,按字节还原 → 绿", () => {
+  const product = `${repoRoot}${SANDBOX_RUNTIME_ARTIFACT_PATH}`;
+  const committed = readFileSync(product);
+
+  const clean = script("check:runtime");
+  expect(clean.status, clean.output).toBe(0);
+  expect(clean.output, clean.output).toContain("runtime bundle 门禁:绿");
+
+  try {
+    // 只多一个换行:内容看着没变而字节变了——正是「手改过」与「构建出来的」的分界。
+    writeFileSync(product, `${committed.toString("utf8")}\n`, "utf8");
+    const drifted = script("check:runtime");
+    expect(drifted.status, "入库的产物被手改了,门禁必须非零退出").not.toBe(0);
+    expect(drifted.output, drifted.output).toContain("与重新构建的结果不一致");
+    expect(drifted.output, drifted.output).toContain("runtime bundle 门禁:红");
+  } finally {
+    writeFileSync(product, committed);
+  }
+
+  const restored = script("check:runtime");
+  expect(restored.status, `按字节还原后没有回到绿:\n${restored.output}`).toBe(0);
+});
+
+it("runtime bundle 门禁挂在全量门禁末尾,且不进快门禁", () => {
+  // 与漂移检查、基准产物门禁同一位置纪律:提交内容对不对的那几道复核都在末尾。
+  expect(tailSteps(), "runtime bundle 门禁不在全量门禁末尾那一组复核里").toContain(
+    "pnpm run check:runtime",
+  );
+
+  // 它要 spawn 一次 esbuild,与快门禁的零构建性质不相容(理由同 check:drift)。
+  expect(manifest().scripts["check:quick"]).not.toContain("check:runtime");
+  expect(manifest().scripts["check:types"]).not.toContain("check:runtime");
 });
 
 // ── 契约自证门禁:按需,不在 check 里 ────────────────────────────────────────

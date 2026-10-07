@@ -71,7 +71,11 @@ export const manifest = (): Manifest =>
  * 契约自证门禁**不在**这份清单里:它按需跑(自己的脚本与 `test:slow` 的反例分属独立入口),
  * 理由与断言见 `gates.test.ts` 的 `契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`。
  */
-export const CONTENT_RECHECKS = ["pnpm run check:drift", "pnpm run check:bench"] as const;
+export const CONTENT_RECHECKS = [
+  "pnpm run check:drift",
+  "pnpm run check:bench",
+  "pnpm run check:runtime",
+] as const;
 
 /** 全量门禁末尾那一组(取与复核清单等长的一段)。 */
 export const tailSteps = (): readonly string[] =>

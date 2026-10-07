@@ -10,16 +10,17 @@
  * ── 为什么入参是**已物化**的对象而不是一条路径 ──
  *
  * hld §2.2.8 把磁盘 I/O 排除在 engine 之外,校验(ajv)归 `apps/cli` 那个唯一实例。所以本函数
- * 吃的是「读盘 + 校验之后」的世界:规则集视图、地图、种子、四份存档引用、四个策略。路径怎么来、
+ * 吃的是「读盘 + 校验之后」的世界:规则集视图、地图、种子、四份存档引用、四个执行器。路径怎么来、
  * 哈希对不对得上、规则集版本三处一不一致——那些都在**装载期**由上层判完,判不过就不进本函数。
- * 于是「装载期拒跑(退出码 2)」与「跑起来(退出码 0/1)」的分界正好落在这一行。
+ * 于是「装载期拒跑(退出码 1)」与「跑起来(退出码 0/2)」的分界正好落在这一行。
  *
- * ── 为什么策略是**普通 TS 函数**而不是脚本文本 ──
+ * ── 为什么收的是**已构造好的执行器**而不是策略 ──
  *
- * 见 `runner/stub.ts` 的头注:桩执行器的策略是 TS 函数,不经字符串、不经 VM。冻结脚本的**文本**
- * 怎么变成一个策略,是沙箱执行器那一格的事(它才有编译器与 QuickJS)。本票交付的是脊柱本身:
- * 一个空转的对局跑满 600 tick 到超时,回放端到端可渲染。策略暂由调用方给(演示态给的是空策略),
- * 真沙箱那一格落地后由它把脚本文本变成同签名的函数,`runMatch` 这一行不用动。
+ * 本函数对执行器的认知止于 `setSnapshot` / `drainIntents` 两条方法(hld §4.5,ADR-0005)。
+ * 建 VM 与释放归**组装层**:`stubRunner`(测试)与真沙箱执行器是同一个缝的两个适配器。
+ * 预算配置与可选观测出口一并收下:解析(规则集里的未定值→启用的轨)也在组装层,引擎不认识
+ * 「未定值」。预算配置透传进结算管线的 `TickContext`(步 5 的淘汰判定读 `exceptionTickLimit`);
+ * 事件/API 两轨的阈值判定在执行器侧(它在构造时就拿到阈值,与 `budget` 是同一份组装层解析结果)。真沙箱执行器把脚本文本变成 `SeatRunner` 的那一步在引擎之外,本函数不参与。
  *
  * ── 终局行怎么来的 ──
  *
@@ -27,21 +28,22 @@
  * 循环跑到 `state.outcome !== null` 为止:写 `outcome` 的那一 tick 就是收官那一 tick。
  * 「收官了却没有 `outcome`」在本函数里是一个**不该发生**的状态(步 5 / 步 7 每 tick 都判),
  * 出现即抛,而不是伪造一个「超时 + 全部并列」的兜底——那会让引擎故障伪装成一局正常超时。
+ *
+ * **另一条出口是故障**:步 0 交回硬超时故障位时,本函数不写末行、直接交回一个
+ * `uncertain-timeout` 状态。它使整场作废而非判罚,是唯一一个「跑完了但没有结果行」的出口。
  */
 
 import type { MapDefinition, ReplayPlayerRef, ReplayResultLine, Ruleset } from "@model-war/replay";
 
+import type { BudgetConfig } from "./budget.js";
 import { processTick } from "./processor/index.js";
 import { createRandom, fillVariantWalls } from "./driver/random.js";
-import { stubRunner, type StubStrategy } from "./runner/stub.js";
+import type { ObservationSink, SeatRunner } from "./runner/index.js";
 import { buildMetaLine, serializeMetaLine, type MetaHead } from "./replay-writer/meta-line.js";
 import type { TickSink } from "./replay-writer/sink.js";
 import { loadRuleset, type RulesetView } from "./ruleset-loader/index.js";
 import { createInitialState } from "./world/initial-state.js";
 import type { GameState } from "./world/state.js";
-
-/** 四个座位,下标即 `playerIndex`(hld §2.3 的串行执行序)。 */
-const SEATS = [0, 1, 2, 3] as const;
 
 /**
  * `runMatch` 的入参。每一项都**已经过装载期校验**:规则集版本三处一致、地图合法、四份存档
@@ -56,42 +58,60 @@ export type RunMatchParams = {
   readonly seed: number;
   /** meta 行里**由本函数不知道**的那几栏:时区、地图哈希、执行器读数。判别在 `runner` 上。 */
   readonly head: MetaHead;
-  /** 四份存档引用(模型 / 存档路径 / 座位)。顺序与 `SEATS` 对齐,进 meta 行。 */
+  /** 四份存档引用(模型 / 存档路径 / 座位)。顺序与座位对齐,进 meta 行。 */
   readonly players: readonly ReplayPlayerRef[];
-  /** 四个座位的参赛策略(普通 TS 函数,见文件头注)。空转对局给四个空策略。 */
-  readonly strategies: readonly StubStrategy[];
+  /**
+   * 四个座位**已构造好**的执行器(下标即座位序)。建 VM 与释放归**组装层**——引擎对执行器的
+   * 认知止于 `setSnapshot` / `drainIntents` 两条方法,不知道 VM 存在。
+   */
+  readonly runners: readonly SeatRunner[];
+  /** 预算配置(已启用的轨 + 阈值)。字段缺席即该轨不启用。透传进 `TickContext`(淘汰判定)。 */
+  readonly budget: BudgetConfig;
   /** 回放写出的唯一出口。本函数**不做磁盘 I/O**(hld §2.2.8),落到哪由上层决定。 */
   readonly sink: TickSink;
+  /** 可选观测出口。缺席时墙钟软限与内存压力两类观测静默丢弃。 */
+  readonly observations?: ObservationSink;
 };
 
-/** `runMatch` 的返回值:终局那一行 + 收官时的状态 + 跑了多少 tick。 */
-export type RunMatchResult = {
-  /** 回放末行 `result`(hld §7.5)。 */
-  readonly result: ReplayResultLine;
-  /**
-   * 收官时的完整状态。
-   *
-   * **`outcome` 在这一刻必已置**(它就是循环的退出条件),与 `result` 是同一份终局的两条读法:
-   * `result` 是它的行格式投影,`finalState` 是引擎侧的原样。
-   */
-  readonly finalState: GameState;
-  /** 结算过的 tick 数。超时收官时它等于 `ruleset.tickLimit`。 */
-  readonly tickCount: number;
-};
+/**
+ * 预算配置:组装层把规则集里**已启用**的轨与阈值解析好后传进来。
+ *
+ * 形状的家在 `./budget.ts`(它同时是 `TickContext` 那一格的类型);这里再导出一次,让
+ * 只认识 `runMatch` 入参的调用方不必多 import 一个模块。字段缺席即该轨不启用——解析归组装层,
+ * 引擎不认识「未定值」(见 `budget.ts` 头注)。
+ */
+export type { BudgetConfig } from "./budget.js";
 
-/** 四个座位必须各有一个策略。少一个在装载期就该拒,不该在这里补一个空的。 */
-const strategiesOf = (strategies: readonly StubStrategy[]) => {
-  const runners = SEATS.map((seat) => {
-    const strategy = strategies[seat];
-    if (strategy === undefined) {
-      throw new Error(
-        `座位 ${String(seat)} 没有参赛策略:策略数组必须按 playerIndex 0..3 对齐,长度 4`,
-      );
+/**
+ * `runMatch` 的返回值:一个判别联合。
+ *
+ * ── 为什么是联合而不是「`result` 加一个可选故障位」──
+ *
+ * 硬超时那一局**没有**合法的末行 `result`(整场作废),而把 `result` 写成可选会让每个调用点
+ * 都得记得判一下「这次到底有没有结果」。判别联合把这件事交给编译器:读 `result` 之前必须先
+ * 收窄到 `completed` 那一支(spec《双重计数与墙钟》:作废而非判罚)。
+ */
+export type RunMatchResult =
+  | {
+      readonly status: "completed";
+      /** 回放末行 `result`(hld §7.5)。 */
+      readonly result: ReplayResultLine;
+      /**
+       * 收官时的完整状态。
+       *
+       * **`outcome` 在这一刻必已置**(它就是循环的退出条件),与 `result` 是同一份终局的两条读法:
+       * `result` 是它的行格式投影,`finalState` 是引擎侧的原样。
+       */
+      readonly finalState: GameState;
+      /** 结算过的 tick 数。超时收官时它等于 `ruleset.tickLimit`。 */
+      readonly tickCount: number;
     }
-    return stubRunner(strategy);
-  });
-  return runners;
-};
+  | {
+      /** 墙钟硬超时:整场作废(不判罚、不写末行 `result`),由上层映射到退出码 3。 */
+      readonly status: "uncertain-timeout";
+      /** 硬超时发生的那一 tick。它被中断,没有写回放行(步骤 reduce 在步 0 后短路)。 */
+      readonly tick: number;
+    };
 
 /**
  * 终局行:`state.outcome` 的行格式投影。
@@ -116,12 +136,14 @@ const resultLineOf = (state: GameState): ReplayResultLine => {
 /**
  * 跑完一局:装载 → 开局 → 逐 tick 结算并写行 → 收官写末行。
  *
- * **每 tick 的结算与写行都由 `processTick` 做**(步 6 写那一行),本函数只做编排:把四个
- * 策略包成执行器、逐 tick 把上一 tick 的返回值喂给下一 tick、直到某一步写下了 `state.outcome`。
+ * **每 tick 的结算与写行都由 `processTick` 做**(步 6 写那一行),本函数只做编排:逐 tick 把上一
+ * tick 的返回值喂给下一 tick、直到某一步写下了 `state.outcome`。执行器由调用方**已构造好**传入。
  * 「tick 的结算」这条规则因此**只有一处实现**,本函数不可能与它分叉。
  */
 export const runMatch = (params: RunMatchParams): RunMatchResult => {
-  const { ruleset, map, seed, head, players, strategies, sink } = params;
+  const { ruleset, map, seed, head, players, runners, sink, observations, budget } = params;
+  // `budget` 透传进 `processTick` → `TickContext`:步 5 的淘汰判定读 `exceptionTickLimit`。
+  // 事件/API 两轨的判定在执行器侧(它构造时就拿到阈值),不在管线里。
   const view: RulesetView = loadRuleset(ruleset);
 
   // 种子驱动的变体墙在开局前填一次(hld §7.3「地图 + 种子 → 地形是纯函数」)。这一步曾经缺失:
@@ -129,7 +151,6 @@ export const runMatch = (params: RunMatchParams): RunMatchResult => {
   // 消费顺序由 `fillVariantWalls` 自己保证(槽位声明序),这里只管把填好的地图交给开局。
   const filledMap = fillVariantWalls(createRandom(seed), map).map;
   let state = createInitialState(ruleset, filledMap);
-  const runners = strategiesOf(strategies);
 
   // meta 行:第一 tick 之前落一次(hld §7.5)。十二栏的键序由 `buildMetaLine` 承担;
   // 种子从入参注入(它有**一个家**:对局输入),meta 行是它的投影而不是第二个可任填的地方。
@@ -138,12 +159,17 @@ export const runMatch = (params: RunMatchParams): RunMatchResult => {
   let tickCount = 0;
   // `state.outcome !== null` 就是收官:写它的那一 tick 是最后结算的一 tick。
   while (state.outcome === null) {
-    const ticked = processTick(state, runners, view, sink);
+    const ticked = processTick(state, runners, view, sink, observations, budget);
+    if (ticked.fault !== null) {
+      // 墙钟硬超时:作废而非判罚。本 tick 没写回放行(processTick 在步 0 后短路)、也不写末行
+      // `result`——它不是一个「合法的负/胜/超时」,而是「这一局的结果不可信」。
+      return { status: "uncertain-timeout", tick: ticked.state.tick };
+    }
     state = ticked.state;
     tickCount = ticked.state.tick;
   }
 
   const result = resultLineOf(state);
   sink.write(JSON.stringify(result));
-  return { result, finalState: state, tickCount };
+  return { status: "completed", result, finalState: state, tickCount };
 };

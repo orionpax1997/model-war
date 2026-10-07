@@ -18,8 +18,9 @@
  */
 
 import type { RulesetView } from "../ruleset-loader/index.js";
-import type { SeatRunner } from "../runner/index.js";
+import type { ObservationSink, RunnerFault, SeatRunner } from "../runner/index.js";
 import type { TickSink } from "../replay-writer/index.js";
+import type { BudgetConfig } from "../budget.js";
 import type { DrainedIntents, IssuedIntent } from "./intents.js";
 import type { EventCollector } from "./events.js";
 import type { GameState } from "../world/state.js";
@@ -31,8 +32,33 @@ export type TickContext = {
   readonly runners: readonly SeatRunner[];
   /** 输出 sink。步 6 往它写一行;不写盘(hld §2.2.8)。 */
   readonly sink: TickSink;
-  /** 事件收集器,整条管线共用一个。 */
+  /**
+   * 观测出口。**可选**:缺席时另外两类观测静默丢弃。
+   *
+   * 它与 `sink` 平行但独立:观测永远不进回放行、更不进 `stateHash`。放在上下文里而不是步 0 的
+   * 局部量里,与收集器同理——「谁收到观测」整条管线只有一处。
+   */
+  readonly observations: ObservationSink | undefined;
+  /**
+   * 事件收集器,整条管线共用一个。
+   */
   readonly collector: EventCollector;
+  /**
+   * 预算配置(已启用的轨 + 阈值)。整条管线不变。
+   *
+   * 它进上下文是因为**步 5 的淘汰判定要读 `exceptionTickLimit`**:累计异常达上限即该席位判负出局。
+   * 事件/API 两轨的阈值判定**不在管线里**(它们在执行器侧,构造时就拿到阈值)——所以这一栏在
+   * 步 0 只被当作「执行器已经做过的事」的背景,不被重判。字段缺席即该轨不启用。
+   */
+  readonly budget: BudgetConfig;
+  /**
+   * 步 0 的**故障位**。目前只有一种:墙钟硬超时(`uncertain-timeout`)。
+   *
+   * 它在步 0 置上后,`processTick` 的 reduce **短路**——后续步不再跑、本 tick 不写回放行。
+   * 这是「作废而非判罚」(spec《双重计数与墙钟》)在结算管线里的落点:故障不是一条读数,
+   * 不影响状态判断,故它必须让本 tick 停下,而不是带着半个状态继续走完八步。
+   */
+  readonly fault: RunnerFault | null;
   /** 步 0 之后:各座位交回的 intents,按 `playerIndex 0..3` 串行排列。 */
   readonly drained: readonly DrainedIntents[];
   /** 步 1 之后:分组、定序并**带上座位**的 intent(校验的落点;本票只留移动两条)。 */
@@ -58,11 +84,18 @@ export const initialContext = (
   sink: TickSink,
   collector: EventCollector,
   state: GameState,
+  /** 观测出口;缺席即另外两类观测静默丢弃。 */
+  observations?: ObservationSink,
+  /** 预算配置;缺席即不启用任何预算轨(与「组装层传了一个空对象」等价)。 */
+  budget: BudgetConfig = {},
 ): TickContext => ({
   ruleset,
   runners,
   sink,
+  observations,
+  budget,
   collector,
+  fault: null,
   drained: [],
   intents: [],
   pathfindingCalls: [0, 0, 0, 0],

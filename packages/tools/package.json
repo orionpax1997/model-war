@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@model-war/schema": "workspace:*",
-    "oxc-parser": "^0.152.0"
+    "esbuild": "^0.28.2",
+    "oxc-parser": "^0.152.0",
+    "quickjs-wasi": "3.6.2"
   }
 }
