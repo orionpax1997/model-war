@@ -1,322 +1,212 @@
 "use strict";
-// script.ts — rules-v1, strategy A (爆兵压制)
-//
-// Self-contained single file. No imports/exports, no host bridges, integers only.
-//
-// Plan:
-//   - seat comes only from getMyIndex(); kept as one module-level number
-//   - keep a tiny worker floor, then spend everything else on melee
-//   - read each base's producing first; order only when the line is empty
-//   - exactly one unit-level intent per unit per tick: harvest/transfer for
-//     workers, attack-or-advance for combat units; otherwise press a point
-var myIndex = -1;
+// script.ts — 四方 RTS 参赛脚本（策略取向 A：爆兵压制）
+// 单文件自包含；顶层声明入口 loop()。
+// 不含模块语法、动态求值、非确定源或宿主桥。
+// 模块级只保留数值记忆（座位号），其余每 tick 重新查询快照。
+var me = -1;
+var desiredWorkers = 2;
 function loop() {
-    if (myIndex < 0) {
-        myIndex = getMyIndex();
+    if (me < 0) {
+        me = getMyIndex();
     }
-    const me = getMyIndex();
     const players = getObjectsByType("player");
-    const myRow = players[me];
-    if (myRow === undefined) {
+    const self = players[me];
+    if (self === undefined) {
         return;
     }
-    const myUnits = getObjectsByType("unit", { owner: me });
-    const myBases = getObjectsByType("site", { owner: me, kind: "base" });
-    const mySites = getObjectsByType("site", { owner: me, kind: "resource" });
     const allUnits = getObjectsByType("unit");
     const allSites = getObjectsByType("site");
-    // ---- production: read the line, order only if it is empty ----
-    let workerCount = 0;
-    for (let i = 0; i < myUnits.length; i += 1) {
-        const u = myUnits[i];
-        if (u === undefined) {
+    // 玩家级意图：先把每条空产线补上（读 producing，空才下单）。
+    produce(allUnits, allSites, self.resources);
+    // 单位级意图：每个单位本 tick 只提交一条。
+    for (let i = 0; i < allUnits.length; i += 1) {
+        const unit = allUnits[i];
+        if (unit === undefined) {
             continue;
         }
-        if (u.type === "worker") {
-            workerCount += 1;
+        if (unit.owner !== me) {
+            continue;
+        }
+        if (unit.type === "worker") {
+            actWorker(unit, allSites);
+        }
+        else {
+            actFighter(unit, allUnits, allSites);
         }
     }
-    for (let i = 0; i < myBases.length; i += 1) {
-        const b = myBases[i];
-        if (b === undefined) {
+}
+/** 爆兵优先：留够基础农民后，剩余资源全部投入近战。 */
+function produce(allUnits, allSites, resources) {
+    let workers = 0;
+    for (let i = 0; i < allUnits.length; i += 1) {
+        const unit = allUnits[i];
+        if (unit === undefined) {
             continue;
         }
-        if (b.producing !== null && b.producing.type === "worker") {
-            workerCount += 1;
+        if (unit.owner === me && unit.type === "worker") {
+            workers += 1;
         }
     }
-    let budget = myRow.resources;
-    const targetWorkers = 2;
-    for (let i = 0; i < myBases.length; i += 1) {
-        const base = myBases[i];
-        if (base === undefined) {
+    let budget = resources;
+    for (let i = 0; i < allSites.length; i += 1) {
+        const site = allSites[i];
+        if (site === undefined) {
             continue;
         }
-        if (base.producing !== null) {
+        if (site.owner !== me || site.kind !== "base") {
             continue;
         }
-        if (budget < 4) {
+        // 产线已有订单时重复下单会被静默丢弃，所以先读 producing，空才下单。
+        if (site.producing !== null) {
             continue;
         }
-        let buildType = "melee";
-        if (workerCount < targetWorkers) {
-            buildType = "worker";
+        let choice = null;
+        if (workers < desiredWorkers && budget >= 4) {
+            choice = "worker";
         }
-        const cost = costOf(buildType);
-        if (budget < cost) {
+        else if (budget >= 8) {
+            choice = "melee";
+        }
+        if (choice === null) {
             continue;
         }
-        const order = spawnUnit(base.id, buildType);
-        if (isError(order)) {
-            const code = errCode(order);
-            if (code === ERR_NOT_ENOUGH_RESOURCES) {
+        const result = spawnUnit(site.id, choice);
+        if (isError(result)) {
+            // 落在「丢弃」：只丢这一单，不扣款、不计异常，其余意图照常。
+            continue;
+        }
+        if (choice === "worker") {
+            workers += 1;
+            budget -= 4;
+        }
+        else {
+            budget -= 8;
+        }
+    }
+}
+/** 农民：满载就回最近己方基地交付，否则去最近己方资源点采集。 */
+function actWorker(unit, allSites) {
+    if (unit.carrying >= 20) {
+        let adjacentBase = -1;
+        let bestBaseX = 0;
+        let bestBaseY = 0;
+        let bestBaseDist = 1000000;
+        for (let i = 0; i < allSites.length; i += 1) {
+            const site = allSites[i];
+            if (site === undefined) {
                 continue;
             }
-        }
-        else {
-            budget -= cost;
-            if (buildType === "worker") {
-                workerCount += 1;
+            if (site.owner !== me || site.kind !== "base") {
+                continue;
             }
-        }
-    }
-    // ---- one unit-level intent per unit ----
-    for (let i = 0; i < myUnits.length; i += 1) {
-        const u = myUnits[i];
-        if (u === undefined) {
-            continue;
-        }
-        if (u.type === "worker") {
-            actWorker(u, mySites, myBases);
-        }
-        else {
-            actCombat(u, allUnits, allSites);
-        }
-    }
-}
-/** Unit cost in the value table: 4 / 8 / 12 / 16. */
-function costOf(t) {
-    if (t === "worker") {
-        return 4;
-    }
-    if (t === "melee") {
-        return 8;
-    }
-    if (t === "ranged") {
-        return 12;
-    }
-    return 16;
-}
-/** Attack reach in the value table: only the ranged unit gets 2. */
-function attackRangeOf(t) {
-    if (t === "ranged") {
-        return 2;
-    }
-    return 1;
-}
-/** Chebyshev distance, integer only; the same number getRange reports. */
-function cheb(ax, ay, bx, by) {
-    let dx = ax - bx;
-    if (dx < 0) {
-        dx = -dx;
-    }
-    let dy = ay - by;
-    if (dy < 0) {
-        dy = -dy;
-    }
-    if (dx > dy) {
-        return dx;
-    }
-    return dy;
-}
-/** Nearest own base, or null when no base is left. */
-function nearestBase(ux, uy, bases) {
-    let found = false;
-    let bestId = -1;
-    let bestX = 0;
-    let bestY = 0;
-    let bestD = 0;
-    for (let i = 0; i < bases.length; i += 1) {
-        const b = bases[i];
-        if (b === undefined) {
-            continue;
-        }
-        const d = cheb(ux, uy, b.x, b.y);
-        if (!found || d < bestD) {
-            found = true;
-            bestD = d;
-            bestId = b.id;
-            bestX = b.x;
-            bestY = b.y;
-        }
-    }
-    if (!found) {
-        return null;
-    }
-    return { id: bestId, x: bestX, y: bestY };
-}
-/** Nearest own resource site that still has ore, or null. */
-function nearestResource(ux, uy, sites) {
-    let found = false;
-    let bestId = -1;
-    let bestX = 0;
-    let bestY = 0;
-    let bestD = 0;
-    for (let i = 0; i < sites.length; i += 1) {
-        const s = sites[i];
-        if (s === undefined) {
-            continue;
-        }
-        if (s.remaining !== undefined && s.remaining <= 0) {
-            continue;
-        }
-        const d = cheb(ux, uy, s.x, s.y);
-        if (!found || d < bestD) {
-            found = true;
-            bestD = d;
-            bestId = s.id;
-            bestX = s.x;
-            bestY = s.y;
-        }
-    }
-    if (!found) {
-        return null;
-    }
-    return { id: bestId, x: bestX, y: bestY };
-}
-/** Nearest site this player does not own, or null; used to press points. */
-function nearestNonOwned(ux, uy, sites, owner) {
-    let found = false;
-    let bestId = -1;
-    let bestX = 0;
-    let bestY = 0;
-    let bestD = 0;
-    for (let i = 0; i < sites.length; i += 1) {
-        const s = sites[i];
-        if (s === undefined) {
-            continue;
-        }
-        if (s.owner === owner) {
-            continue;
-        }
-        const d = cheb(ux, uy, s.x, s.y);
-        if (!found || d < bestD) {
-            found = true;
-            bestD = d;
-            bestId = s.id;
-            bestX = s.x;
-            bestY = s.y;
-        }
-    }
-    if (!found) {
-        return null;
-    }
-    return { id: bestId, x: bestX, y: bestY };
-}
-/** A worker either fills up at an owned site or delivers adjacent to a base. */
-function actWorker(u, sites, bases) {
-    if (u.carrying >= 20) {
-        const base = nearestBase(u.x, u.y, bases);
-        if (base === null) {
-            return;
-        }
-        if (cheb(u.x, u.y, base.x, base.y) <= 1) {
-            const result = transfer(u.id);
-            if (isError(result)) {
-                const code = errCode(result);
-                if (code === ERR_INVALID_UNIT) {
-                    return;
+            const d = getRange(unit.x, unit.y, site.x, site.y);
+            if (d <= 1) {
+                // 相邻多个己方基地时，交给数值 id 最小的那个。
+                if (adjacentBase < 0 || site.id < adjacentBase) {
+                    adjacentBase = site.id;
                 }
             }
-            return;
-        }
-        const moved = moveTo(u.id, base.x, base.y);
-        if (isError(moved)) {
-            const code = errCode(moved);
-            if (code === ERR_INVALID_UNIT) {
-                return;
+            if (d < bestBaseDist) {
+                bestBaseDist = d;
+                bestBaseX = site.x;
+                bestBaseY = site.y;
             }
         }
-        return;
-    }
-    const site = nearestResource(u.x, u.y, sites);
-    if (site === null) {
-        return;
-    }
-    if (cheb(u.x, u.y, site.x, site.y) <= 1) {
-        const result = harvest(u.id, site.id);
-        if (isError(result)) {
-            const code = errCode(result);
-            if (code === ERR_INVALID_UNIT) {
-                return;
-            }
-        }
-        return;
-    }
-    const moved = moveTo(u.id, site.x, site.y);
-    if (isError(moved)) {
-        const code = errCode(moved);
-        if (code === ERR_INVALID_UNIT) {
+        if (adjacentBase >= 0) {
+            transfer(unit.id);
             return;
         }
+        if (bestBaseDist < 1000000) {
+            moveTo(unit.id, bestBaseX, bestBaseY);
+        }
+        return;
+    }
+    let bestSiteId = -1;
+    let bestSiteX = 0;
+    let bestSiteY = 0;
+    let bestSiteDist = 1000000;
+    for (let i = 0; i < allSites.length; i += 1) {
+        const site = allSites[i];
+        if (site === undefined) {
+            continue;
+        }
+        if (site.owner !== me || site.kind !== "resource") {
+            continue;
+        }
+        if (site.remaining !== undefined && site.remaining <= 0) {
+            continue;
+        }
+        const d = getRange(unit.x, unit.y, site.x, site.y);
+        if (d < bestSiteDist) {
+            bestSiteDist = d;
+            bestSiteId = site.id;
+            bestSiteX = site.x;
+            bestSiteY = site.y;
+        }
+    }
+    if (bestSiteId < 0) {
+        return;
+    }
+    if (bestSiteDist <= 1) {
+        harvest(unit.id, bestSiteId);
+    }
+    else {
+        moveTo(unit.id, bestSiteX, bestSiteY);
     }
 }
-/** A combat unit attacks what is in reach, else closes in, else presses a point. */
-function actCombat(u, allUnits, allSites) {
-    let foundEnemy = false;
-    let enemyId = -1;
-    let enemyX = 0;
-    let enemyY = 0;
-    let enemyD = 0;
+/** 战斗单位：射程内就攻击，否则逼近最近敌人；无敌人时去占最近的非己方点位。 */
+function actFighter(unit, allUnits, allSites) {
+    const range = unit.type === "ranged" ? 2 : 1;
+    let foeId = -1;
+    let foeX = 0;
+    let foeY = 0;
+    let foeDist = 1000000;
     for (let i = 0; i < allUnits.length; i += 1) {
-        const v = allUnits[i];
-        if (v === undefined) {
+        const foe = allUnits[i];
+        if (foe === undefined) {
             continue;
         }
-        if (v.owner === u.owner) {
+        if (foe.owner === me) {
             continue;
         }
-        const d = cheb(u.x, u.y, v.x, v.y);
-        if (!foundEnemy || d < enemyD) {
-            foundEnemy = true;
-            enemyD = d;
-            enemyId = v.id;
-            enemyX = v.x;
-            enemyY = v.y;
+        const d = getRange(unit.x, unit.y, foe.x, foe.y);
+        if (d < foeDist) {
+            foeDist = d;
+            foeId = foe.id;
+            foeX = foe.x;
+            foeY = foe.y;
         }
     }
-    if (foundEnemy) {
-        if (enemyD <= attackRangeOf(u.type)) {
-            const result = attack(u.id, enemyId);
-            if (isError(result)) {
-                const code = errCode(result);
-                if (code === ERR_INVALID_UNIT) {
-                    return;
-                }
-            }
-            return;
+    if (foeId >= 0) {
+        if (foeDist <= range) {
+            attack(unit.id, foeId);
         }
-        const moved = moveTo(u.id, enemyX, enemyY);
-        if (isError(moved)) {
-            const code = errCode(moved);
-            if (code === ERR_INVALID_UNIT) {
-                return;
-            }
+        else {
+            moveTo(unit.id, foeX, foeY);
         }
         return;
     }
-    const site = nearestNonOwned(u.x, u.y, allSites, u.owner);
-    if (site === null) {
-        return;
-    }
-    if (cheb(u.x, u.y, site.x, site.y) === 0) {
-        return;
-    }
-    const moved = moveTo(u.id, site.x, site.y);
-    if (isError(moved)) {
-        const code = errCode(moved);
-        if (code === ERR_INVALID_UNIT) {
-            return;
+    let siteId = -1;
+    let siteX = 0;
+    let siteY = 0;
+    let siteDist = 1000000;
+    for (let i = 0; i < allSites.length; i += 1) {
+        const site = allSites[i];
+        if (site === undefined) {
+            continue;
         }
+        if (site.owner === me) {
+            continue;
+        }
+        const d = getRange(unit.x, unit.y, site.x, site.y);
+        if (d < siteDist) {
+            siteDist = d;
+            siteId = site.id;
+            siteX = site.x;
+            siteY = site.y;
+        }
+    }
+    if (siteId >= 0) {
+        moveTo(unit.id, siteX, siteY);
     }
 }

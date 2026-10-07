@@ -1,0 +1,9 @@
+{
+  "//": "由 tsconfig.scripts.json 派生的运行配置:只覆盖 files / outDir(外加 rootDir),把 work/script.ts 编译成同目录同名的 work/script.js。",
+  "extends": "../../../../tsconfig.scripts.json",
+  "compilerOptions": {
+    "rootDir": "work",
+    "outDir": "work"
+  },
+  "files": ["work/script.ts"]
+}

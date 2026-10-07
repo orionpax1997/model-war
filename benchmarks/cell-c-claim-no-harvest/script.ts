@@ -1,193 +1,178 @@
-// script.ts
-// 策略 C：占点不采集。
-// 产能只投向战斗单位，靠占点扩张与压制；不造农民、不安排采集。
-//
-// 契约要点：
-//  - 座位只从 getMyIndex() 认，读一次存进模块级变量。
-//  - 跨 tick 变量只放数值，不缓存对象引用与查询结果。
-//  - 每个单位每 tick 只提交一条单位级意图（attack 或 moveTo）。
-//  - 下单前先读 producing，非 null 不下单。
-//  - 错误只用 isError / errCode 两步判别，不用 typeof 或真值。
-//  - 全整数运算。
+// script.ts —— 策略取向 C:占点不采集。
+// 占领是位置触发的被动结算:把单位送上可占领点位格,靠进度扩张局面。
+// 不建采集农民,产能全部给近战单位。
+// 全整数运算,无随机源,跨 tick 只留一个数值(myIndex)。
 
-var myIndex = -1;
+var myIndex: 0 | 1 | 2 | 3 = 0;
+var mySeatReady = 0;
+
+const MELEE_COST = 8;
 
 function loop() {
-  if (myIndex < 0) {
+  if (mySeatReady === 0) {
     myIndex = getMyIndex();
+    mySeatReady = 1;
+  }
+  const me = myIndex;
+
+  const players = getObjectsByType("player");
+  const mine = players[me];
+  if (mine === undefined || !mine.alive) {
+    return;
   }
 
-  var players = getObjectsByType("player");
-  var mePlayer = players[myIndex];
-  var money = 0;
-  if (mePlayer !== undefined) {
-    money = mePlayer.resources;
-  }
-
-  // 生产：每条空产线下一单近战。已有订单静默跳过（先读 producing）。
-  var bases = getObjectsByType("site", { owner: myIndex, kind: "base" });
-  for (var bi = 0; bi < bases.length; bi += 1) {
-    var base = bases[bi];
+  // 1) 生产:每个己方基地产线空着就补近战。先读 producing,非 null 不下单。
+  const bases = getObjectsByType("site", { owner: me, kind: "base" });
+  let budget = mine.resources;
+  for (let i = 0; i < bases.length; i += 1) {
+    const base = bases[i];
     if (base === undefined) {
       continue;
     }
     if (base.producing !== null) {
       continue;
     }
-    if (money < 8) {
+    if (budget < MELEE_COST) {
       continue;
     }
-    var spawned = spawnUnit(base.id, "melee");
-    if (isError(spawned)) {
-      var spawnCode = errCode(spawned);
-      if (spawnCode === ERR_NOT_ENOUGH_RESOURCES) {
-        money = 0;
-      }
-    } else {
-      money = money - 8;
+    const placed = spawnUnit(base.id, "melee");
+    if (!isError(placed)) {
+      budget -= MELEE_COST;
     }
   }
 
-  var units = getObjectsByType("unit", { owner: myIndex });
-  var allUnits = getObjectsByType("unit");
-  var sites = getObjectsByType("site");
-  var claimed = [];
-  var claimedCount = 0;
-  var offDx = [1, -1, 0, 0, 1, 1, -1, -1];
-  var offDy = [0, 0, 1, -1, 1, -1, 1, -1];
+  // 2) 本 tick 的目标点位:只存数值(坐标 + 优先级)。
+  //    优先级 0 = 自家点位正被敌方驱动,立刻回防;1 = 中立点位;2 = 敌方点位。
+  const allSites = getObjectsByType("site");
+  const tgtX: number[] = [];
+  const tgtY: number[] = [];
+  const tgtP: number[] = [];
+  for (let i = 0; i < allSites.length; i += 1) {
+    const s = allSites[i];
+    if (s === undefined) {
+      continue;
+    }
+    if (s.owner === me) {
+      // 自家单位站自家点位不推进;敌方驱动才需要压回去。
+      if (s.progressOwner !== -1 && s.progressOwner !== me) {
+        tgtX[tgtX.length] = s.x;
+        tgtY[tgtY.length] = s.y;
+        tgtP[tgtP.length] = 0;
+      }
+      continue;
+    }
+    // 中立点位优先,敌方点位次之。占领不花资源。
+    tgtX[tgtX.length] = s.x;
+    tgtY[tgtY.length] = s.y;
+    tgtP[tgtP.length] = s.owner === -1 ? 1 : 2;
+  }
 
-  for (var ui = 0; ui < units.length; ui += 1) {
-    var unit = units[ui];
-    if (unit === undefined) {
+  // 3) 单位行动:每个单位每 tick 至多提交一条单位级意图。
+  const allUnits = getObjectsByType("unit");
+  const myUnits = getObjectsByType("unit", { owner: me });
+  const claimed: number[] = [];
+  for (let i = 0; i < tgtX.length; i += 1) {
+    claimed[i] = 0;
+  }
+
+  for (let i = 0; i < myUnits.length; i += 1) {
+    const u = myUnits[i];
+    if (u === undefined) {
       continue;
     }
 
-    // 一、射程内有敌人：只提交攻击这一条意图。
-    var foeId = nearestFoeInRange(unit, allUnits, myIndex);
-    if (foeId >= 0) {
-      attack(unit.id, foeId);
-      continue;
-    }
-
-    // 二、否则去占一个还没分出去的中立/敌方位点。
-    var siteIndex = pickSite(unit, sites, claimed, claimedCount, myIndex);
-    if (siteIndex < 0) {
-      continue;
-    }
-    var site = sites[siteIndex];
-    claimed[claimedCount] = site.id;
-    claimedCount = claimedCount + 1;
-
-    // 已与点位相邻：原地驻守，让占领进度累积，不再提交移动。
-    // 站点格本身多半不可站立（采集规则要求站在相邻格），所以占领靠相邻。
-    if (getRange(unit.x, unit.y, site.x, site.y) <= 1) {
-      continue;
-    }
-
-    // 选一个相邻的可通行格作为落脚点，朝它走一步。
-    var destX = -1;
-    var destY = -1;
-    var haveDest = 0;
-    var bestD = 0;
-    for (var oi = 0; oi < 8; oi += 1) {
-      var nx = site.x + offDx[oi];
-      var ny = site.y + offDy[oi];
-      if (getTerrainAt(nx, ny) !== "plain") {
+    // 3a) 射程内有敌人:原地攻击(攻击不移动,站在点位上的占领继续推进)。
+    if (u.type !== "worker") {
+      const reach = attackRangeOf(u.type);
+      const foeId = nearestFoeId(u, allUnits, me, reach);
+      if (foeId >= 0) {
+        attack(u.id, foeId);
         continue;
       }
-      var nd = getRange(unit.x, unit.y, nx, ny);
-      if (haveDest === 0 || nd < bestD) {
-        destX = nx;
-        destY = ny;
-        bestD = nd;
-        haveDest = 1;
+    }
+
+    // 3b) 选一个还没被本 tick 其他己方单位认领的目标点位:优先级高者先,同级取近。
+    let pick = -1;
+    let pickScore = 0;
+    for (let k = 0; k < tgtX.length; k += 1) {
+      if (claimed[k] === 1) {
+        continue;
+      }
+      const d = getRange(u.x, u.y, tgtX[k]!, tgtY[k]!);
+      const score = tgtP[k]! * 100000 + d;
+      if (pick === -1 || score < pickScore) {
+        pick = k;
+        pickScore = score;
       }
     }
-    if (haveDest === 1) {
-      moveTo(unit.id, destX, destY);
+    if (pick === -1) {
+      // 所有点位都有人认领:允许重复,别让单位闲着。
+      for (let k = 0; k < tgtX.length; k += 1) {
+        const d = getRange(u.x, u.y, tgtX[k]!, tgtY[k]!);
+        const score = tgtP[k]! * 100000 + d;
+        if (pick === -1 || score < pickScore) {
+          pick = k;
+          pickScore = score;
+        }
+      }
+    }
+
+    if (pick >= 0) {
+      claimed[pick] = 1;
+      if (u.x === tgtX[pick] && u.y === tgtY[pick]) {
+        // 已站在点位格上:原地即驱动占领,不再提交移动。
+        continue;
+      }
+      moveTo(u.id, tgtX[pick]!, tgtY[pick]!);
+      continue;
+    }
+
+    // 3c) 没有可占点位:压向最近敌人。
+    if (u.type !== "worker") {
+      const foeId = nearestFoeId(u, allUnits, me, 100000);
+      if (foeId >= 0) {
+        const foe = getObjectById(foeId);
+        if (foe !== null) {
+          moveTo(u.id, foe.x, foe.y);
+        }
+      }
     }
   }
 }
 
-// 本 tick 射程内最近的敌方单位 id；没有则 -1。射程外的敌人不追。
-function nearestFoeInRange(unit, allUnits, me) {
-  var rng = 0;
-  if (unit.type === "melee") {
-    rng = 1;
-  } else if (unit.type === "ranged") {
-    rng = 2;
-  } else if (unit.type === "cavalry") {
-    rng = 1;
-  } else {
-    rng = 0;
+// 兵种射程(数值表):worker 无攻击,melee / cavalry 为 1,ranged 为 2。
+function attackRangeOf(type: string): number {
+  if (type === "ranged") {
+    return 2;
   }
-  if (rng === 0) {
-    return -1;
+  if (type === "worker") {
+    return 0;
   }
-  var best = -1;
-  var bestD = 0;
-  for (var i = 0; i < allUnits.length; i += 1) {
-    var foe = allUnits[i];
-    if (foe === undefined) {
+  return 1;
+}
+
+// 本 tick 快照里离 unit 最近的敌方单位 id;超出 maxRange 忽略;没有则 -1。
+function nearestFoeId(
+  unit: { x: number; y: number },
+  units: readonly { id: number; owner: number; x: number; y: number }[],
+  me: number,
+  maxRange: number,
+): number {
+  let best = -1;
+  let bestDist = 0;
+  for (let i = 0; i < units.length; i += 1) {
+    const other = units[i];
+    if (other === undefined || other.owner === me) {
       continue;
     }
-    if (foe.owner === me) {
+    const d = getRange(unit.x, unit.y, other.x, other.y);
+    if (d > maxRange) {
       continue;
     }
-    var d = getRange(unit.x, unit.y, foe.x, foe.y);
-    if (d > rng) {
-      continue;
-    }
-    if (best === -1 || d < bestD) {
-      best = foe.id;
-      bestD = d;
+    if (best === -1 || d < bestDist) {
+      best = other.id;
+      bestDist = d;
     }
   }
   return best;
-}
-
-// 为本单位挑一个可占点位：先找中立，其次敌方，且本 tick 尚未分配给别的单位。
-// 返回 sites 数组下标；没有可占点位时返回 -1。
-function pickSite(unit, sites, claimed, claimedCount, me) {
-  for (var pass = 0; pass < 2; pass += 1) {
-    var best = -1;
-    var bestD = 0;
-    for (var i = 0; i < sites.length; i += 1) {
-      var s = sites[i];
-      if (s === undefined) {
-        continue;
-      }
-      if (s.owner === me) {
-        continue;
-      }
-      var neutral = s.owner === -1;
-      if (pass === 0 && neutral === false) {
-        continue;
-      }
-      if (pass === 1 && neutral === true) {
-        continue;
-      }
-      if (isClaimed(s.id, claimed, claimedCount)) {
-        continue;
-      }
-      var d = getRange(unit.x, unit.y, s.x, s.y);
-      if (best === -1 || d < bestD) {
-        best = i;
-        bestD = d;
-      }
-    }
-    if (best !== -1) {
-      return best;
-    }
-  }
-  return -1;
-}
-
-function isClaimed(id, claimed, claimedCount) {
-  for (var i = 0; i < claimedCount; i += 1) {
-    if (claimed[i] === id) {
-      return true;
-    }
-  }
-  return false;
 }

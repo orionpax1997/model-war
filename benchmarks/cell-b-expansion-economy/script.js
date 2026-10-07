@@ -1,224 +1,246 @@
 "use strict";
-// ============================================================
-// script.ts
-// 策略取向：B 扩张运营
-//   优先占资源点与扩张经济，攒够家底再转军事
-// ============================================================
-// ---- 跨 tick 记忆：只放数值 ----
-var myIndexCached = -1;
-// ---- 阈值（数值常量） ----
-const TARGET_WORKERS = 6;
-const TARGET_MELEE = 6;
-const CARRY_LIMIT = 20;
-// ---- 主循环 ----
+// script.ts - Strategy B: 扩张运营
+// 优先占领资源点与扩张经济，攒够家底再转军事
+// 模块级：只存数值与简单状态
+var me = -1;
+var initDone = false;
+var capturerId = -1;
 function loop() {
-    const me = getMyIndex();
-    if (myIndexCached === -1)
-        myIndexCached = me;
-    // 本 tick 玩家状态（每 tick 重读，不缓存）
+    if (!initDone) {
+        me = getMyIndex();
+        initDone = true;
+    }
+    const tick = getTick();
+    // --- 读玩家（含自己），拿自己的钱 ---
     const players = getObjectsByType("player");
-    const mePlayer = players[me];
-    if (mePlayer === undefined)
-        return;
-    if (!mePlayer.alive)
-        return;
-    const myRes = mePlayer.resources;
-    // 本 tick 快照
+    let myRes = 0;
+    for (let i = 0; i < players.length; i += 1) {
+        const p = players[i];
+        if (p !== undefined && p.index === me) {
+            myRes = p.resources;
+        }
+    }
+    // --- 读点位：分类为基地、己方资源、中立资源 ---
+    const sites = getObjectsByType("site");
+    const bases = [];
+    const ownedRes = [];
+    const neutRes = [];
+    for (let i = 0; i < sites.length; i += 1) {
+        const s = sites[i];
+        if (s === undefined)
+            continue;
+        if (s.kind === "base") {
+            if (s.owner === me)
+                bases.push(s);
+        }
+        else if (s.kind === "resource") {
+            if (s.owner === me)
+                ownedRes.push(s);
+            else if (s.owner === -1)
+                neutRes.push(s);
+        }
+    }
+    // --- 读我方单位：分工人（含 capturer）、战斗 ---
     const myUnits = getObjectsByType("unit", { owner: me });
-    const myBases = getObjectsByType("site", { owner: me, kind: "base" });
-    const myResSites = getObjectsByType("site", { owner: me, kind: "resource" });
-    const neutralSites = getObjectsByType("site", { owner: -1, kind: "resource" });
-    // 预取敌方快照（按座位缓存一次，避免每个战斗单位重复查）
-    const foeUnits = [[], [], [], []];
-    const foeBases = [[], [], [], []];
-    for (let p = 0; p < 4; p += 1) {
-        if (p === me)
-            continue;
-        foeUnits[p] = getObjectsByType("unit", { owner: p });
-        foeBases[p] = getObjectsByType("site", { owner: p, kind: "base" });
-    }
-    // 计数
-    let workerN = 0;
-    let meleeN = 0;
-    for (let i = 0; i < myUnits.length; i += 1) {
-        const u = myUnits[i];
-        if (u === undefined)
-            continue;
-        if (u.type === "worker")
-            workerN += 1;
-        else if (u.type === "melee")
-            meleeN += 1;
-    }
-    // ---- 生产：每个基地独立产线，先读 producing，空才下单 ----
-    for (let i = 0; i < myBases.length; i += 1) {
-        const base = myBases[i];
-        if (base === undefined)
-            continue;
-        if (base.producing !== null)
-            continue;
-        let toSpawn = null;
-        if (workerN < TARGET_WORKERS && myRes >= 4) {
-            toSpawn = "worker";
-        }
-        else if (meleeN < TARGET_MELEE && myRes >= 12) {
-            toSpawn = "melee";
-        }
-        else if (myRes >= 16) {
-            // 都达标后继续扩军
-            toSpawn = "melee";
-        }
-        if (toSpawn === null)
-            continue;
-        spawnUnit(base.id, toSpawn);
-    }
-    // ---- 每个单位一条意图（每单位每 tick 最多一条单位级意图） ----
+    const harvestWorkers = [];
+    const combats = [];
+    let capturer;
     for (let i = 0; i < myUnits.length; i += 1) {
         const u = myUnits[i];
         if (u === undefined)
             continue;
         if (u.type === "worker") {
-            actWorker(u, myBases, myResSites, neutralSites, me);
+            if (u.id === capturerId) {
+                capturer = u;
+            }
+            else {
+                harvestWorkers.push(u);
+            }
         }
         else {
-            actCombat(u, me, foeUnits, foeBases);
+            combats.push(u);
         }
     }
-}
-// ---- 农民行为：满载回家交付；空载找己方资源采集；没矿就去占中立 ----
-function actWorker(u, myBases, myResSites, neutralSites, me) {
-    // 满载：回家交付
-    if (u.carrying >= CARRY_LIMIT) {
-        const b = findClosestId(u.x, u.y, myBases);
-        if (b === null)
-            return;
-        if (getRange(u.x, u.y, b.x, b.y) <= 1) {
-            transfer(u.id);
-        }
-        else {
-            moveTo(u.id, b.x, b.y);
-        }
-        return;
-    }
-    // 空载：找最近的己方有储量资源点
-    const target = findOwnedWithRes(u.x, u.y, myResSites);
-    if (target !== null) {
-        if (getRange(u.x, u.y, target.x, target.y) <= 1) {
-            harvest(u.id, target.id);
-        }
-        else {
-            moveTo(u.id, target.x, target.y);
-        }
-        return;
-    }
-    // 没可采己方资源：去最近可占的中立资源点（仅当无人占或我在占）
-    const cap = findCapturableNeutral(u.x, u.y, neutralSites, me);
-    if (cap === null)
-        return;
-    if (getRange(u.x, u.y, cap.x, cap.y) <= 1) {
-        // 站相邻格让进度累加：本 tick 不下任何动作
-        return;
-    }
-    moveTo(u.id, cap.x, cap.y);
-}
-// ---- 战斗单位：射程内攻击，否则靠近敌人；无敌人则去最近敌方基地 ----
-function actCombat(u, me, foeUnits, foeBases) {
-    // 找最近的敌方单位
-    let foe = null;
-    for (let p = 0; p < 4; p += 1) {
-        if (p === me)
+    // --- 读敌方单位（来自所有存活玩家）---
+    const enemies = [];
+    for (let i = 0; i < players.length; i += 1) {
+        const p = players[i];
+        if (p === undefined || p.index === me || !p.alive)
             continue;
-        const list = foeUnits[p];
-        for (let i = 0; i < list.length; i += 1) {
-            const f = list[i];
-            if (f === undefined)
-                continue;
-            const d = getRange(u.x, u.y, f.x, f.y);
-            if (foe === null || d < foe.dist) {
-                foe = { id: f.id, x: f.x, y: f.y, dist: d };
+        const es = getObjectsByType("unit", { owner: p.index });
+        for (let j = 0; j < es.length; j += 1) {
+            const e = es[j];
+            if (e !== undefined) {
+                enemies.push(e);
             }
         }
     }
-    // 射程：远程 2，其余 1
-    const myRange = u.type === "ranged" ? 2 : 1;
-    if (foe !== null && foe.dist <= myRange) {
-        attack(u.id, foe.id);
-        return;
-    }
-    if (foe !== null) {
-        moveTo(u.id, foe.x, foe.y);
-        return;
-    }
-    // 没敌人：去最近的敌方基地
-    let foeBase = null;
-    let foeBaseR = 0;
-    for (let p = 0; p < 4; p += 1) {
-        if (p === me)
+    // --- 生产决策 ---
+    // 经济期（tick < 250）：worker 优先（workerCap=5）；之后：worker 维持 3，melee 主力
+    const workerCap = tick < 250 ? 5 : 3;
+    const totalWorkers = harvestWorkers.length + (capturer !== undefined ? 1 : 0);
+    const wantWorker = totalWorkers < workerCap;
+    for (let i = 0; i < bases.length; i += 1) {
+        const b = bases[i];
+        if (b.producing !== null)
             continue;
-        const list = foeBases[p];
-        for (let i = 0; i < list.length; i += 1) {
-            const b = list[i];
-            if (b === undefined)
-                continue;
-            const d = getRange(u.x, u.y, b.x, b.y);
-            if (foeBase === null || d < foeBaseR) {
-                foeBase = { x: b.x, y: b.y };
-                foeBaseR = d;
+        let toSpawn;
+        let cost;
+        if (wantWorker && myRes >= 4) {
+            toSpawn = "worker";
+            cost = 4;
+        }
+        else if (myRes >= 8) {
+            toSpawn = "melee";
+            cost = 8;
+        }
+        else {
+            continue;
+        }
+        if (myRes < cost)
+            continue;
+        const sr = spawnUnit(b.id, toSpawn);
+        if (!isError(sr)) {
+            myRes -= cost;
+        }
+    }
+    // --- 分配 capturer（已死的就重置；够工人 + 还有中立点 → 派一个）---
+    if (capturer === undefined && capturerId !== -1) {
+        capturerId = -1;
+    }
+    if (capturer === undefined &&
+        neutRes.length > 0 &&
+        harvestWorkers.length >= 4) {
+        capturerId = harvestWorkers[0].id;
+        capturer = harvestWorkers[0];
+    }
+    // --- Capturer 行为：吃最近的 neutral resource 点 ---
+    if (capturer !== undefined) {
+        if (neutRes.length === 0) {
+            // 没有中立点了，释放 capturer 让它回去采
+            capturerId = -1;
+        }
+        else {
+            let bestSite;
+            let bestD = 999;
+            for (let i = 0; i < neutRes.length; i += 1) {
+                const s = neutRes[i];
+                const d = getRange(capturer.x, capturer.y, s.x, s.y);
+                if (d < bestD) {
+                    bestD = d;
+                    bestSite = s;
+                }
+            }
+            if (bestSite !== undefined) {
+                if (capturer.x !== bestSite.x || capturer.y !== bestSite.y) {
+                    moveTo(capturer.id, bestSite.x, bestSite.y);
+                }
+                // 已在 site 上时不发任何意图，让 capture 进度推进
             }
         }
     }
-    if (foeBase !== null)
-        moveTo(u.id, foeBase.x, foeBase.y);
-}
-// ---- 工具：最近对象 ----
-function findClosestId(x, y, arr) {
-    let best = null;
-    let bestR = 0;
-    for (let i = 0; i < arr.length; i += 1) {
-        const s = arr[i];
-        if (s === undefined)
+    // --- 工人（采集）行为：满载交付，否则采集 ---
+    for (let i = 0; i < harvestWorkers.length; i += 1) {
+        const w = harvestWorkers[i];
+        if (w === undefined)
             continue;
-        const r = getRange(x, y, s.x, s.y);
-        if (best === null || r < bestR) {
-            best = s;
-            bestR = r;
+        if (w.id === capturerId)
+            continue; // 兜底跳过 capturer
+        if (w.carrying >= 20) {
+            const tr = transfer(w.id);
+            if (!isError(tr))
+                continue;
+            moveToBaseAdj(w, bases);
+            continue;
+        }
+        // 找最近的我方资源点
+        let bestIdx = -1;
+        let bestD = 999;
+        for (let j = 0; j < ownedRes.length; j += 1) {
+            const rs = ownedRes[j];
+            const d = getRange(w.x, w.y, rs.x, rs.y);
+            if (d < bestD) {
+                bestD = d;
+                bestIdx = j;
+            }
+        }
+        if (bestIdx === -1)
+            continue;
+        const rs = ownedRes[bestIdx];
+        if (bestD === 1) {
+            // 已相邻，采集
+            harvest(w.id, rs.id);
+        }
+        else {
+            // 走向 rs 的某个 plain 相邻格
+            moveToAdjOf(w, rs.x, rs.y);
         }
     }
-    return best;
-}
-function findOwnedWithRes(x, y, arr) {
-    let best = null;
-    let bestR = 0;
-    for (let i = 0; i < arr.length; i += 1) {
-        const s = arr[i];
-        if (s === undefined)
+    // --- 战斗单位：找最近敌人，射程内攻击，否则走近 ---
+    for (let i = 0; i < combats.length; i += 1) {
+        const c = combats[i];
+        let bestIdx = -1;
+        let bestD = 999;
+        for (let j = 0; j < enemies.length; j += 1) {
+            const e = enemies[j];
+            const d = getRange(c.x, c.y, e.x, e.y);
+            if (d < bestD) {
+                bestD = d;
+                bestIdx = j;
+            }
+        }
+        if (bestIdx === -1)
             continue;
-        if (s.remaining === undefined)
-            continue;
-        if (s.remaining <= 0)
-            continue;
-        const r = getRange(x, y, s.x, s.y);
-        if (best === null || r < bestR) {
-            best = { x: s.x, y: s.y, id: s.id };
-            bestR = r;
+        const e = enemies[bestIdx];
+        const rng = c.type === "ranged" ? 2 : 1;
+        if (bestD <= rng) {
+            attack(c.id, e.id);
+        }
+        else {
+            moveTo(c.id, e.x, e.y);
         }
     }
-    return best;
 }
-function findCapturableNeutral(x, y, arr, me) {
-    let best = null;
-    let bestR = 0;
-    for (let i = 0; i < arr.length; i += 1) {
-        const s = arr[i];
-        if (s === undefined)
-            continue;
-        // 仅当无人占（-1）或正在被我这方占时考虑
-        if (s.progressOwner !== -1 && s.progressOwner !== me)
-            continue;
-        const r = getRange(x, y, s.x, s.y);
-        if (best === null || r < bestR) {
-            best = { x: s.x, y: s.y, id: s.id };
-            bestR = r;
+// 走向 (tx, ty) 的某个 plain 相邻格（挑离 w 最近的那个）
+function moveToAdjOf(w, tx, ty) {
+    let ax = tx;
+    let ay = ty;
+    let bestD = 999;
+    for (let dx = -1; dx <= 1; dx += 1) {
+        for (let dy = -1; dy <= 1; dy += 1) {
+            if (dx === 0 && dy === 0)
+                continue;
+            const nx = tx + dx;
+            const ny = ty + dy;
+            if (getTerrainAt(nx, ny) !== "plain")
+                continue;
+            const d = getRange(w.x, w.y, nx, ny);
+            if (d < bestD) {
+                bestD = d;
+                ax = nx;
+                ay = ny;
+            }
         }
     }
-    return best;
+    if (bestD < 999) {
+        moveTo(w.id, ax, ay);
+    }
+}
+// 走向最近基地的某个 plain 相邻格（用来交付）
+function moveToBaseAdj(w, bases) {
+    if (bases.length === 0)
+        return;
+    let bx = 0;
+    let by = 0;
+    let bestD = 999;
+    for (let i = 0; i < bases.length; i += 1) {
+        const b = bases[i];
+        const d = getRange(w.x, w.y, b.x, b.y);
+        if (d < bestD) {
+            bestD = d;
+            bx = b.x;
+            by = b.y;
+        }
+    }
+    moveToAdjOf(w, bx, by);
 }
