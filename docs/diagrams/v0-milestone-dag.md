@@ -32,17 +32,18 @@
 | C | ✅ | schema 真源与生成物 | 同上,6 票全部落地 | `packages/schema` 类型 / `JsonValue` / 21 键清单 / JSON Schema + ajv 读入端校验 + 生成器与漂移检查 |
 | A | ✅ | 地图池与种子变体 | 同上,7 票 **resolved** | `maps/` 三张四重对称真图 + `modelwar map-lint` 两层判据 + `variantSlots` 定稿 + gdd #2/#6 收口 |
 
-**基线的性质**:两张 wayfinder map 都只出决策与 throwaway 证据,没有一份出落库;交付层的四格 **C、D、E、A 工作单元均已收口**(D 于 2026-10-05 随 08 收口,至此九票 resolved);E 的文档与基准脚本已落库,但 M1 遗留见 §6。磁盘现状——
+**基线的性质**:两张 wayfinder map 都只出决策与 throwaway 证据,没有一份出落库;交付层的六格 **C、D、E、A、F、G 工作单元均已收口**。E 的文档与基准脚本已落库,但 M1 遗留见 §6。磁盘现状——
 
 ```
 maps/        corridor-split.json · fortress-core.json · open-clash.json
 rulesets/    v1.json（21 键）
 docs/rules-v1/  rules.md · api.md
 benchmarks/  cell-a-melee-pressure/ · cell-b-expansion-economy/ · cell-c-claim-no-harvest/
+packages/engine/sandbox-runtime/  runtime.iife.js 入库产物 + 漂移门禁(adr/0007)
 prompts/     仍是 .gitkeep
 ```
 
-——**当前位置:基线五格(D1 D2 D3 C A)与交付层的 D、E 已落库**;E 的 `rulesets/`、`docs/rules-v1/`、`benchmarks/` 基础产物齐备,但 **M1 尚未通过验收**(占领契约缺节,基准脚本还需按终稿契约在真引擎上复验)。**F 对局内核已收口**(12 票全部 resolved,`runMatch` 唯一外部缝已打通);`prompts/` 属于 H / M3,不是 M1 缺项。
+——**当前位置:基线五格(D1 D2 D3 C A)与交付层的 D、E 已落库**;E 的 `rulesets/`、`docs/rules-v1/`、`benchmarks/` 基础产物齐备,但 **M1 尚未通过验收**(占领契约缺节,基准脚本还需按终稿契约在真引擎上复验)。**F 对局内核已收口**(12 票全部 resolved,`runMatch` 唯一外部缝已打通);**G 沙箱执行器与预算裁决已收口**(11 票全部 resolved,真沙箱 `match → verify` 端到端打通,hld §12 #8 随五条探针关闭)——**主干的下一格是 R**:`docs/rules-v1/rules.md` §1 / §2 / §5 / §9 四节仍是占位,其中 §5 占领是 M1 唯一的真卡点。`prompts/` 属于 H / M3,不是 M1 缺项。
 
 ## 3. 主图
 
@@ -68,7 +69,7 @@ flowchart TB
     D["D 参赛脚本静态校验器 ✅"]
     E["E 规则集与契约落库 ✅"]
     F["F 对局内核 · StubRunner 驱动 ✅"]
-    G["G 沙箱执行器与预算裁决"]
+    G["G 沙箱执行器与预算裁决 ✅"]
     H["H 生成管线"]
     I["I 赛季调度 · 排名与报告"]
     R["R 面向模型契约补齐与 M1 基准复验 · 待立项"]
@@ -147,7 +148,7 @@ flowchart TB
   L --> V0
 
   classDef done fill:#e6f4ea,stroke:#34a853,color:#0b3d20
-  class D1,D2,D3,C,A,D,E,F,J done
+  class D1,D2,D3,C,A,D,E,F,G,J done
 ```
 
 ## 4. 节点表
@@ -171,7 +172,7 @@ flowchart TB
 | **D 参赛脚本静态校验器** | ✅ 已完成([spec](../../.scratch/script-validator/spec.md) · 9 票 **全部 resolved**) | `tools` 校验器入口、禁列全局名、模块系统、宿主桥前缀、脚本体积上限、内置全局白名单判据、四份盲写脚本的不误伤验收、**解析层源形态收紧到编译产物**(拒未编译的 TS 源码、两侧对称钉住) | C ✅ | — | 收口时把源形态裁在**解析层**而非校验入口(hld §6.2),四个调用点一起受益且绕不开;附四条 2026-10-04 的 oxc 实测进 hld 同节的表。已裁的三笔:①全局白名单反转**由编译器名字解析承担**(实测推翻 hld §2.2.3/§6.2 的「tools 自建分析器」承载条款,理由:自建分析器的失败模式是误伤合规脚本);②脚本 API 的 `.d.ts` 家定在 `schema`、内容由 F/G 回填;③参赛脚本写 `Math.sqrt` 无人拦 → gdd §8 #11 |
 | **E 规则集与契约落库** | ✅ 已完成([spec](../../.scratch/rules-landing/spec.md) · 15 票 **全部 resolved**) | `rulesets/v1.json` 21 键(13 定稿 + 8 预算未定值占位)+ `docs/rules-v1/{rules.md,api.md}`(散文分批落地,数值表/API 表由真源包生成)+ 参赛脚本编译配置(家定在 E,实现归 H)+ 用**终稿**契约重跑盲写三舱 + `benchmarks/` 落库 + 契约自证与 ② 的复验 | C ✅、D ✅、D1 ✅ | M1 基础产物 | 入口那一轮 grilling **只钉了一条**:终稿 API 面与 D 的实现形状同源——裁法是符号表的回填时点从 G 提前到 E(否则「同源」只剩一句人话),并给生成器加一种**区块形态**让混合的散文文档也能挂生成表格;取舍见 `docs/adr/0004`。其余 21 条裁决未重开。**A 与 D1 交办的两笔账在这里销掉**:gdd §8 #8/#13 的等效命题在终稿契约下复验一次,**② 已过**(证据 `.scratch/rules-landing/selfproof/report.md`,门禁 `check:selfproof`)、**① 仍未排期**(窗口重推是规则侧后续工作,归独立小图,指针留在 gdd §8 记录 #13)。**收尾对账带出的一件**:契约面 `docs/rules-v1/rules.md` 的 §1 / §2 / §5 / §9 四节仍是占位,其中 §5 占领是本轮唯一的真卡点(该节正文**已指派归 gdd《占领机制》**,缺的是面向模型那一节的散文,归下一轮),不在本节点 |
 | **F 对局内核** | ✅ 已完成([spec](../../.scratch/engine-core/spec.md) · 12 票 **全部 resolved**) | `world` + `driver`(状态模型、id 升序不变量、整数 LCG + `IdGen`、`apply()` 唯一写入口)、`processor` 七步结算管线 + `intents/*.ts` 的 `check()`/`run()`、`snapshot`(深拷贝 + 只读封存)、`Runner` 缝 + `StubRunner`、`replay` 包全行格式与解析、`replay-writer`;`modelwar replay` 的 ASCII 查看器 | C ✅、E ✅、A ✅ | **M2★**(与 G 合) | spec 在 [`.scratch/engine-core/spec.md`](../../.scratch/engine-core/spec.md)(2026-10-05 入口 grilling 收口,16 条裁決)。**四笔没人认领的账已在 spec 里定死落点**:①规则集装载期校验接线(hld §7.1 差的是接线不是设计)②脚本 API 类型面归 F([`adr/0006`](../../docs/adr/0006-script-api-type-surface-lands-in-engine.md))③产线形状冲突(hld 的 `productions[]` 对契约面的 `site.producing`)④`match-result` / `replay-line` / `archive-meta` 三笔形状回填。**另裁两件与本表原先记载不同的事**:外部缝**唯一**是 `runMatch`,`processTick` 是私有内部缝不进导出面([`adr/0005`](../../docs/adr/0005-runner-seam-is-the-two-bridge-calls.md));`modelwar verify` **归 G**(它要重新执行真脚本)。**接住 A 交办的首触实测复核**(见 §7):三张真图各跑 64 局(种子 11–74)首触 tick 均为 **19**,结论「墙不改变首触」落 `docs/gdd.md` 首触段末尾。**F 的收口面**:外部缝唯一是 `runMatch`,`processTick` 是私有内部缝不进导出面;十次重跑 hash 落在 check 链上的 `packages/engine/src/determinism.test.ts`;三条桩结论的夹具在 `packages/engine/src/fixtures/`(复验归 L)。**复算那一格(`modelwar verify`)不实现,归沙箱执行器 G** |
-| **G 沙箱执行器与预算裁决** | ○ 未开 | `QuickJsRunner` + `engine/sandbox-runtime`(TS→IIFE bundle)+ WASI 三件套常量 + 桥函数删除 + 四类异常轨 + 双计数 + 内存三层 + `exceptionTicks` 续算;`modelwar match` / `verify` 子进程 | D2 ✅、C ✅、F | **M2★** | **本节点第一条验收就是 hld #5 五条复验写回文档并关掉 hld #8**(升级条款在 G 落地前是空头承诺)。`prototype` 只用在一处:hld §2.2.2 把 runtime bundle 的**打包方式**留给实现期,选之前先跑一下 |
+| **G 沙箱执行器与预算裁决** | ✅ 已完成([spec](../../.scratch/sandbox-executor/spec.md) · 11 票全部 resolved,PR #7) | `QuickJsRunner` + `engine/sandbox-runtime`(TS→IIFE bundle)+ WASI 三件套常量 + 桥函数删除 + 四类异常轨 + 双计数 + 内存三层 + `exceptionTicks` 续算;`modelwar match` / `verify` 子进程 | D2 ✅、C ✅、F ✅ | **M2★** | **入口那条验收已销账**:五条复验换版本(2026-10-06 / `quickjs-wasi@3.6.2`)写回 hld §5.0 并**关闭 hld §12 #8**;升级条款不再空头——`coupling:quickjs` 版本耦合断言在根钉版一改即红并指向复验脚本。runtime bundle 入库 + 独立漂移门禁([`adr/0007`](../../docs/adr/0007-runtime-bundle-artifact-is-committed.md))。`prototype` 只用在一处:runtime bundle 的打包方式(hld §2.2.2 留给实现期)。**四笔交出去、不随收口销账的账**:①八个预算键只落了机制与「未定即不启用」,**终值归 K**;②`match` 只做成子进程入口,**spawn / 池 / 重跑编排归 I**;③**跨进程确定性门禁归 L**(F 交出的是同进程十次重跑);④C 舱「站相邻」在真规则下不累积进度,那份脚本的复验归 **R** |
 | **H 生成管线** | ○ 未开 | `prompts/` 模板数据文件、模型 API 客户端 + 厂商适配 + 退避限流、`models.yaml`、≤5 轮只回喂校验错误、tsc 预编译为 script-mode JS、`archive/<model>/<runId>/` 三件套、meta 完整性校验与缺档拒跑 | E ✅、D ✅、J ✅、**F ✅(脚本 API 类型面)**、**R(最终契约文档)**、**G(最终 sandbox-runtime hash)** | **M3★** | prompt、客户端等准备工作可并行;完整存档需用 G 产出的真实 runtime hash,最终契约输入来自 R。凭证由 `wizard` 提前办 |
 | **R 面向模型的契约补齐与 M1 基准复验** | ○ 未开(待立项) | 盘点 `docs/rules-v1/rules.md` §1/§2/§5/§9 的占位对 FR-10 AC1 的影响,按 GDD §3.2 至少补齐 §5 占领;至少两份模型仅凭终稿文档盲写的基准脚本通过静态校验,并在真引擎/沙箱上完成对局,验证规则闭环与区分度 | A ✅、D ✅、E ✅、F ✅、G、J ✅ | **M1★** | 新工作单元,需建立 `.scratch/<feature>/` 后走标准交付流程;盲写用已开通凭证,不依赖 H/M3;真沙箱复验等 G;有效脚本供 B、K 与 H 使用 |
 | **I 赛季调度、排名与报告** | ○ 未开 | 组合×地图×种子枚举 + `(mapIndex+seedIndex) mod 4` 座位轮换 + `M×K ≡ 0 (mod 4)` 均摊断言、对局子进程池 + `engine-crash`/`nondeterministic-timeout` 重跑与剔除、`input.json` 输入物化、`ranker` 名次积分纯函数、`report.md`/`report.json`/叙事战报 + 校验失败名单 + 规则版本隔离、六个子命令接线 | E、G、H、A ✅、K | **M4★** | `research` 用来选 ≥4 个真实模型(可用性 / 端点 / 定价 / 上下文长度是否够读两份契约)——这是 M4 唯一需要外部一手资料的地方。`ranker` 是纯函数无依赖,可以在 H 还在跑的时候顺手做掉。枚举规模已由 A 的 K=4 定死 |
@@ -194,14 +195,14 @@ flowchart TB
 **一条贯穿引擎到赛季收尾的依赖主干(不是完整依赖清单,也不是已证明的工期关键路径)**:
 
 ```
-C ✅ → D ✅ → E ✅ → F ✅ → G → R → K → I → L → V0
+C ✅ → D ✅ → E ✅ → F ✅ → G ✅ → R → K → I → L → V0
 ```
 
 拓扑只说明先后关系;各节点工期与并行资源没有估算,因此不把这条链称为“关键路径”。完整依赖还包括 **H → M3**、**R → M1 / B / K / H / L** 等分支;V0 汇合 **M1、M2、M3、M4、B、L** 六项验收门槛。M1 需补契约与真引擎复验,M2 需 K 的预算终值,B 可在 I 前依据有效基准脚本取证。
 
 四条结论:
 
-1. **C、D、E、F 均已收口**。它们不再是当前待办的开工阻塞;C 仍是多个交付节点的依赖根。
+1. **C、D、E、F、G 均已收口**。它们不再是当前待办的开工阻塞;C 仍是多个交付节点的依赖根。
 2. **H 可先做不依赖 G 的准备工作,但不能宣称与 F/G 零依赖**。脚本 API 类型面由 F 提供,最终契约文档来自 R,完整存档的 `sandboxRuntimeHash` 则要等 G 的真实 runtime 产物;H 的准备可并行,最终集成与 M3 收口不能越过这些依赖。
 3. **A 已收口**,地图与 K=4 的种子数结论均已定。不要把它与图上的**节点 K**(预算参数终值标定)混淆:预算标定需要的是地图点位与全图储量,不是种子数。
 4. **K 同时阻塞 M2 与 I**;R、B、M1 补验和 L 也都是 V0 的收口条件,所以 K 不是唯一的收尾阻塞项。
@@ -211,9 +212,8 @@ C ✅ → D ✅ → E ✅ → F ✅ → G → R → K → I → L → V0
 | 可开的东西 | 类型 | 前置 |
 |---|---|---|
 | ~~**F 对局内核**~~ | ✅ 已收口(12 票全部 resolved) | C ✅、A ✅、D ✅、E ✅;入口 grilling 已收口(2026-10-05),16 条裁決与两份 ADR 落在 [`.scratch/engine-core/spec.md`](../../.scratch/engine-core/spec.md) 与 [`docs/adr/`](../../docs/adr/) |
-| **G 沙箱执行器与预算裁决** | 交付节点,可开 | D2 ✅、C ✅、F ✅ |
-| **H 生成管线** | 交付节点,准备工作可并行 | E ✅、D ✅、J ✅、F ✅;完整存档与最终收口还依赖 G runtime 与 R 的终稿契约 |
-| **R 面向模型契约补齐与 M1 基准复验** | 后续交付节点,待立项 | A ✅、D ✅、E ✅、F ✅、J ✅;真引擎验收需 G 就绪,完成后关闭 M1 |
+| **H 生成管线** | 交付节点,准备工作可并行 | E ✅、D ✅、J ✅、F ✅、G ✅(runtime hash 已入库);**唯一剩下的硬前置是 R 的终稿契约** |
+| **R 面向模型契约补齐与 M1 基准复验** | **交付节点,可开 —— 主干的下一格** | A ✅、D ✅、E ✅、F ✅、G ✅、J ✅(硬依赖全部解除);完成后关闭 M1,并解锁 K / B / H 契约输入 / L |
 | **B 座位轮换实效定案** | wayfinder,待有效基准脚本 | D1 ✅、A ✅、R;HLD #3 的基准脚本对局是首选证据,I 的首轮数据可补充但不是硬前置 |
 
 **D-08 的历史阻塞已解除**:参赛脚本编译配置随 E 的 06 号票落地,D-08 随后收口。主图不再保留反向的 `E ⇢ D` 历史边;H 当前仍需 F 的类型面、R 的契约文档与 G 的真实 runtime 才能完整收口。
@@ -227,8 +227,8 @@ C ✅ → D ✅ → E ✅ → F ✅ → G → R → K → I → L → V0
 | 2 | **A** D J | ✅ 三格全已收口:A(三张真图 + map-lint 两层断言 + variantSlots 定稿);D(9 票全部落地,含 D-08 源形态收紧);J(2026-10-04 办结:凭证 + 端点 + 85 个模型目录,已发真实请求验证) |
 | 3 | **E** | ✅ 已收口(15 票全部落地);M1 基础产物齐备,但 M1 验收尚未关闭 |
 | 4 | **F** | ✅ 已收口(12 票全部 resolved):StubRunner 打通端到端闸门、`runMatch` 唯一外部缝;`modelwar replay` 的 ASCII 查看器并接 |
-| 5 | **G** ∥ **H 准备工作** | G 可开;H 可并行做 prompt / 客户端准备 |
-| 6 | **R** | 等 G 就绪后补契约并真引擎复验基准脚本 |
+| 5 | **G** ✅ ∥ **H 准备工作** | ✅ G 已收口(11 票全部 resolved,PR #7:真沙箱 `match → verify` 端到端 + 五条探针 + hld #8 关闭);H 仍可并行做 prompt / 客户端准备 |
+| 6 | **R** | G 已就绪,**现在可开**:补契约并真引擎复验基准脚本 |
 | 7 | **K** ∥ **B** ∥ **H 收口** ∥ **M1 关闭** | K、B 和 M1 关闭均以 R 的有效基准脚本为输入;H 完整存档等 G runtime 与 R 契约 |
 | 8 | **I** → M4★ | 等 G、H、K;首轮赛季资料可作为 B 的补充证据 |
 | 9 | **L** | 等 G、R、K、I;完成流水线、性能/存储与跨进程验证后,才具备 V0 收尾条件 |
@@ -243,7 +243,7 @@ FSR §4.2 的 M1 写的是「最小规则集 + 脚本 API 定稿,模型生成 �
 | **预算参数零证据** | 交接单 §2.1(已作废)验收命题①:1168 场桩实测异常 **0 次**,`exceptionTickLimit` 下限不能凭直觉取值;命题②要的两个对抗探针(纯计算死循环 / API 轰炸)**仓库里不存在** | **K**。不能只做取值,必须先造探针;终值也是 M2 与 I 的前置 |
 | **M3 生成管线尚未交付** | `prompts/` 仍全是 `.gitkeep`,模型 API 适配、生成与冻结存档也尚未落地 | **H / M3**。这是 M3 的待交付项,不是 M1 的缺件 |
 
-**估算口径**:fsr §4.2 声明「hld 已定稿的工程面(沙箱集成实测、schema 真源与生成物 CI、工具链选型)不计入该估算,可能推翻合计值」。这三项中工具链与 schema 真源已落地,只剩沙箱集成实测(G)还在图上;**剩余 3~6 周是在推翻后的口径上重新计的**。本文件不给估算,那是 fsr 的家。
+**估算口径**:fsr §4.2 声明「hld 已定稿的工程面(沙箱集成实测、schema 真源与生成物 CI、工具链选型)不计入该估算,可能推翻合计值」。这三项**已全部落地**(工具链 D3、schema 真源 C、沙箱集成实测 G);**剩余 3~6 周仍是在推翻后的口径上计的**——那个口径的推翻由它们自己造成,现已付讫。本文件不给估算,那是 fsr 的家。
 
 ## 7. 一处不该被 DAG 掩盖的事
 
