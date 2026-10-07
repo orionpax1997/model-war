@@ -273,38 +273,44 @@ export const RULESET_KEY_CATALOG = {
   },
 
   // ── 8 个预算键(handoff §2.1;第 9 行「内存软阈」是派生展示项,明令不入键清单)──────
-  // 它们在 M1 阶段全部必填、取未定值:机制已定,终值归《预算与性能终值》图(K 节点)。
+  // 它们全部必填。标定状态逐键表达:计数与异常三键已定稿(票 05),内存与墙钟五键仍是未定值,
+  // 终值归《预算与性能终值》图(K 节点)。未定值的取值仍是占位 `0`(机制已定、终值待标)。
+  //
+  // 判据**只是** `calibration.state`,不是「值是不是 0」:上面的 `worker.damage` 就是真的 0,
+  // 而它所在的键标着 final。「未定」与「一个真的 0」是两件事。
   exceptionTickLimit: {
     valueType: "integer",
     unit: "exceptions",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description: "累计异常判负阈值(次/整局)。达它则该方判负出局,点位回归中立。",
     schema: {
       type: "integer",
       minimum: 0,
-      description: "累计异常判负阈值(次/整局)。M1 阶段为未定值。",
+      description: "累计异常判负阈值(次/整局)。",
     },
   },
   eventTickLimit: {
     valueType: "integer",
     unit: "events/tick",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description:
       "单 tick 的控制流事件计数上限(次/tick):以循环回边 / 函数调用 / 函数返回为一格累计。" +
-      "达顶则本 tick 该方 intents 全部丢弃并计一次异常。",
+      "达顶则本 tick 该方 intents 全部丢弃并计一次异常。" +
+      "**有效分辨率是一整格**(宿主中断粒度,见 hld《计算预算》):判定只在中断点上发生," +
+      "小于一格的取值彼此等价。",
     schema: {
       type: "integer",
       minimum: 0,
-      description: "单 tick 的控制流事件计数上限(次/tick)。M1 阶段为未定值。",
+      description: "单 tick 的控制流事件计数上限(次/tick),有效分辨率为一整格(宿主中断粒度)。",
     },
   },
   apiCallTickLimit: {
     valueType: "integer",
     unit: "calls/tick",
     minimum: 0,
-    calibration: { state: "undetermined", placeholder: UNDETERMINED_VALUE },
+    calibration: { state: "final" },
     description:
       "单 tick 的 API 调用计数上限(次/tick)。与控制流事件计数互为盲区:前者抓纯计算死循环," +
       "后者抓 API 轰炸。",
