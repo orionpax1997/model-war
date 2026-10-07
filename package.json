@@ -27,6 +27,7 @@
     "coupling": "node packages/tools/src/toolchain-coupling.ts",
     "coupling:quickjs": "node packages/tools/src/gate/run-quickjs-coupling-gate.ts",
     "probes:sandbox": "node packages/tools/src/sandbox-probes/run-probes.ts",
+    "probes:budget": "MW_READINGS_DIR=.scratch/budget-calibration vitest run --project unit packages/engine/src/runner/probe-harness.test.ts",
     "check:no-float": "node packages/tools/src/gate/run-no-float-gate.ts",
     "check:declared-deps": "node packages/tools/src/gate/run-declared-deps-gate.ts",
     "check:drift": "node packages/tools/src/generate/run-drift-gate.ts",
