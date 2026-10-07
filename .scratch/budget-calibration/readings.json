@@ -1,0 +1,58 @@
+{
+  "meta": {
+    "sandboxRuntimeHash": "46c93013071ebdc2ddd29e1d07604854a0a3e48fa2c6f1bf7f9e9cd811285f83",
+    "sandboxRuntimeArtifact": "packages/engine/sandbox-runtime/runtime.iife.js",
+    "quickjsWasiVersion": "3.6.2",
+    "interruptEventGranularity": 5000,
+    "rerunCommand": "pnpm run probes:budget",
+    "scope": "各一次会话、无地图与规则集参与(探针脚本不读状态、不判据);读数取在 tick 末强制回收之后的存活堆 mallocSize,与内存判据同口径。整数会随运行环境微动,量级稳定。"
+  },
+  "allocationCeiling": {
+    "memoryLimitBytes": 8388608,
+    "shapes": [
+      {
+        "requestBytes": 65536,
+        "chunksRetained": 123,
+        "observedCapBytes": 8210408,
+        "headroomBytes": 178200,
+        "capRatioPpm": 978757,
+        "eventGrid": 0
+      },
+      {
+        "requestBytes": 262144,
+        "chunksRetained": 30,
+        "observedCapBytes": 7991056,
+        "headroomBytes": 397552,
+        "capRatioPpm": 952608,
+        "eventGrid": 0
+      },
+      {
+        "requestBytes": 1048576,
+        "chunksRetained": 7,
+        "observedCapBytes": 7461068,
+        "headroomBytes": 927540,
+        "capRatioPpm": 889429,
+        "eventGrid": 0
+      },
+      {
+        "requestBytes": 4194304,
+        "chunksRetained": 1,
+        "observedCapBytes": 4313860,
+        "headroomBytes": 4074748,
+        "capRatioPpm": 514252,
+        "eventGrid": 0
+      }
+    ]
+  },
+  "aliveHeapBaseline": {
+    "emptyVmMallocSize": 75128,
+    "frozenEmptyVmMallocSize": 75128,
+    "frozenEmptyVmSource": "packages/tools/src/sandbox-probes/constants.ts:54",
+    "loadedRuntimeMallocSamples": [
+      118384,
+      118384,
+      118384
+    ],
+    "samples": 3
+  }
+}
