@@ -924,6 +924,39 @@ it("预算结构门禁:软阈(推导项)低于诚实存活堆峰值 → 变红,�
   expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
 });
 
+it("预算结构门禁:体积上限低于基准产物最大值 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:把体积上限压到 4096——低于三份基准产物的最大值(cell-b 的 7579 字节)。
+  // 这条下界不在默认链上(check:selfproof 按需跑),所以由本门禁带着。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"scriptSizeLimit": 32768', '"scriptSizeLimit": 4096'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "体积上限低于基准产物最大值时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名体积键").toContain("scriptSizeLimit");
+  expect(violated.output, "报告必须说清是体积上限这一条").toContain("体积上限");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁:硬超时不足软限的 20 倍 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:硬超时压到 512——低于 20 × 软限 50 = 1000。硬超时是成本兜底,与只观测的软限的关系要钉住。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"wallClockHardTimeout": 1024', '"wallClockHardTimeout": 512'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "硬超时不足软限的 20 倍时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名硬超时键").toContain("wallClockHardTimeout");
+  expect(violated.output, "报告必须说清是墙钟硬超时这一条").toContain("墙钟硬超时");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
 it("预算结构门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它必须挂在默认的快门禁上,否则改预算取值时没人拦。
