@@ -1,11 +1,13 @@
 /**
  * runner 包:赛季调度、排名与报告(hld §3.1)。
  * 依赖方向单向:runner → schema;**不得 import engine**——runner 只以子进程 + 文件消费对局产物(hld §3.2)。
- * 空壳阶段只落对局枚举的第一步:四方组合。地图 × 种子 × 座位轮换的展开随调度器落地,
- * 种子数 K 等取值是 rulesets 参数,不写在这里。
+ * 已落地的纯函数:四方组合枚举(`enumerateMatchUps`)、名次积分记账(`ranker` 的 `rankSeason`)。
+ * 地图 × 种子 × 座位轮换的展开随调度器落地,种子数 K 等取值是 rulesets 参数,不写在这里。
  */
 
 import { RULESET_VERSION, type RulesetVersion } from "@model-war/schema";
+
+export * from "./ranker.js";
 
 /** 一场对局的输入指向:四个座位 + 钉住的规则集版本。 */
 export type MatchUp = {
