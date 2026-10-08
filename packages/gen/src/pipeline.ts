@@ -27,12 +27,25 @@
  * 不写生成日志、不占用 `protocolRounds`。重试耗尽或遇到不可重试的错误(400 / 缺凭证)→ 轮循环
  * 停在该轮,返回 `transport` 分类的 `failed`(写盘归票 05)。
  *
- * ── `kind` 与 `errorCodes` 的取值(票 07 会继续改) ──
+ * ── `kind` 与 `errorCodes` 的取值(票 07 定稿) ──
  *
  * `kind` 取「驱动本轮结论的那一栏」:编译没过 → `tsc`;编译过了 → `contract`(校验阶段,
- * 过或不过都算它驱动,所以**成功轮的 kind 也是 `contract`**)。`errorCodes`:编译失败时从 tsc
- * 诊断文本里拾取 `TS####`;静态校验失败时留空数组(校验器只经由子进程的 stdout 给出面向模型的
- * 中文文本,没有机器码可拾,票 07 再定它的来源);成功轮为空数组。
+ * 过或不过都算它驱动,所以**成功轮的 kind 也是 `contract`**)。这一栏是「哪一栏驱动」的唯一可读标记。
+ *
+ * `errorCodes` 的来源**只有一处**:编译失败时从 tsc 诊断文本里拾取 `TS####`(可复算:同一份
+ * 诊断文本总能捞出同一组码)。合约失败时**留空数组**,这是**有意写死的决定**,不是留白:
+ * 校验器对本包只暴露三样——退出码、stdout、参数;stdout 是**面向模型的合并中文文本**,
+ * 每条违规渲染成 `- [拦截|提示] <面向模型的说法> · …`,**没有机器码**。规则层的机器类别名
+ * (`forbidden-global` 等)按渲染层的设计**刻意不进 stdout**(「类别名属于机器层……不进面向模型
+ * 层的文字」,见 `packages/tools/src/validate/render-violations.ts` 头注),所以从 stdout 里取不到
+ * 一个稳定的机器码;渲染层那张 `RULE_LABELS` 中文标签表是「面向模型的说法」而不是机器码,把它抬进
+ * 这个机器字段等于把刻意分开的两侧又拆了回去。故本包不猜、不硬编码:合约轮 `errorCodes` 为空,
+ * 靠 `kind` 告诉读者哪些轮由 `tsc` 驱动、哪些轮由 `contract` 驱动。
+ *
+ * `meta.validation` 记的是**判定本轮通过的相位**——迭代期(`--phase iteration`):通过判据就是它
+ * (hld §2.2.6;契约 §3):tsc 零错误 **且** 迭代期无 blocking 违规;**只剩非 blocking 提示也算通过**,
+ * 那些提示必须进 `validation.errors`(所以这里取 `iteration` 而不是 `freeze`;后述冻结期那一相
+ * 的 blocking 判定已经把体积超限挡在提交前,故走到这里时迭代期也不会有 blocking 违规)。
  */
 
 import { readFileSync } from "node:fs";
@@ -58,8 +71,8 @@ import { scriptSizeLimit, validateScript } from "./validate.js";
 const DEFAULT_PROTOCOL_ROUNDS = 5;
 
 /**
- * `meta.generationLog` 的每行形状(hld §2.2.6;契约 §2)。**形状冻结**,票 07 会继续填 `kind`
- * 与 `errorCodes` 的取值来源。
+ * `meta.generationLog` 的每行形状(hld §2.2.6;契约 §2)。**形状冻结**,票 07 定稿了 `kind`
+ * 与 `errorCodes` 的取值来源(见文件头注)。
  */
 export type GenerationLogEntry = {
   /** 1 起;第 1 轮 = 初次生成。 */
@@ -71,6 +84,7 @@ export type GenerationLogEntry = {
   readonly params: ModelParams;
   readonly usage: unknown;
   readonly finishReason: string;
+  /** 编译失败时是诊断里的 `TS####`;合约轮为空(来源与理由见文件头注,票 07 定稿)。 */
   readonly errorCodes: readonly string[];
 };
 
@@ -130,6 +144,7 @@ type RoundResult =
       readonly text: string;
       readonly tscVersion: string;
       readonly jsPath: string;
+      /** 记的迭代期(`--phase iteration`)那一次的结论:非 blocking 提示只在这一相存在。 */
       readonly validation: ArchiveValidation;
       readonly log: GenerationLogEntry;
     }
@@ -239,7 +254,8 @@ const sendOneRound = async (options: {
     text,
     tscVersion: compile.tscVersion,
     jsPath: compile.jsPath,
-    validation: { passed: freeze.passed, errors: freeze.errors },
+    // 记迭代期的结论(不是冻结期那一相):通过判据就是迭代期,非 blocking 提示也只在这一相存在。
+    validation: { passed: iteration.passed, errors: iteration.errors },
     log: { ...base, kind: "contract", errorCodes: [] },
   };
 };
