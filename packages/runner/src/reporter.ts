@@ -20,18 +20,41 @@
  *
  *   - `validationFailures`:gen 侧 `archive/<slug>/failed-<runId>.json`(模型没拿到参赛资格);
  *   - `matchIssues`:§8.4 的崩溃 / 超时 / 内存披露(参赛了但被剔除或需披露)。
- * 处置不同,合并会误导读者。失败名单的读盘在票 09 落地,本票先把形状钉住(可为空数组)。
+ * 处置不同,合并会误导读者。失败名单由 `readFailureRecords` 扫盘填充(票 09)。
+ *
+ * ── 人类面产物:report.md + narrative/<对局>.md(票 09) ────────────────────────
+ *
+ * `renderReportMarkdown` 把 `report.json` 的形状 + 代表性叙事摘要渲染成给人读的 Markdown
+ * (排名表 / 代表性对局叙事 / 两份失败名单 / 规则版本标注);`renderNarrative` 把回放的
+ * `events` 流渲染成一局的时间线。两者都是**纯函数**。
+ *
+ * 叙事**只消费 `events`**:`ReplayEvent` 只有 `{kind, subjectId}`,且 tick 行携带的是该 tick
+ * 结算后的**状态**,所以叙事不能(也不该)回溯上一 tick 去补「这个单位属于谁」。玩家级事件
+ * (`exception` / `economy-dead` / `player-eliminated` / `victory`)的 `subjectId` 是座位号,
+ * 用 meta 行 `players[seat]` 映到模型名;单位级 / 点位级事件只能写数值 id,并在每篇开头**明说**
+ * 这一信息上限(见 `renderNarrative` 的抬头行)。
  *
  * ── 纯度契约 ──────────────────────────────────────────────────────────────────
  *
- * `renderReportJson` 是纯函数(输入 → JSON 文本),不碰 fs / 时钟 / 随机;只有薄壳
- * `writeReportJson` 落盘。依赖方向只到 `@model-war/schema` 与 `./ranker.js` 的类型,
- * 不 import engine / gen(hld §3.2)。
+ * 渲染函数(`renderReportJson` / `renderReportMarkdown` / `renderNarrative` /
+ * `selectRepresentativeMatches` / `summarizeNarrative`)都是纯函数(输入 → 文本 / 选择),不碰
+ * fs / 时钟 / 随机;只有薄壳(`writeReportJson` / `writeReportMarkdown` / `writeNarrative` /
+ * `readFailureRecords` / `writeReportArtifacts`)落盘或读盘。依赖方向只到 `@model-war/schema`
+ * 与 `./ranker.js` 的类型,不 import engine / gen(hld §3.2);也**不引 `@model-war/replay`**——
+ * 读回放就地用 `readFileSync + split + JSON.parse`(见 `readReplayLines`,理由同 `scheduler.ts`)。
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import type { FailureRecord, RulesetVersion } from "@model-war/schema";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import {
+  FAILURE_RECORD_PREFIX,
+  type FailureRecord,
+  type ReplayEvent,
+  type ReplayEventKind,
+  type ReplayLine,
+  type ReplayMetaLine,
+  type RulesetVersion,
+} from "@model-war/schema";
 import type { RankedEntry, RankPoints } from "./ranker.js";
 
 /**
@@ -139,4 +162,412 @@ export const renderReportJson = (report: SeasonReport): string =>
 export const writeReportJson = (filePath: string, report: SeasonReport): void => {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, renderReportJson(report), "utf8");
+};
+
+/** 统一落盘:建父目录 + utf8 写文本(所有 Markdown 产物共用一处写盘纪律)。 */
+const writeTextFile = (filePath: string, text: string): void => {
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, text, "utf8");
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 叙事战报:narrative/<对局>.md(票 09;只消费 events)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const messageOf = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * 事件的定序步号(与 `packages/engine/src/processor/events.ts` 的 `STEP_OF` 同源,hld §4.3)。
+ *
+ * 回放里的 `events` 已按它排好;叙事**重新按它排序**只为让输出只依赖事件的**集合**,不依赖文件
+ * 行序或 `events` 数组的书写序——「叙事是 events 的纯函数」在机器上就是这条(同集合同输出)。
+ */
+const EVENT_STEP: Record<ReplayEventKind, number> = {
+  exception: 0,
+  "first-contact": 2,
+  "unit-destroyed": 3,
+  "site-captured": 4,
+  "economy-dead": 4,
+  "player-eliminated": 5,
+  victory: 5,
+};
+
+/** 一条落在时间线上的事件(带它所属的 tick 与在该 tick `events[]` 里的下标,后者作稳定兜底)。 */
+type TimelineEntry = {
+  readonly tick: number;
+  readonly index: number;
+  readonly event: ReplayEvent;
+};
+
+/** 七种事件的中文文案。座位号经 `seatModel` 映到模型名;单位级 / 点位级只给数值 id。 */
+const describeEvent = (event: ReplayEvent, seatModel: (seat: number) => string): string => {
+  switch (event.kind) {
+    case "exception":
+      return `${seatModel(event.subjectId)} 异常出局`;
+    case "first-contact":
+      return `首触 · 单位 #${event.subjectId}`;
+    case "unit-destroyed":
+      return `单位 #${event.subjectId} 阵亡`;
+    case "site-captured":
+      return `点位 #${event.subjectId} 易主`;
+    case "economy-dead":
+      return `${seatModel(event.subjectId)} 经济死亡`;
+    case "player-eliminated":
+      return `${seatModel(event.subjectId)} 出局`;
+    case "victory":
+      return `${seatModel(event.subjectId)} 获胜`;
+  }
+};
+
+/**
+ * 把一份回放的**行集**渲染成一篇叙事战报(纯函数:同集合同文本)。
+ *
+ * 抬头行明说「只读 `events` 流」这一信息上限:`ReplayEvent` 只有 `{kind, subjectId}`,tick 行是
+ * 结算后状态,故不回溯状态就补不出单位 / 点位的属主与兵种。座位级事件用 meta 行 `players[seat]`
+ * 映到模型名;单位级 / 点位级只能写数值 id。
+ *
+ * 排序键 = `(tick, STEP_OF(kind), subjectId, kind, 下标)`(见 `EVENT_STEP`),于是反转 `events`
+ * 或打乱行序都不改变输出——输出只由事件集合决定,不依赖文件行序。
+ */
+export const renderNarrative = (lines: readonly ReplayLine[]): string => {
+  const meta = lines.find((line): line is ReplayMetaLine => line.type === "meta");
+  const players = meta?.players ?? [];
+  const seatModel = (seat: number): string =>
+    players.find((player) => player.seat === seat)?.model ?? `座位 #${seat}`;
+
+  const timeline: readonly TimelineEntry[] = lines
+    .flatMap((line): readonly TimelineEntry[] =>
+      line.type === "tick"
+        ? line.events.map((event, index) => ({ tick: line.tick, index, event }))
+        : [],
+    )
+    .sort(
+      (left, right) =>
+        left.tick - right.tick ||
+        EVENT_STEP[left.event.kind] - EVENT_STEP[right.event.kind] ||
+        left.event.subjectId - right.event.subjectId ||
+        left.event.kind.localeCompare(right.event.kind) ||
+        left.index - right.index,
+    );
+
+  const roster = players.map((player) => player.model);
+  const out: string[] = [];
+  out.push(roster.length === 0 ? "# 叙事战报" : `# 叙事战报:${roster.join(" / ")}`, "");
+  out.push("本叙事**只读回放的 `events` 流**,不回溯任何 tick 状态(不重解析 `units` / `sites`)。");
+  out.push("");
+  out.push(
+    "因此单位级 / 点位级事件只带数值 id——「这个单位属于哪个模型、什么兵种」是状态里的信息,这里刻意不读。",
+  );
+  out.push("");
+  if (meta !== undefined) {
+    out.push(`- 规则版本:\`${meta.ruleset}\``);
+    out.push(`- 回放种子:\`${meta.seed}\``);
+    out.push(`- 参赛者:${roster.length === 0 ? "(meta 未列名册)" : roster.join(" / ")}`);
+    out.push("");
+  }
+  out.push("## 事件时间线", "");
+  if (timeline.length === 0) {
+    out.push("- (本局无事件)");
+  } else {
+    for (const { tick, event } of timeline) {
+      out.push(`- \`t${tick}\` ${describeEvent(event, seatModel)}`);
+    }
+  }
+  out.push("");
+  return out.join("\n");
+};
+
+/** 薄壳:确保父目录存在后把渲染结果写盘(`narrative/<对局>.md`)。 */
+export const writeNarrative = (filePath: string, lines: readonly ReplayLine[]): void => {
+  writeTextFile(filePath, renderNarrative(lines));
+};
+
+/** 对一篇叙事文本做单行摘要:取前三条时间线,标注总数(供 report.md 的「代表性对局叙事」节)。 */
+export const summarizeNarrative = (narrative: string): string => {
+  const bullets = narrative
+    .split("\n")
+    .filter((line) => line.startsWith("- `t"))
+    .map((line) => line.replace(/^- `/, "").replace("`", ""));
+  if (bullets.length === 0) {
+    return "本局无事件。";
+  }
+  const shown = bullets.slice(0, 3);
+  const tail = bullets.length > shown.length ? `(共 ${bullets.length} 条事件)` : "";
+  return `${shown.join(";")}${tail}`;
+};
+
+/**
+ * 代表性对局的选择(纯函数,挑法写死):按名次表逐模型取它**名次最好**的一局,去重后取前
+ * `limit` 篇。名次表已按均分降序,故输出对同一份报告是确定的。
+ */
+export const selectRepresentativeMatches = (report: SeasonReport, limit = 3): readonly string[] => {
+  const selected: string[] = [];
+  for (const entry of report.standings) {
+    if (selected.length >= limit) {
+      break;
+    }
+    let bestMatchId: string | undefined;
+    let bestRank = Number.POSITIVE_INFINITY;
+    for (const match of report.matches) {
+      const seat = match.seats.indexOf(entry.player);
+      if (seat < 0) {
+        continue;
+      }
+      const rank = match.rankings[seat];
+      if (rank === undefined) {
+        continue;
+      }
+      if (rank < bestRank) {
+        bestRank = rank;
+        bestMatchId = match.matchId;
+      }
+    }
+    if (bestMatchId !== undefined && !selected.includes(bestMatchId)) {
+      selected.push(bestMatchId);
+    }
+  }
+  return selected;
+};
+
+/**
+ * 就地读一份回放为**带类型的行**(`readFileSync` → `split("\n")` → `JSON.parse` → 按 `type`
+ * 分派)。
+ *
+ * 不引 `@model-war/replay` 的 `parseReplay`,理由同 `scheduler.ts`:为一行 JSON 拉一条包边要动
+ * `runner/package.json` + `runner/tsconfig.json`,而 spec 明确 runner 只声明 `schema`。
+ */
+const readReplayLines = (filePath: string): readonly ReplayLine[] => {
+  let raw: string;
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch (cause) {
+    throw new Error(`读不到回放 ${filePath}:${messageOf(cause)}`);
+  }
+  const parsed: ReplayLine[] = [];
+  raw.split("\n").forEach((text, at) => {
+    if (text.trim() === "") {
+      return;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch (cause) {
+      throw new Error(`回放 ${filePath} 第 ${at + 1} 行不是合法 JSON:${messageOf(cause)}`);
+    }
+    const type = isRecord(value) ? value["type"] : undefined;
+    if (type !== "meta" && type !== "tick" && type !== "result") {
+      throw new Error(`回放 ${filePath} 第 ${at + 1} 行不是回放行:type=${JSON.stringify(type)}`);
+    }
+    parsed.push(value as ReplayLine);
+  });
+  if (parsed.length === 0) {
+    throw new Error(`回放 ${filePath} 是空的:读不到任何一行`);
+  }
+  return parsed;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// report.md:排名 + 代表性叙事 + 两份失败名单 + 规则版本标注(票 09)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** report.md 的输入:报告本身 + 已选好的代表性对局(带摘要),只引用 `narrative/<对局>.md`。 */
+export type ReportMarkdownInput = {
+  readonly report: SeasonReport;
+  readonly representatives: readonly { readonly matchId: string; readonly summary: string }[];
+};
+
+/** Markdown 表格单元格转义(照 `packages/tools/src/generate/rules-value-table.ts` 的 `tableCell`)。 */
+const tableCell = (value: string): string => value.replaceAll("|", "\\|");
+
+/** 分数渲染:去掉浮点噪声,整数不带小数位,否则两位(均分可能是 1.5 / 2.33…)。 */
+const formatScore = (value: number): string => {
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+};
+
+/** 存档引用 `archive/<slug>/<runId>` → 可读的 `<slug>`;不是该形态则原样返回。 */
+const modelLabelOf = (player: string): string => {
+  const parts = player.split("/");
+  return parts[0] === "archive" && parts[1] !== undefined ? parts[1] : player;
+};
+
+/** `对局问题清单` 的稳定原因标签 → 中文。 */
+const reasonLabelOf = (reason: MatchIssueReason): string => {
+  switch (reason) {
+    case "engine-crash":
+      return "引擎崩溃";
+    case "nondeterministic-timeout":
+      return "不确定超时";
+    case "memory-pressure":
+      return "内存压力";
+  }
+};
+
+/** 布尔 → 「是」/「否」(照 selfproof report 的 `yn` 形态)。 */
+const yn = (value: boolean): string => (value ? "是" : "否");
+
+/**
+ * 渲染 `report.md`(纯函数:同输入恒同输出)。
+ *
+ * 结构:抬头(规则版本 / 主种子 / 名次积分表 / 计数)+ v0 免责 + 排名表 + 代表性对局叙事 +
+ * **校验失败名单** + **对局问题清单**。两份失败**分两节、绝不合并**;每条都带回到来源记录的指针。
+ *
+ * v0 口径:不宣称名次可信、不做统计推断(报告里不出现任何此类字样,见测试的反例清单)。
+ */
+export const renderReportMarkdown = (input: ReportMarkdownInput): string => {
+  const { report, representatives } = input;
+  const out: string[] = [];
+
+  out.push(`# 赛季报告 · 规则版本 \`${report.ruleset}\``, "");
+
+  const excluded = report.matchIssues.filter((issue) => issue.excludedFromRanking).length;
+  out.push(`- 运行标识:\`${report.runId}\``);
+  out.push(`- 规则版本:\`${report.ruleset}\``);
+  out.push(`- 赛季主种子:\`${report.masterSeed}\``);
+  out.push(`- 名次积分表:${report.rankPoints.map((points) => String(points)).join(" / ")}`);
+  out.push(`- 成功对局:${report.matches.length} 局`);
+  out.push(`- 对局问题:${report.matchIssues.length} 条(其中排除出排名 ${excluded} 条)`);
+  out.push(`- 校验失败:${report.validationFailures.length} 条`);
+  out.push("");
+  out.push("> v0 口径:名次仅供展示与观看,不做统计推断,也不代表模型之间的真实优劣。");
+  out.push("");
+
+  // ── 排名 ──
+  out.push("## 排名", "");
+  if (report.standings.length === 0) {
+    out.push("本节为空:没有可展示的名次。", "");
+  } else {
+    out.push("| 名次 | 模型 | 赛季总分 | 有效局数 | 对局均分 |");
+    out.push("| --- | --- | --- | --- | --- |");
+    for (const entry of report.standings) {
+      out.push(
+        `| ${entry.rank} | ${tableCell(modelLabelOf(entry.player))} | ` +
+          `${formatScore(entry.totalPoints)} | ${entry.countedMatches} | ` +
+          `${formatScore(entry.averagePoints)} |`,
+      );
+    }
+    out.push("");
+  }
+
+  // ── 代表性对局叙事 ──
+  out.push("## 代表性对局叙事", "");
+  if (representatives.length === 0) {
+    out.push("本节为空:没有可引用的对局叙事。", "");
+  } else {
+    for (const { matchId, summary } of representatives) {
+      out.push(`- [${matchId}](narrative/${matchId}.md) — ${summary}`);
+    }
+    out.push("");
+    out.push(`(每局都生成了叙事战报,见 \`narrative/\` 目录;上面只引用代表性几篇。)`);
+    out.push("");
+  }
+
+  // ── 校验失败名单(没拿到参赛资格;来源 = gen 侧 failed-<runId>.json) ──
+  out.push("## 校验失败名单", "");
+  out.push(
+    "> 来源:gen 侧 `archive/<slug>/failed-<runId>.json`。这些模型没通过静态校验 / 传输耗尽,",
+  );
+  out.push("> **没有参赛资格**,与下面的「对局问题清单」是两回事。", "");
+  if (report.validationFailures.length === 0) {
+    out.push("本节为空:没有模型在校验阶段失败。", "");
+  } else {
+    out.push("| 模型 | 版本 | 分类 | 已收敛轮数 | 说明 | 记录 |");
+    out.push("| --- | --- | --- | --- | --- | --- |");
+    for (const record of report.validationFailures) {
+      const pointer = `archive/${record.model}/${FAILURE_RECORD_PREFIX}${record.runId}.json`;
+      out.push(
+        `| ${tableCell(record.model)} | ${tableCell(record.modelVersion)} | ` +
+          `${record.classification} | ${record.protocolRounds} | ` +
+          `${tableCell(record.message)} | \`${pointer}\` |`,
+      );
+    }
+    out.push("");
+  }
+
+  // ── 对局问题清单(参赛了但被剔除 / 需披露;来源 = §8.4 执行期异常) ──
+  out.push("## 对局问题清单", "");
+  out.push("> 来源:§8.4 执行期披露。引擎崩溃 / 不确定超时**参赛了但被排除出排名**;");
+  out.push("> 内存压力是**正常结果**(退出码 0),只披露、仍计入排名。", "");
+  if (report.matchIssues.length === 0) {
+    out.push("本节为空:没有对局出现崩溃 / 超时 / 内存披露。", "");
+  } else {
+    out.push("| 对局 | 地图 | 种子 | 原因 | 退出码 | 重跑 | 排除出排名 | 输入 |");
+    out.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+    for (const issue of report.matchIssues) {
+      const exitCode = issue.exitCode === null ? "—" : String(issue.exitCode);
+      out.push(
+        `| ${tableCell(issue.matchId)} | ${tableCell(issue.map)} | ${issue.seed} | ` +
+          `${reasonLabelOf(issue.reason)} | ${exitCode} | ${issue.rerunCount} | ` +
+          `${yn(issue.excludedFromRanking)} | \`${issue.inputPath}\` |`,
+      );
+    }
+    out.push("");
+  }
+
+  return out.join("\n");
+};
+
+/** 薄壳:确保父目录存在后把渲染结果写盘(`report.md`)。 */
+export const writeReportMarkdown = (filePath: string, input: ReportMarkdownInput): void => {
+  writeTextFile(filePath, renderReportMarkdown(input));
+};
+
+/**
+ * 扫 `archive/<slug>/failed-*.json` 读出校验失败名单(模型没拿到参赛资格)。
+ *
+ * 只按文件名前缀 `failed-` 与目录结构找记录,不猜 runId:赛季的 runId 与 gen 的 runId 不同源,
+ * 因此收录 `archive/` 下**全部**失败记录(按 `slug`、再按文件名升序,确定性)。
+ */
+export const readFailureRecords = (root: string): readonly FailureRecord[] => {
+  const archiveDir = join(root, "archive");
+  let slugs: readonly string[];
+  try {
+    slugs = readdirSync(archiveDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch (cause) {
+    throw new Error(`读不到存档目录 ${archiveDir}:${messageOf(cause)}`);
+  }
+  const records: FailureRecord[] = [];
+  for (const slug of slugs) {
+    const slugDir = join(archiveDir, slug);
+    const files = readdirSync(slugDir)
+      .filter((name) => name.startsWith(FAILURE_RECORD_PREFIX) && name.endsWith(".json"))
+      .sort();
+    for (const file of files) {
+      const filePath = join(slugDir, file);
+      try {
+        records.push(JSON.parse(readFileSync(filePath, "utf8")) as FailureRecord);
+      } catch (cause) {
+        throw new Error(`失败记录 ${filePath} 不是合法 JSON:${messageOf(cause)}`);
+      }
+    }
+  }
+  return records;
+};
+
+/**
+ * 落 human-facing 的两个产物:每局一篇 `narrative/<对局>.md` + 一份 `report.md`。
+ *
+ * 只对 `report.matches`(成功局)生成叙事——被剔除的崩溃局可能根本没写出回放,
+ * 没有 events 流就无从生成;`report.md` 的「对局问题清单」仍会列出它们。
+ */
+export const writeReportArtifacts = (outputDir: string, report: SeasonReport): void => {
+  const narratives = new Map<string, string>();
+  for (const match of report.matches) {
+    const replayPath = join(outputDir, "matches", match.matchId, "replay.jsonl");
+    const text = renderNarrative(readReplayLines(replayPath));
+    narratives.set(match.matchId, text);
+    writeTextFile(join(outputDir, "narrative", `${match.matchId}.md`), text);
+  }
+  const representatives = selectRepresentativeMatches(report).map((matchId) => ({
+    matchId,
+    summary: summarizeNarrative(narratives.get(matchId) ?? ""),
+  }));
+  writeTextFile(join(outputDir, "report.md"), renderReportMarkdown({ report, representatives }));
 };
