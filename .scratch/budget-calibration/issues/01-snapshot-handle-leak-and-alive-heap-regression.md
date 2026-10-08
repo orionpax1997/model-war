@@ -12,10 +12,18 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 空脚本连跑 600 tick,tick 末存活堆不随 tick 增长(窗口极差或斜率断言,不是绝对值断言)
-- [ ] 该断言在修复前能弄红(先看到红,再修绿)
-- [ ] 判定次序与行为一步不动:既有执行器用例全绿,观测与故障位的取值域不变
-- [ ] 一次性 prototype 整份入库,读数部分带失效声明
-- [ ] `pnpm run check:quick` 与默认 `test` 全绿
+- [x] 空脚本连跑 600 tick,tick 末存活堆不随 tick 增长(窗口极差或斜率断言,不是绝对值断言)
+- [x] 该断言在修复前能弄红(先看到红,再修绿)
+- [x] 判定次序与行为一步不动:既有执行器用例全绿,观测与故障位的取值域不变
+- [x] 一次性 prototype 整份入库,读数部分带失效声明
+- [x] `pnpm run check:quick` 与默认 `test` 全绿
+
+## Answer
+
+已实现并合并(合并提交 `7e37208`,随 PR #9 进入 `main`)。
+
+- 修复 `openSandbox.setSnapshot` 未释放 `hostToHandle(snapshot)` 参数 handle 造成的每 tick 快照泄漏。
+- 回归断言用「两 tick 同值 / 窗口极差」形态,修复前先红后绿;判定次序与行为一步不动,观测与故障位取值域不变。
+- 一次性 prototype 整份入库,读数部分带失效声明(取自打过补丁的构建与伪造哈希,只作量级参考)。

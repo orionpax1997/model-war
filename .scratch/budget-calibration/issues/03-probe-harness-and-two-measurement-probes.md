@@ -12,11 +12,19 @@
 
 **Blocked by:** 01(两个量测探针都要真引擎的存活堆读数,读数在泄漏修复前不成立)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 一条显式命令跑完探针,读数落成 `.scratch/budget-calibration/readings.md` 与同级 `.json`,带真沙箱运行时哈希
-- [ ] 探针逐条镜像执行器的每 tick 次序,不改任何判定;既有执行器行为断言全绿
-- [ ] 封装顶探针给出「分配上限 − 读出封顶」的读数,并说明它如何随分配形态变化
-- [ ] 装 bundle 之后的存活堆基线有读数,与空 VM 基线分列
-- [ ] 读数文件只放数与测法、不放建议阈值;不设读数目录时零文件副作用
-- [ ] `pnpm run check:quick` 与默认 `test` 全绿
+- [x] 一条显式命令跑完探针,读数落成 `.scratch/budget-calibration/readings.md` 与同级 `.json`,带真沙箱运行时哈希
+- [x] 探针逐条镜像执行器的每 tick 次序,不改任何判定;既有执行器行为断言全绿
+- [x] 封装顶探针给出「分配上限 − 读出封顶」的读数,并说明它如何随分配形态变化
+- [x] 装 bundle 之后的存活堆基线有读数,与空 VM 基线分列
+- [x] 读数文件只放数与测法、不放建议阈值;不设读数目录时零文件副作用
+- [x] `pnpm run check:quick` 与默认 `test` 全绿
+
+## Answer
+
+已实现并合并(合并提交 `b33656c`)。
+
+- 新增 `pnpm run probes:budget`,经 `MW_READINGS_DIR` 落盘 `.scratch/budget-calibration/readings.{md,json}`,带真沙箱运行时哈希(伪造哈希会被 `verify` 拒绝复算)。
+- 量测探针逐条镜像 `createQuickJsRunner` 的每 tick 次序、不改任何判定;继承两个坑(计数回调只在构造时装上、事件读数按格数记)。
+- 两个量测读数:分配上限的封顶随分配形态从约 98% 到 `limit − 请求量`;装 runtime bundle 后的存活堆基线 `118384 B`,与空 VM 基线 `75128 B` 分列。
