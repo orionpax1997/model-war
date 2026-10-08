@@ -58,7 +58,7 @@ import {
 import { enumerateMatchUps, type MatchUp } from "./enumerate.js";
 import { DEFAULT_RANK_POINTS, perMatchScores, rankSeason, type MatchStanding } from "./ranker.js";
 import type { MatchIssue, MatchIssueReason, SeasonMatchReport, SeasonReport } from "./reporter.js";
-import { writeReportJson } from "./reporter.js";
+import { readFailureRecords, writeReportArtifacts, writeReportJson } from "./reporter.js";
 import { loadSeasonConfig, type SeasonConfig } from "./season-config.js";
 
 /** 正常退出(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_OK` 同值;runner 不 import CLI,故本地定型)。 */
@@ -506,10 +506,13 @@ export const scheduleSeason = async (
     rankPoints,
     matches,
     standings,
-    validationFailures: [], // 读 archive/<slug>/failed-<runId>.json 归票 09;本票先钉住形状
+    // 校验失败名单:扫 archive/<slug>/failed-*.json(模型没拿到参赛资格;票 09)。
+    validationFailures: readFailureRecords(root),
     matchIssues,
   };
   writeReportJson(join(outputDir, "report.json"), report);
+  // 人类面产物:每局一篇 narrative/<对局>.md + 一份 report.md(票 09)。
+  writeReportArtifacts(outputDir, report);
   return EXIT_OK;
 };
 

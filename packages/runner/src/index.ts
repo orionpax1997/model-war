@@ -10,7 +10,9 @@
  * - `season-config`:`season.yaml` 的形状与装载(取值缺省语义由调用方注入);
  * - `ranker`:名次积分纯函数 `rankSeason`;
  * - `scheduler`:`runSeason` 处理器与可测核心 `scheduleSeason`(并发赛季 + 退出码驱动的重跑/剔除,票 06 → 07);
- * - `reporter`:`report.json` 的形状与序列化(纯函数 `renderReportJson` + 薄壳落盘,票 08)。
+ * - `reporter`:`report.json` 的形状与序列化(纯函数 `renderReportJson` + 薄壳落盘,票 08),
+ *   以及人类面产物 `report.md` / `narrative/<对局>.md`(纯函数 `renderReportMarkdown` /
+ *   `renderNarrative` + 薄壳 `writeReportArtifacts`,票 09)。
  */
 
 export * from "./enumerate.js";

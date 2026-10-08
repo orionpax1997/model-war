@@ -1,10 +1,21 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
+import type { FailureRecord, ReplayEvent, ReplayLine } from "@model-war/schema";
 import type { RankPoints } from "./ranker.js";
 import { rankSeason } from "./ranker.js";
-import { renderReportJson, writeReportJson, type SeasonReport } from "./reporter.js";
+import {
+  renderNarrative,
+  renderReportJson,
+  renderReportMarkdown,
+  selectRepresentativeMatches,
+  summarizeNarrative,
+  writeReportJson,
+  type MatchIssue,
+  type SeasonMatchReport,
+  type SeasonReport,
+} from "./reporter.js";
 import { scheduleSeason, type SeasonSchedulerDeps } from "./scheduler.js";
 
 /**
@@ -187,4 +198,244 @@ const emptyReport = (): SeasonReport => ({
   standings: [],
   validationFailures: [],
   matchIssues: [],
+});
+
+// ── 票 09:叙事 narrative/<对局>.md ──────────────────────────────────────────
+
+const ROSTER = ["alpha", "beta", "gamma", "delta"] as const;
+
+/** 一份四方 meta 行:座位 0..3 = alpha/beta/gamma/delta(座位 → 模型名的唯一映射源)。 */
+const metaLine = (): ReplayLine => ({
+  type: "meta",
+  schemaVersion: 1,
+  ruleset: "v1",
+  timezoneOffset: "+00:00",
+  mapHash: "0".repeat(16),
+  seed: 7,
+  players: ROSTER.map((model, seat) => ({
+    model,
+    archiveRef: `archive/${model}/r1`,
+    seat: seat as 0 | 1 | 2 | 3,
+  })),
+  runner: "stub",
+  quickjsWasiVersion: null,
+  sandboxRuntimeHash: null,
+  wasiClock: null,
+  wasiRandomFill: null,
+  wasiTimezoneOffset: null,
+});
+
+const tickLine = (tick: number, events: readonly ReplayEvent[]): ReplayLine => ({
+  type: "tick",
+  tick,
+  players: [],
+  units: [],
+  sites: [],
+  events,
+  stateHash: "x",
+});
+
+it("renderNarrative 是 events 的纯函数:同集合同文本,反转 events 也不变", () => {
+  const events: readonly ReplayEvent[] = [
+    { kind: "victory", subjectId: 0 },
+    { kind: "first-contact", subjectId: 3 },
+    { kind: "unit-destroyed", subjectId: 9 },
+  ];
+  const forward = [metaLine(), tickLine(5, events)];
+  const reversed = [metaLine(), tickLine(5, [...events].reverse())];
+  expect(renderNarrative(forward)).toBe(renderNarrative(forward));
+  expect(renderNarrative(reversed)).toBe(renderNarrative(forward));
+});
+
+it("renderNarrative 渲染七种事件,座位级事件映到模型名,单位 / 点位只给数值 id", () => {
+  const events: readonly ReplayEvent[] = [
+    { kind: "exception", subjectId: 1 },
+    { kind: "first-contact", subjectId: 7 },
+    { kind: "unit-destroyed", subjectId: 8 },
+    { kind: "site-captured", subjectId: 5 },
+    { kind: "economy-dead", subjectId: 2 },
+    { kind: "player-eliminated", subjectId: 3 },
+    { kind: "victory", subjectId: 0 },
+  ];
+  const md = renderNarrative([metaLine(), tickLine(20, events)]);
+  expect(md).toContain("beta 异常出局");
+  expect(md).toContain("首触 · 单位 #7");
+  expect(md).toContain("单位 #8 阵亡");
+  expect(md).toContain("点位 #5 易主");
+  expect(md).toContain("gamma 经济死亡");
+  expect(md).toContain("delta 出局");
+  expect(md).toContain("alpha 获胜");
+  // 抬头明说信息上限:只读 events 流、不回溯状态。
+  expect(md).toContain("只读回放的 `events` 流");
+  expect(md).toContain("不重解析 `units` / `sites`");
+});
+
+it("renderNarrative 对没有 events / 没有名册的 meta 也不崩", () => {
+  const bare = { type: "meta", schemaVersion: 1, ruleset: "v1" } as unknown as ReplayLine;
+  const md = renderNarrative([bare, tickLine(1, [])]);
+  expect(md).toContain("- (本局无事件)");
+});
+
+it("summarizeNarrative 取前三条时间线并标注总数", () => {
+  const events: readonly ReplayEvent[] = [
+    { kind: "first-contact", subjectId: 1 },
+    { kind: "unit-destroyed", subjectId: 2 },
+    { kind: "victory", subjectId: 0 },
+    { kind: "unit-destroyed", subjectId: 3 },
+  ];
+  const summary = summarizeNarrative(renderNarrative([metaLine(), tickLine(3, events)]));
+  expect(summary).toContain("首触 · 单位 #1");
+  expect(summary).toContain("共 4 条事件");
+});
+
+// ── 票 09:report.md ───────────────────────────────────────────────────────────
+
+const matchReport = (
+  matchId: string,
+  rankings: readonly [number, number, number, number],
+): SeasonMatchReport => ({
+  matchId,
+  inputPath: `runs/fixture/matches/${matchId}/input.json`,
+  comboId: "c0",
+  mapIndex: 0,
+  seedIndex: Number(matchId.slice(-1)),
+  map: "arena",
+  seed: 100,
+  seats: ["archive/alpha/r1", "archive/beta/r1", "archive/gamma/r1", "archive/delta/r1"],
+  rankings,
+  reason: "timeout",
+  perMatchScores: [3, 2, 1, 0],
+});
+
+/** 四局、四模型各赢一局的名次表:好让代表性选择逐局取一。 */
+const reportWithFourWinners = (): SeasonReport => ({
+  ...emptyReport(),
+  matches: [
+    matchReport("c0-arena-s0", [1, 2, 3, 4]),
+    matchReport("c0-arena-s1", [2, 1, 3, 4]),
+    matchReport("c0-arena-s2", [3, 2, 1, 4]),
+    matchReport("c0-arena-s3", [4, 2, 3, 1]),
+  ],
+  standings: ROSTER.map((model, index) => ({
+    player: `archive/${model}/r1`,
+    totalPoints: 4 - index,
+    countedMatches: 4,
+    averagePoints: (4 - index) / 4,
+    rank: index + 1,
+  })),
+});
+
+it("selectRepresentativeMatches 挑法确定:逐模型取其最好名次的一局,去重取前 limit 篇", () => {
+  const report = reportWithFourWinners();
+  expect(selectRepresentativeMatches(report)).toEqual([
+    "c0-arena-s0",
+    "c0-arena-s1",
+    "c0-arena-s2",
+  ]);
+  expect(selectRepresentativeMatches(report)).toEqual(selectRepresentativeMatches(report));
+});
+
+const failureRecordFixture = (): FailureRecord => ({
+  model: "alpha",
+  modelVersion: "snapshot-1",
+  generatedAt: "2026-01-01T00:00:00Z",
+  runId: "gen-run-1",
+  ruleset: "v1",
+  classification: "tsc",
+  protocolRounds: 5,
+  prompts: ["prompt 1"],
+  generationLog: ["log 1"],
+  diagnostics: ["diag 1"],
+  message: "编译没过",
+});
+
+const matchIssueFixture = (): MatchIssue => ({
+  matchId: "c0-arena-s0",
+  inputPath: "runs/fixture/matches/c0-arena-s0/input.json",
+  comboId: "c0",
+  mapIndex: 0,
+  seedIndex: 0,
+  map: "arena",
+  seed: 100,
+  reason: "engine-crash",
+  exitCode: 2,
+  rerunCount: 1,
+  excludedFromRanking: true,
+});
+
+it("report.md 不含任何统计性 / 名次可信宣称,且两份失败分两节、各带来源指针", () => {
+  const report: SeasonReport = {
+    ...reportWithFourWinners(),
+    validationFailures: [failureRecordFixture()],
+    matchIssues: [matchIssueFixture()],
+  };
+  const md = renderReportMarkdown({
+    report,
+    representatives: [{ matchId: "c0-arena-s0", summary: "t1 · alpha 获胜" }],
+  });
+
+  for (const forbidden of ["统计显著", "显著", "置信区间", "可信", "p 值", "Elo"]) {
+    expect(md, `报告不该出现统计性宣称:${forbidden}`).not.toContain(forbidden);
+  }
+
+  // 规则版本标注 + 排名表头 + 代表性叙事引用。
+  expect(md).toContain("规则版本 `v1`");
+  expect(md).toContain("| 名次 | 模型 | 赛季总分 | 有效局数 | 对局均分 |");
+  expect(md).toContain("| 1 | alpha |");
+  expect(md).toContain("[c0-arena-s0](narrative/c0-arena-s0.md)");
+
+  // 两节分开、不合并:失败记录的指针落在校验失败节内,且在对局问题节之前。
+  expect(md).toContain("## 校验失败名单");
+  expect(md).toContain("## 对局问题清单");
+  const failHeading = md.indexOf("## 校验失败名单");
+  const failPointer = md.indexOf("`archive/alpha/failed-gen-run-1.json`");
+  const issueHeading = md.indexOf("## 对局问题清单");
+  expect(failHeading).toBeGreaterThanOrEqual(0);
+  expect(failHeading).toBeLessThan(failPointer);
+  expect(failPointer).toBeLessThan(issueHeading);
+  // 对局问题条目带回输入路径指针。
+  expect(md).toContain("> 来源:§8.4 执行期披露");
+  expect(md).toContain("`runs/fixture/matches/c0-arena-s0/input.json`");
+});
+
+it("renderReportMarkdown 是纯函数:同输入恒同输出", () => {
+  const input = { report: reportWithFourWinners(), representatives: [] };
+  expect(renderReportMarkdown(input)).toBe(renderReportMarkdown(input));
+});
+
+// ── 票 09:落盘端到端(每局叙事 + report.md + 校验失败名单读盘) ──────────────
+
+it("落盘端到端:每局都有 narrative/<对局>.md,report.md 引用它们并含两份名单", async () => {
+  const { root, configPath } = buildSeasonRoot();
+  // 放一条 gen 侧失败记录,验证报告会读出来并带来源指针。
+  writeFileSync(
+    join(root, "archive", "alpha", "failed-gen-run-1.json"),
+    `${JSON.stringify(failureRecordFixture(), null, 2)}\n`,
+  );
+  const code = await scheduleSeason(
+    { root, configPath },
+    { spawnMatch: scriptedSpawn(() => 0).spawnMatch },
+  );
+  expect(code).toBe(0);
+
+  const report = JSON.parse(
+    readFileSync(join(root, "runs/fixture/report.json"), "utf8"),
+  ) as SeasonReport;
+  expect(report.validationFailures).toHaveLength(1);
+
+  for (const match of report.matches) {
+    const narrativePath = join(root, "runs/fixture/narrative", `${match.matchId}.md`);
+    expect(existsSync(narrativePath), `${match.matchId} 缺叙事`).toBe(true);
+    expect(readFileSync(narrativePath, "utf8")).toContain("只读回放的 `events` 流");
+  }
+
+  const reportMd = readFileSync(join(root, "runs/fixture/report.md"), "utf8");
+  expect(reportMd).toContain("## 排名");
+  expect(reportMd).toContain("## 校验失败名单");
+  expect(reportMd).toContain("## 对局问题清单");
+  expect(reportMd).toContain("`archive/alpha/failed-gen-run-1.json`");
+  expect(reportMd).toContain("alpha");
+  // report.md 只引用代表性几篇(不是全部),但仍指向 narrative/ 下的对局文件。
+  expect(reportMd).toContain("narrative/");
+  expect(reportMd).toMatch(/\[c0-arena-s\d\]\(narrative\/c0-arena-s\d\.md\)/);
 });
