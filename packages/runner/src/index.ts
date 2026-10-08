@@ -9,7 +9,7 @@
  * - `enumerate`:全部 4 人组合 × M 张地图 × K 个种子,带座位轮换与确定性种子;
  * - `season-config`:`season.yaml` 的形状与装载(取值缺省语义由调用方注入);
  * - `ranker`:名次积分纯函数 `rankSeason`;
- * - `scheduler`:`runSeason` 处理器与可测核心 `scheduleSeason`(串行赛季,票 06)。
+ * - `scheduler`:`runSeason` 处理器与可测核心 `scheduleSeason`(并发赛季 + 退出码驱动的重跑/剔除,票 06 → 07)。
  */
 
 export * from "./enumerate.js";
