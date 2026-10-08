@@ -160,10 +160,12 @@
 
 | 项 | 选择 | 依据 |
 |---|---|---|
-| prompt 模板 | `prompts/` 目录下的数据文件(不进 gen 代码) | 改提示词不必改代码;与 `docs/rules-v1` 同为 gen 的输入 |
-| 模型 API 客户端 | OpenAI-compatible HTTP 客户端 + 各厂商 SDK 适配层 | 新模型接入只改配置(FR-5 AC3);凭证一律走环境变量 |
-| 重试与限流 | 指数退避 + 每模型并发 1 | 生成阶段无性能压力 |
-| 生成日志 | 结构化 JSON 落盘(进存档 meta) | FR-6 AC1 |
+| prompt 模板 | `prompts/base.md` 单模板数据文件(不进 gen 代码):占位符 `{{contract}}`(= 契约读入那两份文档拼接)与可选 `{{strategy}}`,外加一份只写「见 `rules.md` §X / `api.md` §Y」的指针清单——判据文本不复制,真源仍是 `docs/rules-vN` | 改提示词不必改代码;与 `docs/rules-v1` 同为 gen 的输入 |
+| 契约读入 | 每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘(`RULESET_VERSION` 取自 `@model-war/schema` 常量),不嵌入副本;目录名 / 文件缺失或不符即报错退出 | 契约更新自动生效,且与 §7.4 的 `meta.ruleset` 三处一致判据同源 |
+| 模型 API 客户端 | gen 内定义 `ModelClient` 接口(`send(messages, params) → { text, finishReason, usage }`),真实实现 = OpenAI-compatible HTTP 客户端 + **三个端点族分支**(`chat-completions` / `messages` / `responses`),**不引厂商 SDK**——本期全部已开通模型都落在这三族,按厂商再包一层只是让依赖面随节点扩张;测试实现 = 可编程 stub | 新模型接入只改配置(FR-5 AC3);凭证一律走环境变量;CI 无凭证(§CI),自动化测试必须离线可跑 |
+| 模型配置 | `models.yaml`(入库,内容非密钥)只登记本季参赛集:`{ slug, endpointFamily, baseUrl, modelId, credentialEnvVar, 可选 contextLength / protocolRounds / strategy / params }`;类型与加载校验是 **gen 包私有**,不进 `schema` 的五类数据形状 | FR-5 AC3;那五类是跨进程交换的数据形状,配置不经进程边界 |
+| 重试与限流 | 指数退避 + 每模型并发 1;退避参数(初始间隔 / 倍数 / 上限 / 最大重试)是 **gen 内部常量**,不进 `rulesets/*.json`——它是与厂商 API 打交道的工程参数,与对局规则无关 | 生成阶段无性能压力 |
+| 生成日志 | 每条一行序列化 JSON 字符串,填进 `meta.generationLog`(不新增 meta 字段,守十一键冻结);逐轮记 `{ round, kind: "tsc" \| "contract", model, params, usage, finishReason, errorCodes }` | FR-6 AC1 |
 
 #### 2.2.7 脚本分层与 CI 质量门禁
 
@@ -269,7 +271,7 @@ CI 环境无网络、无模型 API、无凭证——保证 CI 上跑的永远是
 |---|---|---|
 | engine | 仅 `quickjs-wasi` + `node:crypto` | 除 stateHash 外**禁一切 `node:*`**,由 dependency-cruiser 强制——等于用 lint 证明"纯函数"。engine 不做磁盘 I/O:wasm 字节由 `apps/cli`/runner 读盘后传入,回放写向注入的输出 sink(§3.1),`engine` 包内不出现 `fs` |
 | runner / apps/cli | 受控少量(`ajv` 校验器**只在 `apps/cli`**;CLI 参数解析用 `node:util` 的 `parseArgs`,不引命令行库) | 只做调度与读文件,不参与结算。校验器不落回真源包,理由与覆盖面见 §2.2.5 |
-| gen | 允许(HTTP 客户端、SDK) | 唯一联网包,永不进对局进程(NFR-4 AC2) |
+| gen | 允许(HTTP 客户端) | 唯一联网包,永不进对局进程(NFR-4 AC2) |
 | tools | 第三方依赖面由 `check:declared-deps` 管(声明即依赖);包图方向只由 tsc 兜,**两者的取舍见 §3.2,此处不复述** | 静态校验器以源码形态由 Node 的类型擦除执行(`node packages/tools/src/…`,§3.1);这是 Node 下限取 22.18 的成因之一(§2.2.1) |
 | devDependencies | 全仓库共享(oxlint、oxfmt、Vitest、dependency-cruiser、`oxc-parser`、tsc) | 不进入任何运行时 |
 
@@ -372,7 +374,7 @@ model-war/
 | tools:generate | 生成器:真源 → 生成物,持有一张**生成物注册表**(每件 = id、产出路径、**形态**、生产函数;形态是 `whole-file` / `section` 的判别联合,两种形态的差别在类型上看得见);**新增生成物是加一行注册**。漂移检查按注册表逐件判定(§2.2.5、§2.2.7) | FR-10 AC2 |
 | cli:replay-view / replay-verify / map-lint | ASCII 查看器(不依赖 engine);重放一致性断言;地图对称性校验 | FR-9、NFR-1、FR-1 AC2 |
 
-**生成器为什么在 `packages/tools` 而不在 `packages/gen`**(ADR-0003)。理由按权重:①生成物漂移检查要进 PR 主流水线,而 `gen` 是唯一联网包,将来按 §2.2.6 要装 HTTP 客户端与各厂商 SDK——一条只读写仓库内文件、零联网的仓库门禁,不该让依赖面随别的节点扩张;②它要推翻上面那段「工具包之所以独立存在,就是为了不把门禁挂在唯一联网包下」;③两个包的产物语义不同——生成管线按批次追加存档,而生成物是整体重生成、判定标准是「重生成后无差异」,放一起会让漂移检查的判定逻辑与追加语义缠在一起。落进 `schema` 或新开第 8 个包也被排除:前者受「无运行时代码」约束,后者要连拓扑图与本表一起改,代价与收益不成比例。
+**生成器为什么在 `packages/tools` 而不在 `packages/gen`**(ADR-0003)。理由按权重:①生成物漂移检查要进 PR 主流水线,而 `gen` 是唯一联网包,将来按 §2.2.6 要装 HTTP 客户端与厂商适配层——一条只读写仓库内文件、零联网的仓库门禁,不该让依赖面随别的节点扩张;②它要推翻上面那段「工具包之所以独立存在,就是为了不把门禁挂在唯一联网包下」;③两个包的产物语义不同——生成管线按批次追加存档,而生成物是整体重生成、判定标准是「重生成后无差异」,放一起会让漂移检查的判定逻辑与追加语义缠在一起。落进 `schema` 或新开第 8 个包也被排除:前者受「无运行时代码」约束,后者要连拓扑图与本表一起改,代价与收益不成比例。
 
 **生成器与真源之间是混合传输,分界线是「能不能 afford 构建」**:生成器是低频入口(跑一次、产物入库),因此它**import 真源包**并为此在本包正式声明那条依赖;而工具包的规则层是每次提交都跑的快门禁,零构建是硬要求,因此它**读生成出来的源文件**,不 import 真源包。同一份名单在两侧都拿得到,分界线只按调用频率划(实测:让规则层直接 import 真源包,`check:quick` 由 1.04s 涨到约 1.36s,+31%,且新克隆第一次跑门禁就要先构建)。这层反直觉的间接是整件事里最容易被后来者「简化」掉的一处——简化掉它,快门禁就多了一个构建前置。
 
@@ -747,6 +749,9 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 - 编译责任在 gen 包(定版前完成),engine 不引入 tsc(§2.2.8)。
 - `meta.json` 的**形状家归真源包**(§2.2.5),十一项字段已由本 feature 的 01 票定死(`packages/schema/src/archive-meta.ts` 的类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。
 - **runner 启动即校验元数据完整性**,缺档**报错退出**(FR-6 AC2,不跳过)。**这里的「runner」指本 feature 的那个进程——第一个执行脚本的进程**(即 `modelwar match` 的装载段),不是赛季调度器 `runner` 那个包;赛季调度复用同一条校验路径,不复写。不消歧的话「runner」两个包都算。
+- **写盘原子、一跑一目录**:`script.ts` + `script.js` + `meta.json` 先在临时目录组装,冻结期校验(编译步骤 + `run-validate-script.ts --phase freeze --max-bytes <rulesets 取值>`)全过,才 rename 到 `archive/<modelSlug>/<runId>/`;目标已存在(秒级 `runId` 撞车)即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量,§7.1 的缺档判据不会被半截产物误触。`runId` 是生成时间戳,旧目录不删——这就是「定版副本不可变」的落地方式。
+- **协议轮数与 prompt 链**:`meta.protocolRounds` 是**模型调用总轮数,含初次生成**(第 1 轮 = 初次生成,之后每轮回喂一次校验错误);`meta.prompts` 逐条记该轮**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等(读入端已断言,§2.2.5)。传输层错误(429 / 5xx / 超时)与截断(`finishReason = length`)走退避**重试同一轮、不消耗协议轮数**,重试耗尽才另记一类失败——如此「轮数上限」始终指校验驱动的迭代、跨模型可比。
+- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport`),供报告侧(I)读成失败名单。`archive/` 只收已通过校验的冻结脚本(FR-5 AC2、FR-6);名字与语义见 CONTEXT 的《校验失败记录》。
 - 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。哈希取每座存档的 `script.js` / `meta.json` 各一份与地图一份,**不含 `script.ts`**(复算认编译产物,定版源码的不可变由 gen 保证,FR-6 AC1);**座位由 `archives` 的下标承载**(下标即 `playerIndex`),轮换算法归赛季调度物化期,不进这份文件。
 
 ### 7.5 回放 JSONL(`matches/<...>/replay.jsonl`)
@@ -794,7 +799,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 
 | 命令 | 模块 | 说明 |
 |---|---|---|
-| `modelwar gen --config models.yaml` | gen | 生成并冻结脚本(可 `--model <slug>` 只跑一个模型的一轮生成) |
+| `modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>]` | gen | 生成并冻结脚本;根目录解析同 `match`(默认 cwd),`--config` 相对根;`--model` 只跑一个模型。gen 启动时若 `<root>/.env` 存在即 `process.loadEnvFile()`,凭据只经 `process.env[credentialEnvVar]` 读 |
 | `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告 |
 | `modelwar match <input.json>` | engine | 执行一个对局(runner 与调试都走这条路径) |
 | `modelwar replay <replay.jsonl>` | apps/cli → `replay` | 终端 ASCII 回放,单步/暂停;只读回放,**不依赖 engine** |
