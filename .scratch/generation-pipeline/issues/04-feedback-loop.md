@@ -4,10 +4,18 @@
 
 **Blocked by:** 02(编译、校验与原子冻结)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 校验失败时下一轮**只回喂校验器 stdout**;不含引擎诊断、不含任何对局信息;messages 无状态全量重发,不依赖 provider 会话。
-- [ ] `protocolRounds` = **模型调用总轮数,含初次生成**;上限可配(默认 5);用尽即止。
-- [ ] `meta.prompts` 每条 = 该轮**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等。
-- [ ] **回喂探针测试**:桩第 1 轮回含 blocking 违规的脚本、第 2 轮回合法脚本 → 断言确实发生一次回喂、`protocolRounds === prompts.length === 2`、生成日志记到两轮。
-- [ ] 断言后续 user 消息不含任何非校验文本。
+- [x] 校验失败时下一轮**只回喂校验器 stdout**;不含引擎诊断、不含任何对局信息;messages 无状态全量重发,不依赖 provider 会话。
+- [x] `protocolRounds` = **模型调用总轮数,含初次生成**;上限可配(默认 5);用尽即止。
+- [x] `meta.prompts` 每条 = 该轮**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等。
+- [x] **回喂探针测试**:桩第 1 轮回含 blocking 违规的脚本、第 2 轮回合法脚本 → 断言确实发生一次回喂、`protocolRounds === prompts.length === 2`、生成日志记到两轮。
+- [x] 断言后续 user 消息不含任何非校验文本。
+
+## Answer
+
+已实现并合并(合并提交 `205b837`)。
+
+- 校验失败时下一轮只回喂校验器 stdout(`pipeline.ts` 的回喂前后缀明确不含引擎诊断与任何对局信息);messages 无状态全量重发,不依赖任何 provider 会话。
+- `protocolRounds` = 模型调用总轮数(含第 1 轮,`config.protocolRounds ?? maxRounds ?? 5`),用尽即止;`meta.prompts` 每条记该轮完整 transcript,长度与 `protocolRounds` 相等(装载期不变量)。
+- 回喂探针测试落 `pipeline.test.ts`:桩第 1 轮回含 blocking 违规的脚本、第 2 轮回合法脚本 → 断言确实发生一次回喂、`protocolRounds === prompts.length === 2`、生成日志记到两轮;并断言后续 user 消息不含任何非校验文本。
