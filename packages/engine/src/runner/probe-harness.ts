@@ -34,6 +34,7 @@ import {
   EVENT_TRACK,
   INTERRUPT_EVENT_GRANULARITY,
   MEMORY_TRACK,
+  UNCAUGHT_EXCEPTION_TRACK,
   createQuickJsRunner,
   openSandbox,
   type TickReadings,
@@ -62,7 +63,7 @@ export type ProbeTickReading = {
   readonly loopMs: number;
   /** 本 tick 是否被墙钟硬超时截停。 */
   readonly hardTimedOut: boolean;
-  /** 本 tick 的 guest 异常消息(若是被截停而吞下的那一次);正常为 `null`。 */
+  /** 本 tick 未被吞掉的 guest 异常消息(正常为 `null`)。 */
   readonly error: string | null;
 };
 
@@ -154,17 +155,19 @@ export const createProbeSeat = async (options: ProbeSeatOptions): Promise<ProbeS
       const started = performance.now();
       let tick: TickReadings;
       let error: string | null = null;
+      // 与真执行器同一条:未被吞掉的 guest 异常不再是「原样冒给宿主」,而是本 tick 计一次异常。
+      let uncaught = false;
       try {
         session.runLoop();
         session.pumpJobs();
         tick = session.endTick();
       } catch (thrown) {
         tick = session.endTick();
-        // 与真执行器同一条:只有「本轨截停 / 硬超时」才吞异常;别的异常原样冒给宿主。
+        // 「本轨截停 / 硬超时」各有出口(事件轨 / 故障位),不当成 guest 异常;其余的归本 tick 计一次。
         if (!tick.eventTripped && !tick.hardTimedOut) {
-          throw thrown;
+          uncaught = true;
+          error = thrown instanceof Error ? thrown.message : String(thrown);
         }
-        error = thrown instanceof Error ? thrown.message : String(thrown);
       }
       const loopMs = performance.now() - started;
       // 无条件测:判据只在 `memoryTickCeiling` 启用时才回收并读堆,探针量的是读数本身。
@@ -200,6 +203,13 @@ export const createProbeSeat = async (options: ProbeSeatOptions): Promise<ProbeS
         };
       }
       const observations: Observation[] = [];
+      // guest 未吞掉的异常:与真执行器同构——中止本 tick、计一次异常(不判内存 / API,故不叠加)。
+      if (uncaught) {
+        return {
+          intents: [],
+          observations: [{ kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 }],
+        };
+      }
       if (ceiling !== undefined) {
         if (usage.mallocSize >= ceiling) {
           observations.push({

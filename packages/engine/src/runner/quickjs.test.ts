@@ -29,6 +29,7 @@ import {
   EVENT_TRACK,
   INTERRUPT_EVENT_GRANULARITY,
   MEMORY_TRACK,
+  UNCAUGHT_EXCEPTION_TRACK,
   WALL_CLOCK_SAMPLE_INTERVAL,
   WALL_CLOCK_TRACK,
   WASI_CLOCK_MS,
@@ -675,6 +676,120 @@ it("本 tick 的 API 计数在下一 tick 进入时重置", async () => {
     expect(first.observations).toEqual([]);
     expect(second.observations).toEqual([]);
     expect(second.intents).toEqual([{ kind: "move", unitId: 7, dx: 1, dy: 0 }]);
+  } finally {
+    dispose();
+  }
+});
+
+// ── `loop()` 抛异常:不再冒成整场 engine-crash,而是计一次异常 ──────────────────
+//
+// 未被脚本吞掉的 guest 异常(脚本自己 `throw` / 引用已删的宿主桥 / 调未定义的 action)与三条预算
+// 计数轨走**同一条写入口**:执行器交回一条 `tripped` 观测(轨名 `UNCAUGHT_EXCEPTION_TRACK`),步 0
+// 落成 `count-exception-tick`。它**中止本 tick**——不排 drain、不判内存 / API,故只计一次、不与任何轨
+// 叠加;VM 续用、模块级记忆保留。断言只钉子**外部可观察行为**:交回的载荷(观测量 / 故障位)与经
+// 步 0 结算出的对局状态。
+
+it("loop() 抛异常:意图作废、产一条异常轨 tripped、无故障位,VM 续用且记忆保留", async () => {
+  // 第一 tick 抛、之后正常:同一 handle 两 tick 都跑,证明 VM 不重建、模块级 `n` 保留。
+  const script = [
+    "let n = 0;",
+    "function loop() {",
+    "  n += 1;",
+    "  if (n === 1) {",
+    '    throw new Error("deliberate");',
+    "  }",
+    "  move(n, 0, 0);",
+    "}",
+  ].join("\n");
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: script,
+    seat: 0,
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    const first = runner.drainIntents();
+    expect(first.fault, "抛异常不是硬超时,不该置故障位").toBeUndefined();
+    expect(first.intents).toEqual([]);
+    expect(first.observations).toEqual([
+      { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+    ]);
+    // 同一 handle 下一 tick 照常工作:`n` 已从 1 走到 2(记忆保留),意图正常交回。
+    runner.setSnapshot(snapshotOf(1));
+    const second = runner.drainIntents();
+    expect(second.observations).toEqual([]);
+    expect(second.intents).toEqual([{ kind: "move", unitId: 2, dx: 0, dy: 0 }]);
+  } finally {
+    dispose();
+  }
+});
+
+it("越权异常与 loop() 抛异常同轨:引用已删桥 / 调未定义 action 各计一次,不冒成崩溃", async () => {
+  // 「引用已删宿主桥」在 guest 里是一次普通 ReferenceError,未捕获时归本轨(§5.2 第五行)。
+  const deletedBridge = await drainOneTick("function loop() { __setSnapshot({}); }");
+  expect(deletedBridge.fault).toBeUndefined();
+  expect(deletedBridge.intents).toEqual([]);
+  expect(deletedBridge.observations).toEqual([
+    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+  ]);
+  // 「调未定义的 action」同样是普通 ReferenceError,与上一条同轨。
+  const undefinedAction = await drainOneTick("function loop() { fly(0, 1, 0); }");
+  expect(undefinedAction.fault).toBeUndefined();
+  expect(undefinedAction.intents).toEqual([]);
+  expect(undefinedAction.observations).toEqual([
+    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+  ]);
+});
+
+it("loop() 抛异常中止本 tick:不与内存 / API 轨叠加(同 tick 只计一次)", async () => {
+  // 同一 tick 里既攥住远越判罚线的存活堆、又打爆 API 调用,最后抛异常:三件事若各判一次就是
+  // 三次;中止语义下只该计异常轨这一次(内存 / API 两条轨都没机会说话)。
+  const script = [
+    "var hoard = [];",
+    "function loop() {",
+    "  for (var i = 0; i < 12; i += 1) { hoard.push(new Uint8Array(262144)); }",
+    "  for (var j = 0; j < 500; j += 1) { getTick(); }",
+    '  throw new Error("boom");',
+    "}",
+  ].join("\n");
+  const output = await drainOneTick(script, { memoryTickCeiling: 1, apiCallTickLimit: 1 });
+  expect(output.intents).toEqual([]);
+  expect(output.observations).toEqual([
+    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+  ]);
+});
+
+it("loop() 抛异常经步 0:exceptionTicks 累加、达上限判负出局、点位回归中立(不是整场 engine-crash)", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: 'function loop() { throw new Error("deliberate"); }',
+    seat: 0,
+  });
+  try {
+    const idle = stubRunner(() => []);
+    const budget = { exceptionTickLimit: 2 };
+    const readings: number[][] = [];
+    let state = makeState();
+    for (let i = 0; i < 3; i++) {
+      state = processTick(
+        state,
+        [runner, idle, idle, idle],
+        loadRuleset(RULESET),
+        { write: () => {} },
+        undefined,
+        budget,
+      ).state;
+      readings.push(state.players.map((player) => player.exceptionTicks));
+    }
+    // 计次数、不清零:1 → 2 → 2(出局后不再累加)。
+    expect(readings[0]).toEqual([1, 0, 0, 0]);
+    expect(readings[1]).toEqual([2, 0, 0, 0]);
+    expect(readings[2]).toEqual([2, 0, 0, 0]);
+    // 达上限即出局,名下点位回归中立——整场没有崩,状态照常结算。
+    expect(state.players[0]?.alive).toBe(false);
+    expect(state.sites.find((site) => site.id === 900)?.owner).toBe(-1);
   } finally {
     dispose();
   }
