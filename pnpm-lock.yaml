@@ -244,9 +244,15 @@ importers:
 
   packages/runner:
     dependencies:
+      '@model-war/replay':
+        specifier: workspace:*
+        version: link:../replay
       '@model-war/schema':
         specifier: workspace:*
         version: link:../schema
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
   packages/schema: {}
 
@@ -1570,6 +1576,9 @@ packages:
     engines: {node: '>=20.11'}
     hasBin: true
 
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
 snapshots:
 
   '@esbuild/aix-ppc64@0.28.2':
@@ -2449,3 +2458,5 @@ snapshots:
   watskeburt@6.0.0: {}
 
   why-is-node-running@3.2.1: {}
+
+  zod@4.6.5: {}

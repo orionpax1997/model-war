@@ -39,13 +39,15 @@
  * 渲染函数(`renderReportJson` / `renderReportMarkdown` / `renderNarrative` /
  * `selectRepresentativeMatches` / `summarizeNarrative`)都是纯函数(输入 → 文本 / 选择),不碰
  * fs / 时钟 / 随机;只有薄壳(`writeReportJson` / `writeReportMarkdown` / `writeNarrative` /
- * `readFailureRecords` / `writeReportArtifacts`)落盘或读盘。依赖方向只到 `@model-war/schema`
- * 与 `./ranker.js` 的类型,不 import engine / gen(hld §3.2);也**不引 `@model-war/replay`**——
- * 读回放就地用 `readFileSync + split + JSON.parse`(见 `readReplayLines`,理由同 `scheduler.ts`)。
+ * `readFailureRecords` / `writeReportArtifacts`)落盘或读盘。依赖方向到 `@model-war/schema` /
+ * `@model-war/replay` 与 `./ranker.js`,不 import engine / gen(hld §3.2 的拓扑里 `runner → replay`
+ * 是一条合法边)。**读回放一律走 `@model-war/replay` 的 `parseReplay` / `readLinesOf`**
+ * (spec《回放读入端(最小面)》:叙事战报与 NFR-2 复算链读同一处),不再就地实现第二条行读取。
  */
 
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { parseReplay } from "@model-war/replay";
 import {
   FAILURE_RECORD_PREFIX,
   type FailureRecord,
@@ -176,9 +178,6 @@ const writeTextFile = (filePath: string, text: string): void => {
 
 const messageOf = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
-
-const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * 事件的定序步号(与 `packages/engine/src/processor/events.ts` 的 `STEP_OF` 同源,hld §4.3)。
@@ -334,40 +333,43 @@ export const selectRepresentativeMatches = (report: SeasonReport, limit = 3): re
 };
 
 /**
- * 就地读一份回放为**带类型的行**(`readFileSync` → `split("\n")` → `JSON.parse` → 按 `type`
- * 分派)。
+ * 尝试读一份回放(供被剔除的局用):坏行 / 缺文件 / 被截断都返回 `undefined`,不抛。
  *
- * 不引 `@model-war/replay` 的 `parseReplay`,理由同 `scheduler.ts`:为一行 JSON 拉一条包边要动
- * `runner/package.json` + `runner/tsconfig.json`,而 spec 明确 runner 只声明 `schema`。
+ * 正常路径(成功局)直接用 `parseReplay` 并让它抛 `ReplayReadError`;这里只用于**被剔除的局**
+ * ——它们可能根本没写出回放,或只留下半截文件,此时叙事退化成「本局被排除」的说明即可,
+ * 不该让一份坏回放拖垮整份报告。
  */
-const readReplayLines = (filePath: string): readonly ReplayLine[] => {
-  let raw: string;
+const tryParseReplay = (filePath: string): readonly ReplayLine[] | undefined => {
   try {
-    raw = readFileSync(filePath, "utf8");
-  } catch (cause) {
-    throw new Error(`读不到回放 ${filePath}:${messageOf(cause)}`);
+    return parseReplay(filePath);
+  } catch {
+    return undefined;
   }
-  const parsed: ReplayLine[] = [];
-  raw.split("\n").forEach((text, at) => {
-    if (text.trim() === "") {
-      return;
-    }
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch (cause) {
-      throw new Error(`回放 ${filePath} 第 ${at + 1} 行不是合法 JSON:${messageOf(cause)}`);
-    }
-    const type = isRecord(value) ? value["type"] : undefined;
-    if (type !== "meta" && type !== "tick" && type !== "result") {
-      throw new Error(`回放 ${filePath} 第 ${at + 1} 行不是回放行:type=${JSON.stringify(type)}`);
-    }
-    parsed.push(value as ReplayLine);
-  });
-  if (parsed.length === 0) {
-    throw new Error(`回放 ${filePath} 是空的:读不到任何一行`);
+};
+
+/**
+ * 被剔除出排名的一局的叙事战报(纯函数)。
+ *
+ * 有可用回放(哪怕是崩溃前写下的部分 tick 行)就把时间线附上;没有则说明本局被排除的原因与
+ * 退出码。**每一局都有一篇 `narrative/<对局>.md`**(spec《报告》),故这个退化分支不是可选项。
+ */
+export const renderExcludedNarrative = (
+  issue: MatchIssue,
+  partialReplay?: readonly ReplayLine[],
+): string => {
+  const reason = reasonLabelOf(issue.reason);
+  const exitCode = issue.exitCode === null ? "被信号终止(null)" : String(issue.exitCode);
+  if (partialReplay === undefined || partialReplay.length === 0) {
+    return [
+      `# 叙事战报:${issue.matchId}(已排除出排名)`,
+      "",
+      `本局被**排除出排名**:${reason},退出码 ${exitCode},重跑 ${issue.rerunCount} 次。`,
+      "",
+      "本局没有可用的回放(崩溃 / 不确定超时的局通常不产出回放),故无事件时间线。",
+      "",
+    ].join("\n");
   }
-  return parsed;
+  return renderNarrative(partialReplay).replace("# 叙事战报", `# 叙事战报(已排除出排名:${reason})`);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -554,17 +556,34 @@ export const readFailureRecords = (root: string): readonly FailureRecord[] => {
 /**
  * 落 human-facing 的两个产物:每局一篇 `narrative/<对局>.md` + 一份 `report.md`。
  *
- * 只对 `report.matches`(成功局)生成叙事——被剔除的崩溃局可能根本没写出回放,
- * 没有 events 流就无从生成;`report.md` 的「对局问题清单」仍会列出它们。
+ * 叙事**每局都生成**(spec《报告》):成功局走 `parseReplay` 读回放(坏回放原样上抛);被剔除
+ * 出排名的失败局即使没写出回放,也写一篇说明「本局被排除 + 原因」的叙事(shell 见
+ * `renderExcludedNarrative`)。`report.md` 只引用代表性几篇。
  */
 export const writeReportArtifacts = (outputDir: string, report: SeasonReport): void => {
+  const narrativePathOf = (matchId: string): string =>
+    join(outputDir, "narrative", `${matchId}.md`);
+  const replayPathOf = (matchId: string): string =>
+    join(outputDir, "matches", matchId, "replay.jsonl");
+
   const narratives = new Map<string, string>();
+  // 成功局:回放是「events 的纯函数」的来源;一律经 `@model-war/replay` 的 `parseReplay` 读入。
   for (const match of report.matches) {
-    const replayPath = join(outputDir, "matches", match.matchId, "replay.jsonl");
-    const text = renderNarrative(readReplayLines(replayPath));
+    const text = renderNarrative(parseReplay(replayPathOf(match.matchId)));
     narratives.set(match.matchId, text);
-    writeTextFile(join(outputDir, "narrative", `${match.matchId}.md`), text);
+    writeTextFile(narrativePathOf(match.matchId), text);
   }
+  // 被剔除的失败局:**仍每局一篇**(没有可用回放则退化成「本局被排除」说明 + 部分回放时间线)。
+  for (const issue of report.matchIssues) {
+    if (!issue.excludedFromRanking) {
+      continue;
+    }
+    writeTextFile(
+      narrativePathOf(issue.matchId),
+      renderExcludedNarrative(issue, tryParseReplay(replayPathOf(issue.matchId))),
+    );
+  }
+
   const representatives = selectRepresentativeMatches(report).map((matchId) => ({
     matchId,
     summary: summarizeNarrative(narratives.get(matchId) ?? ""),

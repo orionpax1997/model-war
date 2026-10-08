@@ -45,3 +45,14 @@
 - `pnpm run check:quick` 通过(fmt / lint / coupling / no-float / budget)。
 - `pnpm vitest run --project unit packages/runner apps/cli` 通过(14 文件 237 例)。
 - `reporter.test.ts` 新增 6 例:叙事纯函数性(同集合同文本 / 反转不变)、七种事件与座位→模型映射、无 events / 无名册 meta 不崩、摘要、代表选择确定、`report.md` 反例清单(「统计显著 / 显著 / 置信区间 / 可信 / p 值 / Elo」一个都不出现)+ 两份失败分两节、落盘端到端(每局都有叙事 + `report.md` 引用 + 读失败记录)。
+
+## Review fixes
+
+**提交:`0795834f0a303eb601ed5e2b74ed42c9addbe32a`(fix(runner): 评审修复——内存披露/每局叙事/parseReplay/zod 与 hld 对齐)**
+
+- **S2(每局都有叙事)**:`writeReportArtifacts` 不再只对 `report.matches` 生成叙事。**成功局**照旧经
+  `parseReplay` 读回放渲染;**被剔除出排名的失败局也每局写一篇** `narrative/<对局>.md`
+  (`renderExcludedNarrative`:说明被排除的原因与退出码,有部分回放则附时间线,没有则明说无回放)。
+  测试新增一例:退 2 两次的剔除局也有 narrative 且含「已排除出排名 / 引擎崩溃」。
+- **S3(读回放走 parseReplay)**:删掉 `reporter.ts` 里就地的 `readReplayLines`,统一走
+  `@model-war/replay` 的 `parseReplay`;新增一例断言坏回放抛 `ReplayReadError`。

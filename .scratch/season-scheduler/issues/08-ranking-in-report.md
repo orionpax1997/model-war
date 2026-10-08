@@ -72,3 +72,16 @@
 ### 未做(留给票 09)
 
 `validationFailures` 先为空数组(形状已定);读 `archive/<slug>/failed-<runId>.json` 与 `report.md` / `narrative/` 归票 09。
+
+## Review fixes
+
+**提交:`0795834f0a303eb601ed5e2b74ed42c9addbe32a`(fix(runner): 评审修复——内存披露/每局叙事/parseReplay/zod 与 hld 对齐)**
+
+- **S1(memory-pressure 披露)**:`scheduleSeason` 对**码 0**(正常结果)的局读同目录 `observations.jsonl`
+  (`readLinesOf` + `kind === "memory-pressure"`),命中即在 `matchIssues[]` 追加一条
+  `reason: "memory-pressure"`、`excludedFromRanking: false`、`exitCode: 0`、`rerunCount: 0` 的披露条目;
+  该局仍留在 `matches`、计数与排名口径不变。scheduler 测试新增两例(命中披露 / 只有 wall-clock-soft 不误报)。
+- **S3(scheduler 读回放)**:`readResult` 改用 `@model-war/replay` 的 `parseReplay`,不再就地 `split + JSON.parse`
+  末行;`runner` 因此声明 `@model-war/replay` 依赖并加 project reference。
+- **St3(退出码分类)**:`isRerunTrack` / `problemReasonOf` / `abortExitCode` 三处判据合并成单一
+  `classifyExitCode(code): {kind:"ok"} | {kind:"rerun",reason} | {kind:"abort",exitCode}`;行为不变、测试全绿。

@@ -373,6 +373,63 @@ it("码 0 的规则内结果(胜/全灭,含内存判负)绝不被误判为崩溃
   }
 });
 
+// ── S1:码 0 的内存披露(读 observations.jsonl) ──────────────────────────────
+
+/** 在 `input.json` 同目录写一份观测行文件(D3:`observations.jsonl`)。 */
+const writeObservations = (inputPath: string, kinds: readonly string[]): void => {
+  const lines = kinds.map((kind, seat) =>
+    JSON.stringify({ type: "observation", tick: 9, seat, kind, value: 10, limit: 9 }),
+  );
+  writeFileSync(join(dirname(inputPath), "observations.jsonl"), `${lines.join("\n")}\n`);
+};
+
+it("码 0 的 memory-pressure 披露:入问题清单(excludedFromRanking=false)但**仍计入排名**", async () => {
+  const { root, configPath } = buildFixture({ concurrency: 1 });
+  const base = scriptedSpawn(() => 0);
+  const deps: SeasonSchedulerDeps = {
+    spawnMatch: async (inputPath) => {
+      const result = await base.spawnMatch(inputPath);
+      if (basename(dirname(inputPath)) === "c0-arena-s1") {
+        writeObservations(inputPath, ["wall-clock-soft", "memory-pressure"]);
+      }
+      return result;
+    },
+  };
+  const code = await scheduleSeason({ root, configPath }, deps);
+  expect(code).toBe(0);
+
+  const report = readReport(root);
+  // 该局仍是正常结果:留在 matches(因而不被剔除)、排名分母不变。
+  expect(report.matches.map((match) => match.matchId)).toContain("c0-arena-s1");
+  expect(report.standings.every((entry) => entry.countedMatches === 4)).toBe(true);
+
+  expect(report.matchIssues).toHaveLength(1);
+  const issue = report.matchIssues[0];
+  expect(issue?.matchId).toBe("c0-arena-s1");
+  expect(issue?.reason).toBe("memory-pressure");
+  expect(issue?.exitCode).toBe(0);
+  expect(issue?.rerunCount).toBe(0);
+  expect(issue?.excludedFromRanking).toBe(false);
+  expect(issue?.inputPath).toBe("runs/fixture/matches/c0-arena-s1/input.json");
+});
+
+it("码 0 只有 wall-clock-soft 观测时不产生问题条目(只披露内存)", async () => {
+  const { root, configPath } = buildFixture({ concurrency: 1 });
+  const base = scriptedSpawn(() => 0);
+  const deps: SeasonSchedulerDeps = {
+    spawnMatch: async (inputPath) => {
+      const result = await base.spawnMatch(inputPath);
+      if (basename(dirname(inputPath)) === "c0-arena-s2") {
+        writeObservations(inputPath, ["wall-clock-soft"]);
+      }
+      return result;
+    },
+  };
+  const code = await scheduleSeason({ root, configPath }, deps);
+  expect(code).toBe(0);
+  expect(readReport(root).matchIssues).toHaveLength(0);
+});
+
 // ── 并发 vs 串行:产出逐字节相同 ───────────────────────────────────────────
 
 it("同一 fixture 下并发 4 与串行 1 产出的 report.json 逐字节相同", async () => {

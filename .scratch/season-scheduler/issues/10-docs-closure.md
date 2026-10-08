@@ -41,3 +41,14 @@
 ## Comments
 
 - 主线程/发布侧只需在合并本 spec 后回填提交号。
+
+## Review fixes
+
+**提交:`0795834f0a303eb601ed5e2b74ed42c9addbe32a`(fix(runner): 评审修复——内存披露/每局叙事/parseReplay/zod 与 hld 对齐)**
+
+- **St1(hld §8.1 矛盾措辞)**:座位轮换条目收紧为单一硬性规则——**精确均摊要求 `M × K ≡ 0 (mod 4)`,
+  不满足时直接报错**;删去「不满足时各座位的对局数最多差 1,差额落在同一相对位次……」这第二处措辞。
+  同源表述同步清理:`docs/gdd.md`《座位与先后手》与该 spec 的 User Story 3。hld 的 FR-7 AC1 验收行
+  由「各 seat 的对局数之差 ≤ 1(M×K 为 4 的倍数时严格相等)」改为「各 seat 的对局数精确相等(要求 M×K ≡ 0 (mod 4))」。
+- **St2(hld §8.1 字段真源)**:删去复制的默认值 / 细节,改为「字段、取值域与默认值的真源 =
+  `packages/runner` 的 zod season schema(`src/season-config.ts`);格式范例见 `season.example.yaml`」。
