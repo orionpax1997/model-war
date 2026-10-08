@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import type { FailureRecord, ReplayEvent, ReplayLine } from "@model-war/schema";
+import { ReplayReadError } from "@model-war/replay";
 import type { RankPoints } from "./ranker.js";
 import { rankSeason } from "./ranker.js";
 import {
@@ -11,6 +12,7 @@ import {
   renderReportMarkdown,
   selectRepresentativeMatches,
   summarizeNarrative,
+  writeReportArtifacts,
   writeReportJson,
   type MatchIssue,
   type SeasonMatchReport,
@@ -438,4 +440,45 @@ it("落盘端到端:每局都有 narrative/<对局>.md,report.md 引用它们并
   // report.md 只引用代表性几篇(不是全部),但仍指向 narrative/ 下的对局文件。
   expect(reportMd).toContain("narrative/");
   expect(reportMd).toMatch(/\[c0-arena-s\d\]\(narrative\/c0-arena-s\d\.md\)/);
+});
+
+// ── S2:每局都有叙事(含被剔除的失败局) ───────────────────────────────────────
+
+it("S2:被剔除的失败局也有一篇 narrative(说明被排除),成功局叙事照旧齐全", async () => {
+  const { root, configPath } = buildSeasonRoot();
+  // s0 首发退 2、重跑仍退 2 → 该局剔除(桩不写回放,模拟崩溃局没有回放)。
+  const code = await scheduleSeason(
+    { root, configPath },
+    { spawnMatch: scriptedSpawn((name) => (name === "c0-arena-s0" ? 2 : 0)).spawnMatch },
+  );
+  expect(code).toBe(0);
+
+  const report = JSON.parse(
+    readFileSync(join(root, "runs/fixture/report.json"), "utf8"),
+  ) as SeasonReport;
+  expect(report.matches).toHaveLength(3);
+  expect(report.matchIssues).toHaveLength(1);
+
+  // 被剔除的局也有叙事,内容说明「被排除」与原因,不静默缺文件。
+  const excludedPath = join(root, "runs/fixture/narrative", "c0-arena-s0.md");
+  expect(existsSync(excludedPath)).toBe(true);
+  const excluded = readFileSync(excludedPath, "utf8");
+  expect(excluded).toContain("已排除出排名");
+  expect(excluded).toContain("引擎崩溃");
+
+  // 每个成功局也都有叙事。
+  for (const match of report.matches) {
+    expect(existsSync(join(root, "runs/fixture/narrative", `${match.matchId}.md`))).toBe(true);
+  }
+});
+
+// ── S3:reporter 经 @model-war/replay 的 parseReplay 读回放 ────────────────────
+
+it("S3:reporter 读回放走 parseReplay——坏回放抛 ReplayReadError(而非就地实现的行读取)", () => {
+  const outputDir = mkdtempSync(join(scratch, "bad-replay-"));
+  const matchId = "c0-arena-s0";
+  mkdirSync(join(outputDir, "matches", matchId), { recursive: true });
+  writeFileSync(join(outputDir, "matches", matchId, "replay.jsonl"), "{ 这不是合法 JSON\n");
+  const report: SeasonReport = { ...emptyReport(), matches: [matchReport(matchId, [1, 2, 3, 4])] };
+  expect(() => writeReportArtifacts(outputDir, report)).toThrow(ReplayReadError);
 });

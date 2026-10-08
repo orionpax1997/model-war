@@ -224,3 +224,11 @@ it("rankPoints 默认 [3,2,1,0],且不进 rulesets/", () => {
   const ruleset = readFileSync(join(repoRoot, "rulesets", "v1.json"), "utf8");
   expect(ruleset).not.toContain("rankPoints");
 });
+
+it("S4(zod 聚合):多个字段同时出错时仍是一份「一次看完」的清单", () => {
+  // 缺 masterSeed / ruleset,seeds 取值错,concurrency 取值错:四条各点名字段、按 schema 序排列。
+  const path = writeConfig(["seeds: 0", "concurrency: -1", roster, ""].join("\n"));
+  expect(() => loadSeasonConfig(path)).toThrow(
+    /masterSeed[\s\S]*ruleset[\s\S]*seeds[\s\S]*concurrency/,
+  );
+});
