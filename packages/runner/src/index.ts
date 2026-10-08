@@ -1,13 +1,15 @@
 /**
  * runner 包:赛季调度、排名与报告(hld §3.1)。
  * 依赖方向单向:runner → schema;**不得 import engine**——runner 只以子进程 + 文件消费对局产物(hld §3.2)。
- *
  * 本模块只做对局枚举:全部 4 人组合 × M 张地图 × K 个种子,每个对局带座位轮换与确定性种子。
  * 种子数 K、地图池等取值来自 `season.yaml`,不写在这里。
+ * 配合 `ranker`(名次积分纯函数 `rankSeason`),runner 已不再是空壳:枚举 → 名次记账两段纯函数齐备。
  */
 
 import { createHash } from "node:crypto";
 import { RULESET_VERSION, type RulesetVersion } from "@model-war/schema";
+
+export * from "./ranker.js";
 
 /** 一场对局的输入指向:四个座位 + 地图 + 种子 + 组合标识 + 各下标 + 钉住的规则集版本。 */
 export type MatchUp = {
