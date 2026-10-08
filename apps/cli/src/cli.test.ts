@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,12 +25,6 @@ const entry = fileURLToPath(new URL("./index.ts", import.meta.url));
 const mapPath = fileURLToPath(new URL("../../../maps/open-clash.json", import.meta.url));
 
 const COMMANDS = ["gen", "run", "match", "replay", "verify", "map-lint"] as const;
-
-/**
- * 尚未落地的子命令。`gen` / `map-lint` / `replay` / `match` / `verify` 不在其中:五者已实现,
- * 被下面各自那组断言盯着。这张名单会随实现推进缩短——把一条命令搬出这张名单是"它有断言了"的信号。
- */
-const UNIMPLEMENTED = ["run"] as const;
 
 let bundle = "";
 let scratch = "";
@@ -157,13 +151,6 @@ it("六条子命令都登记在册(帮助之外的入口也存在)", { timeout: 
   }
 });
 
-it.each(UNIMPLEMENTED)("未实现的 %s 显式失败,不静默返回成功", (command) => {
-  const result = run([command]);
-  expect(result.status).not.toBe(0);
-  // 退出码非零还不够:必须是"未实现"这条路径,而不是别处的崩溃。
-  expect(result.stderr).toContain("未实现");
-});
-
 it("`gen` 不再是「未实现」:帮助里列出 --config / --root / --model", () => {
   // 用户故事 24。`commandHelpText` 不展开处理器私有选项,故三个串只能来自登记的 `usage`。
   const help = run(["gen", "--help"]);
@@ -175,6 +162,19 @@ it("`gen` 不再是「未实现」:帮助里列出 --config / --root / --model",
 
 it("`gen` 缺 --config 时非零退出,不走「未实现」那条路径", () => {
   const result = run(["gen"]);
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).not.toContain("未实现");
+  expect(result.stderr).toContain("--config");
+});
+
+it("`run` 不再是「未实现」:帮助里列出 --config", () => {
+  const help = run(["run", "--help"]);
+  expect(help.status).toBe(0);
+  expect(help.stdout).toContain("--config");
+});
+
+it("`run` 缺 --config 时非零退出,不走「未实现」那条路径", () => {
+  const result = run(["run"]);
   expect(result.status).not.toBe(0);
   expect(result.stderr).not.toContain("未实现");
   expect(result.stderr).toContain("--config");
@@ -465,6 +465,86 @@ it("`match` 不再走「未实现」那条路径:处理器住在 CLI 的 match �
   const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
   const result = run(["match", inputPath, "--root", root]);
   expect(result.stderr).not.toContain("未实现");
+});
+
+// ── `run`:fixture 赛季端到端(串行、真沙箱) ────────────────────────────────────
+
+/**
+ * 复用 `writeMatchInput` 造好的四份存档 + 地图 + 规则集 + 沙箱产物,再补一份 `season.yaml`。
+ *
+ * 显式给 `outputDir`,让产物目录名**确定**(默认 `runs/<时间戳>` 不可预测,断言无从下手)。
+ * `M=1 × K=4 = 4 ≡ 0 (mod 4)`,四方一名册 → 1 组合 × 1 图 × 4 种子 = 4 局(真沙箱串行)。
+ * `ruleset` 传非 v1 时改掉 alpha 的 `meta.ruleset`,用来钉住「前置拒绝」那条路径。
+ */
+const writeSeasonRoot = (
+  options: { readonly ruleset?: string } = {},
+): { readonly root: string; readonly configPath: string } => {
+  const inputPath = writeMatchInput();
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  if (options.ruleset !== undefined) {
+    const metaPath = join(root, "archive", "alpha", "r1", "meta.json");
+    const meta = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+    meta["ruleset"] = options.ruleset;
+    writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+  }
+  writeFileSync(
+    join(root, "season.yaml"),
+    [
+      'masterSeed: "season-1"',
+      "ruleset: v1",
+      "seeds: 4",
+      "outputDir: runs/season",
+      "maps:",
+      "  - open-clash",
+      "participants:",
+      "  - archive/alpha/r1",
+      "  - archive/beta/r1",
+      "  - archive/gamma/r1",
+      "  - archive/delta/r1",
+      "",
+    ].join("\n"),
+  );
+  return { root, configPath: "season.yaml" };
+};
+
+it(
+  "`run` 跑通 fixture 赛季:退 0,report.json 落盘,每局 input.json 键集恰 5 项,目录命名确定",
+  { timeout: 300_000 },
+  () => {
+    const { root } = writeSeasonRoot();
+    const result = run(["run", "--config", "season.yaml", "--root", root]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).not.toContain("未实现");
+
+    const report = JSON.parse(readFileSync(join(root, "runs/season/report.json"), "utf8")) as {
+      matches: readonly { inputPath: string; rankings: readonly number[]; reason: string }[];
+    };
+    // 1 组合 × 1 图 × 4 种子,目录名 `<comboId>-<map>-s<seedIndex>` 确定。
+    expect(report.matches.map((match) => match.inputPath)).toEqual([
+      "runs/season/matches/c0-open-clash-s0/input.json",
+      "runs/season/matches/c0-open-clash-s1/input.json",
+      "runs/season/matches/c0-open-clash-s2/input.json",
+      "runs/season/matches/c0-open-clash-s3/input.json",
+    ]);
+    for (const match of report.matches) {
+      expect(match.rankings).toHaveLength(4);
+      const input = JSON.parse(readFileSync(join(root, match.inputPath), "utf8")) as Record<
+        string,
+        unknown
+      >;
+      // 键集恰为对局输入的五项——多一个赛季字段即失败。
+      expect(Object.keys(input)).toEqual(["archives", "map", "mapSha256", "seed", "ruleset"]);
+    }
+  },
+);
+
+it("`run` 规则版本不一致(存档 meta.ruleset ≠ 赛季 ruleset)→ 退 1,不物化任何对局", () => {
+  const { root } = writeSeasonRoot({ ruleset: "v2" });
+  const result = run(["run", "--config", "season.yaml", "--root", root]);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("规则版本");
+  // 前置拒绝在任何物化/子进程之前:赛季产物目录都不该出现。
+  expect(existsSync(join(root, "runs/season"))).toBe(false);
 });
 
 // ── `verify`:按 input.json 重新执行 → 逐 tick hash 比对 ───────────────────────
