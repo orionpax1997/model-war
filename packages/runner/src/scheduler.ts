@@ -15,7 +15,7 @@
  *   - `0`(EXIT_OK)→ 读回放末行 `result`,入报告。规则内结果(胜/负/超时/淘汰、内存判负、
  *     带异常出局的席位)一律是 0,**绝不**被崩溃条款误判。
  *   - `2`(engine-crash)/ `3`(nondeterministic-timeout)→ **重跑一次**;再触发同码 → 记入
- *     `problems[]` 并**排除出排名**(报告里仍含这一条,不静默丢弃)。
+ *     `matchIssues[]`(`excludedFromRanking: true`)并**排除出排名**(报告里仍含这一条,不静默丢弃)。
  *   - `1`(装载/用法)/ `4`(内部错)→ **赛季级中止**,打印 stderr 后按该码返回(不静默剔除;
  *     装载期错误本应在物化前拦住)。
  *   - `null`(被信号杀)+ **其它未在码表里的非零码** → 同样**赛季级中止**。判据:信号终止或
@@ -56,6 +56,9 @@ import {
   type MatchInputArchives,
 } from "@model-war/schema";
 import { enumerateMatchUps, type MatchUp } from "./enumerate.js";
+import { DEFAULT_RANK_POINTS, perMatchScores, rankSeason, type MatchStanding } from "./ranker.js";
+import type { MatchIssue, MatchIssueReason, SeasonMatchReport, SeasonReport } from "./reporter.js";
+import { writeReportJson } from "./reporter.js";
 import { loadSeasonConfig, type SeasonConfig } from "./season-config.js";
 
 /** 正常退出(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_OK` 同值;runner 不 import CLI,故本地定型)。 */
@@ -83,56 +86,7 @@ const INPUT_KEYS = ["archives", "map", "mapSha256", "seed", "ruleset"] as const;
 const SCRIPT_PRODUCT_NAME = "script.js";
 const META_NAME = "meta.json";
 
-/** 一局对局跑完后入报告的最小一行。 */
-export type ReportedMatch = {
-  /** 组合标识 `c<k>`。 */
-  readonly comboId: string;
-  /** 地图标识。 */
-  readonly map: string;
-  /** 写进 `input.json` 的确定性派生种子。 */
-  readonly seed: number;
-  /** `input.json` 相对赛季根(`root`)的路径,供复算。 */
-  readonly inputPath: string;
-  /** 回放末行 `result.rankings`,下标即座位。 */
-  readonly rankings: readonly number[];
-  /** 回放末行 `result.reason`。 */
-  readonly reason: string;
-};
-
-/** 问题清单里一局的原因:只由退出码 2 / 3 产生(码 0 的规则内结果绝不进这里)。 */
-export type MatchProblemReason = "engine-crash" | "nondeterministic-timeout";
-
-/**
- * 对局问题清单里的一局:重跑一次后仍触发退出码 2 / 3。
- *
- * 它**排除出排名**(票 08 起从分母剔除),但**保留在报告里**(不静默丢弃),供票 08/09 渲染。
- */
-export type MatchProblem = {
-  /** 组合标识 `c<k>`。 */
-  readonly comboId: string;
-  /** 地图标识。 */
-  readonly map: string;
-  /** 该局派生种子。 */
-  readonly seed: number;
-  /** `input.json` 相对赛季根(`root`)的路径。 */
-  readonly inputPath: string;
-  /** 一条稳定的原因标签(供渲染与统计)。 */
-  readonly reason: MatchProblemReason;
-  /** 第二次(重跑后)观察到的退出码,恒为 2 或 3。 */
-  readonly exitCode: number;
-};
-
-/**
- * `report.json`:每局的输入引用 + 结果,外加**对局问题清单**(票 07 落地;票 08/09 在这里加总分与叙事)。
- *
- * `matches` 只含成功局(码 0),`problems` 只含重跑后仍触发 2 / 3 的局;两者互斥、合起来覆盖全部枚举对局。
- */
-export type SeasonReport = {
-  readonly runId: string;
-  readonly ruleset: string;
-  readonly matches: readonly ReportedMatch[];
-  readonly problems: readonly MatchProblem[];
-};
+/** `report.json` 的形状(`SeasonReport` / `SeasonMatchReport` / `MatchIssue`)住在 `./reporter.js`。 */
 
 /** `scheduleSeason` 的注入缝:子进程执行一局,只回退出码(一局可能被调两次:首发 + 重跑一次)。 */
 export type SeasonSchedulerDeps = {
@@ -151,7 +105,7 @@ export type ScheduleSeasonOptions = {
 /** 一局的执行结局。 */
 type AttemptResult =
   | { readonly kind: "completed"; readonly rankings: readonly number[]; readonly reason: string }
-  | { readonly kind: "problem"; readonly reason: MatchProblemReason; readonly exitCode: number }
+  | { readonly kind: "problem"; readonly reason: MatchIssueReason; readonly exitCode: number }
   | { readonly kind: "abort"; readonly exitCode: number; readonly message: string };
 
 /** 入报告的一局(中止不会落进 `outcomes`,故意窄化掉 abort 分支)。 */
@@ -171,7 +125,7 @@ const isRerunTrack = (code: number | null): code is 2 | 3 =>
   code === EXIT_ENGINE_FAULT || code === EXIT_NONDETERMINISTIC_TIMEOUT;
 
 /** 重跑仍触发时的稳定原因标签。 */
-const problemReasonOf = (code: number): MatchProblemReason =>
+const problemReasonOf = (code: number): MatchIssueReason =>
   code === EXIT_ENGINE_FAULT ? "engine-crash" : "nondeterministic-timeout";
 
 /**
@@ -281,6 +235,33 @@ const materializeInput = (root: string, matchUp: MatchUp): MatchInput => {
 /** 每局目录名:`<comboId>-<map>-s<seedIndex>`(确定性;座位号不进名字,轮换已由枚举定死)。 */
 const matchDirName = (matchUp: MatchUp): string =>
   `${matchUp.comboId}-${matchUp.map}-s${matchUp.seedIndex}`;
+
+/** 每个对局的座位数(四方对称,与 `enumerate.js` 同值;本地定型避免跨模块耦合)。 */
+const SEAT_COUNT = 4;
+
+/** 把回放末行的 `rankings` 收窄成 4 元组;长度不符即抛错(不静默截断 / 补齐)。 */
+const fourRankings = (
+  matchId: string,
+  rankings: readonly number[],
+): readonly [number, number, number, number] => {
+  const [first, second, third, fourth] = rankings;
+  if (
+    rankings.length !== SEAT_COUNT ||
+    first === undefined ||
+    second === undefined ||
+    third === undefined ||
+    fourth === undefined
+  ) {
+    throw new Error(`对局 ${matchId} 的 rankings 长度须为 ${SEAT_COUNT},实际 ${rankings.length}`);
+  }
+  return [first, second, third, fourth];
+};
+
+/** 把一局收成 `rankSeason` 要的 `standings`:座位 i 上的参赛者拿 `rankings[i]` 的名次。 */
+const standingsInMatch = (
+  seats: readonly [string, string, string, string],
+  rankings: readonly [number, number, number, number],
+): readonly MatchStanding[] => seats.map((player, seat) => ({ player, rank: rankings[seat] ?? 0 }));
 
 /** 读回放末行的 `result`,只取名次与终局原因;形状不对即抛错(不静默取个空结果)。 */
 const readResult = (
@@ -467,39 +448,68 @@ export const scheduleSeason = async (
         left.matchUp.seedIndex - right.matchUp.seedIndex,
     );
 
-  const reported: ReportedMatch[] = [];
-  const problems: MatchProblem[] = [];
+  const rankPoints = season.rankPoints ?? DEFAULT_RANK_POINTS;
+
+  // ── 逐局入报告:成功局进 matches(含每座位得分),剔除的失败局进 matchIssues ──
+  const matches: SeasonMatchReport[] = [];
+  const matchIssues: MatchIssue[] = [];
   for (const { matchUp, outcome } of settled) {
     const inputPath = relative(root, matchLocation(outputDir, matchUp).inputPath);
+    const matchId = matchDirName(matchUp);
     if (outcome.kind === "problem") {
-      problems.push({
+      // 剔除的失败局:不进 matches、不进均分分母,但保留在问题清单(不静默丢弃)。
+      matchIssues.push({
+        matchId,
+        inputPath,
         comboId: matchUp.comboId,
+        mapIndex: matchUp.mapIndex,
+        seedIndex: matchUp.seedIndex,
         map: matchUp.map,
         seed: matchUp.seed,
-        inputPath,
         reason: outcome.reason,
         exitCode: outcome.exitCode,
+        rerunCount: 1,
+        excludedFromRanking: true,
       });
       continue;
     }
-    reported.push({
+    const rankings = fourRankings(matchId, outcome.rankings);
+    const standings = standingsInMatch(matchUp.seats, rankings);
+    matches.push({
+      matchId,
+      inputPath,
       comboId: matchUp.comboId,
+      mapIndex: matchUp.mapIndex,
+      seedIndex: matchUp.seedIndex,
       map: matchUp.map,
       seed: matchUp.seed,
-      inputPath,
-      rankings: outcome.rankings,
+      seats: matchUp.seats,
+      rankings,
       reason: outcome.reason,
+      perMatchScores: perMatchScores(matchId, standings, rankPoints),
     });
   }
+
+  // ── 排名由纯函数 `rankSeason` 一次算出(有效局数由它计,报告侧不另算一遍) ──
+  const standings = rankSeason(
+    matches.map((match) => ({
+      matchId: match.matchId,
+      standings: standingsInMatch(match.seats, match.rankings),
+    })),
+    { players: season.participants, rankPoints },
+  );
 
   const report: SeasonReport = {
     runId,
     ruleset: season.ruleset,
-    matches: reported,
-    problems,
+    masterSeed: season.masterSeed,
+    rankPoints,
+    matches,
+    standings,
+    validationFailures: [], // 读 archive/<slug>/failed-<runId>.json 归票 09;本票先钉住形状
+    matchIssues,
   };
-  mkdirSync(outputDir, { recursive: true });
-  writeFileSync(join(outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  writeReportJson(join(outputDir, "report.json"), report);
   return EXIT_OK;
 };
 
