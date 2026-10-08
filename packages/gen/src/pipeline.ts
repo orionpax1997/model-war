@@ -22,9 +22,10 @@
  *
  * ── 传输层错误的边界 ──
  *
- * 端口抛错(429 / 5xx / 超时)**不在本票处理**:它直接向上抛,`transport` 分类归票 06/08。
- * 票 06 把 `sendOneRound` 里那一句 `request.createClient(config).send(...)` 换成 `retry.ts`
- * 的包装(新增 `retry.ts`,不改循环骨架)。
+ * 一次 `send` 由 `retry.ts` 的 `retryTransport` 包住:429 / 5xx / 网络失败 / 超时(可重试的
+ * `TransportError`)与截断(`finishReason === "length"`)退避重发**同一轮**,不追加 messages、
+ * 不写生成日志、不占用 `protocolRounds`。重试耗尽或遇到不可重试的错误(400 / 缺凭证)→ 轮循环
+ * 停在该轮,返回 `transport` 分类的 `failed`(写盘归票 05)。
  *
  * ── `kind` 与 `errorCodes` 的取值(票 07 会继续改) ──
  *
@@ -49,6 +50,7 @@ import { compileScript } from "./compile.js";
 import type { ModelConfig } from "./config.js";
 import type { ChatMessage, ModelParams } from "./model-client.js";
 import { renderBaseTemplate } from "./prompt.js";
+import { retryTransport, type TransportFailure } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
@@ -119,7 +121,8 @@ const logLine = (entry: GenerationLogEntry): string => JSON.stringify(entry);
 const transcriptOf = (messages: readonly ChatMessage[]): string =>
   messages.map((message) => message.content).join("\n\n");
 
-/** 一轮的结论:要么走到「冻结期校验通过」,要么在某一栏失败并带上**回喂文本**与诊断。 */
+/** 一轮的结论:要么走到「冻结期校验通过」,要么在某一栏失败并带上**回喂文本**与诊断,
+ * 要么一次 `send` 退避重试后仍失败(传输层收口,不消耗协议轮数)。 */
 type RoundResult =
   | {
       readonly kind: "passed";
@@ -139,14 +142,20 @@ type RoundResult =
       /** 逐字回喂的**面向模型文本**:tsc 诊断,或校验器 stdout(契约 §2.2)。 */
       readonly feedback: string;
       readonly diagnostics: readonly string[];
+    }
+  | {
+      readonly kind: "transport";
+      /** 退避重试耗尽 / 不可重试的错误,由 `retry.ts` 收口(轮循环据此返回 `transport` 失败)。 */
+      readonly failure: TransportFailure;
     };
 
 /**
  * 跑一轮:发一次 → 编译 → 迭代期校验 → 冻结期校验。
  *
  * 它吃**这一轮完整发出的 messages**(第 r>1 轮已含前置 `assistant` 与新增 `user` 回喂),
- * 把整份 transcript 全量重发。**不吞传输层错误**(端口抛错向上抛,归票 06/08),也不负责
- * 落盘——落盘与失败清理归 `generateOneModel`。
+ * 把整份 transcript 全量重发。**传输层收口**:一次 `send` 由 `retryTransport` 包住,退避重试
+ * 同一轮;重试耗尽 / 不可重试时返回 `kind:"transport"`(轮循环不涨轮数、不建存档)。落盘与失败
+ * 清理归 `generateOneModel`。
  */
 const sendOneRound = async (options: {
   readonly request: GenerationRequest;
@@ -158,7 +167,13 @@ const sendOneRound = async (options: {
   readonly round: number;
 }): Promise<RoundResult> => {
   const { request, config, stagingDir, messages, params, maxBytes, round } = options;
-  const response = await request.createClient(config).send(messages, params);
+  // 一轮一个客户端:重试在**同一次 `send` 之内**完成(同一份 messages),协议轮数不动(契约 §2.1)。
+  const client = request.createClient(config);
+  const attempt = await retryTransport({ send: () => client.send(messages, params) });
+  if (!attempt.ok) {
+    return { kind: "transport", failure: attempt.failure };
+  }
+  const response = attempt.response;
   const text = response.text;
 
   const base = {
@@ -239,7 +254,8 @@ const messageOfFailure = (slug: string, result: RoundResult & { kind: "failed" }
  * 直到冻结期校验通过或用尽 `protocolRounds` 轮。
  *
  * 失败时**不建** `archive/<slug>/<runId>/`:临时组装目录被清理,只返回 `failed` 结果(携全部
- * 轮次的 `prompts` / `generationLog`)。传输层错误(端口抛错)此刻向上抛,不在这里吞。
+ * 已收敛轮次的 `prompts` / `generationLog`)。传输层失败(退避重试耗尽 / 不可重试)同样只返回
+ * `transport` 分类的 `failed`,不建存档(失败写盘归票 05)。
  */
 export const generateOneModel = async (
   request: GenerationRequest,
@@ -262,9 +278,6 @@ export const generateOneModel = async (
   let committed = false;
   try {
     for (let round = 1; round <= protocolRounds; round += 1) {
-      // 记该轮**完整发出**的 prompt(在发出前拍下这份 transcript)。
-      prompts.push(transcriptOf(messages));
-
       const result = await sendOneRound({
         request,
         config,
@@ -274,6 +287,27 @@ export const generateOneModel = async (
         maxBytes,
         round,
       });
+
+      // 传输层收口:该轮没有收敛(重试耗尽 / 不可重试),不进 prompts / generationLog、不占
+      // 用协议轮数,只返回结构——不建存档目录(写盘归票 05)。
+      if (result.kind === "transport") {
+        return {
+          kind: "failed",
+          slug,
+          runId,
+          failure: {
+            classification: "transport",
+            prompts,
+            generationLog,
+            diagnostics: result.failure.diagnostics,
+            message: `模型 ${slug} 第 ${String(round)} 轮传输失败:${result.failure.message}`,
+          },
+        };
+      }
+
+      // 该轮已收敛(通过 / 校验失败):现在才把**这一轮完整发出**的 transcript 与日志记下。
+      // 传输失败的轮次不在此列(它没有结论),`prompts` 与 `generationLog` 因此逐条对齐。
+      prompts.push(transcriptOf(messages));
       generationLog.push(logLine(result.log));
 
       if (result.kind === "passed") {
