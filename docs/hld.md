@@ -141,7 +141,7 @@
 
 | 项 | 选择 | 依据 |
 |---|---|---|
-| 真源 | **`schema` 包 = 五类数据形状(规则集 / 地图 / 存档 meta / result / 回放行)的 TS 类型与 JSON Schema + 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移。每类形状的**家只有这一个**,别的包不再重复声明(§3.1、§7.5) |
+| 真源 | **`schema` 包 = 六类数据形状(规则集 / 地图 / 存档 meta / result / 回放行 / 失败记录)的 TS 类型与 JSON Schema(失败记录只交 TS 类型与文件名前缀常量——它不走读入端校验,不配半截 schema,见 §7.4)+ 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移。每类形状的**家只有这一个**,别的包不再重复声明(§3.1、§7.5) |
 | JSON Schema 的形态 | **导出的数据对象(`.ts` 里 `export const X_JSON_SCHEMA`),不是独立 `.json` 文件** | ajv 接受 JS 对象,不需要文件;`description` 是写给模型看的说明,写在源码里自然,顺带避开 `resolveJsonModule` 与本仓库编译配置的组合风险(ADR-0003) |
 | 文档生成 | **数值表**由 `rulesets/v1.json` + `schema` 的参数键清单(键序、量纲、标定状态、说明)共同生成,且在 `rules.md` 与 `api.md` **两份文档里各挂一份、逐字节相同**——两个落点出自同一个生产函数,不是两处各自维护;**API 表 / 常量表**由 `schema` 的注入面符号表生成,落在 `api.md`。**散文部分人工编写**,两者是同一份文件里的两种所有权,所以生成物取**区块形态**(两行定界标记之间是生成物,标记之外不比) | 生成物进版本库,漂移检查(`check:drift`,§2.2.7)逐件判定「重生成后无差异 + 生成物在版本库里」,未重新生成或未提交即报错(FR-10 AC1:文档里的数值表与 API 表必须真的是当前规则集的) |
 | 数据格式校验 | JSON Schema 归真源包(交付**数据**),**校验器只在 `apps/cli` 一处**(唯一一份 `ajv` 实例,导出 `validateMap` / `validateRuleset` 两个纯函数) | 真源包受 §3.2 的包依赖规则约束、不能依赖 ajv;CLI 是唯一用户面,外部数据(文件 / 参数 / 子进程输出)全从它进来,一处校验覆盖全部入口(§2.2.8)。诊断分两层:机器层透出 ajv 原始条目,面向模型层渲染成短句并**对同类错误合并成一行** |
@@ -751,7 +751,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 - **runner 启动即校验元数据完整性**,缺档**报错退出**(FR-6 AC2,不跳过)。**这里的「runner」指本 feature 的那个进程——第一个执行脚本的进程**(即 `modelwar match` 的装载段),不是赛季调度器 `runner` 那个包;赛季调度复用同一条校验路径,不复写。不消歧的话「runner」两个包都算。
 - **写盘原子、一跑一目录**:`script.ts` + `script.js` + `meta.json` 先在临时目录组装,冻结期校验(编译步骤 + `run-validate-script.ts --phase freeze --max-bytes <rulesets 取值>`)全过,才 rename 到 `archive/<modelSlug>/<runId>/`;目标已存在(秒级 `runId` 撞车)即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量,§7.1 的缺档判据不会被半截产物误触。`runId` 是生成时间戳,旧目录不删——这就是「定版副本不可变」的落地方式。
 - **协议轮数与 prompt 链**:`meta.protocolRounds` 是**模型调用总轮数,含初次生成**(第 1 轮 = 初次生成,之后每轮回喂一次校验错误);`meta.prompts` 逐条记该轮**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等(读入端已断言,§2.2.5)。传输层错误(429 / 5xx / 超时)与截断(`finishReason = length`)走退避**重试同一轮、不消耗协议轮数**,重试耗尽才另记一类失败——如此「轮数上限」始终指校验驱动的迭代、跨模型可比。
-- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport`),供报告侧(I)读成失败名单。`archive/` 只收已通过校验的冻结脚本(FR-5 AC2、FR-6);名字与语义见 CONTEXT 的《校验失败记录》。
+- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport`),供报告侧(I)读成失败名单。`archive/` 只收已通过校验的冻结脚本(FR-5 AC2、FR-6);名字与语义见 CONTEXT 的《校验失败记录》,形状家归真源包(§2.2.5),`packages/schema/src/failure-record.ts`。
 - 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。哈希取每座存档的 `script.js` / `meta.json` 各一份与地图一份,**不含 `script.ts`**(复算认编译产物,定版源码的不可变由 gen 保证,FR-6 AC1);**座位由 `archives` 的下标承载**(下标即 `playerIndex`),轮换算法归赛季调度物化期,不进这份文件。
 
 ### 7.5 回放 JSONL(`matches/<...>/replay.jsonl`)
