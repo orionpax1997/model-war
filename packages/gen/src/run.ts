@@ -5,8 +5,8 @@
  *
  * 本文件是编排层:根解析 → 读配置 → 读契约 → 读模板 → 对每个选中模型调 `pipeline.ts` 的
  * `generateOneModel`(发一次 → 编译 → 迭代期校验 → 冻结期校验 → 原子冻结,返回 `ModelOutcome`)。
- * 单模型失败不中断整批;写失败记录文件(`archive/<slug>/failed-<runId>.json`)是票 05 的活,
- * 本票只打诊断。`GenerationRequest` 这一组共享参数(契约 §2)由本文件组装一次、按模型复用。
+ * 单模型失败不中断整批:**写失败记录文件**(`archive/<slug>/failed-<runId>.json`,票 05)再记账,
+ * 成功者照旧冻结。`GenerationRequest` 这一组共享参数(契约 §2)由本文件组装一次、按模型复用。
  *
  * ── 根解析复用 `match` 的约定 ──
  *
@@ -20,6 +20,7 @@ import { join, resolve } from "node:path";
 import { createModelClient } from "./client-factory.js";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs, type RuleDocs } from "./contract.js";
+import { writeFailureRecord } from "./failure.js";
 import type { ModelClient } from "./model-client.js";
 import { generateOneModel } from "./pipeline.js";
 import { loadBaseTemplate } from "./prompt.js";
@@ -66,9 +67,10 @@ const runIdOf = (at: Date): string => at.toISOString().replaceAll(":", "-").repl
 /**
  * 多模型编排:读配置 + 契约 + 模板,逐模型串行跑 `generateOneModel`。
  *
- * 返回进程退出码:全部模型冻结成功 = 0,任一失败 = 1。单模型失败不中断整批(失败的模型
- * 把诊断打到 stderr,其余照跑);写失败记录文件(`failed-<runId>.json`)是票 05 的事,本票不写。
- * 传输层错误(端口抛错)在票 06 之前不入 `transport` 分类,在这里按模型失败记账。
+ * 返回进程退出码:全部模型冻结成功 = 0,任一失败 = 1。单模型失败不中断整批(失败的模型把诊断
+ * 打到 stderr,并写一条 `archive/<slug>/failed-<runId>.json` 失败记录,其余照跑)。三类失败
+ * (`tsc` / `contract` / `transport`)都写失败记录;写失败记录本身出错也按该模型失败记账,不崩整批。
+ * 模型之间**串行**(模型内并发固定 1):`for … await` 保证前一个模型的全部轮次结束后才开下一个。
  */
 export const runGeneration = async (options: GenerationOptions): Promise<number> => {
   const root = resolve(options.root);
@@ -88,9 +90,11 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
   }
 
   const createClient = options.createClient ?? createModelClient;
+  // runId 与 generatedAt 取同一个时刻:前者进目录名 / 失败记录文件名,后者进记录里的留档位。
+  const startedAt = now();
   const request: GenerationRequest = {
     root,
-    runId: runIdOf(now()),
+    runId: runIdOf(startedAt),
     docs,
     template,
     createClient,
@@ -105,6 +109,20 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
         continue;
       }
       failures += 1;
+      // 失败记录是给报告侧的旁证:写盘失败(权限 / 撞名)也按该模型失败记账,不抛不崩整批。
+      const written = writeFailureRecord({
+        root,
+        slug: model.slug,
+        modelVersion: model.modelId,
+        generatedAt: startedAt.toISOString(),
+        runId: outcome.runId,
+        failure: outcome.failure,
+      });
+      if (!written.ok) {
+        process.stderr.write(
+          `modelwar gen: 模型 ${model.slug} 的失败记录写盘失败:${written.reason}\n`,
+        );
+      }
       process.stderr.write(
         `modelwar gen: 模型 ${model.slug} 未通过(${outcome.failure.classification}):` +
           `${outcome.failure.message}\n`,

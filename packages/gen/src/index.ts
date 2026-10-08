@@ -76,3 +76,13 @@ export {
   type GenerationOptions,
   type GenerationRequest,
 } from "./run.js";
+export {
+  FAILURE_RECORD_PREFIX,
+  buildFailureRecord,
+  failureRecordPath,
+  writeFailureRecord,
+  type BuildFailureRecordInput,
+  type FailureRecord,
+  type WriteFailureRecordInput,
+  type WriteFailureRecordResult,
+} from "./failure.js";

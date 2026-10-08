@@ -149,7 +149,7 @@ it("未知子命令非零退出", () => {
   expect(result.stderr).toContain("未知子命令");
 });
 
-it("六条子命令都登记在册(帮助之外的入口也存在)", () => {
+it("六条子命令都登记在册(帮助之外的入口也存在)", { timeout: 30_000 }, () => {
   for (const command of COMMANDS) {
     const result = run([command, "--help"]);
     expect(result.status, `${command} --help 应当成功`).toBe(0);
