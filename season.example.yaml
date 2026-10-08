@@ -1,0 +1,59 @@
+# 本赛季的 `season.yaml` 格式范例(hld §9:`modelwar run --config season.yaml`)。
+#
+# ── 这份文件的定位 ──
+#
+# 字段真源在 `packages/runner/src/season-config.ts`(纯装载器 + 校验),本文件只是**可读范例**,
+# 展示本赛季 5 条参赛模型(N=5)与 M=3 张地图、K=4 个种子的完整形状。它不是一次真跑的配置:
+# 除 deepseek-v4-flash 外,其余四条存档的 `<runId>` 是占位符,须先由 `modelwar gen` 产出存档
+# 再替换。装载器只校验**形状与取值域**,存档是否存在由装载期检查(票 06)按 root 判定。
+#
+# ── 为什么用块序列而非内联 `[a, b, c]` ──
+#
+# `season.yaml` 由 runner 私有的 YAML 子集读取器(`packages/runner/src/yaml-lite.ts`,
+# 与 `packages/gen/src/yaml-lite.ts` 行为逐字相同)解析:它**不支持非空流式数组/映射**,
+# 所以 `rankPoints` / `maps` 一律写成多行块序列(每项一行 `- x`),不写 `[3, 2, 1, 0]`。
+
+# ── 必填字段 ──
+
+# 赛季根种子:决定全部对局种子的源头(`种子 = H(masterSeed, combo, mapIndex, seedIndex)`)。
+masterSeed: "2026-m4"
+
+# 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v1)一致,否则装载期拒跑。
+ruleset: v1
+
+# ── 选填字段(缺省语义见各条注释;缺省值由调用方注入,装载器不探环境)──
+
+# 并发上限;缺省即 min(cpus, 8)。
+concurrency: 8
+
+# 名次积分表:第 i 项 = 第 i+1 名的分值,固定 4 项(四方对局)。
+# 缺省 [3,2,1,0];它是对局调度配置,**不进 rulesets/**(改它不改规则机制,可覆写)。
+rankPoints:
+  - 3
+  - 2
+  - 1
+  - 0
+
+# 地图池(引用 maps/ 下的 slug);缺省即 maps/ 下全部地图。
+# M × K 须满足 M × K ≡ 0 (mod 4)(座位轮换才精确均摊):3 × 4 = 12 ✓。
+maps:
+  - corridor-split
+  - fortress-core
+  - open-clash
+
+# ── 赛季规模与参赛集 ──
+
+# 种子数 K;须满足 M × K ≡ 0 (mod 4)。
+seeds: 4
+
+# 参赛存档引用(archive/<slug>/<runId>),**下标即 playerIndex**,至少 4 条。
+# 名册去重后按 slug 升序参与 4 人组合枚举。以下 5 条 = 本赛季参赛的 5 条模型(N=5)。
+participants:
+  - archive/deepseek-v4-flash/2026-10-08T05-12-42-057Z
+  - archive/deepseek-v4.1-flash/<runId>
+  - archive/gpt-6-luna/<runId>
+  - archive/mimo-v2.6-flash/<runId>
+  - archive/muse-spark-1.3-contributor/<runId>
+
+# 赛季产物目录;缺省即 runs/<新 runId>(由调用方按当前时刻生成)。需要固定目录时显式给出:
+# outputDir: runs/2026-m4
