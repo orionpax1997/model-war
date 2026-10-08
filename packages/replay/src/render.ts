@@ -12,9 +12,10 @@
  * ── 为什么入参是 `readonly string[]` 而不是「三行的类型」 ──
  *
  * 子命令处理器的入参是该命令名之后的一切(见 `CommandHandler`),**自带参数解析**。
- * 而行的**形状**归真源包 `packages/schema`(hld §7.5,ADR-0003),那一格是 02b:
- * 在形状落库之前先在这里声明一份,就是**同一个事实两个家**。所以本模块按**结构**读行
- * (小取值器),不声明行类型:等真源包落库,把 `parseReplay` 接到 `readLinesOf` 那一处即可。
+ * 读盘、逐行 JSON 解析、按 `type` 收窄成带类型的行,这三步归读入端 `./parse.ts`
+ * (`readLinesOf` / `parseReplay`);本模块只做**渲染**。拿到行后仍按**结构**取值(小取值器):
+ * 行的**形状**归真源包 `packages/schema`(hld §7.5,ADR-0003),某一栏形状不对时渲染器不崩,
+ * 也**不因此拒跑**——缺 meta / 缺 result 画出来是 `(缺失)` 与跳过,这正是「逐字节一致」要保住的容错。
  *
  * ── 退出码 ──
  * 全仓退出码表(hld §9)是:`0` 正常 / `1` 用法或校验错 / `2` 引擎崩溃 / `3` 不确定超时 / `4` 内部错。
@@ -33,9 +34,9 @@
  * 有人会拿桩跑的读数当结论——所以 `runner` 为桩时额外打一行显式的警告,不是脚注。
  */
 
-import { readFileSync } from "node:fs";
-
 import type { JsonValue } from "@model-war/schema";
+
+import { parseReplay, ReplayReadError } from "./parse.js";
 
 /** 一行读出来之后的样子。渲染器只认这三类,其余按行序忽略。 */
 const META = "meta";
@@ -45,33 +46,7 @@ const RESULT = "result";
 /** 装载期拒跑。`modelwar replay` 只可能落在 `0`(出了画面)与 `1`(拒绝读这份回放)上。 */
 const REFUSED = 1;
 
-/** 读一份回放并逐行解析。空行跳过(尾随换行会产生一个空串),任何一行解析不过就抛。 */
-class ReplayReadError extends Error {}
-
-const readLinesOf = (path: string): readonly JsonValue[] => {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch (cause) {
-    throw new ReplayReadError(
-      `读不到回放 ${path}:${cause instanceof Error ? cause.message : String(cause)}`,
-    );
-  }
-  return raw.split("\n").flatMap((text, at) => {
-    if (text.trim() === "") {
-      return [];
-    }
-    try {
-      return [JSON.parse(text) as JsonValue];
-    } catch (cause) {
-      throw new ReplayReadError(
-        `${path} 第 ${String(at + 1)} 行不是合法 JSON:${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    }
-  });
-};
-
-/** 缺参、读不到、某一行不是合法 JSON:三者都是**装载期**拒跑,退出码 2。 */
+/** 缺参、读不到、某行不是合法 JSON、某行不是回放行:都是**装载期**拒跑,退出码 1。 */
 const refuse = (message: string): number => {
   process.stderr.write(`modelwar replay: ${message}\n`);
   return REFUSED;
@@ -196,7 +171,7 @@ export const renderReplay = async (args: readonly string[]): Promise<number> => 
     return refuse("用法:modelwar replay <replay.jsonl>");
   }
   try {
-    process.stdout.write(renderLines(readLinesOf(path)));
+    process.stdout.write(renderLines(parseReplay(path)));
   } catch (cause) {
     if (cause instanceof ReplayReadError) {
       return refuse(cause.message);

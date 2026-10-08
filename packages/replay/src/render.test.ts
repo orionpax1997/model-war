@@ -141,3 +141,34 @@ it("缺参、读不到、某一行不是合法 JSON:一律装载期拒跑,退出
   expect((await run(join(dir, "no-such.jsonl"))).status).toBe(1);
   expect((await run(broken)).status).toBe(1);
 });
+
+it("stdout 与改造前逐字节一致(parseReplay 只换了读入路径,渲染一字未动)", async () => {
+  const { status, out } = await run(quickjsPath);
+  expect(status).toBe(0);
+  // 纯全等而非 toContain:parseReplay 不得把渲染侧的容错升级成硬校验,也不得改任何一个字符。
+  expect(out).toBe(
+    [
+      "== 回放 ==",
+      "  schema 1 · ruleset v1 · seed 20260101 · map aaaaaaaaaaaa · runner quickjs",
+      "  座位 A · alpha · archive/alpha/r1",
+      "  座位 B · beta · archive/beta/r1",
+      "  座位 C · gamma · archive/gamma/r1",
+      "  座位 D · delta · archive/delta/r1",
+      "",
+      "== 逐 tick 摘要(共 2 行)==",
+      "  t0 · 单位 2 · 点位 2 · 事件 0 · hash cccccccccccc",
+      "  t1 · 单位 2 · 点位 2 · 事件 0 · hash dddddddddddd",
+      "",
+      "== 画面(tick 1)==",
+      "  +-----+",
+      "  | * . * |",
+      "  | . . . |",
+      "  | . . + |",
+      "  A-D 座位点位(所属玩家的座位字母) / a-d 单位 / + 中立点位 / * 单位站在非自家点位上 / . 空",
+      "",
+      "== 终局 ==",
+      "  reason timeout · 名次 A=1 B=2 C=3 D=4 · 领土分 A=8 B=4 C=0 D=0",
+      "",
+    ].join("\n"),
+  );
+});
