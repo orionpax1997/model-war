@@ -54,6 +54,9 @@
  * **超限的后果**:
  * - 事件 / API 两轨超限 → 只作废该座位本 tick 的意图(单位原地待命),不中断其他三方与
  *   引擎;产出一条 `tripped` 观测(轨名 = 预算键名),经步 0 落成 `count-exception-tick` 变更。
+ * - guest 未吞掉的异常(脚本 `throw` / 引用已删的宿主桥 / 调未定义的 action…) → **同样只作废
+ *   该座位本 tick 的意图并计一次异常**(`tripped` 观测的轨名是 `UNCAUGHT_EXCEPTION_TRACK`),
+ *   **不再原样重抛成整场 `engine-crash`**;VM 续用、记忆保留。
  * - 墙钟软限 → **只产一条 `wall-clock-soft` 观测**,不判罚、不进回放。
  * - 墙钟硬超时 → 中断本 tick,交回故障位 `uncertain-timeout`,整场走**作废而非判罚**那条轨。
  *
@@ -306,6 +309,19 @@ export const createSandboxVm = async (options: QuickJsVmOptions): Promise<QuickJ
 export const MEMORY_TRACK = "memoryTickCeiling";
 
 /**
+ * 「`loop()` 抛异常」这条**计异常轨**的轨名。
+ *
+ * ── 为什么它不是一个预算键 ──
+ *
+ * 其余三条计异常轨的轨名都是规则集预算键(有可标定的上限):事件计数 / API 计数 / 内存判罚线。
+ * 本轨没有可标定的上限——**任一未被脚本吞掉的 guest 异常本身就已达阈**(脚本自己 `throw`、
+ * 引用已删的宿主桥、调未定义的 action、访问未暴露字段),所以它不随预算配置开关,只在
+ * `tripped` 观测里露面。它仍走**同一条写入口**:`tripped` → 步 0 的 `count-exception-tick`
+ * 变更;观测的 `value` / `limit` 因此都取 `1`(这一次抛异常既是一次读数,也已是阈值本身)。
+ */
+export const UNCAUGHT_EXCEPTION_TRACK = "uncaughtException";
+
+/**
  * 一次 VM 会话的操作面:`createQuickJsRunner` 是它在 `SeatRunner` 上的适配。
  *
  * 生命周期(`dispose`)归工厂,VM 的**读数与回收**进这两条方法:`runGC` / `memoryUsage` 是宿主
@@ -505,7 +521,8 @@ export type QuickJsRunnerHandle = {
  *
  * **硬超时是一例外**:墙钟硬超时中断本 tick 并交回故障位 `uncertain-timeout`,整场作废
  * (不判罚、不累加异常)。事件 / API 两轨超限则只作废**该座位本 tick** 的意图,不中断其它三方与
- * 引擎。阈值判定不在 guest 侧,guest 吞不吞异常都改不了读数。
+ * 引擎;guest 未吞掉的异常同路——中止本 tick、计一次异常,同样不中断其它三方与引擎、不重建 VM。
+ * 阈值判定不在 guest 侧,guest 吞不吞异常都改不了读数。
  */
 export const createQuickJsRunner = async (
   options: QuickJsRunnerOptions,
@@ -528,15 +545,19 @@ export const createQuickJsRunner = async (
       // 回调只能在构造时装,计数状态住宿主闭包;这里只开合闸门与读回读数。
       session.beginTick();
       let readings: TickReadings;
+      // 本 tick 是否有**未被吞掉**的 guest 异常(`loop()` / job 里抛的)。有它即本 tick 计一次异常。
+      let uncaught = false;
       try {
         session.runLoop();
         session.pumpJobs();
         readings = session.endTick();
-      } catch (error) {
+      } catch {
         readings = session.endTick();
-        // 只有「本轨截停 / 硬超时」才吞掉异常;别的异常(脚本自己抛错等)原样冒给宿主。
+        // 「本轨截停 / 硬超时」各有出口(事件轨 / 故障位),不当成 guest 异常;其余的抛出
+        // (脚本自己 `throw`、引用已删桥、调未定义 action…)归本 tick 的一次异常计数,不再原样
+        // 冒给宿主变成整场 `engine-crash`(hld §5.2 第一行)。
         if (!readings.eventTripped && !readings.hardTimedOut) {
-          throw error;
+          uncaught = true;
         }
       }
       if (readings.hardTimedOut) {
@@ -560,6 +581,17 @@ export const createQuickJsRunner = async (
               limit: eventTickLimit,
             },
           ],
+        };
+      }
+      if (uncaught) {
+        // guest 未吞掉的异常:本 tick 该座位 intents 全部作废(单位原地待命),计一次异常。
+        // 「中止本 tick」是这条轨的语义:不排 drain、不判内存 / API——故它**不与任何轨叠加**
+        // (事件轨同样早退;内存与 API 两条只在脚本正常返回时才可能同 tick 各计一次)。
+        // VM 续用、模块级记忆保留(不重建),下一 tick 从原处继续(本 tick 的部分 intent 由下一
+        // tick 的 `__setSnapshot` 清空,故不会跨 tick 残留)。
+        return {
+          intents: [],
+          observations: [{ kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 }],
         };
       }
       const observations: Observation[] = [];

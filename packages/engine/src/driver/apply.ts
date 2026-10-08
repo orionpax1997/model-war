@@ -111,9 +111,10 @@ export type Change =
    * ── 为什么它只带座位、值与轨名 ──
    * 判据(这条轨是不是真触限)由执行器在宿主侧算好并作为 `tripped` 观测上报,步 0 只把它转成
    * 本条变更;`apply()` **只落不判**——不看规则集、不判阈值、不判淘汰。`count` 是这一 tick 该
-   * 座位该轨累加的异常次数(一条 `tripped` 观测计一次),`track` 是触发它的预算键名
-   * (`eventTickLimit` / `apiCallTickLimit` / `memoryTickCeiling`)——**按异常事件累加**,轨名
-   * 随变更留下以便读数与审计(多条不同轨同 tick 各计一次)。
+   * 座位该轨累加的异常次数(一条 `tripped` 观测计一次),`track` 是触发它的轨名:三条预算键
+   * (`eventTickLimit` / `apiCallTickLimit` / `memoryTickCeiling`)之一,或第四条 `uncaughtException`
+   * (脚本未被吞掉的异常轨——**它不是规则集键、没有可标定的上限**,任一未吞异常本身即达阈,故不随
+   * 预算配置开关)。轨名随变更留下以便读数与审计(多条不同轨同 tick 各计一次)。
    */
   | {
       readonly kind: "count-exception-tick";
