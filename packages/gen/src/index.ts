@@ -77,13 +77,12 @@ export {
   type GenerationRequest,
 } from "./run.js";
 export {
-  FAILURE_RECORD_PREFIX,
   buildFailureRecord,
   failureRecordPath,
   writeFailureRecord,
   type BuildFailureRecordInput,
-  type FailureIdentity,
-  type FailureRecord,
   type WriteFailureRecordInput,
   type WriteFailureRecordResult,
 } from "./failure.js";
+// 失败记录的形状家已下沉到真源包(§2.2.5):对外名字一个不少,只换来源。
+export { FAILURE_RECORD_PREFIX, type FailureIdentity, type FailureRecord } from "@model-war/schema";

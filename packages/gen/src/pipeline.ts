@@ -50,7 +50,7 @@
 
 import { readFileSync } from "node:fs";
 
-import type { ArchiveMeta, ArchiveValidation } from "@model-war/schema";
+import type { ArchiveMeta, ArchiveValidation, FailureClassification } from "@model-war/schema";
 
 import {
   buildArchiveMeta,
@@ -88,7 +88,9 @@ export type GenerationLogEntry = {
   readonly errorCodes: readonly string[];
 };
 
-export type FailureClassification = "tsc" | "contract" | "transport";
+// 取值域的家在真源包(报告侧要按它分节渲染,是跨进程数据形状而非 gen 私有参数);
+// 这里只是别名,不重列第二份取值表(同 `replay/index.ts` 的 `TickPayload = ReplayTickPayload` 先例)。
+export type { FailureClassification };
 
 export type ModelFailure = {
   readonly classification: FailureClassification;

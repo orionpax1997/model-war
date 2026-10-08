@@ -6,7 +6,9 @@
  * 三行的类型与 JSON Schema 在那里,本包只做编解码、不再声明行的类型,故这里不复述字段。
  * 唯一留在本包的是 `CURRENT_SCHEMA_VERSION`——它是回放**文件格式的版本**,不是行的形状。
  *
- * 写方向的编解码随写出路径落地,读方向是 `renderReplay`(它住在本包的理由见该文件头注)。
+ * 写方向的编解码随写出路径落地;读方向是 `parseReplay`(它把一行收窄成带类型的 `ReplayLine`,
+ * 住在本包的理由见 `./parse.ts` 头注)。形状的**校验**(JSON Schema + ajv)不在这里——
+ * 本包只做**解析**,校验归 `apps/cli`(`replay` 不得依赖它,hld §3.2)。
  *
  * ── 下面这一组再导出:真源包类型面的「传递」,不是本包的新声明 ──
  *
@@ -106,6 +108,13 @@ export { FORBIDDEN_GLOBAL_NAMES, SANDBOX_INJECTED_API_SYMBOLS } from "@model-war
 export const CURRENT_SCHEMA_VERSION = 1;
 
 export { renderReplay } from "./render.js";
+
+/**
+ * 读入端:`readLinesOf` 逐行解析(行仍是 `JsonValue`),`parseReplay` 再按 `type` 收窄成
+ * `ReplayLine`。`ReplayReadError` 是它俩的拒跑标记,导出是为了让消费者 `instanceof` 认出
+ * 「这是坏回放,不是内部错」。渲染器与 NFR-2 复算链走同一条路径。
+ */
+export { parseReplay, readLinesOf, ReplayReadError } from "./parse.js";
 
 /**
  * 对一个 tick 的规范化状态求 SHA-256(hld §4.6):哈希计算只在写出路径上,不参与结算。

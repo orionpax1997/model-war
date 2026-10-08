@@ -73,6 +73,10 @@ export type JsonValue =
 export * from "./archive-meta.js";
 export * from "./match-input.js";
 
+// 失败记录的 `failed-<runId>.json`(形状家归真源包,§2.2.5):报告侧从记录本身读失败名单,
+// 不新增 `runner → gen` 的反向依赖边;键序即书写序,gen 侧照此序列化。
+export * from "./failure-record.js";
+
 // 回放 JSONL 的三行(`meta` / `tick` / `result`,hld §7.5)。形状一次定死,取值由引擎写出。
 // 末行 `result` 的终局原因取值域由本模块的 `ReplayOutcomeReason` 定死(09 票销掉 `match-result`)。
 export * from "./replay-line.js";
