@@ -28,7 +28,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RULESET_VERSION, SANDBOX_RUNTIME_HASH, type ArchiveMeta } from "@model-war/schema";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 
 import { sha256Hex } from "./archive.js";
 import { compileScript } from "./compile.js";
@@ -36,8 +36,10 @@ import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs } from "./contract.js";
 import { generateOneModel, type ModelOutcome } from "./pipeline.js";
 import { loadBaseTemplate } from "./prompt.js";
+import { RETRY } from "./retry.js";
 import { runGeneration, type GenerationRequest } from "./run.js";
-import { replies, reply, stubClient, type StubCall, type StubClient } from "./stub-client.js";
+import { fail, replies, reply, stubClient, type StubCall, type StubClient } from "./stub-client.js";
+import { TransportError } from "./transport-error.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -371,4 +373,175 @@ it("protocolRounds 缺省 = 5:每轮失败 → 桩恰好被调 5 次,失败链�
   }
   expect(outcome.failure.prompts).toHaveLength(5);
   expect(outcome.failure.generationLog).toHaveLength(5);
+});
+
+// ───────────────────────── 票 06:传输韧性(退避重试不消耗协议轮数) ─────────────────────────
+//
+// 传输失败(429 / 5xx / 超时)与截断(`finishReason=length`)都退避重发**同一轮**:桩多被调几次,
+// 但 `protocolRounds` / `prompts` / `generationLog` 只数**已收敛的轮次**。退避用假定时器推进,不真等。
+
+it("传输韧性:429 后成功——只调 2 次、退避一次后冻结,协议轮数仍 1", async () => {
+  const root = mkRoot();
+  const stub = stubClient([
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    reply(VALID_SCRIPT),
+  ]);
+
+  vi.useFakeTimers();
+  let settled = false;
+  try {
+    const outcomePromise = generateOneModel(
+      requestWith(root, stub, "2026-01-01T00-00-00-000Z"),
+      firstModelConfig(root),
+    ).then((outcome) => {
+      settled = true;
+      return outcome;
+    });
+
+    // 首次调用同步发生;第 2 次必须等满初始退避间隔才会发生(证明两次调用之间确有一次等待)。
+    expect(stub.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(RETRY.initialDelayMs - 1);
+    expect(settled).toBe(false);
+    expect(stub.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const outcome = await outcomePromise;
+    expect(stub.calls).toHaveLength(2);
+    expect(outcome.kind).toBe("frozen");
+    if (outcome.kind !== "frozen") {
+      return;
+    }
+    // 重试不消耗协议轮数:一次生成、一份 prompt、一行日志。
+    expect(outcome.meta.protocolRounds).toBe(1);
+    expect(outcome.meta.prompts).toHaveLength(1);
+    expect(outcome.meta.generationLog).toHaveLength(1);
+    expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(VALID_SCRIPT);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("传输韧性:5xx 直到耗尽——重试 maxRetries 次后 transport 失败,不涨轮数、不建存档", async () => {
+  const root = mkRoot();
+  const runId = "2026-01-01T00-00-00-000Z";
+  const stub = stubClient(
+    Array.from({ length: RETRY.maxRetries + 1 }, () =>
+      fail(new TransportError("服务不可用", { retryable: true, status: 503 })),
+    ),
+  );
+
+  vi.useFakeTimers();
+  try {
+    const outcomePromise = generateOneModel(requestWith(root, stub, runId), firstModelConfig(root));
+    await vi.runAllTimersAsync();
+    const outcome = await outcomePromise;
+
+    // 首次 + maxRetries 次重发。
+    expect(stub.calls).toHaveLength(RETRY.maxRetries + 1);
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") {
+      return;
+    }
+    expect(outcome.failure.classification).toBe("transport");
+    // 一次都未收敛 → 没有 prompt、没有日志,协议轮数一点没动。
+    expect(outcome.failure.prompts).toEqual([]);
+    expect(outcome.failure.generationLog).toEqual([]);
+    expect(outcome.failure.diagnostics.join("\n")).toContain("503");
+    expect(outcome.failure.message).toContain("传输失败");
+    // 失败只返回结构,不建存档(写盘归票 05),也不留半截 / 临时目录。
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+    expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("传输韧性:截断后成功——重发同一轮,半截文本不入任何后续 messages", async () => {
+  const root = mkRoot();
+  const HALF_SCRIPT = "function loop() {\n  return 1;\n";
+  const stub = stubClient([reply(HALF_SCRIPT, { finishReason: "length" }), reply(VALID_SCRIPT)]);
+
+  vi.useFakeTimers();
+  try {
+    const outcomePromise = generateOneModel(
+      requestWith(root, stub, "2026-01-01T00-00-00-000Z"),
+      firstModelConfig(root),
+    );
+    await vi.runAllTimersAsync();
+    const outcome = await outcomePromise;
+
+    expect(stub.calls).toHaveLength(2);
+    // 重发的是**同一轮**的 messages(半截文本既不当产物,也不回喂成新消息)。
+    expect(callAt(stub, 1).messages).toEqual(callAt(stub, 0).messages);
+    for (const call of stub.calls) {
+      for (const message of call.messages) {
+        expect(message.content).not.toContain(HALF_SCRIPT);
+      }
+    }
+
+    expect(outcome.kind).toBe("frozen");
+    if (outcome.kind !== "frozen") {
+      return;
+    }
+    expect(outcome.meta.protocolRounds).toBe(1);
+    expect(outcome.meta.prompts).toHaveLength(1);
+    expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(VALID_SCRIPT);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("传输韧性:400(retryable:false)不重试,直接 transport 失败", async () => {
+  const root = mkRoot();
+  const stub = stubClient([fail(new TransportError("坏请求", { retryable: false, status: 400 }))]);
+
+  const outcome = await generateOneModel(
+    requestWith(root, stub, "2026-01-01T00-00-00-000Z"),
+    firstModelConfig(root),
+  );
+
+  expect(stub.calls).toHaveLength(1);
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") {
+    return;
+  }
+  expect(outcome.failure.classification).toBe("transport");
+  expect(outcome.failure.prompts).toEqual([]);
+  expect(outcome.failure.generationLog).toEqual([]);
+  expect(outcome.failure.diagnostics.join("\n")).toContain("400");
+  expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
+});
+
+it("传输韧性:第 1 轮收敛、第 2 轮传输耗尽——失败链只含已收敛的轮次", async () => {
+  const root = mkRoot();
+  const stub = stubClient([
+    reply(BLOCKING_SCRIPT),
+    ...Array.from({ length: RETRY.maxRetries + 1 }, () =>
+      fail(new TransportError("请求超时", { retryable: true })),
+    ),
+  ]);
+
+  vi.useFakeTimers();
+  try {
+    const outcomePromise = generateOneModel(requestWith(root, stub, "2026-01-01T00-00-00-000Z"), {
+      ...firstModelConfig(root),
+      protocolRounds: 3,
+    });
+    await vi.runAllTimersAsync();
+    const outcome = await outcomePromise;
+
+    // 第 1 轮 1 次 + 第 2 轮 1 次首发 + maxRetries 次重发。
+    expect(stub.calls).toHaveLength(1 + RETRY.maxRetries + 1);
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") {
+      return;
+    }
+    expect(outcome.failure.classification).toBe("transport");
+    // 只有第 1 轮收敛过:prompt 链与日志各 1 条,第 2 轮(死在传输上)不进账。
+    expect(outcome.failure.prompts).toHaveLength(1);
+    expect(outcome.failure.generationLog).toHaveLength(1);
+    expect(outcome.failure.diagnostics.join("\n")).toContain("超时");
+  } finally {
+    vi.useRealTimers();
+  }
 });
