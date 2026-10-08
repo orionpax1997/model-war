@@ -112,6 +112,23 @@ it("用尽轮数:写失败记录(逐轮 prompt 链 + 逐轮日志 + 最终诊断
   expect(name).toMatch(/^failed-.*\.json$/);
 
   const record = readRecord(slugDir, name);
+  // 形状家契约(迁移后仍成立):键序即书写序——schema `FailureRecord` 的 11 键按此序序列化。
+  expect(Object.keys(record)).toEqual([
+    "model",
+    "modelVersion",
+    "generatedAt",
+    "runId",
+    "ruleset",
+    "classification",
+    "protocolRounds",
+    "prompts",
+    "generationLog",
+    "diagnostics",
+    "message",
+  ]);
+  // 逐字节纪律:2 空格缩进 + 末尾换行(`writeFailureRecord` 的 `JSON.stringify(record, null, 2)}` + `\n`)。
+  const raw = readFileSync(join(slugDir, name), "utf8");
+  expect(raw).toBe(`${JSON.stringify(record, null, 2)}\n`);
   expect(record.model).toBe("alpha");
   expect(record.modelVersion).toBe("provider/alpha");
   expect(record.ruleset).toBe(RULESET_VERSION);

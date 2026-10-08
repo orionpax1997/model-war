@@ -10,12 +10,14 @@
  * 它**不带编译产物**、**不建** `archive/<modelSlug>/<runId>/`、**不被任何对局装载**(装载段只收
  * 通过校验的三件套)。`archive/` 下的这条 `failed-*.json` 与 `<runId>/` 目录并列,一眼可分辨。
  *
- * ── 为什么形状比 `meta.json` 多几项、又刻意不进 schema ──
+ * ── 形状家归真源包,本文件只组装与落盘 ──
  *
- * `meta.json` 的十一键形状冻结在 `@model-war/schema`;失败记录**不走那条装载断言**,也就不该
- * 混进那个真源包。但报告侧要能从记录本身回答「哪个模型的哪一跑、用哪一版规则、哪一类失败」,
- * 所以这里补齐 `model` / `modelVersion` / `generatedAt` / `runId` / `ruleset` 几个标识位,
- * 再嵌 `classification` / `prompts` / `generationLog` / `diagnostics` / `message`。
+ * `FailureRecord` / `FailureIdentity` / `FailureClassification` 与文件名前缀常量
+ * `FAILURE_RECORD_PREFIX` 的**形状真源在 `@model-war/schema`**(`packages/schema/src/
+ * failure-record.ts`,hld §2.2.5):报告侧要能只靠记录回答「哪个模型的哪一跑、用哪一版规则、
+ * 哪一类失败」,让生成侧与报告侧读同一份定义,不再新增 `runner → gen` 的反向依赖边(§3.2)。
+ * 本文件从 schema 导入记录形状与文件名前缀常量,只负责把 `ModelFailure` 组装成记录、按固定键序
+ * 落盘,不在此重声明第二份形状。
  *
  * `protocolRounds` 取 `prompts.length`(与 `meta.json` 的「轮数 = prompt 条数」不变量同源):
  * 它记的是**已收敛的协议轮数**,而不是配置里的轮数上限——传输在某一轮耗尽时那一轮没有结论,
@@ -32,62 +34,14 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { RULESET_VERSION } from "@model-war/schema";
+import {
+  FAILURE_RECORD_PREFIX,
+  RULESET_VERSION,
+  type FailureIdentity,
+  type FailureRecord,
+} from "@model-war/schema";
 
-import type { FailureClassification, ModelFailure } from "./pipeline.js";
-
-/** 失败记录文件名的前缀:`failed-<runId>.json` 与存档目录 `<runId>/` 在同一父目录下并列。 */
-export const FAILURE_RECORD_PREFIX = "failed-";
-
-/**
- * 一条校验失败记录的 JSON 形状(报告侧读成失败名单的形状真源)。
- *
- * 键序即书写序:先标识(哪个模型 / 哪一跑 / 哪一版规则),再结论(分类 / 已收敛轮数 /
- * 逐轮 prompt / 日志 / 诊断 / 原因)。`writeFailureRecord` 按此序序列化,保证稳定格式化。
- */
-export type FailureRecord = {
-  /** 模型名,与 `archive/<modelSlug>/` 的目录名同源。 */
-  readonly model: string;
-  /** 模型版本/快照标识(配置里的 `modelId`),与 `meta.json` 的分工一致。 */
-  readonly modelVersion: string;
-  /** 失败判定时刻(ISO 字符串),只作留档。 */
-  readonly generatedAt: string;
-  /** 这一跑的 `runId`,与文件名 `failed-<runId>.json` 同源。 */
-  readonly runId: string;
-  /** 生成时所用的规则集版本(本仓常量)。 */
-  readonly ruleset: string;
-  /** 失败分类:`tsc` / `contract` / `transport`。 */
-  readonly classification: FailureClassification;
-  /** 已收敛的协议轮数,恒等于 `prompts.length`(镜像 `meta.json` 的轮数不变量)。 */
-  readonly protocolRounds: number;
-  /** 逐轮**完整发出**的 prompt 链(键与含义同 `ModelFailure.prompts`)。 */
-  readonly prompts: readonly string[];
-  /** 逐轮一行 `JSON.stringify(GenerationLogEntry)`。 */
-  readonly generationLog: readonly string[];
-  /** 最终诊断(tsc 诊断行,或校验器 stdout 的非空行)。 */
-  readonly diagnostics: readonly string[];
-  /** 一行人类可读原因。 */
-  readonly message: string;
-};
-
-/**
- * 失败记录的**身份字段**(哪个模型 / 哪一版 / 哪一跑 / 何时):`buildFailureRecord` 与
- * `writeFailureRecord` 的共同前缀。抽出来只为一件事——两处不再各列一遍这四项,免得其一漏改时
- * 两边的身份字段悄悄分叉。
- *
- * `model` 一名两用:既是记录里的模型名(`FailureRecord.model`),也是 `archive/<modelSlug>/`
- * 的目录名——两者同源,由同一个键承载,不给「记录名」与「目录名」各留一个可能分叉的名字。
- */
-export type FailureIdentity = {
-  /** 模型名,与 `archive/<modelSlug>/` 的目录名同源。 */
-  readonly model: string;
-  /** 模型版本/快照标识(配置里的 `modelId`),与 `meta.json` 的分工一致。 */
-  readonly modelVersion: string;
-  /** 失败判定时刻(ISO 字符串),只作留档。 */
-  readonly generatedAt: string;
-  /** 这一跑的 `runId`,与文件名 `failed-<runId>.json` 同源。 */
-  readonly runId: string;
-};
+import type { ModelFailure } from "./pipeline.js";
 
 /** 组装失败记录所需的一切(不带 `root`:组装与落盘是两件事,便于纯函数直测形状)。 */
 export type BuildFailureRecordInput = FailureIdentity & {
