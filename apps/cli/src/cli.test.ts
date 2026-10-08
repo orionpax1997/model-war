@@ -27,10 +27,10 @@ const mapPath = fileURLToPath(new URL("../../../maps/open-clash.json", import.me
 const COMMANDS = ["gen", "run", "match", "replay", "verify", "map-lint"] as const;
 
 /**
- * 尚未落地的子命令。`map-lint` / `replay` / `match` / `verify` 不在其中:四者已实现,被下面各自那组断言盯着。
- * 这张名单会随实现推进缩短——把一条命令搬出这张名单是"它有断言了"的信号。
+ * 尚未落地的子命令。`gen` / `map-lint` / `replay` / `match` / `verify` 不在其中:五者已实现,
+ * 被下面各自那组断言盯着。这张名单会随实现推进缩短——把一条命令搬出这张名单是"它有断言了"的信号。
  */
-const UNIMPLEMENTED = ["gen", "run"] as const;
+const UNIMPLEMENTED = ["run"] as const;
 
 let bundle = "";
 let scratch = "";
@@ -162,6 +162,22 @@ it.each(UNIMPLEMENTED)("未实现的 %s 显式失败,不静默返回成功", (co
   expect(result.status).not.toBe(0);
   // 退出码非零还不够:必须是"未实现"这条路径,而不是别处的崩溃。
   expect(result.stderr).toContain("未实现");
+});
+
+it("`gen` 不再是「未实现」:帮助里列出 --config / --root / --model", () => {
+  // 用户故事 24。`commandHelpText` 不展开处理器私有选项,故三个串只能来自登记的 `usage`。
+  const help = run(["gen", "--help"]);
+  expect(help.status).toBe(0);
+  for (const option of ["--config", "--root", "--model"]) {
+    expect(help.stdout, `gen --help 应含 ${option}`).toContain(option);
+  }
+});
+
+it("`gen` 缺 --config 时非零退出,不走「未实现」那条路径", () => {
+  const result = run(["gen"]);
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).not.toContain("未实现");
+  expect(result.stderr).toContain("--config");
 });
 
 it("`map-lint` 不再走「未实现」那条路径", () => {

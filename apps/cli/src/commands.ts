@@ -46,7 +46,7 @@ export type CommandSpec = {
 export const COMMANDS: readonly CommandSpec[] = [
   {
     name: "gen",
-    usage: "modelwar gen --config models.yaml",
+    usage: "modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>]",
     summary: "生成并冻结参赛脚本(可 --model <slug> 单跑)",
     provider: "@model-war/gen",
     handler: "generateAndFreeze",
