@@ -92,6 +92,7 @@ const PROBES = [
   "packages/tools/src/__declared-deps-probe.ts",
   "packages/runner/dist/__gate-probe.js",
   "packages/engine/dist/__gate-probe.js",
+  "packages/gen/dist/__gate-probe.js",
   EXTRA_ARTIFACT_PATH,
   IGNORED_ARTIFACT_PATH,
   UNRELATED_NOISE_PATH,
@@ -1057,6 +1058,38 @@ it("依赖门禁:runner 一旦 import engine 就红,撤掉即绿", () => {
   );
   expect(violated.status, "注入跨包方向违规后必须非零退出").not.toBe(0);
   expect(violated.output, violated.output).toContain("runner-must-not-depend-on-engine");
+
+  const restored = script("check:deps");
+  expect(restored.status, restored.output).toBe(0);
+});
+
+it("依赖门禁:gen 一旦 import engine / runner / replay 就红,撤掉即绿", () => {
+  const clean = script("check:deps");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 三个禁止目标写在同一台 `(?:specifier|resolved)` 交替式里:写漏一个时另外两个照样绿,所以三个各注一次。
+  // 判据是「有一条违规行同时点名这条规则与这个目标」——只断言输出里出现过 `@model-war/<target>` 不够:
+  // 探针那个 import 解析不到(gen 没声明这三个依赖),`not-to-unresolvable` 那行也带着这个串,
+  // 于是「规则没挂上」会以绿的样子混过去。
+  for (const target of ["engine", "runner", "replay"] as const) {
+    const violated = withProbeFile(
+      "packages/gen/dist/__gate-probe.js",
+      `import "@model-war/${target}";\n`,
+      () => script("check:deps"),
+    );
+    expect(violated.status, `gen import ${target} 必须非零退出`).not.toBe(0);
+    const named = violated.output
+      .split("\n")
+      .filter(
+        (line) =>
+          line.includes("gen-must-not-depend-on-engine-runner-replay") &&
+          line.includes(`@model-war/${target}`),
+      );
+    expect(
+      named.length,
+      `没有一条违规行同时点名这条规则与 @model-war/${target}:\n${violated.output}`,
+    ).toBeGreaterThan(0);
+  }
 
   const restored = script("check:deps");
   expect(restored.status, restored.output).toBe(0);
