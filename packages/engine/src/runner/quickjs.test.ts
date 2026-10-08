@@ -683,7 +683,7 @@ it("本 tick 的 API 计数在下一 tick 进入时重置", async () => {
 
 // ── `loop()` 抛异常:不再冒成整场 engine-crash,而是计一次异常 ──────────────────
 //
-// 未被脚本吞掉的 guest 异常(脚本自己 `throw` / 引用已删的宿主桥 / 调未定义的 action)与三条预算
+// 未被脚本吞掉的 guest 异常(脚本自己 `throw` / 引用已删的宿主桥 / 调未定义的 action / 访问未暴露字段)与三条预算
 // 计数轨走**同一条写入口**:执行器交回一条 `tripped` 观测(轨名 `UNCAUGHT_EXCEPTION_TRACK`),步 0
 // 落成 `count-exception-tick`。它**中止本 tick**——不排 drain、不判内存 / API,故只计一次、不与任何轨
 // 叠加;VM 续用、模块级记忆保留。断言只钉子**外部可观察行为**:交回的载荷(观测量 / 故障位)与经
@@ -725,7 +725,7 @@ it("loop() 抛异常:意图作废、产一条异常轨 tripped、无故障位,VM
   }
 });
 
-it("越权异常与 loop() 抛异常同轨:引用已删桥 / 调未定义 action 各计一次,不冒成崩溃", async () => {
+it("越权异常与 loop() 抛异常同轨:引用已删桥 / 调未定义 action / 访问未暴露字段 各计一次,不冒成崩溃", async () => {
   // 「引用已删宿主桥」在 guest 里是一次普通 ReferenceError,未捕获时归本轨(§5.2 第五行)。
   const deletedBridge = await drainOneTick("function loop() { __setSnapshot({}); }");
   expect(deletedBridge.fault).toBeUndefined();
@@ -738,6 +738,14 @@ it("越权异常与 loop() 抛异常同轨:引用已删桥 / 调未定义 action
   expect(undefinedAction.fault).toBeUndefined();
   expect(undefinedAction.intents).toEqual([]);
   expect(undefinedAction.observations).toEqual([
+    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+  ]);
+  // 「访问未暴露字段」:引擎的世界快照不挂在脚本全局上(脚本只能经查询函数读),裸引用该字段仍是
+  // 一次普通 ReferenceError,同轨计入。
+  const unexposedField = await drainOneTick("function loop() { snapshot.units; }");
+  expect(unexposedField.fault).toBeUndefined();
+  expect(unexposedField.intents).toEqual([]);
+  expect(unexposedField.observations).toEqual([
     { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
   ]);
 });
