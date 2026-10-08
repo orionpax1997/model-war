@@ -1,18 +1,17 @@
 /**
  * 生成管线的编排层与 CLI 处理器入口(hld §2.2.6 / §9)。
  *
- * ── 票 01 的边界:走到"拿到脚本文本"为止 ──
+ * ── 票 02 的边界:单轮到原子冻结 ──
  *
- * 本票只把输入接起来:根解析 → 读配置 → 读契约 → 读模板 → 对每个模型经 `ModelClient` 端口
- * 发一次请求、回得文本。**不编译、不落存档**——那是票 02 的活。`sendOnce` 就是那条缝:
- * 票 02 会把它换成 `pipeline.ts` 的逐轮 `generateOneModel`(编译 + 校验 + 回喂 + 原子冻结,
- * 返回 `ModelOutcome`)。本文件保留 `GenerationRequest` 这一组共享参数(契约 §2),让替换点
- * 只需改一个函数体、不动签名。
+ * 本文件是编排层:根解析 → 读配置 → 读契约 → 读模板 → 对每个选中模型调 `pipeline.ts` 的
+ * `generateOneModel`(发一次 → 编译 → 迭代期校验 → 冻结期校验 → 原子冻结,返回 `ModelOutcome`)。
+ * 单模型失败不中断整批;写失败记录文件(`archive/<slug>/failed-<runId>.json`)是票 05 的活,
+ * 本票只打诊断。`GenerationRequest` 这一组共享参数(契约 §2)由本文件组装一次、按模型复用。
  *
  * ── 根解析复用 `match` 的约定 ──
  *
  * 默认 cwd,`--root` 覆盖,`--config` 相对根。`.env` 在根解析之后加载(存在才加载),凭证只经
- * `process.env[credentialEnvVar]` 读——票 01 不读凭证,但要保证根解析与加载时机正确,
+ * `process.env[credentialEnvVar]` 读——本票不读凭证,但要保证根解析与加载时机正确,
  * 让票 08 的真实客户端直接可用。
  */
 
@@ -21,8 +20,9 @@ import { join, resolve } from "node:path";
 import { createModelClient } from "./client-factory.js";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs, type RuleDocs } from "./contract.js";
-import type { ChatMessage, ModelClient } from "./model-client.js";
-import { loadBaseTemplate, renderBaseTemplate } from "./prompt.js";
+import type { ModelClient } from "./model-client.js";
+import { generateOneModel } from "./pipeline.js";
+import { loadBaseTemplate } from "./prompt.js";
 
 /**
  * 单模型一次生成的全部共享输入(契约 §2)。由 `runGeneration` 组装一次、按模型复用;
@@ -60,27 +60,15 @@ const writeFailure = (message: string): number => {
   return EXIT_FAILED;
 };
 
-/** 时间戳形态的 `runId`:`:`/`.` 换成 `-`,让它能直接当目录名(票 02 会用它建存档目录)。 */
+/** 时间戳形态的 `runId`:`:`/`.` 换成 `-`,让它能直接当目录名(也用于建存档目录)。 */
 const runIdOf = (at: Date): string => at.toISOString().replaceAll(":", "-").replace(".", "-");
 
 /**
- * 单模型一次:组装 prompt → 经端口发一次请求 → 回得脚本文本。
+ * 多模型编排:读配置 + 契约 + 模板,逐模型串行跑 `generateOneModel`。
  *
- * **票 02 的替换点**:这里会换成 `pipeline.ts` 的 `generateOneModel(request, config)`,
- * 把"一次发送"扩成"逐轮 编译 → 校验 → 失败回喂、上限 `protocolRounds`",并返回 `ModelOutcome`。
- */
-const sendOnce = async (request: GenerationRequest, config: ModelConfig): Promise<string> => {
-  const prompt = renderBaseTemplate(request.template, request.docs, config.strategy);
-  const messages: readonly ChatMessage[] = [{ role: "user", content: prompt }];
-  const response = await request.createClient(config).send(messages, config.params ?? {});
-  return response.text;
-};
-
-/**
- * 多模型编排:读配置 + 契约 + 模板,逐模型串行生成。
- *
- * 返回进程退出码:全部模型发出且拿到文本 = 0,任一失败 = 1。票 01 **不落存档、不编译**:
- * 回得的脚本文本作为中间结果留在 `generated` 里(其形状即票 02 接手的输入)。
+ * 返回进程退出码:全部模型冻结成功 = 0,任一失败 = 1。单模型失败不中断整批(失败的模型
+ * 把诊断打到 stderr,其余照跑);写失败记录文件(`failed-<runId>.json`)是票 05 的事,本票不写。
+ * 传输层错误(端口抛错)在票 06 之前不入 `transport` 分类,在这里按模型失败记账。
  */
 export const runGeneration = async (options: GenerationOptions): Promise<number> => {
   const root = resolve(options.root);
@@ -109,17 +97,27 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     now,
   };
 
-  // 票 01 的中间结果:每模型回得的脚本文本。票 02 会在这里接上编译/校验/冻结。
-  const generated: { readonly slug: string; readonly script: string }[] = [];
+  let failures = 0;
   for (const model of selected) {
     try {
-      const script = await sendOnce(request, model);
-      generated.push({ slug: model.slug, script });
+      const outcome = await generateOneModel(request, model);
+      if (outcome.kind === "frozen") {
+        continue;
+      }
+      failures += 1;
+      process.stderr.write(
+        `modelwar gen: 模型 ${model.slug} 未通过(${outcome.failure.classification}):` +
+          `${outcome.failure.message}\n`,
+      );
+      for (const line of outcome.failure.diagnostics) {
+        process.stderr.write(`  ${line}\n`);
+      }
     } catch (cause) {
+      failures += 1;
       process.stderr.write(`modelwar gen: 模型 ${model.slug} 生成失败:${messageOf(cause)}\n`);
     }
   }
-  return generated.length === selected.length ? EXIT_OK : EXIT_FAILED;
+  return failures === 0 ? EXIT_OK : EXIT_FAILED;
 };
 
 /** `gen` 的三个选项;`-h/--help` 已由 CLI 路由层拦截,不进处理器。 */
