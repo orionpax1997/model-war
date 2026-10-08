@@ -49,6 +49,8 @@ const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
 const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
 /** 过得了 tsc 编译、但撞上 blocking 违规(禁列全局名 `Date`)的脚本——第 1 轮就会被校验拦住。 */
 const BLOCKING_SCRIPT = `function loop() {\n  return Date.now();\n}\nloop();\n`;
+/** 过不了 tsc(引用未定义名 `missingName` → TS2304)的脚本——驱动 `kind: "tsc"` 那一栏。 */
+const TSC_FAIL_SCRIPT = `function loop() {\n  return missingName;\n}\n`;
 /** `models.yaml` 文本;`protocolRounds` 给了才写那一行(缺省 = gen 内部默认 5)。 */
 const modelsYaml = (protocolRounds?: number): string =>
   [
@@ -115,17 +117,34 @@ const callAt = (stub: StubClient, index: number): StubCall => {
  * 独立算一遍「校验器会喂给模型的文本」:把同一段源码编译成产物、跑迭代期校验,取 stdout。
  * 回喂探针用它做**逐字**相等断言(严格相等,不是 `includes`)。
  */
-const iterationFeedback = (root: string, source: string): string => {
+const iterationFeedback = (root: string, source: string): string =>
+  validateCompiled(root, source, "iteration").stdout;
+
+/** 独立算一遍编译 + 指定相位的校验结果(纯子进程缝,不经管线,用作逐字比对的基准)。 */
+const validateCompiled = (
+  root: string,
+  source: string,
+  phase: "iteration" | "freeze",
+): ReturnType<typeof validateScript> => {
   const stagingDir = mkdtempSync(join(root, ".probe-"));
   try {
     const compiled = compileScript({ root, stagingDir, source });
-    const result = validateScript({
+    return validateScript({
       root,
       artifactPath: compiled.jsPath,
       maxBytes: scriptSizeLimit(root),
-      phase: "iteration",
+      phase,
     });
-    return result.stdout;
+  } finally {
+    rmSync(stagingDir, { recursive: true, force: true });
+  }
+};
+
+/** 独立算一遍第 1 轮编译失败时管线会回喂的 tsc 诊断(与 `compile.diagnostics` 同源)。 */
+const tscFeedback = (root: string, source: string): string => {
+  const stagingDir = mkdtempSync(join(root, ".probe-"));
+  try {
+    return compileScript({ root, stagingDir, source }).diagnostics;
   } finally {
     rmSync(stagingDir, { recursive: true, force: true });
   }
@@ -371,4 +390,94 @@ it("protocolRounds 缺省 = 5:每轮失败 → 桩恰好被调 5 次,失败链�
   }
   expect(outcome.failure.prompts).toHaveLength(5);
   expect(outcome.failure.generationLog).toHaveLength(5);
+});
+
+/** 解析 `meta.generationLog` 的每行 JSON(便于框 `kind` / `errorCodes`)。 */
+const parsedLog = (meta: {
+  readonly generationLog: readonly string[];
+}): readonly Record<string, unknown>[] =>
+  meta.generationLog.map((line) => JSON.parse(line) as Record<string, unknown>);
+
+it("体积两档:迭代期只提示(放行、errors 带提示条目),冻结期硬拦(拦)", () => {
+  // 真实 `VALID_SCRIPT` 的字节数 > 16 → 触发体积规则。同一份源码、同一上限,只换相位。
+  const root = mkRoot(16);
+  const iteration = validateCompiled(root, VALID_SCRIPT, "iteration");
+  const freeze = validateCompiled(root, VALID_SCRIPT, "freeze");
+
+  // 迭代期:放行,但 `errors` 必须带上**提示条目**(不是空数组)——「通过」不抹掉「有哪些提示」。
+  expect(iteration.passed).toBe(true);
+  expect(iteration.errors).toHaveLength(1);
+  expect(iteration.errors[0]).toContain("[提示]");
+  expect(iteration.errors[0]).toContain("脚本体积");
+
+  // 冻结期:同一份判据、同一句诊断,只有 blocking 那一维不同 → 硬拦。
+  expect(freeze.passed).toBe(false);
+  expect(freeze.errors.join("\n")).toContain("[拦截]");
+});
+
+it("干净通过时 errors 为空数组(总结句不是条目),提示只随违规出现", () => {
+  const root = mkRoot(16);
+  // 把上限放在源码字节数之上 → 一条违规都没有,渲染成「通过:没有违规。」
+  const clean = mkRoot(1_000_000);
+  expect(validateCompiled(root, VALID_SCRIPT, "iteration").errors).toHaveLength(1);
+  expect(validateCompiled(clean, VALID_SCRIPT, "iteration").errors).toEqual([]);
+});
+
+it("编译诊断回喂:第 1 轮 tsc 不过、第 2 轮合法 → 回喂内容 = tsc 诊断,轮数 = 2,kind 记 tsc", async () => {
+  const root = mkRoot();
+  const expected = tscFeedback(root, TSC_FAIL_SCRIPT);
+  const stub = stubClient([reply(TSC_FAIL_SCRIPT), reply(VALID_SCRIPT)]);
+  const outcome = await generateOneModel(requestWith(root, stub, "2026-01-01T00-00-00-000Z"), {
+    ...firstModelConfig(root),
+    protocolRounds: 2,
+  });
+
+  // 编译失败也照常回喂一次、计入轮数池:桩恰好被调 2 次。
+  expect(stub.calls).toHaveLength(2);
+  const round2 = callAt(stub, 1);
+  expect(round2.messages[1]?.role).toBe("assistant");
+  expect(round2.messages[1]?.content).toBe(TSC_FAIL_SCRIPT);
+  // 逐字等于第 1 轮的 tsc 诊断文本(不加前后缀、不含任何非校验文本)。
+  expect(round2.messages[2]?.role).toBe("user");
+  expect(round2.messages[2]?.content).toBe(expected);
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") {
+    return;
+  }
+  expect(outcome.meta.protocolRounds).toBe(2);
+  expect(outcome.meta.prompts).toHaveLength(2);
+  const log = parsedLog(outcome.meta);
+  expect(log.map((entry) => entry.kind)).toEqual(["tsc", "contract"]);
+  // `errorCodes` 只在编译失败那一轮有机器码;合约轮留空,靠 `kind` 分栏。
+  expect(log[0]?.errorCodes).toEqual(["TS2304"]);
+  expect(log[1]?.errorCodes).toEqual([]);
+});
+
+it("编译诊断与契约诊断同池:tsc 失败 → 契约失败 → 合法,轮数 = 3,kind 逐轮标注", async () => {
+  const root = mkRoot();
+  const tscText = tscFeedback(root, TSC_FAIL_SCRIPT);
+  const contractText = iterationFeedback(root, BLOCKING_SCRIPT);
+  const stub = stubClient([reply(TSC_FAIL_SCRIPT), reply(BLOCKING_SCRIPT), reply(VALID_SCRIPT)]);
+  const outcome = await generateOneModel(requestWith(root, stub, "2026-01-01T00-00-00-000Z"), {
+    ...firstModelConfig(root),
+    protocolRounds: 3,
+  });
+
+  // 两栏共用同一个轮数池:第 1 轮 tsc、第 2 轮契约、第 3 轮通过 —— 桩恰好 3 次(上限含第 1 轮)。
+  expect(stub.calls).toHaveLength(3);
+  expect(callAt(stub, 1).messages[2]?.content).toBe(tscText);
+  expect(callAt(stub, 2).messages[4]?.content).toBe(contractText);
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") {
+    return;
+  }
+  expect(outcome.meta.protocolRounds).toBe(3);
+  expect(outcome.meta.prompts).toHaveLength(3);
+  const log = parsedLog(outcome.meta);
+  expect(log.map((entry) => entry.round)).toEqual([1, 2, 3]);
+  expect(log.map((entry) => entry.kind)).toEqual(["tsc", "contract", "contract"]);
+  expect(log[0]?.errorCodes).toEqual(["TS2304"]);
+  expect(log[1]?.errorCodes).toEqual([]);
 });

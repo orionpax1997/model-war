@@ -35,7 +35,11 @@ export type ValidateResult = {
   readonly passed: boolean;
   /** 校验器 stdout,**面向模型的文本**——唯一允许回喂给模型的内容(票 04 消费)。 */
   readonly stdout: string;
-  /** 面向作者的失败条目;通过时为空数组(`meta.validation.errors` 的来源)。 */
+  /**
+   * 校验条目(`meta.validation.errors` 的来源)。**放行且只有非 blocking 提示时,这里是那些提示条目**,
+   * 不是空数组——「通过」不抹掉「当时有哪些提示」。真的一条违规都没有时才给空数组。
+   * 失败时是 stdout 的全部非空行(含抬头总结句,便于直接当诊断看)。
+   */
   readonly errors: readonly string[];
 };
 
@@ -75,6 +79,15 @@ const nonEmptyLines = (text: string): readonly string[] =>
     .filter((line) => line.length > 0);
 
 /**
+ * stdout 里**逐条违规行**的抬头标记。渲染层把每条违规渲染成 `- [拦截] …` / `- [提示] …`,
+ * 抬头总结句(「…通过:…」/「…未通过:…」)不带这个前缀,所以按它过滤就能把「条目」与
+ * 「总结句」分开(渲染契约见 `packages/tools/src/validate/render-violations.ts`)。
+ * `- [` 是 ASCII 结构标记而不是中文文案,所以这里不硬编码任何类别名。
+ */
+const violationLines = (text: string): readonly string[] =>
+  nonEmptyLines(text).filter((line) => line.startsWith("- ["));
+
+/**
  * 调校验器入口。`artifactPath` 是编译产物(`script.js`)的路径。
  *
  * 参数顺序照入口的用法串:`<产物文件> --max-bytes <N> --phase <iteration|freeze>`。
@@ -103,5 +116,12 @@ export const validateScript = (options: {
   }
   const stdout = result.stdout ?? "";
   const passed = (result.status ?? -1) === 0;
-  return { passed, stdout, errors: passed ? [] : nonEmptyLines(stdout) };
+  return {
+    passed,
+    stdout,
+    // 放行且只有非 blocking 提示时,`errors` 必须是那些**提示条目**(不是空数组):
+    // 冻结档的用处之一就是日后回答「这份脚本当时凭什么被放行、有哪些已知提示」。
+    // 真的一条违规都没有(渲染成「脚本静态校验通过:没有违规。」)时才给空数组——那句总结不是条目。
+    errors: passed ? violationLines(stdout) : nonEmptyLines(stdout),
+  };
 };
