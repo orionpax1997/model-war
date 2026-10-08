@@ -43,7 +43,7 @@ packages/engine/sandbox-runtime/  runtime.iife.js 入库产物 + 漂移门禁(ad
 prompts/     仍是 .gitkeep
 ```
 
-——**当前位置:基线五格(D1 D2 D3 C A)与交付层的 D、E 已落库**;**F 对局内核已收口**(12 票全部 resolved,`runMatch` 唯一外部缝已打通);**G 沙箱执行器与预算裁决已收口**(11 票全部 resolved,真沙箱 `match → verify` 端到端打通,hld §12 #8 随五条探针关闭);**R 面向模型契约补齐与 M1 基准复验已收口**(6 票全部落地,spec 在 `.scratch/contract-closure/spec.md`):§5 占领与 §9 确定性约束已落库,三舱盲写 0 轮契约静态校验通过 3/3、真引擎 10 局复验 10/10 全过,**M1 关闭**。**主干的下一格是 K**(预算参数终值标定);R 收口后 **K / B / H 收口 / L** 的前置依次解锁。`prompts/` 属于 H / M3,不是 M1 缺项。
+——**当前位置:基线五格(D1 D2 D3 C A)与交付层的 D、E 已落库**;**F 对局内核已收口**(12 票全部 resolved,`runMatch` 唯一外部缝已打通);**G 沙箱执行器与预算裁决已收口**(11 票全部 resolved,真沙箱 `match → verify` 端到端打通,hld §12 #8 随五条探针关闭);**R 面向模型契约补齐与 M1 基准复验已收口**(6 票全部落地,spec 在 `.scratch/contract-closure/spec.md`):§5 占领与 §9 确定性约束已落库,三舱盲写 0 轮契约静态校验通过 3/3、真引擎 10 局复验 10/10 全过,**M1 关闭**。**K 预算参数终值标定已收口**(8 票全部 resolved,八个预算键落终值、`check:budget` 门禁与三轨异常探针落地);K 收口后 **B / H 收口 / L** 的前置依次解锁。`prompts/` 属于 H / M3,不是 M1 缺项。
 
 ## 3. 主图
 
