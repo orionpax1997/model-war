@@ -1,27 +1,31 @@
 /**
- * 赛季调度器:第一场端到端(串行)赛季(hld §8.1 / §8.3 / §9,票 06)。
+ * 赛季调度器:并发子进程池 + 退出码驱动的异常重跑/剔除(hld §8.1 / §8.3 / §9,票 06 → 07)。
  *
- * ── 这一票走通的窄路 ──────────────────────────────────────────────────────
+ * ── 这一票把「串行」换成「并发池」 ────────────────────────────────────────
  *
- * `modelwar run --config season.yaml` 第一次真的跑起来:读 `season.yaml`(票 05 的
- * `loadSeasonConfig`)→ 规则版本**前置拒绝** → `enumerateMatchUps` 枚举对局 → 逐局把输入
- * **物化**成 `input.json` → spawn 一个 `modelwar match <input.json>` 子进程执行该局 →
- * 读回放末行拿到名次 → 产出最小 `report.json`。
+ * 票 06 走通了端到端窄路(物化 → spawn → 读末行 → 写报告)。票 07 把那条 `for … await` 换成
+ * **信号量池**:并发上限 = `season.concurrency ?? min(cpus().length, 8)`,每局一个
+ * `modelwar match <input.json> --root <root>` 子进程,各自写进自己的 `<matchDir>`,互不干扰。
+ * 池完成顺序不确定 ⇒ 写盘前**按 `(comboIndex, mapIndex, seedIndex)` 排序**,保证并发度 1 与 N
+ * 产出**逐字节相同**的 `report.json`。
  *
- * ── 为什么这里只有「串行」而没有并发池 ────────────────────────────────────
+ * ── 只认退出码:重跑、剔除、赛季级中止 ──────────────────────────────────
  *
- * 票 06 只要「第一场端到端赛季跑得通」,零并发(一个 `for … await`)就够。并发上限
- * (`min(cpus, 8)`)、退出码 2/3 的**重跑一次 / 剔除**、问题清单,全归票 07;
- * 本文件把那三处**留出来但不实现**,免得后来者以为漏了(见下面 `TODO(票 07)`)。
+ * 子进程成败**只看退出码**(真源 `apps/cli/src/exit-codes.ts`),不解析 stdout 判成败。分流:
+ *   - `0`(EXIT_OK)→ 读回放末行 `result`,入报告。规则内结果(胜/负/超时/淘汰、内存判负、
+ *     带异常出局的席位)一律是 0,**绝不**被崩溃条款误判。
+ *   - `2`(engine-crash)/ `3`(nondeterministic-timeout)→ **重跑一次**;再触发同码 → 记入
+ *     `problems[]` 并**排除出排名**(报告里仍含这一条,不静默丢弃)。
+ *   - `1`(装载/用法)/ `4`(内部错)→ **赛季级中止**,打印 stderr 后按该码返回(不静默剔除;
+ *     装载期错误本应在物化前拦住)。
+ *   - `null`(被信号杀)+ **其它未在码表里的非零码** → 同样**赛季级中止**。判据:信号终止或
+ *     未知码既不携带「引擎故障/超时」这一可重跑语义(故不进重跑轨),也不能安全地折算成「这局
+ *     无效但赛季照跑」(那会把一个坏环境伪装成「成功赛季 + 全进问题清单」)。故按赛季级失败中止。
+ *   - **子进程无法启动**(`deps.spawnMatch` 抛错,如 ENOENT/权限) → 赛季级中止:一个启不来的
+ *     可执行文件对每一局都必然失败,不是某局的偶发异常。
  *
- * ── 「只认退出码」与异常路径的最小行为 ────────────────────────────────────
- *
- * 子进程成败**只看退出码**(真源 `apps/cli/src/exit-codes.ts`:0 正常 / 1 装载期 / 2 引擎故障 /
- * 3 不确定超时 / 4 内部错),不解析 stdout 判成败。票 06 的最小口径:
- *   - `0` → 读回放末行 `result`,入报告;
- *   - 非 `0` → 打印 stderr 并**以非零退出中止整季**(不静默忽略)。
- * 票 07 会把 2 / 3 从「中止」改成「重跑一次 → 再触发则记入问题清单、排除出排名」,并把 1 / 4
- * 固定为赛季级中止。本票先把「非零绝不静默」这条底线立住。
+ * **不另造超时阈值**:不确定超时完全由子进程退出码 3 表达(它复用规则集里 `wallClockHardTimeout`
+ * 的既有口径),调度器不设父级墙钟看门狗、不硬编码任何毫秒数。
  *
  * ── 规则版本隔离是**前置拒绝**,不是报告分组 ─────────────────────────────
  *
@@ -44,6 +48,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { join, relative, resolve } from "node:path";
 import {
   type MatchInput,
@@ -56,11 +61,20 @@ import { loadSeasonConfig, type SeasonConfig } from "./season-config.js";
 /** 正常退出(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_OK` 同值;runner 不 import CLI,故本地定型)。 */
 const EXIT_OK = 0;
 
-/** 赛季级失败(装载、规则版本不一致、子进程非零中止)。 */
+/** 赛季级失败(装载、规则版本不一致、子进程 1 / 4 / null / 未知码中止)。 */
 const EXIT_FAILED = 1;
 
-/** 其它内部错(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_INTERNAL` 同值)。 */
+/** 引擎崩溃(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_ENGINE_FAULT` 同值)。重跑一次。 */
+const EXIT_ENGINE_FAULT = 2;
+
+/** 不确定超时(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_NONDETERMINISTIC_TIMEOUT` 同值)。重跑一次。 */
+const EXIT_NONDETERMINISTIC_TIMEOUT = 3;
+
+/** 其它内部错(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_INTERNAL` 同值)。赛季级中止。 */
 const EXIT_INTERNAL = 4;
+
+/** 并发上限缺省:`min(cpus().length, 8)`(hld §8.1;与自证门 `min(6, cpus-2)` 是两回事)。 */
+const DEFAULT_MAX_CONCURRENCY = 8;
 
 /** 对局输入 `input.json` 的键集与**书写序**(须与 `MatchInput` / `REQUIRED_KEYS` 逐字一致)。 */
 const INPUT_KEYS = ["archives", "map", "mapSha256", "seed", "ruleset"] as const;
@@ -85,17 +99,42 @@ export type ReportedMatch = {
   readonly reason: string;
 };
 
+/** 问题清单里一局的原因:只由退出码 2 / 3 产生(码 0 的规则内结果绝不进这里)。 */
+export type MatchProblemReason = "engine-crash" | "nondeterministic-timeout";
+
 /**
- * 最小 `report.json`:每局的输入引用 + 结果(票 06 只到这一步)。
- * 每模型总分 / 有效局数 / 失败名单 / 问题清单归票 07 与票 08,本形状随它们扩展。
+ * 对局问题清单里的一局:重跑一次后仍触发退出码 2 / 3。
+ *
+ * 它**排除出排名**(票 08 起从分母剔除),但**保留在报告里**(不静默丢弃),供票 08/09 渲染。
+ */
+export type MatchProblem = {
+  /** 组合标识 `c<k>`。 */
+  readonly comboId: string;
+  /** 地图标识。 */
+  readonly map: string;
+  /** 该局派生种子。 */
+  readonly seed: number;
+  /** `input.json` 相对赛季根(`root`)的路径。 */
+  readonly inputPath: string;
+  /** 一条稳定的原因标签(供渲染与统计)。 */
+  readonly reason: MatchProblemReason;
+  /** 第二次(重跑后)观察到的退出码,恒为 2 或 3。 */
+  readonly exitCode: number;
+};
+
+/**
+ * `report.json`:每局的输入引用 + 结果,外加**对局问题清单**(票 07 落地;票 08/09 在这里加总分与叙事)。
+ *
+ * `matches` 只含成功局(码 0),`problems` 只含重跑后仍触发 2 / 3 的局;两者互斥、合起来覆盖全部枚举对局。
  */
 export type SeasonReport = {
   readonly runId: string;
   readonly ruleset: string;
   readonly matches: readonly ReportedMatch[];
+  readonly problems: readonly MatchProblem[];
 };
 
-/** `scheduleSeason` 的注入缝:子进程执行一局,只回退出码(票 07 在这里换真并发池)。 */
+/** `scheduleSeason` 的注入缝:子进程执行一局,只回退出码(一局可能被调两次:首发 + 重跑一次)。 */
 export type SeasonSchedulerDeps = {
   /** 执行一局;`inputPath` 是已物化的 `input.json` 绝对路径。只认返回的退出码(null = 被信号杀)。 */
   readonly spawnMatch: (inputPath: string) => Promise<{ readonly code: number | null }>;
@@ -109,6 +148,15 @@ export type ScheduleSeasonOptions = {
   readonly now?: () => Date;
 };
 
+/** 一局的执行结局。 */
+type AttemptResult =
+  | { readonly kind: "completed"; readonly rankings: readonly number[]; readonly reason: string }
+  | { readonly kind: "problem"; readonly reason: MatchProblemReason; readonly exitCode: number }
+  | { readonly kind: "abort"; readonly exitCode: number; readonly message: string };
+
+/** 入报告的一局(中止不会落进 `outcomes`,故意窄化掉 abort 分支)。 */
+type SettledOutcome = Exclude<AttemptResult, { kind: "abort" }>;
+
 const messageOf = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
@@ -117,6 +165,23 @@ const sha256Hex = (bytes: Buffer): string => createHash("sha256").update(bytes).
 
 /** 时间戳形态的 `runId`:`:` / `.` 换成 `-`,让它能直接当目录名(与 gen 的 `runIdOf` 同款)。 */
 const runIdOf = (at: Date): string => at.toISOString().replaceAll(":", "-").replace(".", "-");
+
+/** 重跑轨:退出码 2(引擎故障)与 3(不确定超时)各给一次重跑机会。 */
+const isRerunTrack = (code: number | null): code is 2 | 3 =>
+  code === EXIT_ENGINE_FAULT || code === EXIT_NONDETERMINISTIC_TIMEOUT;
+
+/** 重跑仍触发时的稳定原因标签。 */
+const problemReasonOf = (code: number): MatchProblemReason =>
+  code === EXIT_ENGINE_FAULT ? "engine-crash" : "nondeterministic-timeout";
+
+/**
+ * 赛季级中止的返回码:`1` / `4` 原样透出;`null`(信号)与未知码折成 `1`。
+ *
+ * `null` / 未知码进不了重跑轨(见文件头注的判据),也不该被折成「这局无效、赛季照跑」,
+ * 故与 1 / 4 一样中止——返回一个非零码即可,取 `EXIT_FAILED` 是因为它没有更具体的中止语义。
+ */
+const abortExitCode = (code: number | null): number =>
+  code === EXIT_FAILED || code === EXIT_INTERNAL ? code : EXIT_FAILED;
 
 /** 读文件为 utf8;失败时把路径写进消息(不吞原因)。 */
 const readText = (filePath: string): string => {
@@ -242,11 +307,77 @@ const readResult = (
   return { rankings: rankings.map((value) => Number(value)), reason };
 };
 
+/** 一局的目录与输入路径(`<outputDir>/matches/<comboId>-<map>-s<seedIndex>/`)。 */
+const matchLocation = (
+  outputDir: string,
+  matchUp: MatchUp,
+): { matchDir: string; inputPath: string } => {
+  const matchDir = join(outputDir, "matches", matchDirName(matchUp));
+  return { matchDir, inputPath: join(matchDir, "input.json") };
+};
+
 /**
- * 赛季调度(可测核心):装载配置 → 规则版本前置拒绝 → 枚举 → 逐局物化并 spawn → 写报告。
+ * 执行一局:物化 `input.json` → spawn → **只认退出码**分流 → (必要时)重跑一次。
  *
- * 返回进程退出码:整季跑通 = 0,规则版本不一致或任一局非零退出 = 1(票 07 细化 1 / 4 中止与
- * 2 / 3 重跑)。`deps.spawnMatch` 是执行一局的注入缝,单测用可控桩替换。
+ * 物化发生在 spawn 之前且只一次;每局一个目录,重跑复用同一路径(子进程重写 `replay.jsonl`),
+ * 局与局之间无共享文件、互不干扰。
+ *
+ * `deps.spawnMatch` 抛错(子进程无法启动)不在此处吞掉——由调用方定为赛季级中止。
+ */
+const runMatchUp = async (
+  root: string,
+  outputDir: string,
+  matchUp: MatchUp,
+  deps: SeasonSchedulerDeps,
+): Promise<AttemptResult> => {
+  const { matchDir, inputPath } = matchLocation(outputDir, matchUp);
+  mkdirSync(matchDir, { recursive: true });
+  writeFileSync(inputPath, `${JSON.stringify(materializeInput(root, matchUp), null, 2)}\n`);
+
+  const name = matchDirName(matchUp);
+  const first = await deps.spawnMatch(inputPath);
+  if (first.code === EXIT_OK) {
+    return completedOf(matchDir);
+  }
+  if (!isRerunTrack(first.code)) {
+    return abortOf(name, first.code);
+  }
+
+  // 首发踩中 2 / 3 → 重跑**一次**。
+  const second = await deps.spawnMatch(inputPath);
+  if (second.code === EXIT_OK) {
+    return completedOf(matchDir);
+  }
+  if (isRerunTrack(second.code)) {
+    return { kind: "problem", reason: problemReasonOf(second.code), exitCode: second.code };
+  }
+  return abortOf(name, second.code);
+};
+
+/** 码 0:读回放末行 `result`,收成一条成功局。 */
+const completedOf = (matchDir: string): AttemptResult => {
+  const result = readResult(join(matchDir, "replay.jsonl"));
+  return { kind: "completed", rankings: result.rankings, reason: result.reason };
+};
+
+/** 非重跑轨的非零码(1 / 4 / null / 未知):赛季级中止。 */
+const abortOf = (name: string, code: number | null): AttemptResult => {
+  const shown = code === null ? "被信号终止(null)" : String(code);
+  return {
+    kind: "abort",
+    exitCode: abortExitCode(code),
+    message: `对局 ${name} 退出码 ${shown},赛季中止`,
+  };
+};
+
+/**
+ * 赛季调度(可测核心):装载配置 → 规则版本前置拒绝 → 枚举 → **并发池**逐局物化并 spawn
+ * (退出码 2 / 3 重跑一次、再触发则入问题清单)→ 按确定序写报告。
+ *
+ * 返回进程退出码:整季跑通(含有问题清单但不中止)= 0;规则版本不一致 / 任一局触发码 1、4、
+ * null 或未知码 / 子进程无法启动 = 相应的非零码(见 `abortExitCode`)。
+ *
+ * `deps.spawnMatch` 是执行一局的注入缝,单测用可控桩替换。
  */
 export const scheduleSeason = async (
   options: ScheduleSeasonOptions,
@@ -276,42 +407,96 @@ export const scheduleSeason = async (
   const runId = runIdOf(now());
   const outputDir = resolve(root, season.outputDir ?? join("runs", runId));
 
-  const reported: ReportedMatch[] = [];
-  for (const matchUp of matchUps) {
-    const matchDir = join(outputDir, "matches", matchDirName(matchUp));
-    mkdirSync(matchDir, { recursive: true });
-    const inputPath = join(matchDir, "input.json");
-    const input = materializeInput(root, matchUp);
-    writeFileSync(inputPath, `${JSON.stringify(input, null, 2)}\n`);
+  // 并发上限:季赛覆写优先,否则 `min(cpus, 8)`(hld §8.1)。
+  const concurrency = season.concurrency ?? Math.min(cpus().length, DEFAULT_MAX_CONCURRENCY);
 
-    // ── 串行执行(票 07 换并发池 + 重跑/剔除) ──
-    const { code } = await deps.spawnMatch(inputPath);
-    if (code !== EXIT_OK) {
-      process.stderr.write(
-        `modelwar run: 对局 ${matchDirName(matchUp)} 退出码 ${String(code)},赛季中止` +
-          "(码 1 / 4 为赛季级失败,码 2 / 3 的重跑与剔除归票 07)\n",
-      );
-      // 票 06 的最小口径:1 / 4 原样透出(它们是赛季级失败);2 / 3 的重跑归票 07,这里先按
-      // 赛季中止处理(退 1)——绝不静默忽略非零。
-      return code === EXIT_FAILED || code === EXIT_INTERNAL ? code : EXIT_FAILED;
+  // ── 并发池:worker 们各自从队列取局;完成顺序不定,靠下面的排序保证确定性 ──
+  const outcomes = new Map<MatchUp, SettledOutcome>();
+  const state: { abort?: { readonly exitCode: number; readonly message: string } } = {};
+  const queue = [...matchUps];
+
+  const worker = async (): Promise<void> => {
+    while (state.abort === undefined) {
+      const matchUp = queue.shift();
+      if (matchUp === undefined) {
+        return;
+      }
+      let attempt: AttemptResult;
+      try {
+        attempt = await runMatchUp(root, outputDir, matchUp, deps);
+      } catch (cause) {
+        // 子进程无法启动(ENOENT / 权限 / 资源耗尽):对每一局都必然失败,归赛季级中止。
+        state.abort = {
+          exitCode: EXIT_FAILED,
+          message: `对局 ${matchDirName(matchUp)} 子进程无法启动:${messageOf(cause)}`,
+        };
+        return;
+      }
+      if (attempt.kind === "abort") {
+        state.abort = { exitCode: attempt.exitCode, message: attempt.message };
+        return;
+      }
+      outcomes.set(matchUp, attempt);
     }
+  };
 
-    const result = readResult(join(matchDir, "replay.jsonl"));
+  // 空赛季不开 worker;`Math.max(1, …)` 保证即使 `cpus()` 为 0 也至少有 worker 推进队列。
+  const workerCount = queue.length === 0 ? 0 : Math.max(1, Math.min(concurrency, queue.length));
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  if (state.abort !== undefined) {
+    process.stderr.write(
+      `modelwar run: ${state.abort.message}(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)\n`,
+    );
+    return state.abort.exitCode;
+  }
+
+  // ── 确定性重组:按 `(comboIndex, mapIndex, seedIndex)` 升序,与池完成顺序解耦 ──
+  // 这正是 `comboId` / `map` / `seed` 三键的数值形态(`comboId` = `c<comboIndex>`);用数值下标
+  // 而非词法比较,是因为 `c10` 词法上排在 `c2` 之前。
+  const settled = matchUps
+    .map((matchUp) => ({ matchUp, outcome: outcomes.get(matchUp) }))
+    .filter(
+      (entry): entry is { matchUp: MatchUp; outcome: SettledOutcome } =>
+        entry.outcome !== undefined,
+    )
+    .sort(
+      (left, right) =>
+        left.matchUp.comboIndex - right.matchUp.comboIndex ||
+        left.matchUp.mapIndex - right.matchUp.mapIndex ||
+        left.matchUp.seedIndex - right.matchUp.seedIndex,
+    );
+
+  const reported: ReportedMatch[] = [];
+  const problems: MatchProblem[] = [];
+  for (const { matchUp, outcome } of settled) {
+    const inputPath = relative(root, matchLocation(outputDir, matchUp).inputPath);
+    if (outcome.kind === "problem") {
+      problems.push({
+        comboId: matchUp.comboId,
+        map: matchUp.map,
+        seed: matchUp.seed,
+        inputPath,
+        reason: outcome.reason,
+        exitCode: outcome.exitCode,
+      });
+      continue;
+    }
     reported.push({
       comboId: matchUp.comboId,
       map: matchUp.map,
       seed: matchUp.seed,
-      inputPath: relative(root, inputPath),
-      rankings: result.rankings,
-      reason: result.reason,
+      inputPath,
+      rankings: outcome.rankings,
+      reason: outcome.reason,
     });
   }
 
-  // TODO(票 07):并发池、退出码 2 / 3 的重跑一次与问题清单、1 / 4 的赛季级中止、(票 08)ranker 记账与报告扩展。
   const report: SeasonReport = {
     runId,
     ruleset: season.ruleset,
     matches: reported,
+    problems,
   };
   mkdirSync(outputDir, { recursive: true });
   writeFileSync(join(outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
