@@ -20,6 +20,7 @@
 
 import type { ChatMessage, ModelParams, ModelResponse } from "../model-client.js";
 import type { EndpointFamily, ModelConfig } from "../config.js";
+import { isRecord } from "../record.js";
 
 /** 一条端点族的翻译规则。`path` 相对 `baseUrl` 拼;`buildBody` 造请求体;`parseResponse` 读回统一形状。 */
 export type EndpointSpec = {
@@ -37,9 +38,6 @@ export type EndpointSpec = {
  * 未给时兜一个**工程缺省**——它是 gen 内部参数,不进 `rulesets/*.json`(那管的是对局规则,不是请求预算)。
  */
 const DEFAULT_MAX_TOKENS = 8192;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const asArray = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : []);
 

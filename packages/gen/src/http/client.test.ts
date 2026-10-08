@@ -9,8 +9,8 @@
 import { once } from "node:events";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { createModelClient } from "../client-factory.js";
 import type { ModelConfig } from "../config.js";
+import { createHttpModelClient as createExportedModelClient } from "../index.js";
 import type { ChatMessage, ModelClient } from "../model-client.js";
 import { TransportError } from "../transport-error.js";
 import { createHttpModelClient } from "./client.js";
@@ -297,11 +297,11 @@ it("超时(假端点 hang)→ retryable=true、无 status", async () => {
   expect(error.status).toBeUndefined();
 });
 
-it("createModelClient 委托到真实 HTTP 客户端:确实发出请求", async () => {
+it("包入口导出的 createHttpModelClient 即真实 HTTP 客户端:确实发出请求", async () => {
   const ep = await endpoint((_captured, res) =>
     json(res, 200, { choices: [{ message: { content: "via factory" }, finish_reason: "stop" }] }),
   );
-  const client = createModelClient(config("chat-completions", ep.baseUrl));
+  const client = createExportedModelClient(config("chat-completions", ep.baseUrl));
 
   const response = await client.send([user("hi")], {});
 

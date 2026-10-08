@@ -70,12 +70,27 @@ export type FailureRecord = {
   readonly message: string;
 };
 
-/** 组装失败记录所需的一切(不带 `root`:组装与落盘是两件事,便于纯函数直测形状)。 */
-export type BuildFailureRecordInput = {
+/**
+ * 失败记录的**身份字段**(哪个模型 / 哪一版 / 哪一跑 / 何时):`buildFailureRecord` 与
+ * `writeFailureRecord` 的共同前缀。抽出来只为一件事——两处不再各列一遍这四项,免得其一漏改时
+ * 两边的身份字段悄悄分叉。
+ *
+ * `model` 一名两用:既是记录里的模型名(`FailureRecord.model`),也是 `archive/<modelSlug>/`
+ * 的目录名——两者同源,由同一个键承载,不给「记录名」与「目录名」各留一个可能分叉的名字。
+ */
+export type FailureIdentity = {
+  /** 模型名,与 `archive/<modelSlug>/` 的目录名同源。 */
   readonly model: string;
+  /** 模型版本/快照标识(配置里的 `modelId`),与 `meta.json` 的分工一致。 */
   readonly modelVersion: string;
+  /** 失败判定时刻(ISO 字符串),只作留档。 */
   readonly generatedAt: string;
+  /** 这一跑的 `runId`,与文件名 `failed-<runId>.json` 同源。 */
   readonly runId: string;
+};
+
+/** 组装失败记录所需的一切(不带 `root`:组装与落盘是两件事,便于纯函数直测形状)。 */
+export type BuildFailureRecordInput = FailureIdentity & {
   readonly failure: ModelFailure;
 };
 
@@ -105,13 +120,9 @@ export type WriteFailureRecordResult =
   | { readonly ok: true; readonly path: string }
   | { readonly ok: false; readonly reason: string };
 
-/** 写盘入参:记录的 `model` 恒等于 `slug`(目录名与记录里的模型名同源),不另设一个可能分叉的键。 */
-export type WriteFailureRecordInput = {
+/** 写盘入参:身份字段见 `FailureIdentity`,另加写盘根与失败结论。 */
+export type WriteFailureRecordInput = FailureIdentity & {
   readonly root: string;
-  readonly slug: string;
-  readonly modelVersion: string;
-  readonly generatedAt: string;
-  readonly runId: string;
   readonly failure: ModelFailure;
 };
 
@@ -123,19 +134,19 @@ export type WriteFailureRecordInput = {
  * 「写盘失败也是该模型的一次失败」记账,不因此崩掉整批。
  */
 export const writeFailureRecord = (options: WriteFailureRecordInput): WriteFailureRecordResult => {
-  const path = failureRecordPath(options.root, options.slug, options.runId);
+  const path = failureRecordPath(options.root, options.model, options.runId);
   try {
     if (existsSync(path)) {
       return { ok: false, reason: `失败记录已存在,拒绝覆盖:${path}` };
     }
     const record = buildFailureRecord({
-      model: options.slug,
+      model: options.model,
       modelVersion: options.modelVersion,
       generatedAt: options.generatedAt,
       runId: options.runId,
       failure: options.failure,
     });
-    mkdirSync(join(options.root, "archive", options.slug), { recursive: true });
+    mkdirSync(join(options.root, "archive", options.model), { recursive: true });
     writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
     return { ok: true, path };
   } catch (cause) {
