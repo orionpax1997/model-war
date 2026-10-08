@@ -114,17 +114,31 @@ export const rankSeason = (
   });
 };
 
-/** 校验并归一 `rankPoints`:长度必须为 4、每项必须是有限数。 */
-const normalizedRankPoints = (input: RankPoints | undefined): RankPoints => {
-  const values: readonly number[] = input ?? DEFAULT_RANK_POINTS;
+/**
+ * 校验一份候选名次积分表:长度必须为 4、每项必须是有限数。
+ *
+ * 返回**第一条**问题(`season.yaml` 装载器据此聚合成"一次看完"的清单);无问题返回 `undefined`。
+ * `rankSeason` 与 `loadSeasonConfig` 共用这一处判据,避免两条校验栈漂移。
+ */
+export const rankPointsIssue = (values: readonly unknown[]): string | undefined => {
   if (values.length !== 4) {
-    throw new Error(`rankPoints 长度必须为 4(四方对局),实际 ${values.length}`);
+    return `rankPoints 长度必须为 4(四方对局),实际 ${values.length}`;
   }
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw new Error(`rankPoints[${index}] 必须是有限数,实际 ${String(value)}`);
+      return `rankPoints[${index}] 必须是有限数,实际 ${String(value)}`;
     }
+  }
+  return undefined;
+};
+
+/** 校验并归一 `rankPoints`:长度必须为 4、每项必须是有限数。 */
+const normalizedRankPoints = (input: RankPoints | undefined): RankPoints => {
+  const values = input ?? DEFAULT_RANK_POINTS;
+  const issue = rankPointsIssue(values);
+  if (issue !== undefined) {
+    throw new Error(issue);
   }
   return input ?? DEFAULT_RANK_POINTS;
 };
