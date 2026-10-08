@@ -118,7 +118,7 @@ export default {
       to: { path: `${toPackage("runner")}|${toPackage("gen")}` },
     },
 
-    // ── hld §3.2:runner 与 gen 只以子进程 + 文件消费对局产物,不得 import engine ──
+    // ── hld §3.2:runner 与 gen 都只以子进程 + 文件消费对局产物,不得 import engine;gen 另禁 runner/replay ──
     {
       name: "runner-must-not-depend-on-engine",
       severity: "error",
@@ -126,12 +126,20 @@ export default {
       from: { path: filesOf("packages/runner"), pathNot: TEST_FILE },
       to: { path: toPackage("engine") },
     },
+    // 名单是三个而不是一个:hld §3.2 只明写了 `gen ⇎ engine`,另外两条的依据是 FR-5 AC1 与它
+    // 在 hld §6.2 的同义句「`gen` 代码中不存在对战结果回传路径」——engine 之外,runner(跑对局、
+    // 把产物落 `runs/`)与 replay(读对局产物)是另外两条能拿到对局结果的边,任何一条都足以把
+    // 结果带回生成环节。三条共用一条规则、沿用 `(?:specifier|resolved)` 交替式:理由是同一个(AC1),
+    // 拆成三条只会复制三份注释,且将来漏改其中一条时另外两条照样绿。
     {
-      name: "gen-must-not-depend-on-engine",
+      name: "gen-must-not-depend-on-engine-runner-replay",
       severity: "error",
-      comment: "hld §3.2:gen 禁 import 任何 result 类型(FR-5 AC1)",
+      comment:
+        "hld §3.2 + FR-5 AC1(hld §6.2:gen 代码中不存在对战结果回传路径):gen 禁 import 任何 result 类型。" +
+        "engine 持有对局结果类型(RunMatchParams / RunMatchResult),runner 跑对局并把产物落 runs/," +
+        "replay 读对局产物——三条边各是一条回喂通路",
       from: { path: filesOf("packages/gen"), pathNot: TEST_FILE },
-      to: { path: toPackage("engine") },
+      to: { path: `${toPackage("engine")}|${toPackage("runner")}|${toPackage("replay")}` },
     },
 
     // ── hld §2.2.8 / §3.2:engine 运行时只允许 node:crypto 一个内置模块 ──
