@@ -228,7 +228,9 @@ it("冻结期体积超限:不建目标目录、无半截三件套、退出码非
   const slugDir = join(root, "archive", "alpha");
   expect(existsSync(slugDir)).toBe(true);
   // 「目录存在 ⇔ 三件套完整」:失败后连一个 runId 目录、一个 .tmp-* 残留都不该有。
-  expect(readdirSync(slugDir)).toEqual([]);
+  // 票 05 起,编排层还会在这里落一条 `failed-<runId>.json` 失败记录(旁证),所以
+  // 只断言「除失败记录外再无他物」,而不是空目录。
+  expect(readdirSync(slugDir)).toEqual([expect.stringMatching(/^failed-.*\.json$/)]);
 });
 
 it("冻结期体积超限:失败分类 contract,诊断是校验器 stdout", async () => {
