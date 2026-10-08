@@ -13,6 +13,8 @@
     }
   },
   "dependencies": {
-    "@model-war/schema": "workspace:*"
+    "@model-war/replay": "workspace:*",
+    "@model-war/schema": "workspace:*",
+    "zod": "^4.6.5"
   }
 }

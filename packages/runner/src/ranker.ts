@@ -143,6 +143,25 @@ const normalizedRankPoints = (input: RankPoints | undefined): RankPoints => {
   return input ?? DEFAULT_RANK_POINTS;
 };
 
+/**
+ * 一局里每**座位**的得分(下标与 `standings` 的次序一致 = 座位号),按 `rankPoints` 与并列规则算。
+ *
+ * 复用 `rankSeason` 的同一套公式(公共分母 12 的整数记账后除以 12),供报告侧写 `perMatchScores`:
+ * 报告读者据此不必先实现 ranker 就能对分。失败局不进这里(调用方过滤)。
+ *
+ * `standings` 的次序即座位序(调用方按 `seats` 的下标构造);本函数不做重复参赛者去重——
+ * 真实对局里一局四个座位必为互异的存档引用。
+ */
+export const perMatchScores = (
+  matchId: string,
+  standings: readonly MatchStanding[],
+  rankPoints?: RankPoints,
+): readonly number[] => {
+  const points = normalizedRankPoints(rankPoints);
+  const milliByPlayer = scoreOfMatch({ matchId, standings }, points);
+  return standings.map((standing) => (milliByPlayer.get(standing.player) ?? 0) / SCORE_DENOMINATOR);
+};
+
 /** 算出一局里每名参赛者的得分(以 1/12 为单位累加的整数)。 */
 const scoreOfMatch = (rankedMatch: RankedMatch, rankPoints: RankPoints): Map<string, number> => {
   const tiedCountByRank = new Map<number, number>();

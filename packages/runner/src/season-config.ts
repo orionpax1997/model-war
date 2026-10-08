@@ -4,7 +4,7 @@
  * ── 字段真源只在本模块 ──
  *
  * `season.yaml` 的字段、取值域与默认值语义**只在这里定义一处**;hld / srs / gdd 只写字段意图,
- * 不复制细节(hld §9)。本模块是**纯函数装载器**:只读文件、解析 YAML、逐字段校验,不碰时钟、
+ * 不复制细节(hld §9)。本模块是**纯函数装载器**:只读文件、解析 YAML、用 zod 校验,不碰时钟、
  * 不看 `cpus()`、不探 `maps/` 目录——凡依赖环境才能定的默认值,一律由调用方(薄壳 `runSeason`)
  * 注入:
  *   - `concurrency` 缺省 → `min(cpus, 8)`(调用方算);
@@ -14,12 +14,15 @@
  * 因此本模块导出的 `SeasonConfig` 里这几个字段都是**可选**的,且**缺省不落成 undefined 键**
  * (`Object.hasOwn` 为 false),把「没写」与「写了 undefined」分开。
  *
- * ── 为什么不引 zod ──
+ * ── zod 只做「形状 + 结构域」,跨字段判据仍复用各自的家 ──
  *
- * 全仓零 zod、零 YAML 库,唯一的运行时第三方依赖是 `apps/cli` 的 `ajv`,且校验器只在
- * `apps/cli` 一处(ADR-0003 的「校验栈只有一份」)。`models.yaml`(`packages/gen/src/config.ts`)
- * 的既有惯例就是**手写逐字段汇总报错**,本模块与它同款:先收集 `issues[]`,末尾一次拼成
- * 「一次看完」的清单 `赛季配置无效(<path>):\n  - …`。引 zod 会平添第二个校验栈,收益不抵成本。
+ * 形状与逐字段取值域用 zod 定义(season schema 的唯一家);跨字段判据不在这里另写第二份,
+ * 而是调各自既有判据:`rankPoints` 复用 `./ranker.js` 的 `rankPointsIssue`;`ruleset` 与
+ * `RULESET_VERSION` 比对;显式 `maps` 的 `M × K ≡ 0 (mod 4)` 由本模块判(枚举期还有一条兜底)。
+ * zod 的 `error.issues` 由 `issueMessageOf` 汇总成仓内惯用的「一次看完」清单
+ * `赛季配置无效(<path>):\n  - …`(照 `packages/gen/src/config.ts` 的形态)。
+ *
+ * YAML 仍由本模块私有的 `./yaml-lite.ts` 读入(zod 不解析 YAML,且本仓无可用 ESM YAML 库)。
  *
  * ── 本模块不判「存档是否存在」 ──
  *
@@ -32,6 +35,7 @@
 
 import { readFileSync } from "node:fs";
 import { RULESET_VERSION, type RulesetVersion } from "@model-war/schema";
+import { z } from "zod";
 import { rankPointsIssue, type RankPoints } from "./ranker.js";
 import { parseYamlSubset } from "./yaml-lite.js";
 
@@ -61,6 +65,9 @@ const SEAT_COUNT = 4;
 /** 四方对局要求至少四名参赛者。 */
 const MIN_PARTICIPANTS = 4;
 
+/** 名次积分表的固定长度(四方对局第 i 项 = 第 i+1 名)。 */
+const RANK_POINTS_LENGTH = 4;
+
 /** `unknown` → 「键值对映射」的收窄判据(与 `packages/gen/src/record.ts` 同义,本包私有)。 */
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -87,167 +94,99 @@ const parseSource = (source: string, filePath: string): unknown => {
   }
 };
 
-/** 必填字符串:缺失或类型不符时记一条问题并返回 `undefined`(不抛,继续攒清单)。 */
-const requiredString = (
-  entry: Record<string, unknown>,
-  key: string,
-  issues: string[],
-): string | undefined => {
-  const value = entry[key];
-  if (typeof value !== "string" || value.length === 0) {
-    issues.push(`必填字段 "${key}" 缺失或不是非空字符串`);
-    return undefined;
-  }
-  return value;
-};
-
-/** 必填正整数 K。 */
-const requiredSeeds = (entry: Record<string, unknown>, issues: string[]): number | undefined => {
-  const value = entry.seeds;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    issues.push('必填字段 "seeds" 必须是 ≥1 的整数(K,种子数)');
-    return undefined;
-  }
-  return value;
-};
-
-/** 必填规则版本:必须等于当前 `RULESET_VERSION`(写错版本在此拦下,不静默降级)。 */
-const parseRuleset = (
-  entry: Record<string, unknown>,
-  issues: string[],
-): RulesetVersion | undefined => {
-  const value = entry.ruleset;
-  if (value === RULESET_VERSION) {
-    return RULESET_VERSION;
-  }
-  if (value === undefined) {
-    issues.push('必填字段 "ruleset" 缺失');
-    return undefined;
-  }
-  issues.push(
-    `必填字段 "ruleset" 取值 "${String(value)}" 与当前规则版本 "${RULESET_VERSION}" 不一致`,
-  );
-  return undefined;
-};
-
-/** 必填参赛存档引用列表:非空字符串数组,且至少 `MIN_PARTICIPANTS` 条。 */
-const parseParticipants = (
-  entry: Record<string, unknown>,
-  issues: string[],
-): readonly string[] | undefined => {
-  const value = entry.participants;
-  if (!Array.isArray(value)) {
-    issues.push('必填字段 "participants" 缺失或不是数组(参赛存档引用,下标即 playerIndex)');
-    return undefined;
-  }
-  if (value.length < MIN_PARTICIPANTS) {
-    issues.push(
-      `必填字段 "participants" 至少要有 ${MIN_PARTICIPANTS} 条参赛存档(四方对局),当前 ${value.length} 条`,
-    );
-    return undefined;
-  }
-  const participants: string[] = [];
-  let valid = true;
-  value.forEach((item, index) => {
-    if (typeof item !== "string" || item.length === 0) {
-      issues.push(`participants[${index}] 必须是非空字符串(形如 archive/<slug>/<runId>)`);
-      valid = false;
-      return;
+/**
+ * season schema 的**唯一家**:形状 + 逐字段取值域用 zod 定义。
+ *
+ * 这一层只管「字段在不在、类型对不对、数组够不够长」;跨字段判据(版本比对、`rankPoints` 的
+ * 内容、`M × K`)在下面那条 `superRefine` 里调各自的家,不在这里复制判据。
+ */
+const seasonSchema = z
+  .object({
+    masterSeed: z.string().min(1),
+    ruleset: z.string(),
+    seeds: z.number().int().min(1),
+    participants: z.array(z.string().min(1)).min(MIN_PARTICIPANTS),
+    concurrency: z.number().int().min(1).optional(),
+    rankPoints: z.array(z.number()).optional(),
+    maps: z.array(z.string().min(1)).min(1).optional(),
+    outputDir: z.string().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    // ruleset 必须与当前版本一致(写错版本在此拦下,不静默降级)。
+    if (value.ruleset !== RULESET_VERSION) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ruleset"],
+        message:
+          `必填字段 "ruleset" 取值 "${value.ruleset}" ` +
+          `与当前规则版本 "${RULESET_VERSION}" 不一致`,
+      });
     }
-    participants.push(item);
-  });
-  return valid ? participants : undefined;
-};
-
-/** 可选正整数(concurrency):给了就必须是 ≥1 的整数。 */
-const optionalPositiveInteger = (
-  entry: Record<string, unknown>,
-  key: string,
-  issues: string[],
-): number | undefined => {
-  const value = entry[key];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    issues.push(`可选字段 "${key}" 必须是 ≥1 的整数`);
-    return undefined;
-  }
-  return value;
-};
-
-/** 可选非空字符串(outputDir)。 */
-const optionalString = (
-  entry: Record<string, unknown>,
-  key: string,
-  issues: string[],
-): string | undefined => {
-  const value = entry[key];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string" || value.length === 0) {
-    issues.push(`可选字段 "${key}" 必须是非空字符串`);
-    return undefined;
-  }
-  return value;
-};
-
-/** 可选非空字符串数组(maps):给了就必须是非空、逐项非空字符串。 */
-const optionalStringArray = (
-  entry: Record<string, unknown>,
-  key: string,
-  issues: string[],
-): readonly string[] | undefined => {
-  const value = entry[key];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value) || value.length === 0) {
-    issues.push(`可选字段 "${key}" 必须是非空数组(如 maps/ 下的 slug)`);
-    return undefined;
-  }
-  const items: string[] = [];
-  let valid = true;
-  value.forEach((item, index) => {
-    if (typeof item !== "string" || item.length === 0) {
-      issues.push(`${key}[${index}] 必须是非空字符串`);
-      valid = false;
-      return;
+    // rankPoints 的内容判据复用 ranker 的同一处(不新开第二条校验栈)。
+    if (value.rankPoints !== undefined) {
+      const issue = rankPointsIssue(value.rankPoints);
+      if (issue !== undefined) {
+        ctx.addIssue({ code: "custom", path: ["rankPoints"], message: issue });
+      }
     }
-    items.push(item);
+    // 均摊条件:只有配置里显式给出 maps 时才判得了 M;缺省 maps 的兜底交给 enumerateMatchUps。
+    if (value.maps !== undefined) {
+      const product = value.maps.length * value.seeds;
+      if (product % SEAT_COUNT !== 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["maps"],
+          message:
+            `地图池与种子数不满足 M × K ≡ 0 (mod 4):当前 M=${value.maps.length} × K=${value.seeds} = ` +
+            `${product}(mod 4 = ${product % SEAT_COUNT})`,
+        });
+      }
+    }
   });
-  return valid ? items : undefined;
-};
 
-/** 可选名次积分表:长度必须为 4、每项必须是有限数(判据复用 `./ranker.js` 的 `rankPointsIssue`)。 */
-const optionalRankPoints = (
-  entry: Record<string, unknown>,
-  issues: string[],
-): RankPoints | undefined => {
-  const value = entry.rankPoints;
-  if (value === undefined) {
-    return undefined;
+/**
+ * 把一条 zod issue 翻成仓内惯用的中文说明(zod 默认文案不含字段名,这里按 `path` 统一口吻)。
+ *
+ * 自定义 issue(`code === "custom"`,即上面 `superRefine` 加的那几条)的消息已是终稿,原样透出。
+ */
+const issueMessageOf = (issue: z.core.$ZodIssue, data: Record<string, unknown>): string => {
+  if (issue.code === "custom") {
+    return issue.message;
   }
-  if (!Array.isArray(value)) {
-    issues.push('可选字段 "rankPoints" 必须是长度 4 的数组(第 i 项 = 第 i+1 名的分值)');
-    return undefined;
+  const [root, child] = issue.path;
+  switch (root) {
+    case "masterSeed":
+      return '必填字段 "masterSeed" 缺失或不是非空字符串';
+    case "ruleset":
+      return data["ruleset"] === undefined
+        ? '必填字段 "ruleset" 缺失'
+        : `必填字段 "ruleset" 取值 "${String(data["ruleset"])}" ` +
+            `与当前规则版本 "${RULESET_VERSION}" 不一致`;
+    case "seeds":
+      return '必填字段 "seeds" 必须是 ≥1 的整数(K,种子数)';
+    case "concurrency":
+      return '可选字段 "concurrency" 必须是 ≥1 的整数';
+    case "outputDir":
+      return '可选字段 "outputDir" 必须是非空字符串';
+    case "rankPoints":
+      return typeof child === "number"
+        ? `可选字段 "rankPoints" 第 ${child} 项必须是有限数`
+        : `可选字段 "rankPoints" 长度必须为 ${RANK_POINTS_LENGTH}` + `(第 i 项 = 第 i+1 名的分值)`;
+    case "maps":
+      return typeof child === "number"
+        ? `maps[${child}] 必须是非空字符串`
+        : '可选字段 "maps" 必须是非空数组(如 maps/ 下的 slug)';
+    case "participants":
+      if (typeof child === "number") {
+        return `participants[${child}] 必须是非空字符串(形如 archive/<slug>/<runId>)`;
+      }
+      return issue.code === "too_small"
+        ? `必填字段 "participants" 至少要有 ${MIN_PARTICIPANTS} 条参赛存档(四方对局),当前 ` +
+            `${Array.isArray(data["participants"]) ? data["participants"].length : 0} 条`
+        : '必填字段 "participants" 缺失或不是数组(参赛存档引用,下标即 playerIndex)';
+    default:
+      return issue.message;
   }
-  const issue = rankPointsIssue(value);
-  if (issue !== undefined) {
-    issues.push(`可选字段 "rankPoints" 无效:${issue}`);
-    return undefined;
-  }
-  // 已通过 rankPointsIssue 的四项校验,此处只是把 any[] 收窄成定长四元组。
-  return [Number(value[0]), Number(value[1]), Number(value[2]), Number(value[3])];
-};
-
-/** 兜住 TS 的收窄:走到这里说明 `issues` 为空,必填值必已就位。 */
-const required = <T>(value: T | undefined, label: string): T => {
-  if (value === undefined) {
-    throw new Error(`内部错误:${label} 已通过校验却缺失`);
-  }
-  return value;
 };
 
 /**
@@ -265,39 +204,25 @@ export const loadSeasonConfig = (filePath: string): SeasonConfig => {
     ]);
   }
 
-  const issues: string[] = [];
-  const masterSeed = requiredString(data, "masterSeed", issues);
-  const ruleset = parseRuleset(data, issues);
-  const seeds = requiredSeeds(data, issues);
-  const participants = parseParticipants(data, issues);
-  const concurrency = optionalPositiveInteger(data, "concurrency", issues);
-  const rankPoints = optionalRankPoints(data, issues);
-  const maps = optionalStringArray(data, "maps", issues);
-  const outputDir = optionalString(data, "outputDir", issues);
-
-  // 均摊条件:只有配置里显式给出 maps 时才判得了 M;缺省 maps 的兜底交给 enumerateMatchUps。
-  if (maps !== undefined && seeds !== undefined) {
-    const product = maps.length * seeds;
-    if (product % SEAT_COUNT !== 0) {
-      issues.push(
-        `地图池与种子数不满足 M × K ≡ 0 (mod 4):当前 M=${maps.length} × K=${seeds} = ` +
-          `${product}(mod 4 = ${product % SEAT_COUNT})`,
-      );
-    }
+  const parsed = seasonSchema.safeParse(data);
+  if (!parsed.success) {
+    throw seasonError(
+      filePath,
+      parsed.error.issues.map((issue) => issueMessageOf(issue, data)),
+    );
   }
 
-  if (issues.length > 0) {
-    throw seasonError(filePath, issues);
-  }
-
+  const config = parsed.data;
   return {
-    masterSeed: required(masterSeed, "masterSeed"),
-    ruleset: required(ruleset, "ruleset"),
-    seeds: required(seeds, "seeds"),
-    participants: required(participants, "participants"),
-    ...(concurrency !== undefined ? { concurrency } : {}),
-    ...(rankPoints !== undefined ? { rankPoints } : {}),
-    ...(maps !== undefined ? { maps } : {}),
-    ...(outputDir !== undefined ? { outputDir } : {}),
+    masterSeed: config.masterSeed,
+    ruleset: config.ruleset as RulesetVersion,
+    seeds: config.seeds,
+    participants: config.participants,
+    ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
+    ...(config.rankPoints !== undefined
+      ? { rankPoints: config.rankPoints as unknown as RankPoints }
+      : {}),
+    ...(config.maps !== undefined ? { maps: config.maps } : {}),
+    ...(config.outputDir !== undefined ? { outputDir: config.outputDir } : {}),
   };
 };

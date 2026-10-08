@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../schema" }]
+  "references": [{ "path": "../replay" }, { "path": "../schema" }]
 }

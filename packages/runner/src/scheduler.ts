@@ -11,11 +11,12 @@
  *
  * ── 只认退出码:重跑、剔除、赛季级中止 ──────────────────────────────────
  *
- * 子进程成败**只看退出码**(真源 `apps/cli/src/exit-codes.ts`),不解析 stdout 判成败。分流:
+ * 子进程成败**只看退出码**(真源 `apps/cli/src/exit-codes.ts`),不解析 stdout 判成败。分流
+ * (分类集中在 `classifyExitCode`,所有站点共用一处):
  *   - `0`(EXIT_OK)→ 读回放末行 `result`,入报告。规则内结果(胜/负/超时/淘汰、内存判负、
- *     带异常出局的席位)一律是 0,**绝不**被崩溃条款误判。
+ *     带异常出局的席位)一律是 0,**绝不被崩溃条款误判**。
  *   - `2`(engine-crash)/ `3`(nondeterministic-timeout)→ **重跑一次**;再触发同码 → 记入
- *     `problems[]` 并**排除出排名**(报告里仍含这一条,不静默丢弃)。
+ *     `matchIssues[]`(`excludedFromRanking: true`)并**排除出排名**(报告里仍含这一条,不静默丢弃)。
  *   - `1`(装载/用法)/ `4`(内部错)→ **赛季级中止**,打印 stderr 后按该码返回(不静默剔除;
  *     装载期错误本应在物化前拦住)。
  *   - `null`(被信号杀)+ **其它未在码表里的非零码** → 同样**赛季级中止**。判据:信号终止或
@@ -26,6 +27,17 @@
  *
  * **不另造超时阈值**:不确定超时完全由子进程退出码 3 表达(它复用规则集里 `wallClockHardTimeout`
  * 的既有口径),调度器不设父级墙钟看门狗、不硬编码任何毫秒数。
+ *
+ * ── 码 0 的内存披露:读 `observations.jsonl`,不改排名 ──────────────────────
+ *
+ * 内存超限判负是**正常结果**(exit 0),按 spec/hld §8.4 要在「对局问题清单」里**披露**。码 0 的
+ * 局因此额外读同目录的 `observations.jsonl`(有 `kind: "memory-pressure"` 即在 `matchIssues[]`
+ * 追加一条 `reason: "memory-pressure"`、`excludedFromRanking: false` 的披露条目——它**仍计入
+ * 排名**)。读观测文件是解释性的最佳努力:文件缺失/读不动都不改变该局「成功」的判定。
+ *
+ * **不用回放的 `players[i].exceptionTicks` 作信号**:它把内存 / API / 未捕获异常 / 事件四条轨的
+ * 触限混在一起,单看判不出是不是内存(`tripped` 观测不入 `observations.jsonl`,见 schema 的
+ * `observation-line.ts` 头注);内存压力的精确持久化信号只有 `memory-pressure` 观测行。
  *
  * ── 规则版本隔离是**前置拒绝**,不是报告分组 ─────────────────────────────
  *
@@ -40,22 +52,28 @@
  *
  * ── 依赖方向 ──────────────────────────────────────────────────────────────
  *
- * 本文件只 import `@model-war/schema` 与 node 内建(`node:crypto` / `node:fs` / `node:path` /
- * `node:child_process` / `node:os`)。**不得 import engine**;也不新增 `runner → gen` 的边
- * (故 `sha256Hex` / `runIdOf` / YAML 子集读取器在 runner 内各留一份私有实现)。
+ * 本文件 import `@model-war/schema` / `@model-war/replay`(读回放与观测行)与 node 内建
+ * (`node:crypto` / `node:fs` / `node:path` / `node:child_process` / `node:os`)。**不得 import
+ * engine**(hld §3.2);也不新增 `runner → gen` 的边(故 `sha256Hex` / `runIdOf` / YAML 子集读取器
+ * 在 runner 内各留一份私有实现)。
  */
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { parseReplay, readLinesOf } from "@model-war/replay";
 import {
+  type JsonValue,
   type MatchInput,
   type MatchInputArchive,
   type MatchInputArchives,
 } from "@model-war/schema";
 import { enumerateMatchUps, type MatchUp } from "./enumerate.js";
+import { DEFAULT_RANK_POINTS, perMatchScores, rankSeason, type MatchStanding } from "./ranker.js";
+import type { MatchIssue, MatchIssueReason, SeasonMatchReport, SeasonReport } from "./reporter.js";
+import { readFailureRecords, writeReportArtifacts, writeReportJson } from "./reporter.js";
 import { loadSeasonConfig, type SeasonConfig } from "./season-config.js";
 
 /** 正常退出(与 `apps/cli/src/exit-codes.ts` 的 `EXIT_OK` 同值;runner 不 import CLI,故本地定型)。 */
@@ -83,56 +101,7 @@ const INPUT_KEYS = ["archives", "map", "mapSha256", "seed", "ruleset"] as const;
 const SCRIPT_PRODUCT_NAME = "script.js";
 const META_NAME = "meta.json";
 
-/** 一局对局跑完后入报告的最小一行。 */
-export type ReportedMatch = {
-  /** 组合标识 `c<k>`。 */
-  readonly comboId: string;
-  /** 地图标识。 */
-  readonly map: string;
-  /** 写进 `input.json` 的确定性派生种子。 */
-  readonly seed: number;
-  /** `input.json` 相对赛季根(`root`)的路径,供复算。 */
-  readonly inputPath: string;
-  /** 回放末行 `result.rankings`,下标即座位。 */
-  readonly rankings: readonly number[];
-  /** 回放末行 `result.reason`。 */
-  readonly reason: string;
-};
-
-/** 问题清单里一局的原因:只由退出码 2 / 3 产生(码 0 的规则内结果绝不进这里)。 */
-export type MatchProblemReason = "engine-crash" | "nondeterministic-timeout";
-
-/**
- * 对局问题清单里的一局:重跑一次后仍触发退出码 2 / 3。
- *
- * 它**排除出排名**(票 08 起从分母剔除),但**保留在报告里**(不静默丢弃),供票 08/09 渲染。
- */
-export type MatchProblem = {
-  /** 组合标识 `c<k>`。 */
-  readonly comboId: string;
-  /** 地图标识。 */
-  readonly map: string;
-  /** 该局派生种子。 */
-  readonly seed: number;
-  /** `input.json` 相对赛季根(`root`)的路径。 */
-  readonly inputPath: string;
-  /** 一条稳定的原因标签(供渲染与统计)。 */
-  readonly reason: MatchProblemReason;
-  /** 第二次(重跑后)观察到的退出码,恒为 2 或 3。 */
-  readonly exitCode: number;
-};
-
-/**
- * `report.json`:每局的输入引用 + 结果,外加**对局问题清单**(票 07 落地;票 08/09 在这里加总分与叙事)。
- *
- * `matches` 只含成功局(码 0),`problems` 只含重跑后仍触发 2 / 3 的局;两者互斥、合起来覆盖全部枚举对局。
- */
-export type SeasonReport = {
-  readonly runId: string;
-  readonly ruleset: string;
-  readonly matches: readonly ReportedMatch[];
-  readonly problems: readonly MatchProblem[];
-};
+/** `report.json` 的形状(`SeasonReport` / `SeasonMatchReport` / `MatchIssue`)住在 `./reporter.js`。 */
 
 /** `scheduleSeason` 的注入缝:子进程执行一局,只回退出码(一局可能被调两次:首发 + 重跑一次)。 */
 export type SeasonSchedulerDeps = {
@@ -150,8 +119,14 @@ export type ScheduleSeasonOptions = {
 
 /** 一局的执行结局。 */
 type AttemptResult =
-  | { readonly kind: "completed"; readonly rankings: readonly number[]; readonly reason: string }
-  | { readonly kind: "problem"; readonly reason: MatchProblemReason; readonly exitCode: number }
+  | {
+      readonly kind: "completed";
+      readonly rankings: readonly number[];
+      readonly reason: string;
+      /** 该局是否读到 `observations.jsonl` 的 `memory-pressure` 披露(码 0 的正常结果)。 */
+      readonly memoryPressure: boolean;
+    }
+  | { readonly kind: "problem"; readonly reason: MatchIssueReason; readonly exitCode: number }
   | { readonly kind: "abort"; readonly exitCode: number; readonly message: string };
 
 /** 入报告的一局(中止不会落进 `outcomes`,故意窄化掉 abort 分支)。 */
@@ -166,14 +141,6 @@ const sha256Hex = (bytes: Buffer): string => createHash("sha256").update(bytes).
 /** 时间戳形态的 `runId`:`:` / `.` 换成 `-`,让它能直接当目录名(与 gen 的 `runIdOf` 同款)。 */
 const runIdOf = (at: Date): string => at.toISOString().replaceAll(":", "-").replace(".", "-");
 
-/** 重跑轨:退出码 2(引擎故障)与 3(不确定超时)各给一次重跑机会。 */
-const isRerunTrack = (code: number | null): code is 2 | 3 =>
-  code === EXIT_ENGINE_FAULT || code === EXIT_NONDETERMINISTIC_TIMEOUT;
-
-/** 重跑仍触发时的稳定原因标签。 */
-const problemReasonOf = (code: number): MatchProblemReason =>
-  code === EXIT_ENGINE_FAULT ? "engine-crash" : "nondeterministic-timeout";
-
 /**
  * 赛季级中止的返回码:`1` / `4` 原样透出;`null`(信号)与未知码折成 `1`。
  *
@@ -182,6 +149,31 @@ const problemReasonOf = (code: number): MatchProblemReason =>
  */
 const abortExitCode = (code: number | null): number =>
   code === EXIT_FAILED || code === EXIT_INTERNAL ? code : EXIT_FAILED;
+
+/** 退出码的唯一分类器(重跑轨 / 赛季级中止 / 成功的判据只此一处,所有站点共用)。 */
+type ExitClassification =
+  | { readonly kind: "ok" }
+  | { readonly kind: "rerun"; readonly code: number; readonly reason: MatchIssueReason }
+  | { readonly kind: "abort"; readonly code: number | null; readonly exitCode: number };
+
+/**
+ * 把一个退出码分成三态:`ok`(码 0,入报告)/ `rerun`(码 2 / 3,先重跑一次,再触发入问题清单并
+ * 排除出排名)/ `abort`(其余:1 / 4 / null / 未知码,赛季级中止)。
+ *
+ * 原始码一并带出:消息要显示「被信号终止(null)」,重跑轨要把码原样写进 `matchIssues[].exitCode`。
+ */
+const classifyExitCode = (code: number | null): ExitClassification => {
+  if (code === EXIT_OK) {
+    return { kind: "ok" };
+  }
+  if (code === EXIT_ENGINE_FAULT) {
+    return { kind: "rerun", code, reason: "engine-crash" };
+  }
+  if (code === EXIT_NONDETERMINISTIC_TIMEOUT) {
+    return { kind: "rerun", code, reason: "nondeterministic-timeout" };
+  }
+  return { kind: "abort", code, exitCode: abortExitCode(code) };
+};
 
 /** 读文件为 utf8;失败时把路径写进消息(不吞原因)。 */
 const readText = (filePath: string): string => {
@@ -282,29 +274,48 @@ const materializeInput = (root: string, matchUp: MatchUp): MatchInput => {
 const matchDirName = (matchUp: MatchUp): string =>
   `${matchUp.comboId}-${matchUp.map}-s${matchUp.seedIndex}`;
 
-/** 读回放末行的 `result`,只取名次与终局原因;形状不对即抛错(不静默取个空结果)。 */
+/** 每个对局的座位数(四方对称,与 `enumerate.js` 同值;本地定型避免跨模块耦合)。 */
+const SEAT_COUNT = 4;
+
+/** 把回放末行的 `rankings` 收窄成 4 元组;长度不符即抛错(不静默截断 / 补齐)。 */
+const fourRankings = (
+  matchId: string,
+  rankings: readonly number[],
+): readonly [number, number, number, number] => {
+  const [first, second, third, fourth] = rankings;
+  if (
+    rankings.length !== SEAT_COUNT ||
+    first === undefined ||
+    second === undefined ||
+    third === undefined ||
+    fourth === undefined
+  ) {
+    throw new Error(`对局 ${matchId} 的 rankings 长度须为 ${SEAT_COUNT},实际 ${rankings.length}`);
+  }
+  return [first, second, third, fourth];
+};
+
+/** 把一局收成 `rankSeason` 要的 `standings`:座位 i 上的参赛者拿 `rankings[i]` 的名次。 */
+const standingsInMatch = (
+  seats: readonly [string, string, string, string],
+  rankings: readonly [number, number, number, number],
+): readonly MatchStanding[] => seats.map((player, seat) => ({ player, rank: rankings[seat] ?? 0 }));
+
+/**
+ * 读回放末行的 `result`,只取名次与终局原因。
+ *
+ * 经 `@model-war/replay` 的 `parseReplay` 读入(与渲染器、NFR-2 复算链同一条读入端,spec《回放
+ * 读入端(最小面)》);空回放 / 坏行由 `parseReplay` 抛 `ReplayReadError`,末行不是 `result`
+ * 则在此报错——不静默取个空结果。
+ */
 const readResult = (
   replayPath: string,
 ): { readonly rankings: readonly number[]; readonly reason: string } => {
-  const last = readText(replayPath).trimEnd().split("\n").at(-1);
-  if (last === undefined || last.length === 0) {
-    throw new Error(`回放 ${replayPath} 为空,读不到末行 result`);
+  const last = parseReplay(replayPath).at(-1);
+  if (last === undefined || last.type !== "result") {
+    throw new Error(`回放 ${replayPath} 末行不是 result 行(读不到名次)`);
   }
-  let line: unknown;
-  try {
-    line = JSON.parse(last);
-  } catch (cause) {
-    throw new Error(`回放 ${replayPath} 末行不是合法 JSON:${messageOf(cause)}`);
-  }
-  const type = typeof line === "object" && line !== null ? Reflect.get(line, "type") : undefined;
-  const rankings =
-    typeof line === "object" && line !== null ? Reflect.get(line, "rankings") : undefined;
-  const reason =
-    typeof line === "object" && line !== null ? Reflect.get(line, "reason") : undefined;
-  if (type !== "result" || !Array.isArray(rankings) || typeof reason !== "string") {
-    throw new Error(`回放 ${replayPath} 末行不是合法 result 行(type=${JSON.stringify(type)})`);
-  }
-  return { rankings: rankings.map((value) => Number(value)), reason };
+  return { rankings: last.rankings, reason: last.reason };
 };
 
 /** 一局的目录与输入路径(`<outputDir>/matches/<comboId>-<map>-s<seedIndex>/`)。 */
@@ -335,37 +346,69 @@ const runMatchUp = async (
   writeFileSync(inputPath, `${JSON.stringify(materializeInput(root, matchUp), null, 2)}\n`);
 
   const name = matchDirName(matchUp);
-  const first = await deps.spawnMatch(inputPath);
-  if (first.code === EXIT_OK) {
+  const first = classifyExitCode((await deps.spawnMatch(inputPath)).code);
+  if (first.kind === "ok") {
     return completedOf(matchDir);
   }
-  if (!isRerunTrack(first.code)) {
-    return abortOf(name, first.code);
+  if (first.kind === "abort") {
+    return abortOf(name, first);
   }
 
   // 首发踩中 2 / 3 → 重跑**一次**。
-  const second = await deps.spawnMatch(inputPath);
-  if (second.code === EXIT_OK) {
+  const second = classifyExitCode((await deps.spawnMatch(inputPath)).code);
+  if (second.kind === "ok") {
     return completedOf(matchDir);
   }
-  if (isRerunTrack(second.code)) {
-    return { kind: "problem", reason: problemReasonOf(second.code), exitCode: second.code };
+  if (second.kind === "abort") {
+    return abortOf(name, second);
   }
-  return abortOf(name, second.code);
+  return { kind: "problem", reason: second.reason, exitCode: second.code };
 };
 
-/** 码 0:读回放末行 `result`,收成一条成功局。 */
+/** 观测行的 `kind`(只从对象形态里取;观测文件的形状校验不归调度器)。 */
+const observationKindOf = (line: JsonValue): unknown =>
+  typeof line === "object" && line !== null && !Array.isArray(line)
+    ? Reflect.get(line, "kind")
+    : undefined;
+
+/**
+ * 该局是否读到 `observations.jsonl` 的 `memory-pressure` 披露(码 0 的正常结果)。
+ *
+ * 观测文件是**解释性**产物:缺失 / 读不动都不改变「该局成功」的判定,故这里吞掉读盘错误、返回
+ * `false`。`modelwar match` 只在有观测时才落盘,没有文件 = 没有披露。
+ */
+const hasMemoryPressure = (matchDir: string): boolean => {
+  const path = join(matchDir, "observations.jsonl");
+  if (!existsSync(path)) {
+    return false;
+  }
+  try {
+    return readLinesOf(path).some((line) => observationKindOf(line) === "memory-pressure");
+  } catch {
+    return false;
+  }
+};
+
+/** 码 0:读回放末行 `result`,收成一条成功局(并带上内存披露标志)。 */
 const completedOf = (matchDir: string): AttemptResult => {
   const result = readResult(join(matchDir, "replay.jsonl"));
-  return { kind: "completed", rankings: result.rankings, reason: result.reason };
+  return {
+    kind: "completed",
+    rankings: result.rankings,
+    reason: result.reason,
+    memoryPressure: hasMemoryPressure(matchDir),
+  };
 };
 
-/** 非重跑轨的非零码(1 / 4 / null / 未知):赛季级中止。 */
-const abortOf = (name: string, code: number | null): AttemptResult => {
-  const shown = code === null ? "被信号终止(null)" : String(code);
+/** 赛季级中止(码 1 / 4 / null / 未知码):原样透出 `classifyExitCode` 判定的中止码与原始码。 */
+const abortOf = (
+  name: string,
+  abort: Extract<ExitClassification, { kind: "abort" }>,
+): AttemptResult => {
+  const shown = abort.code === null ? "被信号终止(null)" : String(abort.code);
   return {
     kind: "abort",
-    exitCode: abortExitCode(code),
+    exitCode: abort.exitCode,
     message: `对局 ${name} 退出码 ${shown},赛季中止`,
   };
 };
@@ -467,39 +510,88 @@ export const scheduleSeason = async (
         left.matchUp.seedIndex - right.matchUp.seedIndex,
     );
 
-  const reported: ReportedMatch[] = [];
-  const problems: MatchProblem[] = [];
+  const rankPoints = season.rankPoints ?? DEFAULT_RANK_POINTS;
+
+  // ── 逐局入报告:成功局进 matches(含每座位得分),剔除的失败局进 matchIssues ──
+  const matches: SeasonMatchReport[] = [];
+  const matchIssues: MatchIssue[] = [];
   for (const { matchUp, outcome } of settled) {
     const inputPath = relative(root, matchLocation(outputDir, matchUp).inputPath);
+    const matchId = matchDirName(matchUp);
     if (outcome.kind === "problem") {
-      problems.push({
+      // 剔除的失败局:不进 matches、不进均分分母,但保留在问题清单(不静默丢弃)。
+      matchIssues.push({
+        matchId,
+        inputPath,
         comboId: matchUp.comboId,
+        mapIndex: matchUp.mapIndex,
+        seedIndex: matchUp.seedIndex,
         map: matchUp.map,
         seed: matchUp.seed,
-        inputPath,
         reason: outcome.reason,
         exitCode: outcome.exitCode,
+        rerunCount: 1,
+        excludedFromRanking: true,
       });
       continue;
     }
-    reported.push({
+    const rankings = fourRankings(matchId, outcome.rankings);
+    const standings = standingsInMatch(matchUp.seats, rankings);
+    matches.push({
+      matchId,
+      inputPath,
       comboId: matchUp.comboId,
+      mapIndex: matchUp.mapIndex,
+      seedIndex: matchUp.seedIndex,
       map: matchUp.map,
       seed: matchUp.seed,
-      inputPath,
-      rankings: outcome.rankings,
+      seats: matchUp.seats,
+      rankings,
       reason: outcome.reason,
+      perMatchScores: perMatchScores(matchId, standings, rankPoints),
     });
+    if (outcome.memoryPressure) {
+      // 码 0 的内存披露:仍是正常结果(已进 matches、计入排名),只在问题清单里披露,
+      // 故 `excludedFromRanking: false`。
+      matchIssues.push({
+        matchId,
+        inputPath,
+        comboId: matchUp.comboId,
+        mapIndex: matchUp.mapIndex,
+        seedIndex: matchUp.seedIndex,
+        map: matchUp.map,
+        seed: matchUp.seed,
+        reason: "memory-pressure",
+        exitCode: EXIT_OK,
+        rerunCount: 0,
+        excludedFromRanking: false,
+      });
+    }
   }
+
+  // ── 排名由纯函数 `rankSeason` 一次算出(有效局数由它计,报告侧不另算一遍) ──
+  const standings = rankSeason(
+    matches.map((match) => ({
+      matchId: match.matchId,
+      standings: standingsInMatch(match.seats, match.rankings),
+    })),
+    { players: season.participants, rankPoints },
+  );
 
   const report: SeasonReport = {
     runId,
     ruleset: season.ruleset,
-    matches: reported,
-    problems,
+    masterSeed: season.masterSeed,
+    rankPoints,
+    matches,
+    standings,
+    // 校验失败名单:扫 archive/<slug>/failed-*.json(模型没拿到参赛资格;票 09)。
+    validationFailures: readFailureRecords(root),
+    matchIssues,
   };
-  mkdirSync(outputDir, { recursive: true });
-  writeFileSync(join(outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  writeReportJson(join(outputDir, "report.json"), report);
+  // 人类面产物:每局一篇 narrative/<对局>.md + 一份 report.md(票 09)。
+  writeReportArtifacts(outputDir, report);
   return EXIT_OK;
 };
 
