@@ -1,0 +1,30 @@
+# 本季参赛模型集(hld §2.2.6)。
+#
+# ── 这份文件的定位 ──
+#
+# 唯一用户面是 `modelwar gen --config models.yaml`:只登记**本季参赛集**,不是把服务商的
+# 全量目录(85 条)当配置长期维护。一条模型一个条目,接入同端点族的新模型只加一条配置、不改代码。
+#
+# ── 字段 ──
+#
+# 必填五项:slug(存档目录以它分家,须唯一)、endpointFamily(chat-completions / messages /
+# responses)、baseUrl、modelId(必须带 provider 前缀)、credentialEnvVar(凭证只从环境变量读)。
+# 可选项:contextLength(契约 token 预算核对)、protocolRounds(模型调用总轮数,含第 1 轮,
+# 缺省 5)、strategy(策略取向一行文,缺省则模板里 {{strategy}} 整段不注入)、params(透传端点族的
+# 请求参数)。
+#
+# ── 本季参赛集(1 条,E2E 实证) ──
+#
+# 服务商 = Command Code(聚合);baseUrl 一条通吃三端点族,端点路径由 endpointFamily 决定。
+
+models:
+  - slug: deepseek-v4-flash
+    endpointFamily: chat-completions
+    baseUrl: https://api.commandcode.ai/provider/v1
+    modelId: deepseek/deepseek-v4-flash
+    credentialEnvVar: COMMAND_CODE_API_KEY
+    contextLength: 1000000
+    protocolRounds: 5
+    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
+    params:
+      temperature: 0
