@@ -4,9 +4,40 @@
 
 **Blocked by:** None(can start immediately;建议随本 spec 的 PR 一起收口,因为指针要指向票号)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] hld §12 含三笔交办账(A / G / H),每条指针指向本 spec 的票与关账条件;旧处改指针、不留第二份表述。
-- [ ] DAG 四处过时句对齐;§5 frontier 表新增 I 的行。
-- [ ] `packages/engine/src/index.ts` 头注与代码一致。
-- [ ] 通读一遍:没有同一事实出现两处、没有悬空指针。
+- [x] hld §12 含三笔交办账(A / G / H),每条指针指向本 spec 的票与关账条件;旧处改指针、不留第二份表述。
+- [x] DAG 四处过时句对齐;§5 frontier 表新增 I 的行。
+- [x] `packages/engine/src/index.ts` 头注与代码一致。
+- [x] 通读一遍:没有同一事实出现两处、没有悬空指针。
+
+## Answer
+
+已实现。纯文档 + 一处代码注释,不改行为。
+
+**hld §12 登记三笔交办账(`docs/hld.md` §12 表尾新增 #9/#10/#11)**
+- #9:A 的两条等效命题在首轮赛季上的复验 → 落本 spec 票 11 的读数(`.scratch/season-scheduler/e2e-readings.md`)。
+- #10:`match` 的 spawn / 进程池 / 重跑编排 → `packages/runner` 的 `scheduler`,本 spec 票 06 / 07。
+- #11:H 的四项交办(≥4 真实模型 / `input.json` 物化 / 崩溃重跑剔除 / 回放读入端接线)→ 本 spec 票 11 / 03 / 07 / 02,逐条关账条件写清。
+
+**旧处改指针(不留第二份)**
+- `docs/diagrams/v0-milestone-dag.md` §7 A 引言句 → 指向 hld §12 #9;§4 的 G 行② → 指向 hld §12 #10。
+- `.scratch/generation-pipeline/spec.md` 为历史件,原文不动。
+
+**DAG 过时句对齐 + I 行**
+- `:35` 交付层七格 → 八格(加 H);`:202` V0 汇合六项 → 四项;`:206` 结论 1 补 H/K;`:220` L 行前置 K 打 ✅。
+- §5 frontier 表在 H 行后插入 I 行(交付层、可开、前置 E/G/H/A/K ✅、**M4★**);顺手对齐 `:179`(I 行改 🔶 实施中、research 栏办结)、`:236`(波次 8 前置已满足)、`:237`(波次 9 L 等 I)。
+
+**engine 头注**
+- `packages/engine/src/index.ts` 头注改为「状态模型**不**导出(经 `RunMatchResult.finalState` 拿得到值、拿不到名字)」,type/interface 理由改挂 ADR-0002。**未补导出**(以代码为准)。
+
+**顺带指针**
+- hld `:750` `meta.json` 形状家指向 `packages/schema/src/archive-meta.ts`;`:776` 补 `season.yaml` 字段意图;`:784` Elo 冲突改指 spec《Out of Scope》;`:803` run 行补根目录解析与不加载 `.env`。`:754` 失败记录形状家已由票 01 落地,不重复。
+
+**验证**
+- `pnpm run check:quick` ✅(fmt / lint / coupling / no-float / budget 全绿;「N 次控制流事件」仍 3 处)。
+- `pnpm run test` ✅(88 文件 / 913 用例,含 doc-homes 与 budget 门禁)。
+
+## Comments
+
+- 主线程/发布侧只需在合并本 spec 后回填提交号。
