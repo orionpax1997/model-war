@@ -873,6 +873,104 @@ it("生成物漂移检查:手改数值表区块正文 → 变红,手改表外散
   expect(driftCheck().status, "还原后漂移检查没有回到绿").toBe(0);
 });
 
+// ── 预算结构门禁:已定稿预算键的结构断言(票 05)────────────────────────────
+
+it("预算结构门禁:改一个预算取值(不是中断粒度的整数倍)→ 变红,按字节还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例落在**数据文件**上(与数值表那一节同族):把事件计数上限改成一个不是中断粒度整数倍的数。
+  // 门禁读的正是磁盘上那份 JSON,所以改完立刻可判、不需要先 `tsc -b`。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"eventTickLimit": 10000', '"eventTickLimit": 9999'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "事件计数上限不是中断粒度整数倍时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名那个键").toContain("eventTickLimit");
+  expect(violated.output, "报告必须说清是整数倍这一条").toContain("整数倍");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁:内存夹逼被弄红——判罚线超过分配上限的一半 / 分配上限不足 8 倍 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:把判罚线抬到等于分配上限——既破了「判罚线 ≤ 分配上限的一半」,也破了「分配上限 ≥ 8 × 判罚线」。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"memoryTickCeiling": 524288', '"memoryTickCeiling": 4194304'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "判罚线越过分配上限的一半时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名内存两键").toContain("memoryTickCeiling");
+  expect(violated.output, "报告必须说清是夹逼这一条").toContain("内存夹逼");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁:软阈(推导项)低于诚实存活堆峰值 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:判罚线取 250000。它仍满足夹逼(≤ 分配上限的一半、≥ 8 倍的反面也成立),但
+  // 0.8 × 250000 = 200000 低于诚实峰值 201384——正常脚本会开始产内存压力观测。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"memoryTickCeiling": 524288', '"memoryTickCeiling": 250000'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "软阈低于诚实峰值时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须说清是软阈下界这一条").toContain("软阈下界");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁:体积上限低于基准产物最大值 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:把体积上限压到 4096——低于三份基准产物的最大值(cell-b 的 7579 字节)。
+  // 这条下界不在默认链上(check:selfproof 按需跑),所以由本门禁带着。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"scriptSizeLimit": 32768', '"scriptSizeLimit": 4096'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "体积上限低于基准产物最大值时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名体积键").toContain("scriptSizeLimit");
+  expect(violated.output, "报告必须说清是体积上限这一条").toContain("体积上限");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁:硬超时不足软限的 20 倍 → 变红,还原 → 变绿", () => {
+  const clean = script("check:budget");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 反例:硬超时压到 512——低于 20 × 软限 50 = 1000。硬超时是成本兜底,与只观测的软限的关系要钉住。
+  const violated = withPatchedRuleset(
+    (source) => source.replace('"wallClockHardTimeout": 1024', '"wallClockHardTimeout": 512'),
+    () => script("check:budget"),
+  );
+  expect(violated.status, "硬超时不足软限的 20 倍时门禁必须非零退出").toBe(1);
+  expect(violated.output, "报告必须指名硬超时键").toContain("wallClockHardTimeout");
+  expect(violated.output, "报告必须说清是墙钟硬超时这一条").toContain("墙钟硬超时");
+
+  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("预算结构门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它必须挂在默认的快门禁上,否则改预算取值时没人拦。
+  expect(scripts["check:quick"] ?? "", "预算结构门禁不在快门禁里").toContain("check:budget");
+  // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "预算结构门禁被挪进了按需门禁").not.toContain(
+    "check:budget",
+  );
+  expect(scripts["test:slow"] ?? "", "预算结构门禁被挪进了慢链").not.toContain("check:budget");
+  expect(scripts["test"] ?? "", "预算结构门禁被挪进了默认测试").not.toContain("check:budget");
+  // 末尾那组仍是「提交内容对不对」的复核:结构门禁不属于那里。
+  expect(tailSteps(), "预算结构门禁被挪进了全量门禁末尾复核组").not.toContain("check:budget");
+});
+
 // ── 生成物漂移检查:API 面的表(真源是符号表与后果行,落在契约文档的正文里) ─────────
 
 /** 注入面符号表那一件的真源:它渲染成契约文档里的一段区块,而它的落点是一份手写散文夹着的文档。 */

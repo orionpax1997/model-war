@@ -40,12 +40,12 @@
   "baseScore": 4,
   "resourceScore": 1,
   "unitCostDivisor": 6,
-  "exceptionTickLimit": 0,
-  "eventTickLimit": 0,
-  "apiCallTickLimit": 0,
-  "memoryLimit": 0,
-  "memoryTickCeiling": 0,
-  "wallClockSoftLimit": 0,
-  "wallClockHardTimeout": 0,
-  "scriptSizeLimit": 0
+  "exceptionTickLimit": 3,
+  "eventTickLimit": 10000,
+  "apiCallTickLimit": 300,
+  "memoryLimit": 4194304,
+  "memoryTickCeiling": 524288,
+  "wallClockSoftLimit": 50,
+  "wallClockHardTimeout": 1024,
+  "scriptSizeLimit": 32768
 }

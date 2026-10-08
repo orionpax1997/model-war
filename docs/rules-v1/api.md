@@ -412,14 +412,14 @@ if (isError(result)) {
 | `baseScore` | 4 | score | 每控制一个主基地的终局分。 |
 | `resourceScore` | 1 | score | 每控制一个资源点的终局分。 |
 | `unitCostDivisor` | 6 | divisor | 存活单位总造价分的除数:该项加分为 `⌊Σ 存活单位造价 ÷ unitCostDivisor⌋`(分)。 |
-| `exceptionTickLimit` | 未定 | exceptions | 累计异常判负阈值(次/整局)。达它则该方判负出局,点位回归中立。 |
-| `eventTickLimit` | 未定 | events/tick | 单 tick 的控制流事件计数上限(次/tick):以循环回边 / 函数调用 / 函数返回为一格累计。达顶则本 tick 该方 intents 全部丢弃并计一次异常。 |
-| `apiCallTickLimit` | 未定 | calls/tick | 单 tick 的 API 调用计数上限(次/tick)。与控制流事件计数互为盲区:前者抓纯计算死循环,后者抓 API 轰炸。 |
-| `memoryLimit` | 未定 | bytes | VM 线性内存的分配上限(bytes)。上限本身不可突破,超限转成可捕获的 JS 异常。 |
-| `memoryTickCeiling` | 未定 | bytes | 内存判据的判罚线(bytes):每 tick 末 `runGC()` 后的存活堆读数达它即视同一次异常。软阈是它的 `MEMORY_SOFT_THRESHOLD_RATIO` 倍,是**纯展示项**、不入键清单。 |
-| `wallClockSoftLimit` | 未定 | milliseconds | 单 tick `loop()` 的墙钟软限(ms)。**只观测**:写进观测文件披露,不参与判罚,也不进回放。 |
-| `wallClockHardTimeout` | 未定 | milliseconds | 墙钟硬超时(ms),**只作废该场**:标记 `nondeterministic-timeout` 后按重跑 / 剔除处理,不判负(墙钟受机器负载影响,参与判罚会破坏可复算性)。 |
-| `scriptSizeLimit` | 未定 | bytes | 顶层脚本体积上限(bytes),封「直线代码不计量、大循环体放大每格工作量」的计数盲区。它是**规则集里的数值键**,与沙箱注入的 API 名表是两件事(hld §6.2 的「不进名单」说的是后者)。 |
+| `exceptionTickLimit` | 3 | exceptions | 累计异常判负阈值(次/整局)。达它则该方判负出局,点位回归中立。 |
+| `eventTickLimit` | 10000 | events/tick | 单 tick 的控制流事件计数上限(次/tick):以循环回边 / 函数调用 / 函数返回为一格累计。达顶则本 tick 该方 intents 全部丢弃并计一次异常。**有效分辨率是一整格**(宿主中断粒度,见 hld《计算预算》):判定只在中断点上发生,小于一格的取值彼此等价。 |
+| `apiCallTickLimit` | 300 | calls/tick | 单 tick 的 API 调用计数上限(次/tick)。与控制流事件计数互为盲区:前者抓纯计算死循环,后者抓 API 轰炸。 |
+| `memoryLimit` | 4194304 | bytes | VM 线性内存的分配上限(bytes)。上限本身不可突破,超限转成可捕获的 JS 异常。 |
+| `memoryTickCeiling` | 524288 | bytes | 内存判据的判罚线(bytes):每 tick 末 `runGC()` 后的存活堆读数达它即视同一次异常。软阈是它的 `MEMORY_SOFT_THRESHOLD_RATIO` 倍,是**纯展示项**、不入键清单。 |
+| `wallClockSoftLimit` | 50 | milliseconds | 单 tick `loop()` 的墙钟软限(ms)。**只观测**:写进观测文件披露,不参与判罚,也不进回放。 |
+| `wallClockHardTimeout` | 1024 | milliseconds | 墙钟硬超时(ms),**只作废该场**:标记 `nondeterministic-timeout` 后按重跑 / 剔除处理,不判负(墙钟受机器负载影响,参与判罚会破坏可复算性)。 |
+| `scriptSizeLimit` | 32768 | bytes | 顶层脚本体积上限(bytes),封「直线代码不计量、大循环体放大每格工作量」的计数盲区。它是**规则集里的数值键**,与沙箱注入的 API 名表是两件事(hld §6.2 的「不进名单」说的是后者)。 |
 
 **兵种属性**
 
@@ -436,7 +436,7 @@ if (isError(result)) {
 
 | 派生量 | 公式 | 值 |
 | --- | --- | --- |
-| 内存软阈 | `MEMORY_SOFT_THRESHOLD_RATIO × memoryTickCeiling` | 未定 |
+| 内存软阈 | `MEMORY_SOFT_THRESHOLD_RATIO × memoryTickCeiling` | 419430 |
 | 单基地满产烧钱率 | `FULL_PRODUCTION_COST_RATE` | 2 |
 <!-- generated:api-v1-value-table:end -->
 
