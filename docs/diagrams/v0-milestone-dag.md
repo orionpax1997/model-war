@@ -32,7 +32,7 @@
 | C | ✅ | schema 真源与生成物 | 同上,6 票全部落地 | `packages/schema` 类型 / `JsonValue` / 21 键清单 / JSON Schema + ajv 读入端校验 + 生成器与漂移检查 |
 | A | ✅ | 地图池与种子变体 | 同上,7 票 **resolved** | `maps/` 三张四重对称真图 + `modelwar map-lint` 两层判据 + `variantSlots` 定稿 + gdd #2/#6 收口 |
 
-**基线的性质**:两张 wayfinder map 都只出决策与 throwaway 证据,没有一份出落库;交付层的七格 **C、D、E、A、F、G、R 工作单元均已收口**。E 的文档与基准脚本已落库;M1 已由 R 关闭。磁盘现状——
+**基线的性质**:两张 wayfinder map 都只出决策与 throwaway 证据,没有一份出落库;交付层的八格 **C、D、E、A、F、G、R、H 工作单元均已收口**。E 的文档与基准脚本已落库;M1 已由 R 关闭。磁盘现状——
 
 ```
 maps/        corridor-split.json · fortress-core.json · open-clash.json
@@ -173,10 +173,10 @@ flowchart TB
 | **D 参赛脚本静态校验器** | ✅ 已完成([spec](../../.scratch/script-validator/spec.md) · 9 票 **全部 resolved**) | `tools` 校验器入口、禁列全局名、模块系统、宿主桥前缀、脚本体积上限、内置全局白名单判据、四份盲写脚本的不误伤验收、**解析层源形态收紧到编译产物**(拒未编译的 TS 源码、两侧对称钉住) | C ✅ | — | 收口时把源形态裁在**解析层**而非校验入口(hld §6.2),四个调用点一起受益且绕不开;附四条 2026-10-04 的 oxc 实测进 hld 同节的表。已裁的三笔:①全局白名单反转**由编译器名字解析承担**(实测推翻 hld §2.2.3/§6.2 的「tools 自建分析器」承载条款,理由:自建分析器的失败模式是误伤合规脚本);②脚本 API 的 `.d.ts` 家定在 `schema`、内容由 F/G 回填;③参赛脚本写 `Math.sqrt` 无人拦 → gdd §8 #11 |
 | **E 规则集与契约落库** | ✅ 已完成([spec](../../.scratch/rules-landing/spec.md) · 15 票 **全部 resolved**) | `rulesets/v1.json` 21 键(13 定稿 + 8 预算未定值占位)+ `docs/rules-v1/{rules.md,api.md}`(散文分批落地,数值表/API 表由真源包生成)+ 参赛脚本编译配置(家定在 E,实现归 H)+ 用**终稿**契约重跑盲写三舱 + `benchmarks/` 落库 + 契约自证与 ② 的复验 | C ✅、D ✅、D1 ✅ | M1 基础产物 | 入口那一轮 grilling **只钉了一条**:终稿 API 面与 D 的实现形状同源——裁法是符号表的回填时点从 G 提前到 E(否则「同源」只剩一句人话),并给生成器加一种**区块形态**让混合的散文文档也能挂生成表格;取舍见 `docs/adr/0004`。其余 21 条裁决未重开。**A 与 D1 交办的两笔账在这里销掉**:gdd §8 #8/#13 的等效命题在终稿契约下复验一次,**② 已过**(证据 `.scratch/rules-landing/selfproof/report.md`,门禁 `check:selfproof`)、**① 仍未排期**(窗口重推是规则侧后续工作,归独立小图,指针留在 gdd §8 记录 #13)。**收尾对账带出的一件**:契约面 `docs/rules-v1/rules.md` 的 §1 / §2 / §5 / §9 四节仍是占位,其中 §5 占领是本轮唯一的真卡点(该节正文**已指派归 gdd《占领机制》**,缺的是面向模型那一节的散文,归下一轮),不在本节点 |
 | **F 对局内核** | ✅ 已完成([spec](../../.scratch/engine-core/spec.md) · 12 票 **全部 resolved**) | `world` + `driver`(状态模型、id 升序不变量、整数 LCG + `IdGen`、`apply()` 唯一写入口)、`processor` 七步结算管线 + `intents/*.ts` 的 `check()`/`run()`、`snapshot`(深拷贝 + 只读封存)、`Runner` 缝 + `StubRunner`、`replay` 包全行格式与解析、`replay-writer`;`modelwar replay` 的 ASCII 查看器 | C ✅、E ✅、A ✅ | **M2★**(与 G 合) | spec 在 [`.scratch/engine-core/spec.md`](../../.scratch/engine-core/spec.md)(2026-10-05 入口 grilling 收口,16 条裁決)。**四笔没人认领的账已在 spec 里定死落点**:①规则集装载期校验接线(hld §7.1 差的是接线不是设计)②脚本 API 类型面归 F([`adr/0006`](../../docs/adr/0006-script-api-type-surface-lands-in-engine.md))③产线形状冲突(hld 的 `productions[]` 对契约面的 `site.producing`)④`match-result` / `replay-line` / `archive-meta` 三笔形状回填。**另裁两件与本表原先记载不同的事**:外部缝**唯一**是 `runMatch`,`processTick` 是私有内部缝不进导出面([`adr/0005`](../../docs/adr/0005-runner-seam-is-the-two-bridge-calls.md));`modelwar verify` **归 G**(它要重新执行真脚本)。**接住 A 交办的首触实测复核**(见 §7):三张真图各跑 64 局(种子 11–74)首触 tick 均为 **19**,结论「墙不改变首触」落 `docs/gdd.md` 首触段末尾。**F 的收口面**:外部缝唯一是 `runMatch`,`processTick` 是私有内部缝不进导出面;十次重跑 hash 落在 check 链上的 `packages/engine/src/determinism.test.ts`;三条桩结论的夹具在 `packages/engine/src/fixtures/`(复验归 L)。**复算那一格(`modelwar verify`)不实现,归沙箱执行器 G** |
-| **G 沙箱执行器与预算裁决** | ✅ 已完成([spec](../../.scratch/sandbox-executor/spec.md) · 11 票全部 resolved,PR #7) | `QuickJsRunner` + `engine/sandbox-runtime`(TS→IIFE bundle)+ WASI 三件套常量 + 桥函数删除 + 四类异常轨 + 双计数 + 内存三层 + `exceptionTicks` 续算;`modelwar match` / `verify` 子进程 | D2 ✅、C ✅、F ✅ | **M2★** | **入口那条验收已销账**:五条复验换版本(2026-10-06 / `quickjs-wasi@3.6.2`)写回 hld §5.0 并**关闭 hld §12 #8**;升级条款不再空头——`coupling:quickjs` 版本耦合断言在根钉版一改即红并指向复验脚本。runtime bundle 入库 + 独立漂移门禁([`adr/0007`](../../docs/adr/0007-runtime-bundle-artifact-is-committed.md))。`prototype` 只用在一处:runtime bundle 的打包方式(hld §2.2.2 留给实现期)。**四笔交出去、不随收口销账的账**:①八个预算键只落了机制与「未定即不启用」,**终值归 K**;②`match` 只做成子进程入口,**spawn / 池 / 重跑编排归 I**;③**跨进程确定性门禁归 L**(F 交出的是同进程十次重跑);④C 舱「站相邻」在真规则下不累积进度,那份脚本的复验归 **R** |
+| **G 沙箱执行器与预算裁决** | ✅ 已完成([spec](../../.scratch/sandbox-executor/spec.md) · 11 票全部 resolved,PR #7) | `QuickJsRunner` + `engine/sandbox-runtime`(TS→IIFE bundle)+ WASI 三件套常量 + 桥函数删除 + 四类异常轨 + 双计数 + 内存三层 + `exceptionTicks` 续算;`modelwar match` / `verify` 子进程 | D2 ✅、C ✅、F ✅ | **M2★** | **入口那条验收已销账**:五条复验换版本(2026-10-06 / `quickjs-wasi@3.6.2`)写回 hld §5.0 并**关闭 hld §12 #8**;升级条款不再空头——`coupling:quickjs` 版本耦合断言在根钉版一改即红并指向复验脚本。runtime bundle 入库 + 独立漂移门禁([`adr/0007`](../../docs/adr/0007-runtime-bundle-artifact-is-committed.md))。`prototype` 只用在一处:runtime bundle 的打包方式(hld §2.2.2 留给实现期)。**四笔交出去、不随收口销账的账**:①八个预算键只落了机制与「未定即不启用」,**终值归 K**;②`match` 只做成子进程入口,**spawn / 池 / 重跑编排归 I**——已登记进 hld §12 #10;③**跨进程确定性门禁归 L**(F 交出的是同进程十次重跑);④C 舱「站相邻」在真规则下不累积进度,那份脚本的复验归 **R** |
 | **H 生成管线** | ✅ 已完成([spec](../../.scratch/generation-pipeline/spec.md) · 9 票全部落地;PR #10) | `prompts/base.md` 薄壳 + `models.yaml`(gen 私有加载)+ `ModelClient` 端口与 HTTP 三端点族 + ≤N 轮只回喂静态校验错误 + tsc 预编译为 script-mode JS + `archive/<slug>/<runId>/` 三件套原子落盘 + 校验失败记录 + meta 完整性校验与缺档拒跑 | E ✅、D ✅、J ✅、**F ✅(脚本 API 类型面)**、**R ✅(最终契约文档)**、**G ✅(最终 sandbox-runtime hash)** | **M3★**(已关闭) | 已收口。两处实现期裁定:模型生成的脚本按**裸脚本**落盘(模板明确不要 Markdown 围栏),`protocolRounds` = 模型调用总轮数(含首轮)、`meta.prompts` 记逐轮完整 transcript;无对局反馈路径由 depcruise 禁边 + gen 源码级符号禁测固化为会红的门禁。真实 e2e(真模型 3 轮、2 次回喂)读数见 `.scratch/generation-pipeline/e2e-readings.md` |
 | **R 面向模型的契约补齐与 M1 基准复验** | ✅ 已完成([spec](../../.scratch/contract-closure/spec.md) · 6 票全部落地) | `docs/rules-v1/rules.md` §5 占领 + §9 确定性约束落库(§1/§2 明文 out-of-scope、占位保留并注明裁定出处);三舱盲写 0 轮契约静态校验通过 3/3(判读 `.scratch/contract-closure/verdict-2026-10-07.md`);真引擎 10 局复验 10/10 全过(`.scratch/contract-closure/replay-matrix.md`);`benchmarks/` 三份按真机制替换入库;**M1 关闭** | A ✅、D ✅、E ✅、F ✅、G ✅、J ✅ | **M1★** | 已收口。散文修订不升版本号([`docs/adr/0008`](../../docs/adr/0008-contract-prose-revision-does-not-bump-version.md));`check:selfproof` 的桩口径不动(改动归 L);`progress` 决策用法交回 gdd §8 #15;有效脚本供 B、K 与 H 使用 |
-| **I 赛季调度、排名与报告** | ○ 未开 | 组合×地图×种子枚举 + `(mapIndex+seedIndex) mod 4` 座位轮换 + `M×K ≡ 0 (mod 4)` 均摊断言、对局子进程池 + `engine-crash`/`nondeterministic-timeout` 重跑与剔除、`input.json` 输入物化、`ranker` 名次积分纯函数、`report.md`/`report.json`/叙事战报 + 校验失败名单 + 规则版本隔离、六个子命令接线 | E、G、H、A ✅、K | **M4★** | `research` 用来选 ≥4 个真实模型(可用性 / 端点 / 定价 / 上下文长度是否够读两份契约)——这是 M4 唯一需要外部一手资料的地方。`ranker` 是纯函数无依赖,可以在 H 还在跑的时候顺手做掉。枚举规模已由 A 的 K=4 定死 |
+| **I 赛季调度、排名与报告** | 🔶 实施中([spec](../../.scratch/season-scheduler/spec.md) · 票 01–11) | 组合×地图×种子枚举 + `(mapIndex+seedIndex) mod 4` 座位轮换 + `M×K ≡ 0 (mod 4)` 均摊断言、对局子进程池 + `engine-crash`/`nondeterministic-timeout` 重跑与剔除、`input.json` 输入物化、`ranker` 名次积分纯函数、`report.md`/`report.json`/叙事战报 + 校验失败名单 + 规则版本隔离、六个子命令接线 | E、G、H、A ✅、K | **M4★** | `research` 已在入口 grilling 里办结:参赛集定死为 5 条真实模型(≥4),可用性 / 端点 / 上下文长度均已核(见 [`.scratch/season-scheduler/spec.md`](../../.scratch/season-scheduler/spec.md))。`ranker` 是纯函数无依赖。枚举规模已由 A 的 K=4 定死 |
 
 ### 人工前置
 
@@ -199,11 +199,11 @@ flowchart TB
 C ✅ → D ✅ → E ✅ → F ✅ → G ✅ → R ✅ → K ✅ → I → L → V0
 ```
 
-拓扑只说明先后关系;各节点工期与并行资源没有估算,因此不把这条链称为“关键路径”。完整依赖还包括 **H ✅ → M3 ✅**、**R ✅ →(M1 关闭)· B · K · H 的契约输入 · L** 等分支;V0 汇合 **M1、M2、M3、M4、B、L** 六项验收门槛。**M1 已关闭**(R 的 6 票全部落地);**M3 已关闭**(H 的 9 票全部落地,首份真实冻结存档 + `modelwar match` 装载通过);M2 需 K 的预算终值(已交出);B 可在 I 前依据 R 交出的有效基准脚本取证。
+拓扑只说明先后关系;各节点工期与并行资源没有估算,因此不把这条链称为“关键路径”。完整依赖还包括 **H ✅ → M3 ✅**、**R ✅ →(M1 关闭)· B · K · H 的契约输入 · L** 等分支;V0 汇合 **M2、M4、B、L** 四项验收门槛(M1 与 M3 已关闭,见下)。**M1 已关闭**(R 的 6 票全部落地);**M3 已关闭**(H 的 9 票全部落地,首份真实冻结存档 + `modelwar match` 装载通过);M2 需 K 的预算终值(已交出);B 可在 I 前依据 R 交出的有效基准脚本取证。
 
 四条结论:
 
-1. **C、D、E、F、G、R 均已收口**。它们不再是当前待办的开工阻塞;C 仍是多个交付节点的依赖根;R 的收口同时关闭 M1 并解锁 K / B / H 的契约输入 / L。
+1. **C、D、E、F、G、R、H、K 均已收口**。它们不再是当前待办的开工阻塞;C 仍是多个交付节点的依赖根;R 的收口同时关闭 M1 并解锁 K / B / H 的契约输入 / L。
 2. ~~**H 可先做不依赖 G 的准备工作,但不能宣称与 F/G 零依赖**~~(**已收口**)。脚本 API 类型面由 F 提供、最终契约文档来自 R、`sandboxRuntimeHash` 来自 G 的真实 runtime 产物——这三条依赖在 H 的 9 票里全部兑现;H 已交出首份真实冻结存档并关闭 M3。
 3. **A 已收口**,地图与 K=4 的种子数结论均已定。不要把它与图上的**节点 K**(预算参数终值标定)混淆:预算标定需要的是地图点位与全图储量,不是种子数。
 4. **K 已收口**(八键终值已交出,见 §4 收尾层);R 已收口(M1 已关闭)、H 已收口(M3 已关闭),B 与 L 也都是 V0 的收口条件——K 曾是收尾阻塞项之一,现不再是。
@@ -217,7 +217,8 @@ C ✅ → D ✅ → E ✅ → F ✅ → G ✅ → R ✅ → K ✅ → I → L �
 | ~~**K 预算参数终值标定**~~ | ✅ 已收口(8 键落终值 + 判据落 hld §5.3;spec [`.scratch/budget-calibration/spec.md`](../../.scratch/budget-calibration/spec.md),读数与推导 `.scratch/budget-calibration/readings.md`) | E ✅、R ✅、A ✅、G ✅;三类预算探针已入库(原「须先造两个对抗探针」已办) |
 | **B 座位轮换实效定案** | wayfinder,可开 | D1 ✅、A ✅、**R ✅**(提供按终稿契约复验过的基准脚本);HLD #3 的基准脚本对局是首选证据,I 的首轮数据可补充但不是硬前置 |
 | ~~**H 生成管线**~~ | ✅ 已收口(9 票全部落地;PR #10;首份真实冻结存档 + `modelwar match` 装载通过,**M3 关闭**) | E ✅、D ✅、J ✅、F ✅、G ✅(runtime hash 已入库)、**R ✅(终稿契约已交出)** |
-| **L 门禁、流水线、性能与存储** | 收尾层,R ✅ 后上游证据到位;完整收口等 K、I | G ✅、**R ✅**、K、I |
+| **I 赛季调度、排名与报告** | 交付层,可开(11 票已就绪) | E ✅、G ✅、H ✅、A ✅、K ✅;spec [`.scratch/season-scheduler/spec.md`](../../.scratch/season-scheduler/spec.md),票 01–11;**M4★** |
+| **L 门禁、流水线、性能与存储** | 收尾层,R ✅ 后上游证据到位;完整收口等 I | G ✅、**R ✅**、K ✅、I |
 
 **D-08 的历史阻塞已解除**:参赛脚本编译配置随 E 的 06 号票落地,D-08 随后收口。主图不再保留反向的 `E ⇢ D` 历史边;H 收口所需的三项前置——F 的类型面、G 的真实 runtime、R 的终稿契约——已全部满足,H 已收口。
 
@@ -233,8 +234,8 @@ C ✅ → D ✅ → E ✅ → F ✅ → G ✅ → R ✅ → K ✅ → I → L �
 | 5 | **G** ✅ ∥ **H** ✅ | ✅ G 已收口(11 票全部 resolved,PR #7:真沙箱 `match → verify` 端到端 + 五条探针 + hld #8 关闭);H 当时并行做 prompt / 客户端准备,随后已在波次 7 收口 |
 | 6 | **R** | ✅ 已收口(6 票全部落地):§5/§9 落库、三舱盲写 3/3、真引擎 10 局复验 10/10,**M1 关闭** |
 | 7 | **K** ✅ ∥ **B** ∥ ~~**H 收口**~~ | ✅ K 已收口(8 键终值 + 判据落 hld §5.3,读数与推导见 `.scratch/budget-calibration/readings.md`);B 以 R ✅ 的有效基准脚本为输入;H 已收口(9 票全部落地,关闭 M3) |
-| 8 | **I** → M4★ | 等 G、H、K;首轮赛季资料可作为 B 的补充证据 |
-| 9 | **L** | 等 G、R ✅、K、I;完成流水线、性能/存储与跨进程验证后,才具备 V0 收尾条件 |
+| 8 | **I** → M4★ | 前置 G ✅、H ✅、K ✅ 均已满足,I 已开(票 01–11);首轮赛季资料可作为 B 的补充证据 |
+| 9 | **L** | 等 I(其余前置 G ✅、R ✅、K ✅ 已满足);完成流水线、性能/存储与跨进程验证后,才具备 V0 收尾条件 |
 
 ## 6. 从里程碑视角看到的两个真实缺口
 
@@ -251,7 +252,7 @@ M1 已关闭(逐条验收对照表见 `.scratch/contract-closure/verdict-2026-10
 
 D1 的桩模拟器跑过 1336 场,给出 gdd §8 记录 #7–#10(#7 枯竭定位、#8 验收剖面作废、#9 终局形态边界、#10 骑兵闲置)。但**桩不是引擎**——真正接住那些结论的是 **F 的结算管线**:每条记录都要在真引擎上以属性测试或基准门禁的形式复验一次,否则它们只是关于一个已丢弃实现的观察。图上以虚线标出 `F ⇢ L`:它是非阻塞的证据复验义务,不改变硬依赖拓扑,但决定 M2 收尾要补多少测试。**F 已把这条边的一半接住**:三条结论在真引擎上的夹具已建在 `packages/engine/src/fixtures/`(薄跑批 + 三条夹具 + 用例),十次重跑落在 `packages/engine/src/determinism.test.ts`(check 链上);**复验(属性测试 / 基准门禁 + 停止条件)归 L**。
 
-同理,A 的两条等效命题验完之后还要在 I 的首轮赛季上复验一次。**A 已收口,但它交办出去的账不随收口销账**,各有一个明确的落点:
+同理,A 的两条等效命题验完之后还要在 I 的首轮赛季上复验一次——**这笔账已登记进 hld §12 #9**(落本 spec 票 11 的读数)。**A 已收口,但它交办出去的账不随收口销账**,其余各有一个明确的落点:
 
 | 交办项 | 落在哪 | 不做会怎样 |
 |---|---|---|
