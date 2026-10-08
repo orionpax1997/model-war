@@ -41,7 +41,8 @@ export type RunnerKind = "stub" | "quickjs";
  * 由种类分成三条去向:
  *
  * - `tripped`:某条轨已触限——由步 0 落成状态变更(累加 `exceptionTicks`)。判据由执行器算好,
- *   引擎**不做裁决**。阈值判定与淘汰不在本票。
+ *   引擎**不做裁决**。阈值判定与淘汰不在本票。轨名通常是预算键名;`loop()` 抛异常那条轨没有
+ *   预算键(轨名常量见 `quickjs.ts` 的 `UNCAUGHT_EXCEPTION_TRACK`)。
  * - `wall-clock-soft`:墙钟软限观测,只披露不判罚——转发给观测出口。
  * - `memory-pressure`:内存压力观测,只披露不判罚——转发给观测出口。
  *
@@ -53,7 +54,8 @@ export type ObservationKind = "tripped" | ObservationLineKind;
 /**
  * 一条观测:种类 + 轨名 + 观测值 + 上限值。
  *
- * `track` 是规则集里那条轨的名字(如 `eventTickLimit`),用来读数与定位。`value` 是观测读数,
+ * `track` 是触发它的那条轨的名字(如 `eventTickLimit`),用来读数与定位——`loop()` 抛异常那条轨
+ * 不是预算键,但仍按同一个 `tripped` 契约交给唯一写入口。`value` 是观测读数,
  * `limit` 是当时那条轨的上限。引擎在这条载荷上不做裁决:它只把 `tripped` 交给唯一写入口、
  * 把另外两类原样转发。
  */
