@@ -25,7 +25,7 @@
 | `packages/runner/src/index.ts`(改) | `export * from "./season-config.js";` + 头注同步 |
 | `packages/runner/src/ranker.ts`(改) | 把 `rankPoints` 校验抽成导出 `rankPointsIssue`(`rankSeason` 内部照用),供装载器复用同一处判据,不新开第二条校验栈 |
 
-### 裁决 1 —— 不引 zod,手写逐字段汇总
+### 裁决 1 —— ~~不引 zod,手写逐字段汇总~~(评审已推翻:改用 zod,见 `## Review fixes`)
 
 理由:全仓零 zod、零 YAML 库;唯一的运行时第三方依赖是 `apps/cli` 的 `ajv`,而校验器只有一处(ADR-0003「校验栈只有一份」);`models.yaml` 的既有惯例(`packages/gen/src/config.ts`)正是手写逐字段汇总。故照抄其风格:先收集 `issues[]`,末尾一次抛 `赛季配置无效(<path>):\n  - …`,改配置的人可「一次看完」。**未改 `packages/runner/package.json`、未 `pnpm install`。**
 
@@ -85,3 +85,17 @@ loadSeasonConfig(filePath: string): SeasonConfig;
    > 整轮赛季 + 报告;根目录解析同 `gen` / `match`(默认 cwd),`--config` 相对根;`season.yaml` 字段真源见 `packages/runner/src/season-config.ts`。
 3. **(与票 03 遗留的同一处矛盾)hld §8.1** 现文「不满足时各座位的对局数最多差 1,差额落在同一相对位次——该残留不对称由 §12 的座位胜率统计验证,不做逐座位校正」与票 03/本票的**硬错误**口径冲突,应改为:
    > **精确均摊要求 `M × K ≡ 0 (mod 4)`**;不满足时直接报错(不静默产生偏移清单)。
+
+## Review fixes
+
+**提交:`0795834f0a303eb601ed5e2b74ed42c9addbe32a`(fix(runner): 评审修复——内存披露/每局叙事/parseReplay/zod 与 hld 对齐)**
+
+- **S4(推翻「裁决 1」)**:`season-config.ts` 改用 **zod v4** 定义 season schema(形状 + 逐字段取值域),
+  跨字段判据仍在 `superRefine` 里调各自的家(`rankPointsIssue` / `RULESET_VERSION` / `M × K`),
+  `error.issues` 汇总成 `赛季配置无效(<path>):\n  - …` 一次看完。`loadSeasonConfig` / `SeasonConfig` /
+  可选字段「缺席不落键」行为不变,原 19 例与本票新增 1 例全过。`pnpm add zod -F @model-war/runner`;`tsc -b`
+  与 `node apps/cli/dist/modelwar.mjs run --help` 均验过(esbuild 单文件 ESM bundle 正常,zod 未触发 Dynamic require)。
+- **St2(hld §8.1 字段真源)**:删去复制的默认值细节,改指 `packages/runner` 的 zod season schema +
+  `season.example.yaml`(见 `docs/hld.md`)。
+- **yaml-lite / sha256Hex / runIdOf 的第二份**:头注已写明「runner 不得 import gen,故各留一份私有实现」,
+  本次未跨包去重。
