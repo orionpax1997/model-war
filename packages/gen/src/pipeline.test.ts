@@ -31,12 +31,14 @@ import { RULESET_VERSION, SANDBOX_RUNTIME_HASH, type ArchiveMeta } from "@model-
 import { afterAll, expect, it } from "vitest";
 
 import { sha256Hex } from "./archive.js";
+import { compileScript } from "./compile.js";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs } from "./contract.js";
 import { generateOneModel, type ModelOutcome } from "./pipeline.js";
 import { loadBaseTemplate } from "./prompt.js";
 import { runGeneration, type GenerationRequest } from "./run.js";
-import { reply, stubClient, type StubClient } from "./stub-client.js";
+import { replies, reply, stubClient, type StubCall, type StubClient } from "./stub-client.js";
+import { scriptSizeLimit, validateScript } from "./validate.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-gen-pipeline-`);
@@ -45,15 +47,21 @@ afterAll(() => rmSync(scratch, { force: true, recursive: true }));
 const CONTRACT_RULES = "# rules\n\n机制正文:这里是规则契约。\n";
 const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
 const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
-const MODELS_YAML = [
-  "models:",
-  "  - slug: alpha",
-  "    endpointFamily: chat-completions",
-  "    baseUrl: https://example.test/v1",
-  "    modelId: provider/alpha-1",
-  "    credentialEnvVar: GEN_TEST_KEY",
-  "",
-].join("\n");
+/** 过得了 tsc 编译、但撞上 blocking 违规(禁列全局名 `Date`)的脚本——第 1 轮就会被校验拦住。 */
+const BLOCKING_SCRIPT = `function loop() {\n  return Date.now();\n}\nloop();\n`;
+/** `models.yaml` 文本;`protocolRounds` 给了才写那一行(缺省 = gen 内部默认 5)。 */
+const modelsYaml = (protocolRounds?: number): string =>
+  [
+    "models:",
+    "  - slug: alpha",
+    "    endpointFamily: chat-completions",
+    "    baseUrl: https://example.test/v1",
+    "    modelId: provider/alpha-1",
+    "    credentialEnvVar: GEN_TEST_KEY",
+    ...(protocolRounds === undefined ? [] : [`    protocolRounds: ${String(protocolRounds)}`]),
+    "",
+  ].join("\n");
+const MODELS_YAML = modelsYaml();
 
 const only = (entries: readonly string[]): string => {
   const [first] = entries;
@@ -92,6 +100,35 @@ const firstModelConfig = (root: string): ModelConfig => {
     throw new Error("fixture 缺模型条目");
   }
   return first;
+};
+
+/** 取桩的第 `index` 次调用(下标越界即抛,避免测试里写非空断言)。 */
+const callAt = (stub: StubClient, index: number): StubCall => {
+  const call = stub.calls[index];
+  if (call === undefined) {
+    throw new Error(`桩没有第 ${String(index)} 次调用`);
+  }
+  return call;
+};
+
+/**
+ * 独立算一遍「校验器会喂给模型的文本」:把同一段源码编译成产物、跑迭代期校验,取 stdout。
+ * 回喂探针用它做**逐字**相等断言(严格相等,不是 `includes`)。
+ */
+const iterationFeedback = (root: string, source: string): string => {
+  const stagingDir = mkdtempSync(join(root, ".probe-"));
+  try {
+    const compiled = compileScript({ root, stagingDir, source });
+    const result = validateScript({
+      root,
+      artifactPath: compiled.jsPath,
+      maxBytes: scriptSizeLimit(root),
+      phase: "iteration",
+    });
+    return result.stdout;
+  } finally {
+    rmSync(stagingDir, { recursive: true, force: true });
+  }
 };
 
 /** 直接构造一份 `GenerationRequest`(绕开 `runGeneration` 的 `new Date()`,让 runId 可控)。 */
@@ -158,6 +195,8 @@ it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退
 
 it("冻结期体积超限:不建目标目录、无半截三件套、退出码非零", async () => {
   const root = mkRoot(16);
+  // 本用例只关心失败清理,单轮即可;多轮会因桩脚本用尽而抛错,掩盖真正的失败分类。
+  writeFileSync(join(root, "models.yaml"), modelsYaml(1));
   const code = await runGeneration({
     root,
     configPath: "models.yaml",
@@ -175,7 +214,7 @@ it("冻结期体积超限:失败分类 contract,诊断是校验器 stdout", asyn
   const root = mkRoot(16);
   const outcome: ModelOutcome = await generateOneModel(
     requestWith(root, stubClient([reply(VALID_SCRIPT)]), "2026-01-01T00-00-00-000Z"),
-    firstModelConfig(root),
+    { ...firstModelConfig(root), protocolRounds: 1 },
   );
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") {
@@ -198,7 +237,7 @@ it("tsc 编译失败:失败分类 tsc,日志 kind=tsc 并带 TS 错误码,不建
       stubClient([reply("function loop() { return missingName; }\n")]),
       "2026-01-01T00-00-00-000Z",
     ),
-    firstModelConfig(root),
+    { ...firstModelConfig(root), protocolRounds: 1 },
   );
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") {
@@ -231,4 +270,105 @@ it("目标存档目录已存在即拒绝覆盖(runId 撞车),且不留临时目�
     expect(second.failure.message).toContain("已存在");
   }
   expect(readdirSync(join(root, "archive", "alpha"))).toEqual([runId]);
+});
+
+it("回喂探针:第 1 轮 blocking 违规、第 2 轮合法 → 恰好回喂一次,轮数 = prompt 条数 = 2", async () => {
+  const root = mkRoot();
+  // 第 1 轮会喂回的那段文本 = 校验器 stdout(独立复算,拿来做逐字相等)。
+  const expected = iterationFeedback(root, BLOCKING_SCRIPT);
+  const stub = stubClient([reply(BLOCKING_SCRIPT), reply(VALID_SCRIPT)]);
+  const outcome = await generateOneModel(requestWith(root, stub, "2026-01-01T00-00-00-000Z"), {
+    ...firstModelConfig(root),
+    protocolRounds: 2,
+  });
+
+  // 恰好发生一次回喂:桩只被调 2 次。
+  expect(stub.calls).toHaveLength(2);
+  const round2 = callAt(stub, 1);
+  expect(round2.messages).toHaveLength(3);
+  expect(round2.messages[1]?.role).toBe("assistant");
+  expect(round2.messages[1]?.content).toBe(BLOCKING_SCRIPT);
+  // 严格相等(不是 includes):新增的那条 user 消息逐字等于上一轮的诊断文本,不含任何非校验文本。
+  expect(round2.messages[2]?.role).toBe("user");
+  expect(round2.messages[2]?.content).toBe(expected);
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") {
+    return;
+  }
+  expect(outcome.meta.protocolRounds).toBe(2);
+  expect(outcome.meta.prompts).toHaveLength(2);
+  expect(outcome.meta.prompts[0]).toContain(CONTRACT_RULES);
+  expect(outcome.meta.prompts[1]).toContain(expected);
+  expect(outcome.meta.generationLog).toHaveLength(2);
+});
+
+it("用尽轮数:每轮都违规 → 桩被调 3 次,failure 覆盖 3 轮,不建存档目录", async () => {
+  const root = mkRoot();
+  const runId = "2026-01-01T00-00-00-000Z";
+  const stub = stubClient(replies([BLOCKING_SCRIPT, BLOCKING_SCRIPT, BLOCKING_SCRIPT]));
+  const outcome = await generateOneModel(requestWith(root, stub, runId), {
+    ...firstModelConfig(root),
+    protocolRounds: 3,
+  });
+
+  expect(stub.calls).toHaveLength(3);
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") {
+    return;
+  }
+  expect(outcome.failure.classification).toBe("contract");
+  expect(outcome.failure.prompts).toHaveLength(3);
+  expect(outcome.failure.generationLog).toHaveLength(3);
+  expect(outcome.failure.diagnostics.join("\n")).toContain("禁列全局名");
+  // 失败不建 archive/<slug>/<runId>/,也不留任何半截 / 临时目录。
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
+});
+
+it("无状态:每轮 messages 前缀增长,只见 role/content 两键,不含 provider 会话 id / 隐藏状态", async () => {
+  const root = mkRoot();
+  const stub = stubClient(replies([BLOCKING_SCRIPT, BLOCKING_SCRIPT, BLOCKING_SCRIPT]));
+  const outcome = await generateOneModel(requestWith(root, stub, "2026-01-01T00-00-00-000Z"), {
+    ...firstModelConfig(root),
+    protocolRounds: 3,
+  });
+  expect(outcome.kind).toBe("failed");
+
+  const round1 = callAt(stub, 0);
+  const round2 = callAt(stub, 1);
+  const round3 = callAt(stub, 2);
+
+  // 前缀增长:第 r 轮 messages = 上一轮 messages 原样 + 2 条(assistant + user),全量重发。
+  expect(round2.messages.slice(0, round1.messages.length)).toEqual(round1.messages);
+  expect(round3.messages.slice(0, round2.messages.length)).toEqual(round2.messages);
+  expect(round2.messages).toHaveLength(round1.messages.length + 2);
+  expect(round3.messages).toHaveLength(round2.messages.length + 2);
+
+  // 每条消息只有 role / content:没有 provider 会话 id 字段,也没有隐藏状态。
+  for (const call of stub.calls) {
+    for (const message of call.messages) {
+      expect(Object.keys(message).sort()).toEqual(["content", "role"]);
+    }
+  }
+  // 每次调用的模型参数逐次相同(不靠跨轮隐藏状态)。
+  expect(round2.params).toEqual(round1.params);
+  expect(round3.params).toEqual(round1.params);
+});
+
+it("protocolRounds 缺省 = 5:每轮失败 → 桩恰好被调 5 次,失败链覆盖 5 轮", async () => {
+  const root = mkRoot();
+  const stub = stubClient(replies(Array.from({ length: 5 }, () => BLOCKING_SCRIPT)));
+  const outcome = await generateOneModel(
+    requestWith(root, stub, "2026-01-01T00-00-00-000Z"),
+    firstModelConfig(root), // 配置里没有 protocolRounds → gen 内部默认 5
+  );
+
+  expect(stub.calls).toHaveLength(5);
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") {
+    return;
+  }
+  expect(outcome.failure.prompts).toHaveLength(5);
+  expect(outcome.failure.generationLog).toHaveLength(5);
 });

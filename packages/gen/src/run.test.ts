@@ -72,7 +72,8 @@ it("顺利路径:经端口发一次请求、回得合法脚本,退出码 0", asy
 });
 
 it("一次调用发出的 messages 含完整契约与模板渲染结果(user 角色)", async () => {
-  const root = writeRoot(configOf(entry("alpha")));
+  // 本用例只关心第 1 轮发出的 prompt 形状;钉死单轮,避免桩脚本用尽干扰。
+  const root = writeRoot(configOf(entry("alpha", ["    protocolRounds: 1"])));
   const stub = stubClient([reply("x")]);
   await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
   const call = stub.calls[0];
@@ -86,7 +87,14 @@ it("一次调用发出的 messages 含完整契约与模板渲染结果(user 角
 
 it("配置里的 strategy 进 prompt;params 透传给端口", async () => {
   const root = writeRoot(
-    configOf(entry("alpha", ["    strategy: 占点不采集", "    params:", "      temperature: 0.2"])),
+    configOf(
+      entry("alpha", [
+        "    strategy: 占点不采集",
+        "    protocolRounds: 1",
+        "    params:",
+        "      temperature: 0.2",
+      ]),
+    ),
     "策略:{{strategy}}\n\n契约:\n\n{{contract}}\n",
   );
   const stub = stubClient([reply("x")]);
@@ -96,7 +104,10 @@ it("配置里的 strategy 进 prompt;params 透传给端口", async () => {
 });
 
 it("模型没配 strategy 时,发出的 prompt 不留 `{{strategy}}` 也不留空占位", async () => {
-  const root = writeRoot(configOf(entry("alpha")), "策略:{{strategy}}\n\n{{contract}}\n");
+  const root = writeRoot(
+    configOf(entry("alpha", ["    protocolRounds: 1"])),
+    "策略:{{strategy}}\n\n{{contract}}\n",
+  );
   const stub = stubClient([reply("x")]);
   await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
   const content = stub.calls[0]?.messages[0]?.content ?? "";
