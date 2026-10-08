@@ -127,21 +127,41 @@ const scriptedSpawn = (
 type ReportShape = {
   runId: string;
   ruleset: string;
+  masterSeed: string;
+  rankPoints: readonly number[];
   matches: readonly {
+    matchId: string;
     comboId: string;
+    mapIndex: number;
+    seedIndex: number;
     map: string;
     seed: number;
     inputPath: string;
+    seats: readonly string[];
     rankings: readonly number[];
     reason: string;
+    perMatchScores: readonly number[];
   }[];
-  problems: readonly {
+  standings: readonly {
+    player: string;
+    totalPoints: number;
+    countedMatches: number;
+    averagePoints: number;
+    rank: number;
+  }[];
+  validationFailures: readonly unknown[];
+  matchIssues: readonly {
+    matchId: string;
     comboId: string;
+    mapIndex: number;
+    seedIndex: number;
     map: string;
     seed: number;
     inputPath: string;
     reason: string;
     exitCode: number;
+    rerunCount: number;
+    excludedFromRanking: boolean;
   }[];
 };
 
@@ -158,22 +178,52 @@ it("跑通一整季:退 0,每局物化 input.json(键集恰 5 项)并写出 repo
   const report = readReport(root);
   expect(report.ruleset).toBe("v1");
   expect(typeof report.runId).toBe("string");
+  expect(report.masterSeed).toBe("seed-1");
+  expect(report.rankPoints).toEqual([3, 2, 1, 0]);
   expect(report.matches).toHaveLength(4);
-  expect(report.problems).toHaveLength(0);
+  expect(report.matchIssues).toHaveLength(0);
+  expect(report.validationFailures).toEqual([]);
   expect(report.matches.map((match) => match.inputPath)).toEqual([
     "runs/fixture/matches/c0-arena-s0/input.json",
     "runs/fixture/matches/c0-arena-s1/input.json",
     "runs/fixture/matches/c0-arena-s2/input.json",
     "runs/fixture/matches/c0-arena-s3/input.json",
   ]);
+  expect(report.matches.map((match) => match.matchId)).toEqual([
+    "c0-arena-s0",
+    "c0-arena-s1",
+    "c0-arena-s2",
+    "c0-arena-s3",
+  ]);
+  expect(report.matches.map((match) => match.comboId)).toEqual(["c0", "c0", "c0", "c0"]);
+  expect(report.matches.map((match) => match.mapIndex)).toEqual([0, 0, 0, 0]);
+  expect(report.matches.map((match) => match.seedIndex)).toEqual([0, 1, 2, 3]);
   for (const match of report.matches) {
     expect(match.comboId).toBe("c0");
     expect(match.map).toBe("arena");
     expect(match.rankings).toEqual([1, 2, 3, 4]);
+    // 名次 [1,2,3,4] 下默认 [3,2,1,0] → 每座位得分就是 rankPoints 本身。
+    expect(match.perMatchScores).toEqual([3, 2, 1, 0]);
+    // 四个座位就是四个存档引用(轮换因局而异),集合恒为全员。
+    expect([...match.seats].sort()).toEqual(MODELS.map((model) => `archive/${model}/r1`).sort());
     expect(match.reason).toBe("timeout");
     expect(Number.isInteger(match.seed)).toBe(true);
   }
+  // s0 的轮换位移为 0,座位即 slug 升序的基准序列(alpha, beta, delta, gamma)。
+  expect(report.matches[0]?.seats).toEqual(
+    [...MODELS].sort().map((model) => `archive/${model}/r1`),
+  );
   expect(new Set(report.matches.map((match) => match.seed)).size).toBe(4);
+
+  // standings 是 rankSeason 的输出:桩回放的 rankings 恒为 [1,2,3,4]（按座位）,而座位逐局轮换,
+  // 故每人各拿一次 1/2/3/4 名 → 总分 3+2+1+0 = 6,四人同分并列第 1。
+  expect(report.standings).toHaveLength(4);
+  for (const entry of report.standings) {
+    expect(entry.countedMatches).toBe(4);
+    expect(entry.totalPoints).toBe(6);
+    expect(entry.rank).toBe(1);
+  }
+  expect(report.standings[0]?.player).toBe("archive/alpha/r1");
 
   // 每局 input.json 的键集恰为五项(书写序 = REQUIRED_KEYS 序),座位 = archives 下标。
   for (const match of report.matches) {
@@ -209,7 +259,7 @@ it("退出码 2:首发触发 → 恰好重跑一次,第二次成功则该局入�
   expect(code).toBe(0);
   const report = readReport(root);
   expect(stub.attemptsOf("c0-arena-s0")).toBe(2);
-  expect(report.problems).toHaveLength(0);
+  expect(report.matchIssues).toHaveLength(0);
   expect(report.matches).toHaveLength(4);
   expect(report.matches.map((match) => match.inputPath)).toContain(
     "runs/fixture/matches/c0-arena-s0/input.json",
@@ -230,14 +280,23 @@ it("退出码 2 连续两次 → 入问题清单(engine-crash)、排除出 match
   expect(report.matches.map((match) => match.inputPath)).not.toContain(
     "runs/fixture/matches/c0-arena-s0/input.json",
   );
-  expect(report.problems).toHaveLength(1);
-  const problem = report.problems[0];
+  expect(report.matchIssues).toHaveLength(1);
+  const problem = report.matchIssues[0];
+  expect(problem?.matchId).toBe("c0-arena-s0");
   expect(problem?.comboId).toBe("c0");
+  expect(problem?.mapIndex).toBe(0);
+  expect(problem?.seedIndex).toBe(0);
   expect(problem?.map).toBe("arena");
   expect(Number.isInteger(problem?.seed)).toBe(true);
   expect(problem?.inputPath).toBe("runs/fixture/matches/c0-arena-s0/input.json");
   expect(problem?.reason).toBe("engine-crash");
   expect(problem?.exitCode).toBe(2);
+  expect(problem?.rerunCount).toBe(1);
+  expect(problem?.excludedFromRanking).toBe(true);
+  // 被剔除的局不进 matches，也不进均分分母:每人只计 3 局(s0 被剔, s1..s3 含全员)。
+  const short = report.standings.find((entry) => entry.countedMatches === 3);
+  expect(short).toBeDefined();
+  expect(report.standings.every((entry) => entry.countedMatches === 3)).toBe(true);
 });
 
 it("退出码 3 连续两次 → 入问题清单(nondeterministic-timeout)、排除出 matches", async () => {
@@ -249,10 +308,10 @@ it("退出码 3 连续两次 → 入问题清单(nondeterministic-timeout)、排
   expect(stub.attemptsOf("c0-arena-s1")).toBe(2);
   const report = readReport(root);
   expect(report.matches).toHaveLength(3);
-  expect(report.problems).toHaveLength(1);
-  expect(report.problems[0]?.reason).toBe("nondeterministic-timeout");
-  expect(report.problems[0]?.exitCode).toBe(3);
-  expect(report.problems[0]?.inputPath).toBe("runs/fixture/matches/c0-arena-s1/input.json");
+  expect(report.matchIssues).toHaveLength(1);
+  expect(report.matchIssues[0]?.reason).toBe("nondeterministic-timeout");
+  expect(report.matchIssues[0]?.exitCode).toBe(3);
+  expect(report.matchIssues[0]?.inputPath).toBe("runs/fixture/matches/c0-arena-s1/input.json");
 });
 
 it("退出码 3 首发、重跑成功 → 该局入报告、问题清单空", async () => {
@@ -262,7 +321,7 @@ it("退出码 3 首发、重跑成功 → 该局入报告、问题清单空", as
 
   expect(code).toBe(0);
   expect(stub.attemptsOf("c0-arena-s2")).toBe(2);
-  expect(readReport(root).problems).toHaveLength(0);
+  expect(readReport(root).matchIssues).toHaveLength(0);
 });
 
 it("退出码 1 / 4 → 赛季级中止并按该码返回(不静默剔除、不重跑)", async () => {
@@ -308,7 +367,7 @@ it("码 0 的规则内结果(胜/全灭,含内存判负)绝不被误判为崩溃
     const code = await scheduleSeason({ root, configPath }, { spawnMatch: stub.spawnMatch });
     expect(code).toBe(0);
     const report = readReport(root);
-    expect(report.problems).toHaveLength(0);
+    expect(report.matchIssues).toHaveLength(0);
     expect(report.matches.every((match) => match.reason === reason)).toBe(true);
     expect(report.matches).toHaveLength(4);
   }
