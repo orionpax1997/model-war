@@ -5,7 +5,7 @@
  *
  * 对外面按域分文件,本文件是唯一入口(spec《真源包的导出面》的同款纪律):
  * 契约读入(`contract`)、prompt 模板(`prompt`)、模型配置(`config`)、模型客户端端口与桩
- * (`model-client` / `stub-client`)、工厂(`client-factory`)、编排与 CLI 处理器(`run`)。
+ * (`model-client` / `stub-client`)、真实 HTTP 客户端(`http/client`)、编排与 CLI 处理器(`run`)。
  * CLI 从 `@model-war/gen` 取 `generateAndFreeze`;后续各票只**追加**导出,不改既有名字。
  */
 
@@ -35,7 +35,7 @@ export {
   type StubReply,
   type StubStep,
 } from "./stub-client.js";
-export { createModelClient } from "./client-factory.js";
+export { createHttpModelClient } from "./http/client.js";
 export {
   compileScript,
   deriveScriptTsconfig,
@@ -82,6 +82,7 @@ export {
   failureRecordPath,
   writeFailureRecord,
   type BuildFailureRecordInput,
+  type FailureIdentity,
   type FailureRecord,
   type WriteFailureRecordInput,
   type WriteFailureRecordResult,

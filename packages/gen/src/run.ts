@@ -17,10 +17,10 @@
 
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createModelClient } from "./client-factory.js";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs, type RuleDocs } from "./contract.js";
 import { writeFailureRecord } from "./failure.js";
+import { createHttpModelClient } from "./http/client.js";
 import type { ModelClient } from "./model-client.js";
 import { generateOneModel } from "./pipeline.js";
 import { loadBaseTemplate } from "./prompt.js";
@@ -45,7 +45,7 @@ export type GenerationOptions = {
   readonly configPath: string;
   /** `--model <slug>`:只跑一个模型。 */
   readonly modelFilter?: string;
-  /** 测试注入桩;缺省用真实 HTTP 客户端(票 08 之前会抛"未实现")。 */
+  /** 测试注入桩;缺省用真实 HTTP 客户端(`http/client.ts`,唯一允许联网的代码)。 */
   readonly createClient?: (config: ModelConfig) => ModelClient;
 };
 
@@ -89,7 +89,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     );
   }
 
-  const createClient = options.createClient ?? createModelClient;
+  const createClient = options.createClient ?? createHttpModelClient;
   // runId 与 generatedAt 取同一个时刻:前者进目录名 / 失败记录文件名,后者进记录里的留档位。
   const startedAt = now();
   const request: GenerationRequest = {
@@ -112,7 +112,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
       // 失败记录是给报告侧的旁证:写盘失败(权限 / 撞名)也按该模型失败记账,不抛不崩整批。
       const written = writeFailureRecord({
         root,
-        slug: model.slug,
+        model: model.slug,
         modelVersion: model.modelId,
         generatedAt: startedAt.toISOString(),
         runId: outcome.runId,

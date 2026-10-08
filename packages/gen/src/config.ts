@@ -15,6 +15,7 @@
 
 import { readFileSync } from "node:fs";
 import type { ModelParams } from "./model-client.js";
+import { isRecord } from "./record.js";
 import { parseYamlSubset } from "./yaml-lite.js";
 
 /** 三条端点族:本期已开通模型全落在它们里(hld §2.2.6)。新增一族才需要动适配层。 */
@@ -50,9 +51,6 @@ export type ModelsConfig = {
 /** 配置加载失败的统一出口:把逐字段问题拼成一份一次看完的清单。 */
 const configError = (filePath: string, issues: readonly string[]): Error =>
   new Error(`模型配置无效(${filePath}):\n${issues.map((issue) => `  - ${issue}`).join("\n")}`);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const readSource = (filePath: string): string => {
   try {
