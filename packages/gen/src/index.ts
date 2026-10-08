@@ -37,6 +37,40 @@ export {
 } from "./stub-client.js";
 export { createModelClient } from "./client-factory.js";
 export {
+  compileScript,
+  deriveScriptTsconfig,
+  parseTscVersion,
+  readTscVersion,
+  type CompileResult,
+  type ScriptTsconfig,
+} from "./compile.js";
+export {
+  scriptSizeLimit,
+  validateScript,
+  type ScriptLintPhase,
+  type ValidateResult,
+} from "./validate.js";
+export {
+  ARCHIVE_META_NAME,
+  STAGING_DIR_PREFIX,
+  SCRIPT_PRODUCT_NAME,
+  SCRIPT_SOURCE_NAME,
+  buildArchiveMeta,
+  commitArchive,
+  discardStagingDir,
+  openStagingDir,
+  sha256Hex,
+  type BuildArchiveMetaInput,
+  type CommitResult,
+} from "./archive.js";
+export {
+  generateOneModel,
+  type FailureClassification,
+  type GenerationLogEntry,
+  type ModelFailure,
+  type ModelOutcome,
+} from "./pipeline.js";
+export {
   generateAndFreeze,
   runGeneration,
   type GenerationOptions,

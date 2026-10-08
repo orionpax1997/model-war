@@ -1,21 +1,42 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { RULESET_VERSION } from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 import type { ModelConfig } from "./config.js";
 import type { ModelClient } from "./model-client.js";
 import { generateAndFreeze, runGeneration } from "./run.js";
 import { fail, reply, stubClient, type StubClient } from "./stub-client.js";
 
+const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-run-`);
 afterAll(() => rmSync(scratch, { force: true, recursive: true }));
 
 const CONTRACT_RULES = "# rules\n\n机制正文:这里是规则契约。\n";
 const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
+/** 一份能过编译与静态校验的最简参赛脚本(票 02 起,回文本要真的能进存档)。 */
+const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
 
-/** 造一个临时根:契约两份文档 + `prompts/base.md` + `models.yaml`。 */
+/**
+ * 把仓库的安装面(编译与校验的依赖)接进临时根:`--root` 在真实使用里就是安装根。
+ * 用符号链接而不是拷贝,让 fixture 与仓库同源。
+ */
+const installRuntime = (root: string): void => {
+  symlinkSync(join(repoRoot, "node_modules"), join(root, "node_modules"), "dir");
+  symlinkSync(join(repoRoot, "packages"), join(root, "packages"), "dir");
+  symlinkSync(join(repoRoot, "tsconfig.scripts.json"), join(root, "tsconfig.scripts.json"));
+  mkdirSync(join(root, "rulesets"), { recursive: true });
+  writeFileSync(
+    join(root, "rulesets", `${RULESET_VERSION}.json`),
+    readFileSync(join(repoRoot, "rulesets", `${RULESET_VERSION}.json`)),
+  );
+};
+
+/** 造一个临时根:契约两份文档 + `prompts/base.md` + `models.yaml` + 安装面。 */
 const writeRoot = (modelsYaml: string, baseTemplate = "契约:\n\n{{contract}}\n"): string => {
   const root = mkdtempSync(`${scratch}/root-`);
+  installRuntime(root);
   mkdirSync(join(root, "docs", "rules-v1"), { recursive: true });
   writeFileSync(join(root, "docs", "rules-v1", "rules.md"), CONTRACT_RULES);
   writeFileSync(join(root, "docs", "rules-v1", "api.md"), CONTRACT_API);
@@ -38,9 +59,9 @@ const entry = (slug: string, extra: readonly string[] = []): readonly string[] =
 const configOf = (...entries: readonly (readonly string[])[]): string =>
   ["models:", ...entries.flat()].join("\n") + "\n";
 
-it("顺利路径:经端口发一次请求、回得脚本文本,退出码 0", async () => {
+it("顺利路径:经端口发一次请求、回得合法脚本,退出码 0", async () => {
   const root = writeRoot(configOf(entry("alpha")));
-  const stub = stubClient([reply("function loop() { return []; }\n")]);
+  const stub = stubClient([reply(VALID_SCRIPT)]);
   const code = await runGeneration({
     root,
     configPath: "models.yaml",
@@ -86,8 +107,8 @@ it("模型没配 strategy 时,发出的 prompt 不留 `{{strategy}}` 也不留�
 
 it("`--model` 只跑选中的那一个,其余模型不发请求", async () => {
   const root = writeRoot(configOf(entry("alpha"), entry("beta")));
-  const alpha = stubClient([reply("alpha")]);
-  const beta = stubClient([reply("beta")]);
+  const alpha = stubClient([reply(VALID_SCRIPT)]);
+  const beta = stubClient([reply(VALID_SCRIPT)]);
   const code = await runGeneration({
     root,
     configPath: "models.yaml",
