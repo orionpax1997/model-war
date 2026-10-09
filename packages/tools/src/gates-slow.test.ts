@@ -1,8 +1,10 @@
 /**
- * 门禁自测里**慢的那一半**:契约自证门禁的四问与三个反例,以及会 spawn 全量 `check` 的那一条。
+ * 门禁自测里**慢的那一半**:契约自证门禁的四问与三个反例、跨进程一致性门禁的正例与反例,
+ * 以及会 spawn 全量 `check` 的那一条。
  *
- * 为什么不与 `gates.test.ts` 合在一起:同机实测(2026-10,Node v24 / Linux x64),本文件里这 5 条
- * 用例合计约 **350s**,而 `gates.test.ts` 那 30 条合计约 **43s**——一个 8:1 的比例。
+ * 为什么不与 `gates.test.ts` 合在一起:同机实测(2026-10,Node v24 / Linux x64),本文件里这几条
+ * 用例合计约 **350s**(加上跨进程那两条真沙箱用例后更多),而 `gates.test.ts` 那 30 条合计约 **43s**
+ * ——一个 8:1 以上的比例。
  * 更关键的是其中一条(`--same-script` 反例要证「三对都掉到 0/9」,一个关于指标的论断)必须跑全矩阵,
  * 它自己就 220s。**把 43s 的东西和 350s 的东西捆在一个脚本里,等于让每次想跑快的那一半的人
  * 付出慢的那一半的价钱**,于是两个后果二选一:要么整个门禁自测没人跑,要么它每天都跑,
@@ -105,6 +107,35 @@ it("契约自证门禁:三份换成同一份 → ④ 变红,还原 → 绿", () 
   expect(same.output, same.output).toContain("A vs B：分开 0/9 项");
 
   expect(selfproof().status, "还原后没有回到绿").toBe(0);
+});
+
+// ── 跨进程一致性门禁:正式样本绿一次 + 反例红一次 ────────────────────────
+//
+// 门禁脚本 `packages/tools/src/cross-process/run-cross-process-gate.ts` 走 CLI 主接缝
+// (`match` 进程 A → `verify` 进程 B),它的位置纪律在 `gates.test.ts`。这里跑它本身。
+// 反例用 `--tamper`(门禁把回放里一个 tick 的 `stateHash` 改掉一位再交给 verify),不动仓库里的任何东西。
+
+it(
+  "跨进程一致性门禁:正式样本 match → verify 逐 tick 一致,退出 0(真沙箱)",
+  { timeout: 300_000 },
+  () => {
+    const result = script("check:cross-process");
+    expect(result.status, result.output).toBe(0);
+    expect(result.output, result.output).toContain("cell-a-melee-pressure");
+    expect(result.output, result.output).toContain("进程 B(verify):退出码 0");
+    expect(result.output, result.output).toContain("逐项一致");
+    expect(result.output, result.output).toContain("逐 tick hash:一致");
+    expect(result.output, result.output).toContain("跨进程一致性门禁:绿");
+  },
+);
+
+it("跨进程一致性门禁:改一 tick 的 stateHash 即红,还原后绿", { timeout: 300_000 }, () => {
+  const tampered = script("check:cross-process", ["--tamper"]);
+  expect(tampered.status, `改了一个 tick 门禁仍为绿:\n${tampered.output}`).not.toBe(0);
+  expect(tampered.output, tampered.output).toContain("逐 tick hash:**不一致**");
+  expect(tampered.output, tampered.output).toContain("跨进程一致性门禁:红");
+  // 「还原」= 无参数再跑一次回到绿:门禁只碰临时目录,仓库状态全程未被触碰,所以无需手动还原。
+  expect(script("check:cross-process").status, "还原后没有回到绿").toBe(0);
 });
 
 // 与 gates.test.ts 的兜底清理同形态:进程被硬杀时 finally 根本没机会跑。
