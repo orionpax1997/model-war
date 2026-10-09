@@ -468,12 +468,12 @@ export const renderReportMarkdown = (input: ReportMarkdownInput): string => {
     out.push("");
   }
 
-  // ── 校验失败名单(没拿到参赛资格;来源 = gen 侧 failed-<runId>.json) ──
+  // ── 校验失败名单(本季没参赛的模型;来源 = gen 侧 failed-<runId>.json) ──
   out.push("## 校验失败名单", "");
   out.push(
-    "> 来源:gen 侧 `archive/<slug>/failed-<runId>.json`。这些模型没通过静态校验 / 传输耗尽,",
+    "> 来源:gen 侧 `archive/<slug>/failed-<runId>.json`,**只列本季未参赛的模型**。这些模型没通过",
   );
-  out.push("> **没有参赛资格**,与下面的「对局问题清单」是两回事。", "");
+  out.push("> 静态校验 / 传输耗尽,**没有参赛资格**,与下面的「对局问题清单」是两回事。", "");
   if (report.validationFailures.length === 0) {
     out.push("本节为空:没有模型在校验阶段失败。", "");
   } else {
@@ -519,12 +519,22 @@ export const writeReportMarkdown = (filePath: string, input: ReportMarkdownInput
 };
 
 /**
- * 扫 `archive/<slug>/failed-*.json` 读出校验失败名单(模型没拿到参赛资格)。
+ * 扫 `archive/<slug>/failed-*.json` 读出校验失败名单(本季没拿到参赛资格)。
  *
- * 只按文件名前缀 `failed-` 与目录结构找记录,不猜 runId:赛季的 runId 与 gen 的 runId 不同源,
- * 因此收录 `archive/` 下**全部**失败记录(按 `slug`、再按文件名升序,确定性)。
+ * 只按文件名前缀 `failed-` 与目录结构找记录,**不猜 runId**:赛季的 runId 与 gen 的 runId
+ * 不同源,无法只凭 runId 关联到本季。故收窄口径改为按 **slug 是否本季参赛**:一个 slug 只要
+ * 出现在 `participatingSlugs` 里,它遗留的历史失败记录就不算「没拿到参赛资格」(否则名单会与
+ * 本季主排名自相矛盾——同一 slug 既被列进名单、又在排名里)。收录的因此只是本季未参赛模型的
+ * 失败记录(按 `slug`、再按文件名升序,确定性)。
+ *
+ * 没走另两个候选:给 `season.yaml` 加 gen runId 引用要动契约(`season-config` / hld §9 / 范例);
+ * 只把名单改名成「历史记录」不解决矛盾。比对用目录段,它与记录里的 `model` 同源(gen 侧
+ * `failureRecordPath` 就用 `model` 当目录名)。
  */
-export const readFailureRecords = (root: string): readonly FailureRecord[] => {
+export const readFailureRecords = (
+  root: string,
+  participatingSlugs: ReadonlySet<string>,
+): readonly FailureRecord[] => {
   const archiveDir = join(root, "archive");
   let slugs: readonly string[];
   try {
@@ -537,6 +547,9 @@ export const readFailureRecords = (root: string): readonly FailureRecord[] => {
   }
   const records: FailureRecord[] = [];
   for (const slug of slugs) {
+    if (participatingSlugs.has(slug)) {
+      continue;
+    }
     const slugDir = join(archiveDir, slug);
     const files = readdirSync(slugDir)
       .filter((name) => name.startsWith(FAILURE_RECORD_PREFIX) && name.endsWith(".json"))

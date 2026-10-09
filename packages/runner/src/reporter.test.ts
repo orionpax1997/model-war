@@ -7,6 +7,7 @@ import { ReplayReadError } from "@model-war/replay";
 import type { RankPoints } from "./ranker.js";
 import { rankSeason } from "./ranker.js";
 import {
+  readFailureRecords,
   renderNarrative,
   renderReportJson,
   renderReportMarkdown,
@@ -337,7 +338,7 @@ it("selectRepresentativeMatches 挑法确定:逐模型取其最好名次的一�
   expect(selectRepresentativeMatches(report)).toEqual(selectRepresentativeMatches(report));
 });
 
-const failureRecordFixture = (): FailureRecord => ({
+const failureRecordFixture = (overrides: Partial<FailureRecord> = {}): FailureRecord => ({
   model: "alpha",
   modelVersion: "snapshot-1",
   generatedAt: "2026-01-01T00:00:00Z",
@@ -349,6 +350,7 @@ const failureRecordFixture = (): FailureRecord => ({
   generationLog: ["log 1"],
   diagnostics: ["diag 1"],
   message: "编译没过",
+  ...overrides,
 });
 
 const matchIssueFixture = (): MatchIssue => ({
@@ -409,10 +411,16 @@ it("renderReportMarkdown 是纯函数:同输入恒同输出", () => {
 
 it("落盘端到端:每局都有 narrative/<对局>.md,report.md 引用它们并含两份名单", async () => {
   const { root, configPath } = buildSeasonRoot();
-  // 放一条 gen 侧失败记录,验证报告会读出来并带来源指针。
+  // alpha 是本季参赛模型:它遗留的陈旧失败记录**不该**进名单(票 12 口径收窄)。
   writeFileSync(
     join(root, "archive", "alpha", "failed-gen-run-1.json"),
     `${JSON.stringify(failureRecordFixture(), null, 2)}\n`,
+  );
+  // epsilon 不是本季参赛模型:它的失败记录**要**进名单并带来源指针。
+  mkdirSync(join(root, "archive", "epsilon"), { recursive: true });
+  writeFileSync(
+    join(root, "archive", "epsilon", "failed-gen-run-2.json"),
+    `${JSON.stringify(failureRecordFixture({ model: "epsilon", runId: "gen-run-2" }), null, 2)}\n`,
   );
   const code = await scheduleSeason(
     { root, configPath },
@@ -423,7 +431,9 @@ it("落盘端到端:每局都有 narrative/<对局>.md,report.md 引用它们并
   const report = JSON.parse(
     readFileSync(join(root, "runs/fixture/report.json"), "utf8"),
   ) as SeasonReport;
+  // 只剩非参赛 slug 的那条;参赛 slug alpha 的陈旧记录被排除。
   expect(report.validationFailures).toHaveLength(1);
+  expect(report.validationFailures[0]?.model).toBe("epsilon");
 
   for (const match of report.matches) {
     const narrativePath = join(root, "runs/fixture/narrative", `${match.matchId}.md`);
@@ -435,11 +445,31 @@ it("落盘端到端:每局都有 narrative/<对局>.md,report.md 引用它们并
   expect(reportMd).toContain("## 排名");
   expect(reportMd).toContain("## 校验失败名单");
   expect(reportMd).toContain("## 对局问题清单");
-  expect(reportMd).toContain("`archive/alpha/failed-gen-run-1.json`");
+  // 收录非参赛 slug 的指针;不收录本季已参赛 slug 的陈旧指针。
+  expect(reportMd).toContain("`archive/epsilon/failed-gen-run-2.json`");
+  expect(reportMd).not.toContain("`archive/alpha/failed-gen-run-1.json`");
   expect(reportMd).toContain("alpha");
   // report.md 只引用代表性几篇(不是全部),但仍指向 narrative/ 下的对局文件。
   expect(reportMd).toContain("narrative/");
   expect(reportMd).toMatch(/\[c0-arena-s\d\]\(narrative\/c0-arena-s\d\.md\)/);
+});
+
+it("readFailureRecords:只收录 slug 不属于本季参赛集的失败记录", () => {
+  const root = mkdtempSync(join(scratch, "failures-"));
+  for (const slug of ["alpha", "epsilon"]) {
+    mkdirSync(join(root, "archive", slug), { recursive: true });
+  }
+  writeFileSync(
+    join(root, "archive", "alpha", "failed-gen-run-1.json"),
+    JSON.stringify(failureRecordFixture()),
+  );
+  writeFileSync(
+    join(root, "archive", "epsilon", "failed-gen-run-2.json"),
+    JSON.stringify(failureRecordFixture({ model: "epsilon", runId: "gen-run-2" })),
+  );
+
+  const records = readFailureRecords(root, new Set(["alpha"]));
+  expect(records.map((record) => record.model)).toEqual(["epsilon"]);
 });
 
 // ── S2:每局都有叙事(含被剔除的失败局) ───────────────────────────────────────
