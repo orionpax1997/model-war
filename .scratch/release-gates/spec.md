@@ -1,6 +1,6 @@
 # L 门禁、流水线、性能与存储
 
-Status: ready-for-agent
+Status: resolved
 
 图上的节点 L(`docs/diagrams/v0-milestone-dag.md` §4 收尾层节点表,波次 9)。工作单元 = `.scratch/release-gates/`,走 `grill-with-docs`(已完成,两轮九问)→ `to-spec`(本文件)→ `to-tickets` → `implement`。判据之家:`docs/hld.md` §2.2.7(脚本分层与门禁)、§12 开放项 #6/#7、§5.3 标定判据、§10.1/§10.3;条款在 `docs/srs.md` NFR-1(`:112-116`)/NFR-2(`:118-122`)/NFR-3(`:124-126`)/NFR-4(`:128-131`);重开决策 `docs/adr/0010-minimal-ci-pipelines.md`(ADR-0002 不建 CI 条款已 supersede)。**L 是当前唯一未开的主干格,四条硬依赖 G/R/K/I 全收口;另有一条虚线义务边 F ⇢ L。M2 的收尾并入本节点,M2 随本节点 PR 关账。** 词表用 `CONTEXT.md` 既有词条(含本轮新增:门禁／流水线／主流水线／夜间流水线／标定复算)。
 

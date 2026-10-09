@@ -6,7 +6,9 @@
 
 **Status:** resolved
 
-- [x] 两条链配置入库,快链与慢链各全绿一次
+## 验收
+
+- [x] 两条链配置入库;主链 `fast` 已在真实 GitHub Actions 上全绿一次,慢链成员已在本地逐条全绿(见 Answer 证据表)
 - [x] 流水线内无直调入口,失败等价于命名脚本失败
 - [x] 改错即红的冒烟验证存在
 
@@ -52,7 +54,7 @@
 
 **风险 / 离线处置**
 
-- **真实 GitHub Actions 未跑**:本票只做配置入库与本地等价性;推送与真实 Actions 验证由主线程做。
+- **真实 GitHub Actions 已跑(PR #13 合前回写)**:主链 `fast` 已在本 PR 分支真跑两次全绿——最新一次 run `37911562606` 跑在 head `cecc0d7`,此前一次 run `37909191975` 跑在当时的 head `86c2864`,`check:quick` 与 `test` 两 step 均 success。**夜间链 `nightly` 仍未触发过**(`schedule` 只作用于默认分支,合入 main 后才开始定时触发)。
 - **`schedule` 延迟/丢弃是常态**:值班口径以 `workflow_dispatch` 手动重跑一次为准,别把「没跑」当「全绿」。
 - **CI 不装 scc**(离线约束,不引第三方服务):`scan` 走脚本内探测,缺二进制写 `skipped` 标记并退 0;三夜基线之前不谈红线,artifact 里的 `meta.json` 会区分「今晚没装」与「今晚没代码」。
 - **`mutate` 实测 236s**(1155 mutant),夜间 `timeout-minutes: 300` 宽裕;若后续范围扩大需重估。

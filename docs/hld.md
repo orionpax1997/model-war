@@ -169,14 +169,14 @@
 
 #### 2.2.7 脚本分层与 CI 质量门禁
 
-门禁以**命名脚本手工触发**,不建 CI/CD 流水线(ADR-0002;流水线形态与仓库首个真实实现强相关)。下表**只登记归属层**——哪道门禁归哪一层、它管什么;**命令清单永远以 `package.json` 为真源,本文不复制**(复制过一次就漂:本表曾把 `check:quick` 写成 5 项,实际是 **6 步**):
+门禁以**命名脚本**为唯一执行入口(本地手工触发);ADR-0002 的「不建 CI/CD 流水线」条款已由 ADR-0010 重开,两层流水线已建成——主链 `.github/workflows/fast.yml`(PR 与主干 push 触发,成员 = `check:quick` + `test`)与夜间全量链 `.github/workflows/nightly.yml`(定时触发慢门禁与 `mutate`/`scan` 观测项);CI 只复核不新断言,失败等价于命名脚本失败。下表**只登记归属层**——哪道门禁归哪一层、它管什么;**命令清单永远以 `package.json` 为真源,本文不复制**(复制过一次就漂:本表曾把 `check:quick` 写成 5 项,实际是 **6 步**):
 
 | 归属层 | 入口(命令真源永远是 `package.json`) | 用途与归属说明 |
 |---|---|---|
 | 编辑循环(每轮) | `check:quick`(**6 步**) | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁;**零构建**,所以贴得住每轮编辑循环。链上的 `check:no-float` / `check:budget` 同样可单独敲(`check:budget` 只读规则集取值、键清单源码与文档文本,读到零个预算键 / 零个已定稿键按失败处理) |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);AI 实现与 spec 收口的唯一默认入口 |
 | 提交前全量 | `check` | `check:types` + 默认 `test` + `check:deps`(巡航 `dist` 而非 `src`,§2.2.10)+ `check:declared-deps`(读源码清单,与 `check:deps` 互补)+ **末尾复核组**;末尾复核组 = `check:drift` / `check:bench` / `check:runtime`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`);`check:runtime` 判 runtime bundle **三段**——入库产物与重新构建逐字节一致、sha256 与冻结常量相符、不含模块语法 |
-| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`test:gates`、`test:slow` | 慢门禁自测与契约自证;`check:selfproof` 拿终稿契约把 `benchmarks/` 三份产物过静态校验器 → 跑标定环那个桩的矩阵,只回答四问(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同),改契约、改 `rulesets/`、改自证桩时手工敲;`check:cross-process` 走 CLI 主接缝(`match` → `verify`)抽正式对局样本重跑并逐 tick 比对 `stateHash`(跨进程那一层);`check:limits` 用真引擎单进程跑入库基准脚本,判 NFR-3 的 X 与开放项 #6/#7 的两条停止断言(见 §10.1);`test:gates` 是门禁自测的快一半,`test:slow` 是慢的一半(契约自证四问 + 三个反例 + 会 spawn `check` 的那一条);它们**都不进 `check`、也不进默认 `test`**,按需手工跑,归属夜间流水线 |
+| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁自测与契约自证;`check:selfproof` 拿终稿契约把 `benchmarks/` 三份产物过静态校验器 → 跑标定环那个桩的矩阵,只回答四问(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同),改契约、改 `rulesets/`、改自证桩时手工敲;`check:cross-process` 走 CLI 主接缝(`match` → `verify`)抽正式对局样本重跑并逐 tick 比对 `stateHash`(跨进程那一层);`check:limits` 用真引擎单进程跑入库基准脚本,判 NFR-3 的 X 与开放项 #6/#7 的两条停止断言(见 §10.1);`check:budget-recheck` 重跑预算探针与三份基准脚本、判终值仍自洽(失效触发事件与命令见 §5.3 与 `.scratch/release-gates/budget-recheck-triggers.md`);`test:gates` 是门禁自测的快一半,`test:slow` 是慢的一半(契约自证四问 + 三个反例 + 会 spawn `check` 的那一条);它们**都不进 `check`、也不进默认 `test`**,按需手工跑,归属夜间流水线 |
 | 按需 → 夜间 | `mutate` / `scan` | **只观测、不设红线**(spec §7;三夜基线之前不谈红线)。`mutate` = Stryker 变异,范围限定 `engine` 结算管线(mutate glob 只认 `packages/engine/src/processor/`,配置 `stryker.config.mjs`),产物落 `reports/mutation/`;`scan` = `scc` 行数/复杂度观测(`scc` 是手动装的外部工具,`command -v scc` 失败写一份带 `skipped` 字段的 `reports/scan/meta.json` 并退 0),产物落 `reports/scan/`。两者都**不进 `check:quick`、也不进 `check`** |
 
 > `check:drift` / `check:bench` 刻意**不进 `check:quick`**:前者要一次 `tsc -b`(生产函数 import 真源包),后者要 spawn 一次 `tsc`。`check:declared-deps` 零构建,但要在每轮编辑循环里多付一次全源码树遍历加读 manifest,所以也留在 `check`。命名脚本里另有 `test`(默认功能测试:`unit` + `property`,不含类型检查、门禁自测或慢测试)、`generate`(提交前动作:重跑生成器产出全部生成物并入库,要一次构建,不是门禁)与 `test:props`(只跑 property,长时属性测试单独跑)。
@@ -246,7 +246,7 @@ project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自�
 任何一个常跑 project 拾取、默认 `test` 只包含 unit/property 且不含 slow),另有 `afterAll` 兜底清理探针。
 改动直接影响自证门禁覆盖范围时,再按需分别运行 `pnpm run check:selfproof` 与 `pnpm run test:slow`;两者均不属于默认快速验证。
 
-**主流水线**(每次 PR 与主干 push,全部通过才可合并;**尚未建成**,当前全部以命名脚本手工触发):
+**主流水线**(每次 PR 与主干 push,全部通过才可合并;**已建成**,ADR-0010):成员 = `check:quick` + `test` 两条命名脚本,真源 `.github/workflows/fast.yml`。下表五阶段是 ADR-0010 之前的形态草案、仅留档,阶段 2 的 `check:drift` 与阶段 5 的基准对打都不进主链,归夜间全量链(§2.2.7 归属层表「按需 → 夜间」与 `check` 末尾复核组):
 
 | 阶段 | 内容 | 对应需求 |
 |---|---|---|
@@ -256,7 +256,7 @@ project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自�
 | 4. 集成 | 样例对局端到端 + `modelwar verify` 重放一致性 + 重跑 10 次 hash 断言 | FR-2、NFR-1 |
 | 5. 基准 | `benchmarks/` 双模型基准脚本对打一个对局,断言正常终局(不判策略胜负) | srs §4 第 2 条的回归防线 |
 
-**夜间流水线**(定时或手动,不阻塞 PR):StrykerJS 变异测试(engine 优先);对 CI 可取到的对局样本批量 `modelwar verify`,守护"历史结果永远可复算"(NFR-2)。
+**夜间流水线**(定时或手动,不阻塞 PR;**已建成**,ADR-0010):StrykerJS 变异测试(engine 优先)与慢门禁全量;对 CI 可取到的对局样本批量 `modelwar verify`,守护"历史结果永远可复算"(NFR-2)。
 
 CI 环境无网络、无模型 API、无凭证——保证 CI 上跑的永远是无头引擎与固定脚本,与生产对局同构。
 
@@ -866,8 +866,8 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 5a | TypeScript 7.0 GA 时点 | **已收口**:7.0.2(2026-07-08 GA,Go 实现,`tsgo` 名已取消)为精确锁版,见 ADR-0002 锁定版本表。本项关闭。 |
 | 5b | 类型感知 lint 的可用性与耗时 | **已收口**:oxlint-tsgolint 已 stable(oxlint 1.86.0 `--help` 无 experimental 标记),进 `check:types` 不再并行试跑;版本耦合形状 `7.0.<tsPatch><golintPatch>` 由 `coupling` 断言脚本强制(§2.2.3)。耗时见 §2.2.7 实测表(只此一处,不在此复述)。本项关闭,后续只剩随仓库规模重测。 |
 | 5c | oxfmt 0.x 风险 | **已收口为接受风险**:官方称 JS/TS 已 100% 通过 Prettier conformance,未兑现的只是 1.0 发布;由 caret + lockfile + `oxfmt --check` 门禁兜住(ADR-0002)。**不设降级到 Prettier 的退路**。本项关闭。 |
-| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**已收口(停止条件归 L,本票据此收成可执行断言)**:深拷贝+深 freeze 与纯 clone 的差值,按「每 tick 四席各一次」换算成整局拷贝税,占**同一局墙钟 < 10%** 即停——超了即红,**不做零拷贝重构**(合并深 freeze 与 stateHash 规范化两次遍历会踩 `snapshot/traversal-independence.test.ts` 钉住的禁令)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(占比 **4.96%**)与测法见 `.scratch/release-gates/readings.md`,票 11 原始读数见 `.scratch/engine-core/readings.md` |
-| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**已收口(停止条件归 L,本票据此收成可执行断言)**:一个赛季(算例 75 局)的回放总量 **< 1 GiB**,且夜间一遍读完 **< 10 min**——超了即红,**不做压缩 / 增量回放**(真超的那天另开优化节点)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(单季 **171.1 MiB** / 一遍 **0.140 s**)与测法见 `.scratch/release-gates/readings.md`,票 11 原始读数见 `.scratch/engine-core/readings.md` |
+| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**已收口(停止条件归 L,本票据此收成可执行断言)**:深拷贝+深 freeze 与纯 clone 的差值,按「每 tick 四席各一次」换算成整局拷贝税,占**同一局墙钟 < 10%** 即停——超了即红,**不做零拷贝重构**(合并深 freeze 与 stateHash 规范化两次遍历会踩 `snapshot/traversal-independence.test.ts` 钉住的禁令)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(占比 **4.96%**)与测法见 `.scratch/release-gates/readings.md`,票 11 原始读数见 `.scratch/engine-core/readings.md`。**本项关闭** |
+| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**已收口(停止条件归 L,本票据此收成可执行断言)**:一个赛季(算例 75 局)的回放总量 **< 1 GiB**,且夜间一遍读完 **< 10 min**——超了即红,**不做压缩 / 增量回放**(真超的那天另开优化节点)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(单季 **171.1 MiB** / 一遍 **0.140 s**)与测法见 `.scratch/release-gates/readings.md`,票 11 原始读数见 `.scratch/engine-core/readings.md`。**本项关闭** |
 | 8 | 沙箱行为五条结论的复验 | **已收口**:五条各有可执行探针(`pnpm run probes:sandbox`,输出落盘 `.scratch/sandbox-executor/probe-output/`),2026-10-06 按 `quickjs-wasi@3.6.2` 复验并写回 §5.0;`check:quick` 的版本耦合断言(`pnpm run coupling:quickjs`)在根钉版一改即红并指向复验脚本与 §5.0。本项关闭。 |
 | 9 | A 的两条等效命题在首轮赛季上的复验 | 承自 A 收口时的交办账(`docs/diagrams/v0-milestone-dag.md` §7),归本 spec(`.scratch/season-scheduler/spec.md`)票 11。旧处(`v0-milestone-dag.md` §7)已改成指向本行的指针。**已收口**:关账条件是「首轮赛季读数含两条等效命题的复验结论,若仍未排期则明文写出『仍未排期』」——两条各给结论:命题 **② 已在终稿契约下复验通过**(证据 `.scratch/rules-landing/selfproof/report.md`、门禁 `check:selfproof`;首轮赛季用的是真实模型脚本而非命题要求的基准脚本口径,故本季读数不构成又一次测量);命题 **① 仍未排期**(窗口本身可疑须重推,返工方向与触发条件在 gdd《开放项》#8 记录 #13,窗口定案前根本无从复验)。结论、口径与读数缺口均写进 `.scratch/season-scheduler/e2e-readings.md` §10,不是留空。本项关闭。 |
 | 10 | `match` 的 spawn / 进程池 / 重跑编排 | 承自 G 收口时的交办账(`v0-milestone-dag.md` §4 的 G 行②)——`match` 只做成子进程入口,不对局编排。归 `packages/runner` 的 `scheduler`,本 spec 票 06 / 07。旧处已改成指向本行的指针。**已收口**:一条 `modelwar run` 跑完整轮(退出码 0),`c3-corridor-split-s2` 以 `engine-crash`(退出码 2)按 §8.4 重跑 1 次仍触发,记入对局问题清单并排除出排名(`excludedFromRanking: true`)。读数在 `.scratch/season-scheduler/e2e-readings.md` §3 / §4。本项关闭。 |
