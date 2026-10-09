@@ -1,0 +1,18 @@
+{
+  "model": "mimo-v2.6-flash",
+  "modelVersion": "xiaomi/mimo-v2.6-flash",
+  "generatedAt": "2026-10-08T15:35:01.236Z",
+  "runId": "2026-10-08T15-35-01-236Z",
+  "ruleset": "v1",
+  "classification": "transport",
+  "protocolRounds": 0,
+  "prompts": [],
+  "generationLog": [],
+  "diagnostics": [
+    "传输错误:请求 https://api.commandcode.ai/provider/v1/chat/completions 失败:The operation was aborted due to timeout",
+    "传输错误:请求 https://api.commandcode.ai/provider/v1/chat/completions 失败:The operation was aborted due to timeout",
+    "传输错误:请求 https://api.commandcode.ai/provider/v1/chat/completions 失败:The operation was aborted due to timeout",
+    "传输错误:请求 https://api.commandcode.ai/provider/v1/chat/completions 失败:The operation was aborted due to timeout"
+  ],
+  "message": "模型 mimo-v2.6-flash 第 1 轮传输失败:重试 3 次后仍失败(共 4 次尝试)"
+}
