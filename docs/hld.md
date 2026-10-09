@@ -169,7 +169,7 @@
 
 #### 2.2.7 脚本分层与 CI 质量门禁
 
-门禁以**命名脚本手工触发**,不建 CI/CD 流水线(ADR-0002;流水线形态与仓库首个真实实现强相关)。下表**只登记归属层**——哪道门禁归哪一层、它管什么;**命令清单永远以 `package.json` 为真源,本文不复制**(复制过一次就漂:本表曾把 `check:quick` 写成 5 项,实际是 **6 步**):
+门禁以**命名脚本**为唯一执行入口(本地手工触发);ADR-0002 的「不建 CI/CD 流水线」条款已由 ADR-0010 重开,两层流水线已建成——主链 `.github/workflows/fast.yml`(PR 与主干 push 触发,成员 = `check:quick` + `test`)与夜间全量链 `.github/workflows/nightly.yml`(定时触发慢门禁与 `mutate`/`scan` 观测项);CI 只复核不新断言,失败等价于命名脚本失败。下表**只登记归属层**——哪道门禁归哪一层、它管什么;**命令清单永远以 `package.json` 为真源,本文不复制**(复制过一次就漂:本表曾把 `check:quick` 写成 5 项,实际是 **6 步**):
 
 | 归属层 | 入口(命令真源永远是 `package.json`) | 用途与归属说明 |
 |---|---|---|
@@ -246,7 +246,7 @@ project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自�
 任何一个常跑 project 拾取、默认 `test` 只包含 unit/property 且不含 slow),另有 `afterAll` 兜底清理探针。
 改动直接影响自证门禁覆盖范围时,再按需分别运行 `pnpm run check:selfproof` 与 `pnpm run test:slow`;两者均不属于默认快速验证。
 
-**主流水线**(每次 PR 与主干 push,全部通过才可合并;**尚未建成**,当前全部以命名脚本手工触发):
+**主流水线**(每次 PR 与主干 push,全部通过才可合并;**已建成**,ADR-0010):成员 = `check:quick` + `test` 两条命名脚本,真源 `.github/workflows/fast.yml`。下表五阶段是 ADR-0010 之前的形态草案、仅留档,阶段 2 的 `check:drift` 与阶段 5 的基准对打都不进主链,归夜间全量链(§2.2.7 归属层表「按需 → 夜间」与 `check` 末尾复核组):
 
 | 阶段 | 内容 | 对应需求 |
 |---|---|---|
@@ -256,7 +256,7 @@ project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自�
 | 4. 集成 | 样例对局端到端 + `modelwar verify` 重放一致性 + 重跑 10 次 hash 断言 | FR-2、NFR-1 |
 | 5. 基准 | `benchmarks/` 双模型基准脚本对打一个对局,断言正常终局(不判策略胜负) | srs §4 第 2 条的回归防线 |
 
-**夜间流水线**(定时或手动,不阻塞 PR):StrykerJS 变异测试(engine 优先);对 CI 可取到的对局样本批量 `modelwar verify`,守护"历史结果永远可复算"(NFR-2)。
+**夜间流水线**(定时或手动,不阻塞 PR;**已建成**,ADR-0010):StrykerJS 变异测试(engine 优先)与慢门禁全量;对 CI 可取到的对局样本批量 `modelwar verify`,守护"历史结果永远可复算"(NFR-2)。
 
 CI 环境无网络、无模型 API、无凭证——保证 CI 上跑的永远是无头引擎与固定脚本,与生产对局同构。
 
