@@ -70,7 +70,7 @@ import {
   type MatchInputArchive,
   type MatchInputArchives,
 } from "@model-war/schema";
-import { enumerateMatchUps, type MatchUp } from "./enumerate.js";
+import { enumerateMatchUps, slugOf, type MatchUp } from "./enumerate.js";
 import { DEFAULT_RANK_POINTS, perMatchScores, rankSeason, type MatchStanding } from "./ranker.js";
 import type { MatchIssue, MatchIssueReason, SeasonMatchReport, SeasonReport } from "./reporter.js";
 import { readFailureRecords, writeReportArtifacts, writeReportJson } from "./reporter.js";
@@ -585,8 +585,12 @@ export const scheduleSeason = async (
     rankPoints,
     matches,
     standings,
-    // 校验失败名单:扫 archive/<slug>/failed-*.json(模型没拿到参赛资格;票 09)。
-    validationFailures: readFailureRecords(root),
+    // 校验失败名单:扫 archive/<slug>/failed-*.json,只留本季未参赛的 slug
+    // (本季已参赛 slug 的历史失败记录不计;票 09 收窄口径,票 12)。
+    validationFailures: readFailureRecords(
+      root,
+      new Set(season.participants.map((archiveRef) => slugOf(archiveRef))),
+    ),
     matchIssues,
   };
   writeReportJson(join(outputDir, "report.json"), report);
