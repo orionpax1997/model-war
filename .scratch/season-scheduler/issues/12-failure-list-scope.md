@@ -7,7 +7,7 @@
 
 **Blocked by:** 无(I 的交付缺陷,票 09 的实现口径问题)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 证据(season 票 11)
 
@@ -30,10 +30,10 @@
 
 ## 验收
 
-- [ ] 真实赛季(或 fixture)里:报告不再把本季已参赛的模型列进「没有参赛资格」名单。
-- [ ] 新的口径在 `reporter.ts` 注释与报告文案里各写一次、不互相复述;若动 `season.yaml`,同步 hld §9 与范例。
-- [ ] `reporter.test.ts` 补齐:陈旧失败记录 + 本季成功存档并存时的断言。
-- [ ] `pnpm run verify:fast` 全绿。
+- [x] 真实赛季(或 fixture)里:报告不再把本季已参赛的模型列进「没有参赛资格」名单。
+- [x] 新的口径在 `reporter.ts` 注释与报告文案里各写一次、不互相复述;若动 `season.yaml`,同步 hld §9 与范例。(未动契约)
+- [x] `reporter.test.ts` 补齐:陈旧失败记录 + 本季成功存档并存时的断言。
+- [x] `pnpm run verify:fast` 全绿。
 
 ## Comments
 
@@ -64,3 +64,8 @@
 - `pnpm exec vitest run --project unit packages/runner/src/reporter.test.ts` → 15/15 通过(改前该文件因 `readFailureRecords` 少参编译失败,为红)。
 - `pnpm exec vitest run --project unit packages/runner` → 6 suites / 81 tests 全绿。
 - `pnpm run check:quick` → 格式、lint、toolchain/quickjs 耦合、禁浮点、预算门禁全绿。
+
+**合并与收口证据:**
+
+- 落地 commit **`31405dc`**(在 `main` 上,无独立票分支 / merge commit)。
+- `pnpm run verify:fast` 全绿(**92 files / 987 tests**)——原先只记在该 commit 的 message 里,回写本票时补入此处。
