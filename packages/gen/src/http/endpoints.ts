@@ -31,6 +31,34 @@ export type EndpointSpec = {
     params: ModelParams,
   ) => Record<string, unknown>;
   readonly parseResponse: (json: unknown) => ModelResponse;
+  /** 可选流式能力;不声明即非流式(响应按 content-type 回退到一次性 JSON)。见 `StreamingEndpoint`。 */
+  readonly streaming?: StreamingEndpoint;
+};
+
+/** 逐帧累积器:SSE 把一次响应摊成多帧,累积器把它重新拼回 `ModelResponse`。 */
+export type StreamAccumulator = {
+  /** 喂一帧(已 `JSON.parse` 过的帧);端点族自己决定读哪些字段。 */
+  readonly push: (frame: unknown) => void;
+  /** 收流(`[DONE]`)后的统一形状;缺省语义与非流式 `parseResponse` 保持一致。 */
+  readonly result: () => ModelResponse;
+};
+
+/**
+ * 一条端点族的**流式能力**。
+ *
+ * ── 为什么是可选字段,不是人人都有 ──
+ *
+ * 三族的 SSE 帧形状并不相同,而本期只有 `chat-completions` 走过真实流式验证面。给另两族写
+ * 没被任何真实响应验证过的翻译,只会造出「看起来支持」的假象——留成可选字段,缺省即非流式,
+ * 声明它才是「这条端点族的流式读法被验证过」。
+ *
+ * - `buildBody` 造**带流式字段**的请求体(与非流式 `buildBody` 同源,只叠加 `stream` 之类);
+ * - `createAccumulator` 造一个逐帧累积器,每次 `push` 接到一帧;`result` 给出与非流式
+ *   `parseResponse` **同形**的返回值,于是端口(`ModelResponse`)不必知道传输是不是流式的。
+ */
+export type StreamingEndpoint = {
+  readonly buildBody: EndpointSpec["buildBody"];
+  readonly createAccumulator: () => StreamAccumulator;
 };
 
 /**
@@ -63,6 +91,54 @@ const chatCompletionsBody: EndpointSpec["buildBody"] = (config, messages, params
   messages: messages.map(toWireMessage),
   ...params,
 });
+
+/**
+ * 流式请求体 = 非流式请求体叠加 `stream: true` 与 `stream_options.include_usage`。
+ *
+ * `include_usage` 是 OpenAI 取 token 读数的标准开关:不打开时收尾帧不带 `usage`,`meta.generationLog`
+ * 就整段缺 token 数。两者排在 `...params` **之后**,故调用方 params 里的同名键压不过本层——
+ * 「这条请求走流式」是端点族的传输决定,不是可被模型配置覆盖的生成参数。
+ */
+const chatCompletionsStreamBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
+  ...chatCompletionsBody(config, messages, params),
+  stream: true,
+  stream_options: { include_usage: true },
+});
+
+/**
+ * 逐帧累积 chat-completions 的流:正文增量拼 `text`,终点帧的 `finish_reason` 定 `finishReason`,
+ * 最后一个非空 `usage` 帧定 `usage`。
+ *
+ * 只认 `delta.content`:**不认 `delta.reasoning_content`**。推理增量不是产物(实测推理型模型先吐
+ * 一大段 `reasoning_content` 再吐正文),把它拼进 `text` 等于把半截思维链当脚本写盘、并回喂给下一轮。
+ */
+const createChatCompletionsAccumulator = (): StreamAccumulator => {
+  let text = "";
+  let finishReason: string | undefined;
+  let usage: unknown;
+
+  return {
+    push: (frame) => {
+      const root = asRecord(frame);
+      const choice = asRecord(asArray(root.choices)[0]);
+      const delta = asRecord(choice.delta);
+      text += stringField(delta, "content") ?? "";
+
+      // 首帧与中途帧都带 `finish_reason: null`;只被「最后一个非空值」覆盖(终点帧 / 截断的 length)。
+      const frameFinish = stringField(choice, "finish_reason");
+      if (frameFinish !== undefined && frameFinish.length > 0) {
+        finishReason = frameFinish;
+      }
+
+      // usage 只在开 `include_usage` 时的收尾帧出现,而中途帧可能带 `usage: null`——取最后一个
+      // **非空**值,别被后者清掉。保持 OpenAI 原形(含 `completion_tokens_details.reasoning_tokens`)。
+      if (root.usage !== undefined && root.usage !== null) {
+        usage = root.usage;
+      }
+    },
+    result: () => ({ text, finishReason: finishReason ?? "stop", usage }),
+  };
+};
 
 const parseChatCompletions: EndpointSpec["parseResponse"] = (json) => {
   const root = asRecord(json);
@@ -164,6 +240,10 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         path: "/chat/completions",
         buildBody: chatCompletionsBody,
         parseResponse: parseChatCompletions,
+        streaming: {
+          buildBody: chatCompletionsStreamBody,
+          createAccumulator: createChatCompletionsAccumulator,
+        },
       };
     case "messages":
       return { path: "/messages", buildBody: messagesBody, parseResponse: parseMessages };
