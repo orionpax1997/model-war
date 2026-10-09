@@ -1,0 +1,48 @@
+=== runs/seat-rotation-topup/h-corridor-split-s0/ ===
+modelwar match: 494 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-corridor-split-s0/replay.jsonl(runner=quickjs,shortcut)
+exit=0
+=== runs/seat-rotation-topup/h-corridor-split-s1/ ===
+modelwar match: 571 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-corridor-split-s1/replay.jsonl(runner=quickjs,shortcut)
+exit=0
+=== runs/seat-rotation-topup/h-corridor-split-s2/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-corridor-split-s2/replay.jsonl(runner=quickjs,timeout)
+exit=0
+=== runs/seat-rotation-topup/h-corridor-split-s3/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-corridor-split-s3/replay.jsonl(runner=quickjs,timeout)
+exit=0
+=== runs/seat-rotation-topup/h-fortress-core-s0/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-fortress-core-s0/replay.jsonl(runner=quickjs,timeout)
+exit=0
+=== runs/seat-rotation-topup/h-fortress-core-s1/ ===
+modelwar match: 565 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-fortress-core-s1/replay.jsonl(runner=quickjs,victory)
+exit=0
+=== runs/seat-rotation-topup/h-fortress-core-s2/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-fortress-core-s2/replay.jsonl(runner=quickjs,timeout)
+exit=0
+=== runs/seat-rotation-topup/h-fortress-core-s3/ ===
+modelwar match: 454 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-fortress-core-s3/replay.jsonl(runner=quickjs,shortcut)
+exit=0
+=== runs/seat-rotation-topup/h-open-clash-s0/ ===
+modelwar match: 386 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-open-clash-s0/replay.jsonl(runner=quickjs,victory)
+exit=0
+=== runs/seat-rotation-topup/h-open-clash-s1/ ===
+modelwar match: 542 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-open-clash-s1/replay.jsonl(runner=quickjs,shortcut)
+exit=0
+=== runs/seat-rotation-topup/h-open-clash-s2/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-open-clash-s2/replay.jsonl(runner=quickjs,timeout)
+exit=0
+=== runs/seat-rotation-topup/h-open-clash-s3/ ===
+modelwar match: 570 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/h-open-clash-s3/replay.jsonl(runner=quickjs,shortcut)
+exit=0
+=== runs/seat-rotation-topup/s-aaaa-corridor-split/ ===
+modelwar match: 363 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/s-aaaa-corridor-split/replay.jsonl(runner=quickjs,shortcut)
+exit=0
+=== runs/seat-rotation-topup/s-aaaa-open-clash/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/s-aaaa-open-clash/replay.jsonl(runner=quickjs,timeout)
+exit=0
+=== runs/seat-rotation-topup/s-bbbb-corridor-split/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/s-bbbb-corridor-split/replay.jsonl(runner=quickjs,timeout)
+exit=0
+=== runs/seat-rotation-topup/s-bbbb-open-clash/ ===
+modelwar match: 600 tick 已结算,回放写入 /home/qingtian/workspace/model-war/runs/seat-rotation-topup/s-bbbb-open-clash/replay.jsonl(runner=quickjs,timeout)
+exit=0
