@@ -122,7 +122,7 @@
 | FR-1 AC2 四方对等 | `deepEqual(rotate90(m).seats[i], m.seats[(i+1)%4])` |
 | FR-3 AC1 不可变性 | `step` 后原 `state` 深比较不变 |
 | NFR-1 整数闭包 | `step` 输出全为整数(动态补静态类型之漏) |
-| FR-7 AC1 种子与座位派生 | 同名输入必同输出、组合间无碰撞;各 seat 的对局数之差 ≤ 1(M×K 为 4 的倍数时严格相等) |
+| FR-7 AC1 种子与座位派生 | 同名输入必同输出、组合间无碰撞;各 seat 的对局数精确相等(要求 M×K ≡ 0 (mod 4)) |
 | FR-8 AC1 排名 | 名次分守恒、参赛者置换不变(纯函数,§8.2) |
 
 **已知陷阱**:`JSON.stringify(-0) === "0"`,往返丢符号。全整数 + JSONL 的组合正好踩在这上面——属性测试会逮到,手写例子测试不会。
@@ -141,7 +141,7 @@
 
 | 项 | 选择 | 依据 |
 |---|---|---|
-| 真源 | **`schema` 包 = 五类数据形状(规则集 / 地图 / 存档 meta / result / 回放行)的 TS 类型与 JSON Schema + 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移。每类形状的**家只有这一个**,别的包不再重复声明(§3.1、§7.5) |
+| 真源 | **`schema` 包 = 六类数据形状(规则集 / 地图 / 存档 meta / result / 回放行 / 失败记录)的 TS 类型与 JSON Schema(失败记录只交 TS 类型与文件名前缀常量——它不走读入端校验,不配半截 schema,见 §7.4)+ 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移。每类形状的**家只有这一个**,别的包不再重复声明(§3.1、§7.5) |
 | JSON Schema 的形态 | **导出的数据对象(`.ts` 里 `export const X_JSON_SCHEMA`),不是独立 `.json` 文件** | ajv 接受 JS 对象,不需要文件;`description` 是写给模型看的说明,写在源码里自然,顺带避开 `resolveJsonModule` 与本仓库编译配置的组合风险(ADR-0003) |
 | 文档生成 | **数值表**由 `rulesets/v1.json` + `schema` 的参数键清单(键序、量纲、标定状态、说明)共同生成,且在 `rules.md` 与 `api.md` **两份文档里各挂一份、逐字节相同**——两个落点出自同一个生产函数,不是两处各自维护;**API 表 / 常量表**由 `schema` 的注入面符号表生成,落在 `api.md`。**散文部分人工编写**,两者是同一份文件里的两种所有权,所以生成物取**区块形态**(两行定界标记之间是生成物,标记之外不比) | 生成物进版本库,漂移检查(`check:drift`,§2.2.7)逐件判定「重生成后无差异 + 生成物在版本库里」,未重新生成或未提交即报错(FR-10 AC1:文档里的数值表与 API 表必须真的是当前规则集的) |
 | 数据格式校验 | JSON Schema 归真源包(交付**数据**),**校验器只在 `apps/cli` 一处**(唯一一份 `ajv` 实例,导出 `validateMap` / `validateRuleset` 两个纯函数) | 真源包受 §3.2 的包依赖规则约束、不能依赖 ajv;CLI 是唯一用户面,外部数据(文件 / 参数 / 子进程输出)全从它进来,一处校验覆盖全部入口(§2.2.8)。诊断分两层:机器层透出 ajv 原始条目,面向模型层渲染成短句并**对同类错误合并成一行** |
@@ -747,11 +747,11 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ```
 
 - 编译责任在 gen 包(定版前完成),engine 不引入 tsc(§2.2.8)。
-- `meta.json` 的**形状家归真源包**(§2.2.5),十一项字段已由本 feature 的 01 票定死(`packages/schema/src/archive-meta.ts` 的类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。
+- `meta.json` 的十一项字段的形状家在 `packages/schema/src/archive-meta.ts`(类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。
 - **runner 启动即校验元数据完整性**,缺档**报错退出**(FR-6 AC2,不跳过)。**这里的「runner」指本 feature 的那个进程——第一个执行脚本的进程**(即 `modelwar match` 的装载段),不是赛季调度器 `runner` 那个包;赛季调度复用同一条校验路径,不复写。不消歧的话「runner」两个包都算。
 - **写盘原子、一跑一目录**:`script.ts` + `script.js` + `meta.json` 先在临时目录组装,冻结期校验(编译步骤 + `run-validate-script.ts --phase freeze --max-bytes <rulesets 取值>`)全过,才 rename 到 `archive/<modelSlug>/<runId>/`;目标已存在(秒级 `runId` 撞车)即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量,§7.1 的缺档判据不会被半截产物误触。`runId` 是生成时间戳,旧目录不删——这就是「定版副本不可变」的落地方式。
 - **协议轮数与 prompt 链**:`meta.protocolRounds` 是**模型调用总轮数,含初次生成**(第 1 轮 = 初次生成,之后每轮回喂一次校验错误);`meta.prompts` 逐条记该轮**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等(读入端已断言,§2.2.5)。传输层错误(429 / 5xx / 超时)与截断(`finishReason = length`)走退避**重试同一轮、不消耗协议轮数**,重试耗尽才另记一类失败——如此「轮数上限」始终指校验驱动的迭代、跨模型可比。
-- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport`),供报告侧(I)读成失败名单。`archive/` 只收已通过校验的冻结脚本(FR-5 AC2、FR-6);名字与语义见 CONTEXT 的《校验失败记录》。
+- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport`),供报告侧(I)读成失败名单。`archive/` 只收已通过校验的冻结脚本(FR-5 AC2、FR-6);名字与语义见 CONTEXT 的《校验失败记录》,形状家归真源包(§2.2.5),`packages/schema/src/failure-record.ts`。
 - 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。哈希取每座存档的 `script.js` / `meta.json` 各一份与地图一份,**不含 `script.ts`**(复算认编译产物,定版源码的不可变由 gen 保证,FR-6 AC1);**座位由 `archives` 的下标承载**(下标即 `playerIndex`),轮换算法归赛季调度物化期,不进这份文件。
 
 ### 7.5 回放 JSONL(`matches/<...>/replay.jsonl`)
@@ -773,15 +773,15 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 
 ### 8.1 对局枚举与座位轮换
 
-- 输入:`season.yaml`(参赛脚本存档目录列表、地图池、种子数 K、并发度、ruleset 版本)。
+- 输入:`season.yaml`(参赛存档引用列表、地图池、种子数 K、并发度、`rankPoints`、ruleset 版本、根种子 `masterSeed`)。字段、取值域与默认值的真源 = `packages/runner` 的 zod season schema(`src/season-config.ts`);格式范例见仓库根 `season.example.yaml`。**本节只写字段意图,不复制 schema 细节**。
 - 枚举:全部 4 人组合 × M 地图 × K 种子(srs FR-7 AC1);种子值 = 确定性函数(组合、地图、序号),同一对局的输入物化对全体参赛者一致。
-- **座位轮换**:把组合内 4 名参赛者按 slug 升序为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4` 循环移位。**精确均摊要求 `M × K ≡ 0 (mod 4)`**(地图数通常为 3,故 K 需为 4 的倍数;K 具体取多少由 gdd《开放项》#6 的裁决给出,本节只给均摊条件);不满足时各座位的对局数最多差 1,差额落在同一相对位次——该残留不对称由 §12 的座位胜率统计验证,不做逐座位校正。分配对全体一致且完全确定(FR-7 AC1)。
+- **座位轮换**:把组合内 4 名参赛者按 slug 升序为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4` 循环移位。**精确均摊要求 `M × K ≡ 0 (mod 4)`**(地图数通常为 3,故 K 需为 4 的倍数;K 具体取多少由 gdd《开放项》#6 的裁决给出,本节只给均摊条件);不满足时**直接报错**(不静默产生偏移清单)。分配对全体一致且完全确定(FR-7 AC1)。
 - 并发:进程池语义的对局子进程池,并发度默认 `min(cpus, 8)`;对局之间互不干扰。
 
 ### 8.2 排名(名次积分制)
 
 - 名次由 gdd《胜利与淘汰》的排序规则决定(引擎在 `outcome` 中给出),`runner:ranker` 只做**纯函数记账**:名次分向量由赛季配置给出(`season.yaml` 的 `rankPoints`,默认 `[3,2,1,0]`,**不进 `rulesets/`**——赛制不该经 rules-vN 泄漏给模型);并列名次分 = 并列名次区间分值之和 ÷ 并列人数(并列第 2 → (2+1)/2 = 1.5)。
-- 赛季总分 = Σ 对局得分;对局均分排名;Elo 为可选副产品输出,不进主报告标题(FR-8 AC1)。
+- 赛季总分 = Σ 对局得分;对局均分排名,只保证主排名(FR-8 AC1)。**Elo 不在 v0 内**——裁决见 `.scratch/season-scheduler/spec.md`《Out of Scope》,hld 不再把 Elo 写成 v0 的产物。
 
 ### 8.3 报告输出(`runs/<runId>/`)
 
@@ -800,7 +800,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 命令 | 模块 | 说明 |
 |---|---|---|
 | `modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>]` | gen | 生成并冻结脚本;根目录解析同 `match`(默认 cwd),`--config` 相对根;`--model` 只跑一个模型。gen 启动时若 `<root>/.env` 存在即 `process.loadEnvFile()`,凭据只经 `process.env[credentialEnvVar]` 读 |
-| `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告 |
+| `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告。根目录解析同 `match`(默认 cwd),`--config` 相对根;对局阶段**不联网**,故**不加载 `.env`**(与 `gen` 相反) |
 | `modelwar match <input.json>` | engine | 执行一个对局(runner 与调试都走这条路径) |
 | `modelwar replay <replay.jsonl>` | apps/cli → `replay` | 终端 ASCII 回放,单步/暂停;只读回放,**不依赖 engine** |
 | `modelwar verify <replay.jsonl>` | apps/cli → engine + `replay` | 按 input.json 重新执行,逐 tick hash 比对(CI 调用);不起子进程 |
@@ -870,3 +870,6 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**观测项不是承诺**,不裁「优化到什么程度算完」——停止条件归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
 | 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**观测项不是承诺**,不裁方案——存储/IO 方案归 L(读数与测法见 `.scratch/engine-core/readings.md`) |
 | 8 | 沙箱行为五条结论的复验 | **已收口**:五条各有可执行探针(`pnpm run probes:sandbox`,输出落盘 `.scratch/sandbox-executor/probe-output/`),2026-10-06 按 `quickjs-wasi@3.6.2` 复验并写回 §5.0;`check:quick` 的版本耦合断言(`pnpm run coupling:quickjs`)在根钉版一改即红并指向复验脚本与 §5.0。本项关闭。 |
+| 9 | A 的两条等效命题在首轮赛季上的复验 | 承自 A 收口时的交办账(`docs/diagrams/v0-milestone-dag.md` §7),归本 spec(`.scratch/season-scheduler/spec.md`)票 11。关账条件:首轮赛季读数(`.scratch/season-scheduler/e2e-readings.md`)含两条等效命题的复验结论;若仍未排期,读数里须明确写出「仍未排期」而不是留空。旧处(`v0-milestone-dag.md` §7)已改成指向本行的指针。 |
+| 10 | `match` 的 spawn / 进程池 / 重跑编排 | 承自 G 收口时的交办账(`v0-milestone-dag.md` §4 的 G 行②)——`match` 只做成子进程入口,不对局编排。归 `packages/runner` 的 `scheduler`,本 spec 票 06 / 07。关账条件:一条 `modelwar run` 跑完整轮,并给出「退出码 2 / 3 重跑一次、再触发进问题清单并排除出排名」的读数。旧处已改成指向本行的指针。 |
+| 11 | H 的四项交办(选 ≥4 个真实模型 / `input.json` 物化 / 硬超时·崩溃重跑与剔除 / 回放读入端接线) | 承自 H 收口时的交办账(`.scratch/generation-pipeline/spec.md` 的历史件,原文不改),分别落本 spec 票 **11**(真实模型参赛集)/ **03**(对局元组,`input.json` 的物化输入)/ **07**(重跑与剔除)/ **02**(回放读入端 `parseReplay`)。关账条件:五条真实模型冻结 + 逐局 `input.json` 物化 + 崩溃/超时重跑剔除读数 + `parseReplay` 读入端落地。 |

@@ -16,10 +16,11 @@
  *
  * `runMatch` 的入参形状(`RunMatchParams` / 返回 `RunMatchResult`)随它导出:调用方要构造入参,
  * 就必须看得懂那几个字段,而它们是这条缝的**全部**表面(座席四元组、策略签名、sink)。
- * 状态模型(`GameState` / `Snapshot` / `Outcome`)随 `runMatch` 一起导出,理由同上。
+ * 状态模型(`GameState` / `Snapshot` / `Outcome`)与上文那些内部符号一样**不**导出:调用方经
+ * `RunMatchResult.finalState` 拿得到值、拿不到名字,少学的正是这一份名字面。
  *
- * 状态模型用 `type` 而非 `interface`:要进入回放的形状必须可赋给 schema 的 `JsonValue`,
- * 而只有类型别名拿得到隐式索引签名。
+ * 状态模型用 `type` 而非 `interface`,理由归 ADR-0002:全仓语法须可擦除,且要进回放的形状
+ * 必须可赋给 schema 的 `JsonValue`(只有类型别名拿得到隐式索引签名)。
  */
 
 export { runMatch } from "./run-match.js";

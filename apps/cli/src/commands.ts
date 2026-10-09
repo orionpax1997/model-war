@@ -54,7 +54,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
   {
     name: "run",
-    usage: "modelwar run --config season.yaml",
+    usage: "modelwar run --config season.yaml [--root <仓库根>]",
     summary: "整轮赛季 + 报告",
     provider: "@model-war/runner",
     handler: "runSeason",

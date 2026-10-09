@@ -1,53 +1,22 @@
 /**
  * runner 包:赛季调度、排名与报告(hld §3.1)。
  * 依赖方向单向:runner → schema;**不得 import engine**——runner 只以子进程 + 文件消费对局产物(hld §3.2)。
- * 空壳阶段只落对局枚举的第一步:四方组合。地图 × 种子 × 座位轮换的展开随调度器落地,
- * 种子数 K 等取值是 rulesets 参数,不写在这里。
- */
-
-import { RULESET_VERSION, type RulesetVersion } from "@model-war/schema";
-
-/** 一场对局的输入指向:四个座位 + 钉住的规则集版本。 */
-export type MatchUp = {
-  /** 与 `docs/rules-vN` / `rulesets/vN.json` 对齐;错配拒跑(hld §7.1) */
-  ruleset: RulesetVersion;
-  seats: readonly [string, string, string, string];
-};
-
-/**
- * 枚举 C(4, N) 四方组合(hld §2.1 的对局调度第一段)。
  *
- * 名册去重后按字典序排序,组合因而只依赖名册的内容而不依赖入参顺序——
- * 同名输入必同输出(FR-7 AC1)。座位按排序后的顺序落位;座位轮换是后续步骤。
+ * 本文件是**对外唯一入口**,只做再导出(域文件之间经这里互相看见的旧约定:枚举主体在
+ * `./enumerate.js` 而不是本文件,是为了避免 `index → scheduler → index` 的包内环——见该文件头注)。
+ *
+ * 四段各司其职:
+ * - `enumerate`:全部 4 人组合 × M 张地图 × K 个种子,带座位轮换与确定性种子;
+ * - `season-config`:`season.yaml` 的形状与装载(取值缺省语义由调用方注入);
+ * - `ranker`:名次积分纯函数 `rankSeason`;
+ * - `scheduler`:`runSeason` 处理器与可测核心 `scheduleSeason`(并发赛季 + 退出码驱动的重跑/剔除,票 06 → 07);
+ * - `reporter`:`report.json` 的形状与序列化(纯函数 `renderReportJson` + 薄壳落盘,票 08),
+ *   以及人类面产物 `report.md` / `narrative/<对局>.md`(纯函数 `renderReportMarkdown` /
+ *   `renderNarrative` + 薄壳 `writeReportArtifacts`,票 09)。
  */
-export const enumerateMatchUps = (players: readonly string[]): readonly MatchUp[] => {
-  const roster = [...new Set(players)].sort();
-  const matchUps: MatchUp[] = [];
-  for (let a = 0; a + 3 < roster.length; a += 1) {
-    for (let b = a + 1; b + 2 < roster.length; b += 1) {
-      for (let c = b + 1; c + 1 < roster.length; c += 1) {
-        for (let d = c + 1; d < roster.length; d += 1) {
-          const seats = fourSeatsAt(roster, a, b, c, d);
-          if (seats !== undefined) {
-            matchUps.push({ ruleset: RULESET_VERSION, seats });
-          }
-        }
-      }
-    }
-  }
-  return matchUps;
-};
 
-const fourSeatsAt = (
-  roster: readonly string[],
-  a: number,
-  b: number,
-  c: number,
-  d: number,
-): readonly [string, string, string, string] | undefined => {
-  const [first, second, third, fourth] = [roster[a], roster[b], roster[c], roster[d]];
-  if (first === undefined || second === undefined || third === undefined || fourth === undefined) {
-    return undefined;
-  }
-  return [first, second, third, fourth];
-};
+export * from "./enumerate.js";
+export * from "./ranker.js";
+export * from "./reporter.js";
+export * from "./season-config.js";
+export * from "./scheduler.js";
