@@ -18,10 +18,10 @@
  * 不确定超时 3(hld §9 的退出码表)。它是 CI 的入口,调用方只认退出码。
  */
 
-import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import {
+  parseReplay,
   stateHashOf,
   type ReplayLine,
   type ReplayResultLine,
@@ -47,21 +47,6 @@ const refuse = (message: string, details: readonly string[] = []): number => {
   reportFailure(COMMAND, { exitCode: EXIT_USAGE_OR_VALIDATION, message, details });
   return EXIT_USAGE_OR_VALIDATION;
 };
-
-const parseLines = (raw: string): readonly ReplayLine[] =>
-  raw.split("\n").flatMap((text, at) => {
-    if (text.trim() === "") {
-      return [];
-    }
-    try {
-      return [JSON.parse(text) as ReplayLine];
-    } catch (cause) {
-      throw new Error(
-        `第 ${String(at + 1)} 行不是合法 JSON:` +
-          `${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    }
-  });
 
 /** 逐 tick 比:先核每一行自洽,再核与本次重算逐项相同。返回差异清单(空即一致)。 */
 const compareTicks = (
@@ -114,7 +99,7 @@ export const runVerifyCommand = async (args: readonly string[]): Promise<number>
   // ── 读存档回放 ──
   let archivedLines: readonly ReplayLine[];
   try {
-    archivedLines = parseLines(readFileSync(replayPath, "utf8"));
+    archivedLines = parseReplay(replayPath);
   } catch (cause) {
     return refuse(
       `读不了回放 ${replayPath}:${cause instanceof Error ? cause.message : String(cause)}`,
