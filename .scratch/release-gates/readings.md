@@ -163,3 +163,28 @@ N=5/M=3/K=5)× 单局均值;读完时间 = 单季字节 ÷ 实测读盘速率。
 并用真引擎单进程跑真沙箱对局,**归按需→夜间层**:不进 `check:quick` / `check` / `test` /
 `verify:fast`(零构建性质不能破)。位置纪律在 `gates.test.ts`,正例与两侧反例(人为放大拷贝差值 /
 回放体量即红,去掉开关即绿)在 `gates-slow.test.ts`。
+
+---
+
+# `mutate` 深跑读数(票 07 本地全绿证据的观测项)
+
+票 06 只做了 `--dryRunOnly` 的 dry-run(19/1209 文件,见该票 `## Answer`),**没有真跑**;一次深跑
+的读数记在票 07「主/夜间流水线建成」的本地全绿证据里。本仓 `reports/` 被 `.gitignore` 排除,产物不
+入库,故把读数落在这里,使「夜间 `mutate` leg 的 `timeout-minutes: 300` 宽裕」这一声明可复核。
+
+| 项 | 值 |
+|---|---|
+| 命令 | `pnpm run mutate`(= `stryker run`) |
+| 结果 | exit 0 |
+| mutant 数 | **1155** |
+| worker | 4 |
+| 墙钟 | **236.0s** |
+| 产物落点 | `reports/mutation/`(`.gitignore` 排除) |
+| 来源 | 票 07 `.scratch/release-gates/issues/07-ci-pipelines-built.md` `## Answer` 的本地运行;本文件未重跑,数字照录 |
+
+口径:`stryker.config.mjs` 的 mutate glob 限定 `packages/engine/src/processor/**/*.ts`(结算管线)。
+236.0s 相对夜间 `timeout-minutes: 300` 留约 27% 余量。复现命令:
+
+```sh
+pnpm run mutate
+```

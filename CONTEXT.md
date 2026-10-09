@@ -114,5 +114,5 @@ PR 与合入触发的快链,只装 `check:quick` 与 `test`,无凭证离线可�
 _Avoid_: 夜间流水线(定时触发的慢链,不是同一条)。
 
 **夜间流水线**:
-定时触发的慢链,装 `check` / `test:gates` / `test:slow` / `check:selfproof` 与 `mutate` / `scan`,产物落盘供复核。
+定时触发的慢链,装慢门禁与观测项两组成员,产物落盘供复核;成员真源见 `.github/workflows/nightly.yml`。
 _Avoid_: 主流水线(合入触发的快链)。
