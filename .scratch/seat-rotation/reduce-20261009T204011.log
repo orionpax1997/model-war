@@ -1,0 +1,10 @@
+report: runs/2026-10-09T12-40-11-464Z/report.json
+counted matches: 60 (excluded: 0)
+seat | n | wins | winRate | Wilson95% | meanScore
+0 | 60 | 35 | 58.3% | [45.7%, 69.9%] | 2.22
+1 | 60 | 27 | 45.0% | [33.1%, 57.5%] | 1.75
+2 | 60 | 15 | 25.0% | [15.8%, 37.2%] | 1.05
+3 | 60 | 4 | 6.7% | [2.6%, 15.9%] | 0.98
+max spread: 51.7% -> 红(>15%)
+topup advice: 补矩阵 (tier=红(>15%), Wilson下限<20%的座位=[2,3])
+crosscheck: 4/4 replay.jsonl entries agree with report.json
