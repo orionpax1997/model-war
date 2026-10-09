@@ -9,6 +9,13 @@ dist/
 .oxlint-cache/
 .vitest/
 
+# 观测项产物(变异 / 扫描):每次重算的落盘快照,不入库
+reports/
+
+# Stryker 的沙箱与日志:变异体复制进沙箱后再插桩,不影响源码树
+.stryker-tmp/
+stryker.log
+
 # 本地子代理模型配置
 .pi/subagents-lite.json
 # codegraph 索引(由源码重建)
