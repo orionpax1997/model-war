@@ -1369,6 +1369,28 @@ it("契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆�
   expect(tailSteps(), "基准产物门禁被挤出了末尾那一组").toContain("pnpm run check:bench");
 });
 
+// ── 跨进程一致性门禁:按需,不在 check 里 ────────────────────────────────────
+//
+// 正例与反例(真沙箱跑一局,单次约 11s)在 `gates-slow.test.ts`。留在这里的只有它的**位置纪律**
+// ——那一条只读 manifest,耗时可忽略。它不进 `check` / 快门禁的理由与契约自证门禁同源:它要 spawn
+// 一次 `tsc -b` + esbuild 再真跑一局真沙箱,与快门禁的零构建性质不相容(spec §3 与用户故事 19)。
+
+it("跨进程一致性门禁按需跑:不在快链里,但有独立入口", () => {
+  const scripts = manifest().scripts;
+  // 缺席:它不在任何一个常跑入口里。
+  for (const entry of ["check", "check:quick", "check:types", "test", "verify:fast"] as const) {
+    expect(scripts[entry] ?? "", `跨进程门禁被放进快速入口 ${entry}`).not.toContain(
+      "check:cross-process",
+    );
+  }
+  // 也不在末尾那一组复核里——它按需跑,不是「提交内容对不对」的复核。
+  expect(tailSteps(), "跨进程门禁混进了末尾那一组").not.toContain("check:cross-process");
+  // 在场:按需入口还在(它是这件事的全部意义)。
+  expect(scripts["check:cross-process"] ?? "", "按需入口没了,这道门禁从此没人跑").toContain(
+    "run-cross-process-gate.ts",
+  );
+});
+
 // ── 反递归不变量 ─────────────────────────────────────────────────────────────
 
 it("gates 不在 unit 的拾取范围里(否则 check 会套娃成叉炸弹)", () => {
