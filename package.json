@@ -36,6 +36,7 @@
     "check:runtime": "node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts",
     "check:selfproof": "node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "check:cross-process": "node --disable-warning=ExperimentalWarning packages/tools/src/cross-process/run-cross-process-gate.ts",
+    "check:budget-recheck": "node --disable-warning=ExperimentalWarning packages/tools/src/budget-recheck/run-budget-recheck-gate.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
