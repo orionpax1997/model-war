@@ -36,6 +36,8 @@
     "check:runtime": "node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts",
     "check:selfproof": "node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "check:cross-process": "node --disable-warning=ExperimentalWarning packages/tools/src/cross-process/run-cross-process-gate.ts",
+    "mutate": "stryker run",
+    "scan": "node packages/tools/src/gate/run-scan-gate.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
@@ -43,6 +45,8 @@
     "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "^24.19.0",
     "dependency-cruiser": "^18.4.0",
     "esbuild": "^0.28.2",

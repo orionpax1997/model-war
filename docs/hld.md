@@ -111,7 +111,7 @@
 | 确定性回放 | 固定种子 + 固定脚本 → 逐 tick `stateHash` 断言;`modelwar verify` 重算比对 | FR-2 AC1、NFR-1 AC |
 | 地图校验 | `modelwar map-lint <maps/>` 对地图池跑单图与池两层断言(清单见 §7.2) | FR-1 AC2 |
 | 规则文档验收 | `benchmarks/` 下模型生成 ≥2 个基准脚本,仅凭 `docs/rules-v1` 编写 | FR-10 AC1、srs §4 第 2 条(模型 dry-run 流程,测试仅保证可运行) |
-| 变异测试 | StrykerJS(度量测试有效性);**尚未安装**,配置随引擎结算管线落地(ADR-0002:先装一个没有配置、也没有被任何脚本调用的 Stryker,只会让人以为这条门禁存在) | 夜跑体检 |
+| 变异测试 | StrykerJS(度量测试有效性);**已装**:devDependency 精确锁版 10.0.0,配置 `stryker.config.mjs` 落库,范围限定 `engine` 结算管线,脚本 `mutate` 挂夜间——**只落盘、不设红线**(ADR-0002 的「不装 Stryker」条款已 supersede) | 夜跑体检 |
 
 属性测试(收益最高的一层),把 AC 直接写成命题:
 
@@ -177,7 +177,7 @@
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);AI 实现与 spec 收口的唯一默认入口 |
 | 提交前全量 | `check` | `check:types` + 默认 `test` + `check:deps`(巡航 `dist` 而非 `src`,§2.2.10)+ `check:declared-deps`(读源码清单,与 `check:deps` 互补)+ **末尾复核组**;末尾复核组 = `check:drift` / `check:bench` / `check:runtime`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`);`check:runtime` 判 runtime bundle **三段**——入库产物与重新构建逐字节一致、sha256 与冻结常量相符、不含模块语法 |
 | 按需 → 夜间 | `check:selfproof`、`test:gates`、`test:slow` | 慢门禁自测与契约自证;`check:selfproof` 拿终稿契约把 `benchmarks/` 三份产物过静态校验器 → 跑标定环那个桩的矩阵,只回答四问(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同),改契约、改 `rulesets/`、改自证桩时手工敲;`test:gates` 是门禁自测的快一半,`test:slow` 是慢的一半(契约自证四问 + 三个反例 + 会 spawn `check` 的那一条);三者**都不进 `check`、也不进默认 `test`**,按需手工跑,归属夜间流水线 |
-| 按需 → 夜间(未落) | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 |
+| 按需 → 夜间 | `mutate` / `scan` | **只观测、不设红线**(spec §7;三夜基线之前不谈红线)。`mutate` = Stryker 变异,范围限定 `engine` 结算管线(mutate glob 只认 `packages/engine/src/processor/`,配置 `stryker.config.mjs`),产物落 `reports/mutation/`;`scan` = `scc` 行数/复杂度观测(`scc` 是手动装的外部工具,`command -v scc` 失败写一份带 `skipped` 字段的 `reports/scan/meta.json` 并退 0),产物落 `reports/scan/`。两者都**不进 `check:quick`、也不进 `check`** |
 
 > `check:drift` / `check:bench` 刻意**不进 `check:quick`**:前者要一次 `tsc -b`(生产函数 import 真源包),后者要 spawn 一次 `tsc`。`check:declared-deps` 零构建,但要在每轮编辑循环里多付一次全源码树遍历加读 manifest,所以也留在 `check`。命名脚本里另有 `test`(默认功能测试:`unit` + `property`,不含类型检查、门禁自测或慢测试)、`generate`(提交前动作:重跑生成器产出全部生成物并入库,要一次构建,不是门禁)与 `test:props`(只跑 property,长时属性测试单独跑)。
 
