@@ -1,4 +1,6 @@
-# 11: quickjs-ng GC 断言崩溃(真实脚本组合,确定性复现)
+# 12: quickjs-ng GC 断言崩溃(真实脚本组合,确定性复现)
+
+> 本票原误编为 11 号(与 `11-end-to-end-closeout.md` 重号),回写时改号为 **12**——它是节点 G 收口后新增的一张收尾票,不是原 11 票的一部分。
 
 **What to build:** 诊断并修掉一处**确定性**的引擎 / 沙箱崩溃:`I 真实赛季`(season 票 11)整轮 60 局里有 1 局
 (`c3-corridor-split-s2`)在 quickjs-wasi 里触发 GC 断言、子进程 `exitCode 2`(`engine-crash`),重跑一次仍触发,
@@ -6,7 +8,7 @@
 
 **Blocked by:** 无
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 复现
 
@@ -34,10 +36,10 @@ modelwar match: 引擎故障:RuntimeError: unreachable
 
 ## 验收
 
-- [ ] 有确定性复现脚本(存进本票或 `probes/`),不依赖真实凭证 / 网络。
-- [ ] 定位到根因(引擎 / 沙箱 / quickjs 绑定 三选一),给出最小化输入。
-- [ ] 修复后上述 `input.json` 跑满 600 tick、退出码 0;`pnpm run verify:fast` 全绿。
-- [ ] 若根因在 quickjs-ng 上游、短期修不掉:在本票写明、给出规避(引擎侧约束),不静默忽略。
+- [x] 有确定性复现脚本(存进本票或 `probes/`),不依赖真实凭证 / 网络。
+- [x] 定位到根因(引擎 / 沙箱 / quickjs 绑定 三选一),给出最小化输入。
+- [x] 修复后上述 `input.json` 跑满 600 tick、退出码 0;`pnpm run verify:fast` 全绿。
+- [x] 若根因在 quickjs-ng 上游、短期修不掉:在本票写明、给出规避(引擎侧约束),不静默忽略。
 
 ## Comments
 
@@ -104,6 +106,7 @@ JS 实现自身被中断只是普通异常、引用计数由解释器正常回�
 
 ### 验收与回归(均已实测)
 
+- 落地 commit **`773a900`**(在 `main` 上,无独立票分支 / merge commit)。
 - `node probes/quickjs-find-interrupt-gc/repro-match.mjs` → `modelwar match: 600 tick 已结算`、
   退出码 **0**(修复前:同一份 input 稳定 `exitCode 2`)。
 - `pnpm exec vitest run --project unit packages/engine` → **268 passed / 0 failed**(含新增两条
