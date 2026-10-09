@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0010
 ---
 
 # 工具链:pnpm 12 + TypeScript 7 + oxc 三件套,包间类型引用走 exports + project references

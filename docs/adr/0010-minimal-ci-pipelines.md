@@ -1,0 +1,20 @@
+---
+status: accepted
+---
+
+# 最小主/夜间流水线建成,ADR-0002 的「不建 CI/CD」条款作废
+
+ADR-0002 拒 CI 的理由是「流水线形态与仓库首个真实实现强相关」——F/G/H/I 全部收口后该前提已消失,而 DAG 的 L 交付物要求「主/夜间流水线建成」,与 hld §2.2.7「不建 CI/CD 流水线」直接互斥。故正式重开该条款:建最小 `.github/workflows/`,本地快反馈口径不变。
+
+## Considered Options
+
+- **只做本地命名脚本编排,改 DAG 措辞(落选)**:DAG `:253` 关 M2 的剩余工作明写「无 CI、无跨进程确定性门禁」,只做本地等于 M2 的缺口永远不关,hld 与 DAG 的矛盾也只是换一边藏。
+- **最小 `.github/workflows/`(采纳)**:主流水线 = PR/合入触发快链(`check:quick` + `test`),夜间流水线 = 定时触发慢链(`check` / `test:gates` / `test:slow` / `check:selfproof` + `mutate`/`scan`观测 + `check:budget-recheck`)。CI 只做复核不引入新断言;CI 无凭证、离线可跑(J 已办结)。
+- **一次到位加夜间全量红线(落选)**:`mutate`/`scan` 尚无基线就设红线只会得到一条天天红的流水线;grill 已裁两者在 L 内只观测不设红线,设红线的那天另开 ADR。
+
+## Consequences
+
+- **ADR-0002 状态改为 `superseded by ADR-0010`**,hld §2.2.7 的边界声明(`:170`/` :210`)由 L 第一票按现状改写,旧耗时基线留作历史。
+- **`verify:fast` 仍是本地快反馈唯一入口**,CI 失败等价于命名脚本失败,不新增「CI 专属」断言。
+- **夜间链的慢项(`mutate`/`scan`)只落盘观测**,分数/行数红线不在本 ADR 授权范围内。
+- **M2 的「无 CI」半句由本 ADR 关闭**,另一半「跨进程门禁」由 L 的跨进程一致性票关闭,M2 随 L 的 PR 关账。
