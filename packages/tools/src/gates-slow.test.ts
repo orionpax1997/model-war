@@ -174,6 +174,38 @@ it("单局墙钟与快照回放门禁:人为放大回放体量即红,还原后�
   expect(script("check:limits", ["--matches=2"]).status, "还原后没有回到绿").toBe(0);
 });
 
+// ── 标定复算门禁:终值下复算绿一次 + 失配语义两侧各红一次 ────────────────
+//
+// 门禁脚本 `packages/tools/src/budget-recheck/run-budget-recheck-gate.ts` 重跑预算探针与三份基准
+// 脚本（复算的实际断言在 `probe-harness.test.ts` 的三条 `复算:*` 用例里），它的位置纪律在
+// `gates.test.ts`。这里跑它本身。反例用 `--tamper-probe` / `--tamper-baseline`（门禁只改本进程传给
+// 被测测试的 env），不动仓库里的任何东西；还原 = 无参数再跑一次回到绿。
+
+it("标定复算门禁:终值下探针被截停、基准不被截停,退出 0", { timeout: 900_000 }, () => {
+  const result = script("check:budget-recheck");
+  expect(result.status, result.output).toBe(0);
+  expect(result.output, result.output).toContain("MW_BUDGET_RECHECK=1");
+  expect(result.output, result.output).toContain("探针:终值下三类探针均被截停");
+  expect(result.output, result.output).toContain("基准:终值预算下三份基准脚本均不被截停");
+  expect(result.output, result.output).toContain("推导:终值推导与规则集逐键自洽");
+  expect(result.output, result.output).toContain("预算复算门禁:绿");
+});
+
+it("标定复算门禁:探针不被截停 → 红,还原 → 绿", { timeout: 900_000 }, () => {
+  const tampered = script("check:budget-recheck", ["--tamper-probe"]);
+  expect(tampered.status, `探针不被截停门禁仍为绿:\n${tampered.output}`).not.toBe(0);
+  expect(tampered.output, tampered.output).toContain("预算复算门禁:红(探针未被截停)");
+  // 「还原」= 无参数再跑一次回到绿:门禁只碰临时进程的 env，仓库状态全程未被触碰。
+  expect(script("check:budget-recheck").status, "还原后没有回到绿").toBe(0);
+});
+
+it("标定复算门禁:基准被截停 → 红,还原 → 绿", { timeout: 900_000 }, () => {
+  const tampered = script("check:budget-recheck", ["--tamper-baseline"]);
+  expect(tampered.status, `基准被截停门禁仍为绿:\n${tampered.output}`).not.toBe(0);
+  expect(tampered.output, tampered.output).toContain("预算复算门禁:红(基准被截停)");
+  expect(script("check:budget-recheck").status, "还原后没有回到绿").toBe(0);
+});
+
 // 与 gates.test.ts 的兜底清理同形态:进程被硬杀时 finally 根本没机会跑。
 afterAll(() => {
   rmSync(`${repoRoot}${VIOLATING_SCRIPT_PROBE_PATH}`, { force: true });

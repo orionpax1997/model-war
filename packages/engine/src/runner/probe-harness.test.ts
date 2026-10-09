@@ -136,6 +136,18 @@ const envN = (name: string, fallback: number): number => {
 const readingsDir = process.env["MW_READINGS_DIR"];
 const fullSample = readingsDir !== undefined;
 
+/**
+ * 复算模式(门禁 `check:budget-recheck` 设 `MW_BUDGET_RECHECK`):把**终值预算**真正装上
+ * (探针与基准两侧),并把「终值仍自洽」变成断言——探针仍被截停、基准仍不被截停、终值推导与
+ * 规则集逐键一致。**不改读数模式的规模与落盘语义**(默认 run 与 `probes:budget` 都不设它)。
+ */
+const recheckMode = process.env["MW_BUDGET_RECHECK"] !== undefined;
+/**
+ * 复算的**反例开关**(门禁的 `--tamper-probe` / `--tamper-baseline` 映射到这里):`probe` 让一条
+ * 对抗探针不在终值轨上截停,`baseline` 把一条基准脚本用紧预算截停。两个值都只在复算模式下有意义。
+ */
+const recheckTamper = process.env["MW_RECHECK_TAMPER"] ?? null;
+
 /** 分配上限探针用的 `memoryLimit`(字节)。 */
 const capMemoryLimitBytes = envN("MW_CAP_LIMIT_BYTES", fullSample ? 8 << 20 : 1 << 20);
 /** 分配形态轴:每次请求一块多少字节的 `Uint8Array`。默认只跑一档。 */
@@ -175,7 +187,81 @@ const DEFAULT_HONEST_SCENARIO = {
   map: "open-clash",
   cells: [CELLS[0], CELLS[0], CELLS[0], CELLS[0]] as const,
 };
-const honestScenarios = fullSample ? FULL_HONEST_SCENARIOS : [DEFAULT_HONEST_SCENARIO];
+/**
+ * 复算只跑三份基准脚本各一场(同图同种子):判据是「终值下不被截停」与「推导仍自洽」,
+ * 不取读数分布——三场足以覆盖三份脚本,也足以让终值推导的四个峰值不再退化。
+ */
+const RECHECK_HONEST_SCENARIOS: readonly {
+  readonly id: string;
+  readonly map: string;
+  readonly cells: readonly string[];
+}[] = CELLS.map((cell) => ({
+  id: `${cell}-open-clash`,
+  map: "open-clash",
+  cells: [cell, cell, cell, cell],
+}));
+const honestScenarios = fullSample
+  ? FULL_HONEST_SCENARIOS
+  : recheckMode
+    ? RECHECK_HONEST_SCENARIOS
+    : [DEFAULT_HONEST_SCENARIO];
+
+/** 预算组装的运行时字段(与 `apps/cli` 的 `BUDGET_FIELDS` 同口径;`scriptSizeLimit` 是编译期的事)。 */
+const RUNTIME_BUDGET_FIELDS = [
+  "exceptionTickLimit",
+  "eventTickLimit",
+  "apiCallTickLimit",
+  "memoryLimit",
+  "memoryTickCeiling",
+  "wallClockSoftLimit",
+  "wallClockHardTimeout",
+] as const;
+type RuntimeBudgetField = (typeof RUNTIME_BUDGET_FIELDS)[number];
+type RuntimeBudget = Partial<Record<RuntimeBudgetField, number>>;
+
+/**
+ * 终值预算:只装键清单里 `calibration.state === "final"` 的轨——与组装层 `budgetOf` 同一判据
+ * (不是「值是不是 0」;失效退回未定值时会自动把该轨摘下)。复算必须把**终值键真正装上**:
+ * 诚实侧默认传空预算时,「不被截停」证明不了「终值下不被截停」。
+ */
+const finalBudgetOf = (ruleset: Ruleset): RuntimeBudget => {
+  const budget: RuntimeBudget = {};
+  for (const field of RUNTIME_BUDGET_FIELDS) {
+    if (RULESET_KEY_CATALOG[field].calibration.state === "final") {
+      budget[field] = ruleset[field];
+    }
+  }
+  return budget;
+};
+
+const RECHECK_FINAL_KEYS = RUNTIME_BUDGET_FIELDS.filter(
+  (field) => RULESET_KEY_CATALOG[field].calibration.state === "final",
+);
+const RECHECK_BUDGET = finalBudgetOf(RULESET);
+/** 复算里诚实侧要装的预算:`--tamper-baseline` 把事件轨压到 1(基准当场被截停)。 */
+const RECHECK_HONEST_BUDGET: RuntimeBudget =
+  recheckTamper === "baseline" ? { ...RECHECK_BUDGET, eventTickLimit: 1 } : RECHECK_BUDGET;
+
+/** 终值预算 → 探针座位选项(与 `apps/cli` 的 `budgetTracksOf` 同口径;缺席的轨不写)。 */
+const seatBudgetOptions = (
+  budget: RuntimeBudget,
+): {
+  readonly memoryLimit?: number;
+  readonly wallClockHardTimeout?: number;
+  readonly apiCallTickLimit?: number;
+  readonly memoryTickCeiling?: number;
+  readonly eventTickLimit?: number;
+} => ({
+  ...(budget.memoryLimit === undefined ? {} : { memoryLimit: budget.memoryLimit }),
+  ...(budget.wallClockHardTimeout === undefined
+    ? {}
+    : { wallClockHardTimeout: budget.wallClockHardTimeout }),
+  ...(budget.apiCallTickLimit === undefined ? {} : { apiCallTickLimit: budget.apiCallTickLimit }),
+  ...(budget.memoryTickCeiling === undefined
+    ? {}
+    : { memoryTickCeiling: budget.memoryTickCeiling }),
+  ...(budget.eventTickLimit === undefined ? {} : { eventTickLimit: budget.eventTickLimit }),
+});
 
 let wasmModule: WebAssembly.Module;
 let runtimeCode: string;
@@ -420,6 +506,8 @@ type HonestMatch = {
   readonly tickCount: number;
   readonly matchWallMs: number;
   readonly seatPeaks: readonly SeatPeaks[];
+  /** 收官时四个座位的 `exceptionTicks`（终值预算下应恒为 0：没有一条轨触限）。 */
+  readonly exceptionTicks: readonly number[];
 };
 
 type HonestSideReport = {
@@ -696,6 +784,8 @@ const runHonestMatch = async (scenario: {
         runtimeCode,
         scriptCode,
         seat: seat as PlayerIndex,
+        // 复算：把终值预算真装到探针座位上（缺席时保持今天「无阈值、纯量测」的读数形态）。
+        ...(recheckMode ? seatBudgetOptions(RECHECK_HONEST_BUDGET) : {}),
       }),
     ),
   );
@@ -713,7 +803,7 @@ const runHonestMatch = async (scenario: {
       head,
       players,
       runners: seats.map((seat) => seat.runner),
-      budget: {},
+      budget: recheckMode ? RECHECK_HONEST_BUDGET : {},
       sink: { write: () => {} },
     });
     const matchWallMs = performance.now() - started;
@@ -727,6 +817,10 @@ const runHonestMatch = async (scenario: {
         tickCount: result.status === "completed" ? result.tickCount : result.tick,
         matchWallMs,
         seatPeaks: seats.map((seat) => peakOfSeat(seat.readings)),
+        exceptionTicks:
+          result.status === "completed"
+            ? result.finalState.players.map((player) => player.exceptionTicks)
+            : [],
       },
       eventGrids,
     };
@@ -1262,6 +1356,100 @@ const renderReadingsMarkdown = (report: Report): string => {
     "",
   ].join("\n");
 };
+
+// ── 复算（门禁 `check:budget-recheck`）：终值预算真装着，判失配语义与终值自洽 ────────
+//
+// 这三条只在 `MW_BUDGET_RECHECK` 设上时跑（默认 `test` 与 `probes:budget` 都不设它）。
+// 「终值仍自洽」此前只渲染成 `readings.md` 的散文：推导与规则集不一致时没有任何断言会红。
+// 这里把它变成可执行断言，并把诚实侧从空预算换成**终值预算**——空预算下没有一条轨启用，
+// 「不被截停」证明不了任何事（spec 决策 6 的缺口）。
+
+it.runIf(recheckMode)("复算:终值下三类探针必被截停", async () => {
+  // 事件轨：死循环探针在终值事件上限上被截停。
+  const spin = await runBudgetProbeTick({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: EVENT_SPIN_PROBE_SCRIPT,
+    eventTickLimit: RULESET.eventTickLimit,
+  });
+  expect(
+    spin.trips.some((trip) => trip.track === EVENT_TRACK),
+    "死循环探针没有在终值事件轨上被截停",
+  ).toBe(true);
+  // API 轨：`--tamper-probe` 把上限抬到探针的燃烧量之上（它就不会被截停）。
+  const apiLimit = recheckTamper === "probe" ? apiBombCallsPerTick + 1 : RULESET.apiCallTickLimit;
+  const api = await runBudgetProbeTick({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: apiBombProbeScript(apiBombCallsPerTick),
+    apiCallTickLimit: apiLimit,
+  });
+  expect(
+    api.trips.some((trip) => trip.track === API_CALL_TRACK),
+    "API 轰炸探针没有在终值 API 轨上被截停",
+  ).toBe(true);
+  // 三轨异常探针：三条轨各在终值上限上被反复触发，累计异常 = tick 数。
+  const view = loadRuleset(RULESET);
+  const eventTrack = await runExceptionTrack(
+    EVENT_SPIN_PROBE_SCRIPT,
+    { eventTickLimit: RULESET.eventTickLimit },
+    view,
+  );
+  expect(eventTrack.totalExceptions, "事件计数轨在终值上限下没有被触发").toBe(exceptionProbeTicks);
+  const memoryTrack = await runExceptionTrack(
+    MEMORY_HOARD_PROBE_SCRIPT,
+    { memoryTickCeiling: RULESET.memoryTickCeiling },
+    view,
+  );
+  expect(memoryTrack.totalExceptions, "内存判罚线在终值上限下没有被触发").toBe(exceptionProbeTicks);
+  const apiTrack = await runExceptionTrack(
+    apiBombProbeScript(2000),
+    { apiCallTickLimit: RULESET.apiCallTickLimit },
+    view,
+  );
+  expect(apiTrack.totalExceptions, "API 计数轨在终值上限下没有被触发").toBe(exceptionProbeTicks);
+});
+
+it.runIf(recheckMode)("复算:终值预算下三份基准脚本必不被截停", () => {
+  expect(RECHECK_FINAL_KEYS.length, "没有任何终值键——复算无从谈起（防假绿）").toBeGreaterThan(0);
+  const honest = collected.honestSide;
+  expect(honest, "诚实侧没有跑完，复算无从谈起").toBeDefined();
+  if (honest === undefined) {
+    return;
+  }
+  expect(honest.matches.length, "没有跑过任何一场基准脚本").toBeGreaterThan(0);
+  for (const match of honest.matches) {
+    expect(match.status, `${match.id} 在终值预算下没有跑完`).toBe("completed");
+    expect(maxOf(match.exceptionTicks), `${match.id} 在终值预算下有轨触限（基准被截停）`).toBe(0);
+  }
+});
+
+/**
+ * 逐字相等断言**豁免**的键:墙钟两键的推导要用一次**负载敏感的墙钟读数**(`loopMsPeak`),
+ * 在竞争的机器上会漂(终值取的是观测机制下界,而读数只要超过它的二十分之一就会把它顶掉)。
+ * 它们的结构约束(2 的幂、硬 ≥ 20 × 软)由快门禁 `check:budget` 看着;行为侧(基准不被截停)
+ * 由本门禁的另两条用例看着。其余六键的读数在固定脚本 / 图 / 种子下是确定值,故逐字相等。
+ */
+const RECHECK_DERIVATION_EXEMPT: readonly string[] = ["wallClockSoftLimit", "wallClockHardTimeout"];
+
+it.runIf(recheckMode)("复算:终值推导与规则集逐键自洽", () => {
+  const report = buildReport();
+  const derivedByKey = new Map(
+    derivationsOf(report).map((derivation) => [derivation.key, derivation]),
+  );
+  const finalKeys = BUDGET_KEY_NAMES.filter(
+    (key) => RULESET_KEY_CATALOG[key].calibration.state === "final",
+  );
+  expect(finalKeys.length, "没有任何终值键——复算无从谈起（防假绿）").toBeGreaterThan(0);
+  for (const key of finalKeys) {
+    if (RECHECK_DERIVATION_EXEMPT.includes(key)) {
+      continue;
+    }
+    const derivation = derivedByKey.get(key);
+    expect(derivation, `终值键 ${key} 没有推导`).toBeDefined();
+    expect(derivation?.derived, `${key} 的重算值与规则集不一致`).toBe(RULESET[key]);
+  }
+});
 
 afterAll(() => {
   if (readingsDir === undefined) {

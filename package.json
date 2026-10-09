@@ -37,6 +37,7 @@
     "check:selfproof": "node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "check:cross-process": "node --disable-warning=ExperimentalWarning packages/tools/src/cross-process/run-cross-process-gate.ts",
     "check:limits": "node --disable-warning=ExperimentalWarning packages/tools/src/limits/run-limits-gate.ts",
+    "check:budget-recheck": "node --disable-warning=ExperimentalWarning packages/tools/src/budget-recheck/run-budget-recheck-gate.ts",
     "mutate": "stryker run",
     "scan": "node packages/tools/src/gate/run-scan-gate.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
