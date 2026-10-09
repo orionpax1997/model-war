@@ -138,6 +138,42 @@ it("跨进程一致性门禁:改一 tick 的 stateHash 即红,还原后绿", { t
   expect(script("check:cross-process").status, "还原后没有回到绿").toBe(0);
 });
 
+// ── 单局墙钟与快照回放门禁:正例绿一次 + 两侧反例各红一次 ────────────────────────
+//
+// 门禁脚本 `packages/tools/src/limits/run-limits-gate.ts` 用真引擎、真沙箱、单进程逐局跑入库基准
+// 脚本,判 #6(快照拷贝税占单局墙钟 < 10%)与 #7(单季回放 < 1 GiB 且一遍读完 < 10 min)两条停止
+// 断言。它 spawn 一次 `tsc -b` + 真跑对局,不是零构建,所以正例与反例都落在 slow project。
+// 反例用门禁自己的两个倍率开关(`--copy-inflate` / `--volume-inflate`),**不动仓库里的任何文件**;
+// 「还原」= 去掉开关再跑一次回到绿。`--matches=2` 只为把三舱里最小的采样跑出来(反例要证的是「放大即
+// 红」,不是读数的取值),判据一字不改。
+
+it("单局墙钟与快照回放门禁:默认阈值下 #6/#7 都绿,退出 0(真沙箱)", { timeout: 300_000 }, () => {
+  const result = script("check:limits", ["--matches=2"]);
+  expect(result.status, result.output).toBe(0);
+  expect(result.output, result.output).toContain("#6 快照拷贝");
+  expect(result.output, result.output).toContain("#7 单季回放");
+  expect(result.output, result.output).toContain("limits 门禁:绿");
+});
+
+it("单局墙钟与快照回放门禁:人为放大拷贝差值即红,还原后绿", { timeout: 300_000 }, () => {
+  const inflated = script("check:limits", ["--matches=2", "--copy-inflate=4"]);
+  expect(inflated.status, `放大拷贝差值后门禁仍为绿:\n${inflated.output}`).not.toBe(0);
+  expect(inflated.output, inflated.output).toContain("占单局墙钟");
+  expect(inflated.output, inflated.output).toContain("**红**");
+  expect(inflated.output, inflated.output).toContain("limits 门禁:红");
+  // 「还原」= 去掉开关再跑一次回到绿:门禁只碰临时目录,仓库状态全程未被触碰。
+  expect(script("check:limits", ["--matches=2"]).status, "还原后没有回到绿").toBe(0);
+});
+
+it("单局墙钟与快照回放门禁:人为放大回放体量即红,还原后绿", { timeout: 300_000 }, () => {
+  const inflated = script("check:limits", ["--matches=2", "--volume-inflate=8"]);
+  expect(inflated.status, `放大回放体量后门禁仍为绿:\n${inflated.output}`).not.toBe(0);
+  expect(inflated.output, inflated.output).toContain("#7 单季回放");
+  expect(inflated.output, inflated.output).toContain("**红**");
+  expect(inflated.output, inflated.output).toContain("limits 门禁:红");
+  expect(script("check:limits", ["--matches=2"]).status, "还原后没有回到绿").toBe(0);
+});
+
 // 与 gates.test.ts 的兜底清理同形态:进程被硬杀时 finally 根本没机会跑。
 afterAll(() => {
   rmSync(`${repoRoot}${VIOLATING_SCRIPT_PROBE_PATH}`, { force: true });
