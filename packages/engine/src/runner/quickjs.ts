@@ -31,6 +31,14 @@
  * 每 tick:`__setSnapshot(snapshot)` → `loop()` → `executePendingJobs()` 排空到不动点 →
  * `__drainIntents()`。删干净了的断言是「脚本按 `__` 前缀枚举为空」,而宿主仍能经函数 handle 调桥。
  *
+ * ── 为什么载入脚本前要灌一段 `Array.prototype.find` 家族 shim ──
+ *
+ * quickjs-ng 0.17.0(本仓 `quickjs-wasi@3.6.2` 内置)的 `js_array_find` 在中断点上会二次释放
+ * 元素(上游 #1792):宿主中断处理器恰好在 find 家族每轮顶部的检查处返回真时,异常出口把上一轮
+ * 已释放的元素再释放一次,下一次强制回收就命中 GC 断言并 trap。规避必须落在**不改变 guest runtime
+ * bundle 字节**的地方(runtime 的 sha256 被每份存档 meta 钉住),所以由宿主 `evalCode` 一段等价 JS
+ * 实现覆盖那四个方法。理由与上游线索见 `array-search-shim.ts`。
+ *
  * ── 排空到不动点为什么必须在 drain 之前 ──
  *
  * 单 tick 是同步的,但脚本可以用 `Promise.resolve().then(…)` 把一条意图推迟到一个 job 里。
@@ -91,6 +99,7 @@ import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset } from "@model-war/replay";
 
 import type { Intent } from "../processor/intents.js";
 import type { PlayerIndex, Snapshot } from "../world/state.js";
+import { ARRAY_PROTOTYPE_SEARCH_SHIM } from "./array-search-shim.js";
 import {
   HOST_BRIDGE_DRAIN_INTENTS,
   HOST_BRIDGE_SET_SNAPSHOT,
@@ -420,6 +429,12 @@ export const openSandbox = async (options: QuickJsSessionOptions): Promise<Sandb
         `delete globalThis[${JSON.stringify(HOST_BRIDGE_DRAIN_INTENTS)}];`,
       "<delete-bridges>",
     ).dispose();
+
+    // 上游缺陷规避:`Array.prototype.find` 家族在中断点上二次释放元素(quickjs-ng #1792,
+    // `js_array_find`)。把四个方法换成等价 JS 实现——只改实现、不新增全局名,故脚本可见面不变。
+    // 放在脚本载入之前,脚本与 guest runtime 用到的都是安全实现。理由与上游线索见
+    // `array-search-shim.ts`。
+    vm.evalCode(ARRAY_PROTOTYPE_SEARCH_SHIM, "<array-search-shim>").dispose();
 
     vm.evalCode(options.scriptCode, "<script>").dispose();
     const loopHandle = vm.global.getProp(SCRIPT_ENTRY);
