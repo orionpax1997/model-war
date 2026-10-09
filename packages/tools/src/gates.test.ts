@@ -49,7 +49,7 @@
  * 清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。
  */
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { afterAll, expect, it } from "vitest";
@@ -1437,4 +1437,87 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
   expect(manifest().scripts["test:slow"], "慢门禁自测没有落进可手工调用的脚本").toContain(
     "--project slow",
   );
+});
+
+// ── 变异 / 扫描观测:配置落库、范围限定、只进夜间 ────────────────────────────
+//
+// 两项都是**观测**,不是门禁:没有分数/行数红线,产物落盘供三夜基线对比(spec §7)。这里断言的
+// 因此不是「跑出多少分」,而是三件外部可观察的事:配置在不在、范围限不限定在 engine 结算管线、
+// 有没有混进常跑入口。真跑一遍变异(分钟级起,`pnpm run mutate`)不在这一层的预算里。
+//
+// 真跑那一遍的成本实测与首夜墙钟归 `.scratch/release-gates/readings.md`;这里只钉「配置存在且
+// scope 限定」——把「配置落地」误读成「分数达标」是 spec 明确要避免的那种读法。
+
+/** Stryker 配置的落点。读文本而不是 import:`.mjs` 无类型声明,import 会让 `tsc -b` 找不到声明。 */
+const STRYKER_CONFIG = `${repoRoot}stryker.config.mjs`;
+
+/** 从 `mutate: [ ... ]` 里抽出被引号包住的 glob 原文(含 `!` 排除项)。 */
+const mutateGlobs = (): readonly string[] => {
+  const array = /mutate:\s*\[([\s\S]*?)\]/.exec(readFileSync(STRYKER_CONFIG, "utf8"))?.[1] ?? "";
+  return [...array.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
+};
+
+it("Stryker 配置落库,且 mutate 范围限定在 engine 结算管线", () => {
+  const source = readFileSync(STRYKER_CONFIG, "utf8");
+
+  // 抽取本身要成立,否则下面几条会在空数组上安静通过(与「探针没打上补丁」同一条纪律)。
+  const globs = mutateGlobs();
+  expect(globs.length, `stryker.config.mjs 里抽不出 mutate 清单:\n${source}`).toBeGreaterThan(0);
+
+  const included = globs.filter((glob) => !glob.startsWith("!"));
+  expect(included.length, "mutate 里没有一条正向 glob").toBeGreaterThan(0);
+  for (const glob of included) {
+    expect(glob, `mutate 越界到了结算管线之外:${glob}`).toMatch(
+      /^packages\/engine\/src\/processor\//,
+    );
+  }
+  // 数据底座(`world/` 与 `snapshot/`)不在这里——它们的复验归别的格(spec §7)。
+  for (const glob of globs) {
+    expect(glob, `mutate 越界到了 world/snapshot:${glob}`).not.toMatch(/world|snapshot/);
+  }
+  // 预览范围不含同目录测试文件。
+  expect(source, "没有排掉 processor 下的测试文件").toContain(
+    "!packages/engine/src/processor/**/*.test.ts",
+  );
+  // 只落盘、不设红线:`break: null` 是可 grep、可 review 的那一条证据(ADR-0010)。
+  expect(source, "Stryker 配置里没有把阈值显式关掉").toContain("break: null");
+});
+
+it("变异 / 扫描只在夜间:不进任何常跑入口,但有独立脚本", () => {
+  const scripts = manifest().scripts;
+  // 在场:两个命名脚本都在(它们是这件事的全部意义)。
+  expect(scripts["mutate"] ?? "", "mutate 脚本没了").toContain("stryker run");
+  expect(scripts["scan"] ?? "", "scan 脚本没了").toContain("run-scan-gate.ts");
+
+  // 缺席:观测项不混进任何一个常跑入口——它们没有红线,挂在快链上只会拖慢反馈回路。
+  for (const entry of ["check", "check:quick", "check:types", "test", "verify:fast"] as const) {
+    const command = scripts[entry] ?? "";
+    expect(command, `变异测试被放进常跑入口 ${entry}`).not.toContain("mutate");
+    expect(command, `扫描观测被放进常跑入口 ${entry}`).not.toContain("scan");
+  }
+  // 也不在末尾那一组复核里——观测不是「提交内容对不对」的复核。
+  for (const step of tailSteps()) {
+    expect(step, "观测项混进了末尾复核组").not.toContain("mutate");
+    expect(step, "观测项混进了末尾复核组").not.toContain("scan");
+  }
+});
+
+it("scan 观测可调通:退出 0 且落盘口径 meta(装了记版本 / 没装记 skipped)", () => {
+  const result = script("scan");
+  expect(result.status, result.output).toBe(0);
+
+  const metaPath = `${repoRoot}reports/scan/meta.json`;
+  expect(existsSync(metaPath), `scan 没有落盘 meta:\n${result.output}`).toBe(true);
+  const meta = JSON.parse(readFileSync(metaPath, "utf8")) as {
+    tool?: string;
+    config?: string;
+    version?: string;
+    skipped?: string;
+  };
+  expect(meta.tool).toBe("scc");
+  expect(meta.config).toBe("none(--no-config)");
+  // 二者必居其一且互斥:「哪一版扫的」与「这一晚没扫」是两件事,不能都空也不能都有。
+  const hasVersion = meta.version !== undefined;
+  const hasSkipped = meta.skipped !== undefined;
+  expect(hasVersion !== hasSkipped, "装了与没装的标记必须恰有一个").toBe(true);
 });
