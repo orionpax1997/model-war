@@ -1,0 +1,94 @@
+# 夜间流水线(慢链 + 观测项):定时触发,手动可重跑。
+#
+# ── 触发 ──
+# schedule 的 cron 按 UTC 解释(tooling-forms §1.1:取 '37 3 * * *' 而不是整点——整点高负载,
+# 排队中的 job 会被丢弃)。定时触发只作用于默认分支,仓库连续 60 天无活动会被 GitHub 自动禁用。
+# 值班口径:以 `workflow_dispatch` 手动重跑一次为准,别把「没跑」当成「全绿」。
+#
+# ── 硬门禁 vs 观测项 ──
+# 单 job matrix + 矩阵项级 continue-on-error(不是 job 级!job 级会把红吞成 success)。
+#   硬门禁(check / test:gates / test:slow / check:selfproof / check:cross-process /
+#           check:limits / check:budget-recheck):红 = 该 job 红。
+#   观测项(mutate / scan):只落盘不设红线(ADR-0010、spec §7),红了不阻断别的 leg,
+#           但 steps.run.outcome 会写进产物——「今晚观测项自己红了」不被抹掉。
+# fail-fast: false 是硬要求:默认 true 会让第一条红把还在排队的观测项取消掉,
+# 于是「没产物」和「门禁红了」变成同一个现象,值班者分不开。
+#
+# ── 只调命名脚本 ──
+# 唯一的执行步是 `pnpm run ${{ matrix.script }}`;yaml 里不写裸命令,不新增任何 CI 专属断言。
+
+name: nightly
+
+on:
+  schedule:
+    # UTC 03:37。错开整点以降低定时 job 被丢弃的概率。
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+# 只读源码,最小权限;watch 与 cron 触发的 job 不出现任何凭证引用。
+permissions:
+  contents: read
+
+jobs:
+  legs:
+    name: ${{ matrix.script }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---- 硬门禁:红 = 该 job 红 ----
+          - { script: "check", advisory: false, timeout: 60 }
+          - { script: "test:gates", advisory: false, timeout: 60 }
+          - { script: "test:slow", advisory: false, timeout: 120 }
+          - { script: "check:selfproof", advisory: false, timeout: 60 }
+          - { script: "check:cross-process", advisory: false, timeout: 60 }
+          - { script: "check:limits", advisory: false, timeout: 60 }
+          - { script: "check:budget-recheck", advisory: false, timeout: 60 }
+          # ---- 观测项:红不阻断,只把 outcome 落盘(ADR-0010:只落盘不设红线)----
+          - { script: "mutate", advisory: true, timeout: 300 }
+          - { script: "scan", advisory: true, timeout: 30 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # 唯一的执行步。观测项的前置安装一律交给脚本自己负责,不在这里拼裸命令,
+      # 例如 `scan`:scc 缺二进制时脚本会写 skipped 标记并退 0(离线降级)。
+      - name: Run ${{ matrix.script }}
+        id: run
+        # step 级 continue-on-error:job 结论不受观测项影响,但 steps.run.outcome 仍是真实结果。
+        continue-on-error: ${{ matrix.advisory }}
+        run: pnpm run ${{ matrix.script }}
+
+      # 把「观测项自己红了」变成落盘产物。读 outcome 而不是 conclusion:continue-on-error 下
+      # conclusion 恒为 success,读它会把真实结果抹掉。
+      - name: Record outcome
+        if: always()
+        run: |
+          mkdir -p reports/legs
+          printf 'script=%s\nadvisory=%s\noutcome=%s\nconclusion=%s\n' '${{ matrix.script }}' '${{ matrix.advisory }}' '${{ steps.run.outcome }}' '${{ steps.run.conclusion }}' > 'reports/legs/${{ matrix.script }}.txt'
+          cat 'reports/legs/${{ matrix.script }}.txt'
+
+      # 门禁红了也要传产物——红的那次往往最需要看报告。artifact 名必须唯一(v4+ 同名直接失败)。
+      - name: Upload leg reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-${{ matrix.script }}-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
