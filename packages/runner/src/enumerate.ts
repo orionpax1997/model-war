@@ -114,7 +114,7 @@ export const enumerateMatchUps = (options: EnumerateMatchUpsOptions): readonly M
  * **不按整串比较**:`-`(0x2D)与 `.`(0x2E)都排在 `/`(0x2F)之前,于是整串排序会把 `a-b` 放到 `a`
  * 前面,与 slug 升序不一致。排序键写死成这一种,由测试钉住。
  */
-const slugOf = (archiveRef: string): string => archiveRef.split("/")[1] ?? archiveRef;
+export const slugOf = (archiveRef: string): string => archiveRef.split("/")[1] ?? archiveRef;
 
 /** slug 升序,slug 相同时以整串为稳定平局键。 */
 const bySlug = (left: string, right: string): number => {
