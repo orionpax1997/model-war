@@ -1,0 +1,57 @@
+# 主流水线(快链):PR 开/更新/重开与合入 main 时跑 `check:quick` + `test`。
+#
+# ── 只调命名脚本 ──
+# 两个 run 步都是 `pnpm run <script>`:CI 的失败信号只有一个来源——那条命名脚本本身
+# (ADR-0010「CI 失败等价于命名脚本失败」)。yaml 里不写裸命令,也不设「CI 专属」断言。
+#
+# ── 无凭证、离线可跑 ──
+# 全部 step 只有 checkout / setup / `pnpm install` / 命名脚本,没有一处凭证引用。
+# 版本与写法见 `.scratch/release-gates/../` 的调研与 ADR-0010;pnpm 版本由 packageManager 决定。
+
+name: fast
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 只读源码,最小权限;fork PR 拿到的 token 本来也只读,流水线里不出现任何凭证引用。
+permissions:
+  contents: read
+
+# 连推三次不跑三遍。只在 PR 上取消:合入 main 的那次必须跑完,否则会被后续 push 取消掉。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: 快链(check:quick + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # pnpm 必须先上 PATH:下面 setup-node 的 cache: pnpm 会 shell out 跑 `pnpm store path`,
+      # 顺序反了直接失败。省略 version → 读 package.json 的 packageManager(pnpm@12.8.1)。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      # --frozen-lockfile:CI 装出来的依赖树必须与 lockfile 一致,不能在这里悄悄改。
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: check:quick
+        run: pnpm run check:quick
+
+      - name: test
+        run: pnpm run test

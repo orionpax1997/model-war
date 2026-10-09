@@ -1,0 +1,396 @@
+{
+  "machine": {
+    "node": "v24.15.0",
+    "platform": "linux 7.0.0-34-generic",
+    "arch": "x64",
+    "cpus": 8
+  },
+  "options": {
+    "matches": 36,
+    "seed": 20260101,
+    "copyInflate": 1,
+    "volumeInflate": 1,
+    "seasonMatches": 75,
+    "readingsOut": ".scratch/release-gates/limits-readings.json",
+    "keep": false
+  },
+  "report": {
+    "samples": [
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260101,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2277.769577,
+        "replayBytes": 2167969,
+        "buildSnapshotMs": 0.213647999999921,
+        "cloneMs": 0.1873169999998936
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260102,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3604.727145,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.24640400000043883,
+        "cloneMs": 0.19493099999999686
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260103,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2429.5653390000007,
+        "replayBytes": 2122404,
+        "buildSnapshotMs": 0.21504499999900872,
+        "cloneMs": 0.16692300000067917
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260104,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2025.5409260000015,
+        "replayBytes": 2167969,
+        "buildSnapshotMs": 0.2471720000012283,
+        "cloneMs": 0.1847330000000511
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260105,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3519.3955100000003,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.24242300000150863,
+        "cloneMs": 0.18354600000020582
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260106,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2320.312541000001,
+        "replayBytes": 2122405,
+        "buildSnapshotMs": 0.20771199999944656,
+        "cloneMs": 0.159310999999434
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260107,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2004.1609790000002,
+        "replayBytes": 2167969,
+        "buildSnapshotMs": 0.2144159999988915,
+        "cloneMs": 0.16322199999922304
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260108,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3424.918013999999,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.2376040000017383,
+        "cloneMs": 0.18347600000197417
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260109,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2328.563583000003,
+        "replayBytes": 2122405,
+        "buildSnapshotMs": 0.2098069999992731,
+        "cloneMs": 0.1602180000008957
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260110,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2034.576925999998,
+        "replayBytes": 2167055,
+        "buildSnapshotMs": 0.21630200000072364,
+        "cloneMs": 0.16371000000071945
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260111,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3482.954608,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.24361100000169245,
+        "cloneMs": 0.19136900000012247
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260112,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2373.193578000002,
+        "replayBytes": 2122404,
+        "buildSnapshotMs": 0.21686100000079023,
+        "cloneMs": 0.169158000000607
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260113,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2079.2701989999987,
+        "replayBytes": 2167055,
+        "buildSnapshotMs": 0.24626400000124704,
+        "cloneMs": 0.18333700000221143
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260114,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3528.5295009999973,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.24968699999590172,
+        "cloneMs": 0.18759599999611964
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260115,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2374.545726999997,
+        "replayBytes": 2122405,
+        "buildSnapshotMs": 0.221399999994901,
+        "cloneMs": 0.16538700000091922
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260116,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2006.4045259999984,
+        "replayBytes": 2167055,
+        "buildSnapshotMs": 0.22398499999690102,
+        "cloneMs": 0.16336199999932433
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260117,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3913.8548660000015,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.2440989999959129,
+        "cloneMs": 0.19039000000339001
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260118,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2525.0774110000057,
+        "replayBytes": 2122405,
+        "buildSnapshotMs": 0.22237899999890942,
+        "cloneMs": 0.16454899999371264
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260119,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2281.5286350000024,
+        "replayBytes": 2167969,
+        "buildSnapshotMs": 0.22279700000217417,
+        "cloneMs": 0.16929800000070827
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260120,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3853.0163350000003,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.25736999999935506,
+        "cloneMs": 0.19744500000524567
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260121,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2467.232324999997,
+        "replayBytes": 2122404,
+        "buildSnapshotMs": 0.2225179999950342,
+        "cloneMs": 0.1693680000025779
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260122,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2052.263816999999,
+        "replayBytes": 2167969,
+        "buildSnapshotMs": 0.24081699999806006,
+        "cloneMs": 0.1760020000001532
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260123,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3510.689096000002,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.2745500000019092,
+        "cloneMs": 0.1989809999940917
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260124,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2366.8596400000024,
+        "replayBytes": 2122404,
+        "buildSnapshotMs": 0.2237749999985681,
+        "cloneMs": 0.16957800000091083
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260125,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2022.4703750000044,
+        "replayBytes": 2167055,
+        "buildSnapshotMs": 0.23369199999433476,
+        "cloneMs": 0.18410499999299645
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260126,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3509.9475799999927,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.2656110000098124,
+        "cloneMs": 0.19877199998882134
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260127,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2505.8000690000044,
+        "replayBytes": 2122405,
+        "buildSnapshotMs": 0.22265799999877345,
+        "cloneMs": 0.16769200000271667
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260128,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2012.1690390000003,
+        "replayBytes": 2167055,
+        "buildSnapshotMs": 0.22628899999835994,
+        "cloneMs": 0.17139299999689683
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260129,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3489.4308840000012,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.25806800001009833,
+        "cloneMs": 0.20380000000295695
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260130,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2368.9755860000005,
+        "replayBytes": 2122405,
+        "buildSnapshotMs": 0.2400480000069365,
+        "cloneMs": 0.16915800000424497
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260131,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 1993.4593759999989,
+        "replayBytes": 2167055,
+        "buildSnapshotMs": 0.22140000000945292,
+        "cloneMs": 0.1704159999935655
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260132,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 3528.4793530000024,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.267426999998861,
+        "cloneMs": 0.19709499999589752
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260133,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2369.4982160000072,
+        "replayBytes": 2122404,
+        "buildSnapshotMs": 0.24759199999971315,
+        "cloneMs": 0.19590799999423325
+      },
+      {
+        "cell": "cell-a-melee-pressure",
+        "seed": 20260134,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2147.3142309999967,
+        "replayBytes": 2167969,
+        "buildSnapshotMs": 0.23187699999834877,
+        "cloneMs": 0.17921499999647494
+      },
+      {
+        "cell": "cell-b-expansion-economy",
+        "seed": 20260135,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 4650.751042999997,
+        "replayBytes": 2887368,
+        "buildSnapshotMs": 0.33922399999573827,
+        "cloneMs": 0.25981400000455324
+      },
+      {
+        "cell": "cell-c-claim-no-harvest",
+        "seed": 20260136,
+        "status": "completed",
+        "ticks": 600,
+        "wallMs": 2742.243987000009,
+        "replayBytes": 2122404,
+        "buildSnapshotMs": 0.2303399999946123,
+        "cloneMs": 0.1754440000077011
+      }
+    ],
+    "wallP50Ms": 2373.193578000002,
+    "wallMeanMs": 2725.7080706388897,
+    "wallWorstMs": 4650.751042999997,
+    "buildSnapshotMedianMs": 0.23187699999834877,
+    "cloneMedianMs": 0.1760020000001532,
+    "copyCostMs": 4869.247200034442,
+    "copySharePercent": 4.962265332982634,
+    "copyPass": true,
+    "perMatchMeanBytes": 2392428.1666666665,
+    "seasonBytes": 179432112.5,
+    "seasonSizePass": true,
+    "readRateBytesPerSec": 1282576927.8988168,
+    "seasonReadSeconds": 0.13989968835160232,
+    "seasonReadPass": true,
+    "pass": true
+  }
+}
