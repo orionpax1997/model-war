@@ -1,0 +1,53 @@
+# 本赛季 `season.yaml`——I 真实赛季(票 11)的一次真跑配置。
+#
+# ── 这份文件的定位 ──
+#
+# 字段真源在 `packages/runner/src/season-config.ts`(纯装载器 + 校验)。本文件与
+# `season.example.yaml`(格式范例)同形,区别只在 `participants` 指向的是**本季真实冻结存档**
+# (由 `modelwar gen --config models.yaml` 一次批次产出,共享 `runId = 2026-10-09T01-09-09-599Z`)。
+#
+# 规模:N=5,M=3,K=4,`M × K = 12 ≡ 0 (mod 4)` ✓ ⇒ 对局总数 `C(4,5) × 3 × 4 = 60`,
+# 每模型出场 `C(3,4) × 3 × 4 = 48` 局。五条 `strategy` 注入同一句(赛模型,不赛策略)。
+#
+# ── 为什么用块序列而非内联 `[a, b, c]` ──
+#
+# `season.yaml` 由 runner 私有的 YAML 子集读取器解析,它**不支持非空流式数组/映射**,
+# 所以 `rankPoints` / `maps` 一律写成多行块序列(每项一行 `- x`)。
+
+# ── 必填字段 ──
+
+# 赛季根种子:决定全部对局种子的源头(`种子 = H(masterSeed, combo, mapIndex, seedIndex)`)。
+masterSeed: "2026-m4"
+
+# 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v1)一致,否则装载期拒跑。
+ruleset: v1
+
+# ── 选填字段 ──
+
+# 并发上限;本机为 8 核,取 min(cpus, 8) 的上界。
+concurrency: 8
+
+# 名次积分表:第 i 项 = 第 i+1 名的分值,固定 4 项(四方对局);不进 rulesets/。
+rankPoints:
+  - 3
+  - 2
+  - 1
+  - 0
+
+# 地图池(引用 maps/ 下的 slug);M × K = 3 × 4 = 12 ≡ 0 (mod 4) ✓。
+maps:
+  - corridor-split
+  - fortress-core
+  - open-clash
+
+# 种子数 K。
+seeds: 4
+
+# 参赛存档引用(archive/<slug>/<runId>),**下标即 playerIndex**;名册去重后按 slug 升序参与枚举。
+# 五条同属本季一次 gen 批次(共享 runId),五条均 `meta.validation.passed = true`。
+participants:
+  - archive/deepseek-v4-flash/2026-10-09T01-09-09-599Z
+  - archive/deepseek-v4.1-flash/2026-10-09T01-09-09-599Z
+  - archive/gpt-6-luna/2026-10-09T01-09-09-599Z
+  - archive/mimo-v2.6-flash/2026-10-09T01-09-09-599Z
+  - archive/muse-spark-1.3-contributor/2026-10-09T01-09-09-599Z

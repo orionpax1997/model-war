@@ -1,0 +1,18 @@
+{
+  "model": "mimo-v2.6-flash",
+  "modelVersion": "xiaomi/mimo-v2.6-flash",
+  "generatedAt": "2026-10-08T14:49:44.003Z",
+  "runId": "2026-10-08T14-49-44-003Z",
+  "ruleset": "v1",
+  "classification": "transport",
+  "protocolRounds": 0,
+  "prompts": [],
+  "generationLog": [],
+  "diagnostics": [
+    "传输错误:请求 https://api.commandcode.ai/provider/v1/chat/completions 失败:The operation was aborted due to timeout",
+    "传输错误(HTTP 503):端点 https://api.commandcode.ai/provider/v1/chat/completions 返回 503 Service Unavailable: <!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 7]>    <html class=\"no-js ie7 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 8]>    <html class=\"no-…",
+    "传输错误:请求 https://api.commandcode.ai/provider/v1/chat/completions 失败:The operation was aborted due to timeout",
+    "传输错误(HTTP 503):端点 https://api.commandcode.ai/provider/v1/chat/completions 返回 503 Service Unavailable: <!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 7]>    <html class=\"no-js ie7 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 8]>    <html class=\"no-…"
+  ],
+  "message": "模型 mimo-v2.6-flash 第 1 轮传输失败:重试 3 次后仍失败(共 4 次尝试)"
+}
