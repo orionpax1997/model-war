@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import type { ModelConfig } from "../config.js";
 import type { ChatMessage } from "../model-client.js";
 import { endpointSpec } from "./endpoints.js";
+
 const config = (family: ModelConfig["endpointFamily"]): ModelConfig => ({
   slug: "model-x",
   endpointFamily: family,
@@ -169,8 +170,8 @@ it("responses 响应:拼 output 里 message 的 output_text;completed → stop;i
 
 // ── 流式能力:只有 chat-completions 声明;其余族缺省即非流式 ──────────────────────
 
-/** 取流式能力;没有声明就直接抛(测试里预期只有 chat-completions 有)。 */
-const streamingOf = (family: ModelConfig["endpointFamily"]) => {
+// 只有 chat-completions 声明了流式能力;若改坏了这个前提,直接抛比把 `undefined` 当成功更能指出问题。
+const requireStreaming = (family: ModelConfig["endpointFamily"]) => {
   const streaming = endpointSpec(family).streaming;
   if (streaming === undefined) {
     throw new Error(`${family} 没有声明流式能力`);
@@ -185,7 +186,7 @@ it("流式能力是可选字段:只有 chat-completions 声明,messages / respon
 });
 
 it("chat-completions 流式请求体 = 非流式体 + stream:true + include_usage;params 同名键压不过本层", () => {
-  const body = streamingOf("chat-completions").buildBody(
+  const body = requireStreaming("chat-completions").buildBody(
     config("chat-completions"),
     [
       { role: "system", content: "s" },
@@ -206,7 +207,7 @@ it("chat-completions 流式请求体 = 非流式体 + stream:true + include_usag
 });
 
 it("chat-completions 流累积器:只拼 delta.content,忽略 reasoning_content", () => {
-  const accumulator = streamingOf("chat-completions").createAccumulator();
+  const accumulator = requireStreaming("chat-completions").createAccumulator();
   accumulator.push({ choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
   accumulator.push({ choices: [{ delta: { reasoning_content: "The" }, finish_reason: null }] });
   accumulator.push({ choices: [{ delta: { reasoning_content: " answer is" } }] });
@@ -222,7 +223,7 @@ it("chat-completions 流累积器:只拼 delta.content,忽略 reasoning_content"
 });
 
 it("chat-completions 流累积器:usage 取最后一个非空帧,`usage:null` 中途帧不清掉它", () => {
-  const accumulator = streamingOf("chat-completions").createAccumulator();
+  const accumulator = requireStreaming("chat-completions").createAccumulator();
   accumulator.push({ choices: [{ delta: { content: "x" }, finish_reason: null }] });
   accumulator.push({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } });
   accumulator.push({ choices: [], usage: null });
@@ -247,19 +248,19 @@ it("chat-completions 流累积器:usage 取最后一个非空帧,`usage:null` �
 });
 
 it("chat-completions 流累积器:finish_reason 取最后一个非空值(截断的 length),非终点帧的 null 不算", () => {
-  const accumulator = streamingOf("chat-completions").createAccumulator();
+  const accumulator = requireStreaming("chat-completions").createAccumulator();
   accumulator.push({ choices: [{ delta: { content: "半截" }, finish_reason: null }] });
   accumulator.push({ choices: [{ delta: {}, finish_reason: "length" }] });
   expect(accumulator.result()).toEqual({ text: "半截", finishReason: "length", usage: undefined });
 });
 
 it("chat-completions 流累积器:一帧都没喂 / 空帧 → 与非流式缺字段时同一缺省", () => {
-  expect(streamingOf("chat-completions").createAccumulator().result()).toEqual({
+  expect(requireStreaming("chat-completions").createAccumulator().result()).toEqual({
     text: "",
     finishReason: "stop",
     usage: undefined,
   });
-  const accumulator = streamingOf("chat-completions").createAccumulator();
+  const accumulator = requireStreaming("chat-completions").createAccumulator();
   accumulator.push({ choices: [{ delta: {}, finish_reason: "" }] });
   accumulator.push("not an object");
   expect(accumulator.result()).toEqual({ text: "", finishReason: "stop", usage: undefined });

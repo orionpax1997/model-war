@@ -34,11 +34,12 @@ data: [DONE]
 1. **只做 `chat-completions` 流式**。本期 5 条真实模型全部 `endpointFamily: chat-completions`;`messages` / `responses` 两族的 SSE 帧格式不同且本期无真实验证面,**保持非流式**,不写没测试的翻译。因此 `EndpointSpec` 上的流式能力是**可选字段**,只有 chat-completions 声明它。
 2. **请求体** = 非流式请求体叠加 `stream: true` 与 `stream_options: { include_usage: true }`(端点已实测接受;`include_usage` 是 OpenAI 标准取 usage 的方式)。`params` 里若有同名键,流式字段以本层为准。
 3. **按 `content-type` 分派解析**:响应 `content-type` 含 `text/event-stream` → 走 SSE 累积;否则回退现有一次性 JSON 解析。回退不是多此一举:它挡住了「端点忽略 `stream`、照旧回整段 JSON」的服务商,也让既有 `parseChatCompletions` 仍是活代码。
-4. **超时改成空闲口径**:把现有 `AbortSignal.timeout(总时长)` 替换为「手动 `AbortController` + 定时器」,定时器在**每次读到一段数据时重置**;`DEFAULT_TIMEOUT_MS` 提到 `300_000`。非流式族没有中途数据可重置,行为等价于旧的总时长上限;流式下则是「两帧之间最多静默 300 s」。这是流式正确的语义:总时长设限会把「慢但一直在出字」的合法生成误杀,而真问题(524)本就是空闲超时。
+4. **超时改成空闲口径**:把现有 `AbortSignal.timeout(总时长)` 替换为「手动 `AbortController` + 定时器」,定时器在**每次读到一段数据时重置**;`DEFAULT_TIMEOUT_MS` 提到 `300_000`。非流式族没有中途数据可重置,于是退成「建连 / 首字节窗口 + 读完整段窗口」两段,每段各一个 `timeoutMs`、至多两段(响应头到达时重置一次),而不是旧实现单一的「从发起算起」上限;流式下则是「两帧之间最多静默 300 s」。这是流式正确的语义:总时长设限会把「慢但一直在出字」的合法生成误杀,而真问题(524)本就是空闲超时。
 5. **超时是 gen 内部工程常量,不接 `models.yaml` / 环境变量**:与 `retry.ts` 的 `RETRY` 同性质(运行韧性参数,不描述对局规则),单一真源就是常量本身,不做per-model 旋钮。
 6. **失败归类沿用既有口径**(`transport-error.ts` / `retry.ts` 不动):
    - 流在 `[DONE]` 之前断掉(连接被切 / 读失败)→ `TransportError{ retryable: true }`;
    - 帧里是 `{"error": …}`(网关流中报错)→ `TransportError{ retryable: true }`;
+   - 流式路径下 `data:` 帧不是合法 JSON(中途截断的半帧 / 连接噪声)→ `TransportError{ retryable: true }`。这与非流式路径对「整段响应不是 JSON」判 `retryable: false` 的口径分叉:后者多半是端点返回了错误形状,重发无益;前者更像传输中被截断,重发一次可能正好避开。
    - `finish_reason: "length"` ⇒ 照 `retry.ts` 重发同一轮、不消耗协议轮数(本次改动不碰这里);
    - 状态码分类(429 / 5xx 可重试,其余 4xx 不可)不变。
 7. **`text` 只累积 `delta.content`**;`delta.reasoning_content` 不进 `text`(它不是产物,回喂半截推理等于污染)。`usage` 取最后一个带 `usage` 的帧(保持 OpenAI 原形,`reasoning_tokens` 随 `completion_tokens_details` 一并留档)。`ModelResponse` 端口形状**不变**。
@@ -105,8 +106,17 @@ data: [DONE]
 
 ### 与票面的偏离
 
-无功能偏离。两点实现细节的选择:
+无功能偏离。两点实现细节已一并回写进上文的「设计决定」(第 4、6 条):
 
-- 非流式族(以及 SSE 回退路径)的空闲计时器在「响应头到达」时重置一次,故上界是「连接/头部窗口 + 整段响应窗口」各一个 `timeoutMs`,而不是旧实现单一的「从发起算起」。语义仍是「没有中途数据可重置时的总时长上限」,与票面「等价于旧的总时长上限」一致。
-- 非法 JSON 的 `data:` 帧归为**可重试** `TransportError`(票面只点名了断流与 error 帧)。理由是它同属「网关给了我们读不懂的字节」这类传输故障,重发一次可能正好避开。
+- 非流式族(以及 SSE 回退路径)的空闲计时器在「响应头到达」时重置一次,故上界是「连接/头部窗口 + 整段响应窗口」各一个 `timeoutMs`、至多两段,而不是旧实现单一的「从发起算起」。
+- 非法 JSON 的 `data:` 帧归为**可重试** `TransportError`(原票只点名了断流与 error 帧)。理由是它同属「网关给了我们读不懂的字节」这类传输故障,重发一次可能正好避开。
+
+### 评审修复
+
+Standards / Spec 两轴评审后收敛,无行为变更:
+
+- `client.ts`:把散落的 `idleTimer` / `idleTimedOut` / `armIdleTimer` / `disarmIdleTimer` 四个局部收成一只 `IdleTimeout`(类型 + `startIdleTimeout`),`send` 与 `readEventStream` 共享同一只时钟;顺带把 `readEventStream` catch 里 retryable 双分支的无意义三元合并为「超时则省 `status`」。
+- `endpoints.test.ts`:`streamingOf` 改名 `requireStreaming`(名字读出「缺失即抛」);恢复 import 与 `config` 间空行;删去复述式注释。
+- `client.test.ts`:抽 `sseContent` 消掉 8 处正文增量帧重复;`openSse` / `sseFrame` / `sseDone` 注释改为讲假端点「一帧一发 chunk、可逐帧控时」的意图。
+- 票面:设计 4 改为「建连/首字节窗口 + 读完整段窗口、至多两段」的准确说法;设计 6 补记「流式 `data:` 帧非法 JSON → `retryable: true`」及其与非流式口径分叉的理由。
 

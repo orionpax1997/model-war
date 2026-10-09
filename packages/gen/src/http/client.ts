@@ -127,16 +127,48 @@ const parseSseFrame = (payload: string, url: string): unknown => {
   return frame;
 };
 
-/** `readEventStream` 的入参:响应、累积器,以及两个计时回调(重置 / 是否已空闲超时)。 */
+/**
+ * 一次请求一只空闲时钟:`signal` 交由 fetch 中断,`noteData` 每读到一段数据(响应头 / chunk)
+ * 就重置,`didTimeout` 区分「静默超时」与「普通读失败」,`stop` 在读完 / 失败时清理。四件事永远
+ * 指向同一只计时器,故收成一个类型,免得散成局部变量、在请求与读流两侧各自漂移。
+ */
+type IdleTimeout = {
+  readonly timeoutMs: number;
+  readonly signal: AbortSignal;
+  readonly noteData: () => void;
+  readonly didTimeout: () => boolean;
+  readonly stop: () => void;
+};
+
+const startIdleTimeout = (timeoutMs: number): IdleTimeout => {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const noteData = (): void => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  };
+  const stop = (): void => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+  noteData();
+  return { timeoutMs, signal: controller.signal, noteData, didTimeout: () => timedOut, stop };
+};
+
+/** `readEventStream` 的入参:响应 / 累积器,外加那只贯穿整次请求的空闲时钟。 */
 type EventStreamRead = {
   readonly response: Response;
   readonly url: string;
   readonly accumulator: StreamAccumulator;
-  readonly timeoutMs: number;
-  /** 每读到一段数据调用一次:客户端据此重置空闲计时器。 */
-  readonly onData: () => void;
-  /** 空闲计时器是否已触发(用于把中断归类成超时,而不是普通读失败)。 */
-  readonly timedOut: () => boolean;
+  readonly idle: IdleTimeout;
 };
 
 /**
@@ -149,7 +181,7 @@ type EventStreamRead = {
  * 中断**不挂 `status`**(与「连接都没建立起来」的超时同一形状),其余读失败挂已知的状态码。
  */
 const readEventStream = async (options: EventStreamRead): Promise<ModelResponse> => {
-  const { response, url, accumulator } = options;
+  const { response, url, accumulator, idle } = options;
   const body = response.body;
   if (body === null) {
     throw new TransportError(`端点 ${url} 声明了 text/event-stream 却没有响应体`, {
@@ -169,7 +201,7 @@ const readEventStream = async (options: EventStreamRead): Promise<ModelResponse>
       if (result.done) {
         break;
       }
-      options.onData();
+      idle.noteData();
       buffer += decoder.decode(result.value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
@@ -192,11 +224,12 @@ const readEventStream = async (options: EventStreamRead): Promise<ModelResponse>
     if (cause instanceof TransportError) {
       throw cause;
     }
+    const timedOut = idle.didTimeout();
     throw new TransportError(
-      options.timedOut()
-        ? `端点 ${url} 的流空闲超过 ${String(options.timeoutMs)}ms 没有数据,已中断`
+      timedOut
+        ? `端点 ${url} 的流空闲超过 ${String(idle.timeoutMs)}ms 没有数据,已中断`
         : `读 ${url} 的流失败:${reasonOf(cause)}`,
-      options.timedOut() ? { retryable: true } : { retryable: true, status: response.status },
+      { retryable: true, ...(timedOut ? {} : { status: response.status }) },
     );
   } finally {
     // 已在 `[DONE]` 处提前退出时,去掉尾部未处理的数据并关掉连接;读失败时 cancel 会 reject,忽略。
@@ -235,27 +268,7 @@ export const createHttpModelClient = (
           : streaming.buildBody(config, messages, params),
       );
 
-      const controller = new AbortController();
-      let idleTimer: ReturnType<typeof setTimeout> | undefined;
-      let idleTimedOut = false;
-      /** 重置空闲计时器:每收到一段数据(响应头 / 每个 chunk)都算「还在动」。 */
-      const armIdleTimer = (): void => {
-        if (idleTimer !== undefined) {
-          clearTimeout(idleTimer);
-        }
-        idleTimer = setTimeout(() => {
-          idleTimedOut = true;
-          controller.abort();
-        }, timeoutMs);
-      };
-      const disarmIdleTimer = (): void => {
-        if (idleTimer !== undefined) {
-          clearTimeout(idleTimer);
-          idleTimer = undefined;
-        }
-      };
-
-      armIdleTimer();
+      const idle = startIdleTimeout(timeoutMs);
 
       let response: Response;
       try {
@@ -266,20 +279,20 @@ export const createHttpModelClient = (
             authorization: `Bearer ${credential}`,
           },
           body,
-          signal: controller.signal,
+          signal: idle.signal,
         });
       } catch (cause) {
         // 网络失败 / DNS / 连接被拒 / 空闲超时(手动 abort)都到这里,一律可重试。
-        disarmIdleTimer();
+        idle.stop();
         throw new TransportError(
-          idleTimedOut
-            ? `请求 ${url} 后 ${String(timeoutMs)}ms 没有收到响应头(空闲超时)`
+          idle.didTimeout()
+            ? `请求 ${url} 后 ${String(idle.timeoutMs)}ms 没有收到响应头(空闲超时)`
             : `请求 ${url} 失败:${reasonOf(cause)}`,
           { retryable: true },
         );
       }
       // 响应头到了:从这一时刻起重新计空闲。
-      armIdleTimer();
+      idle.noteData();
 
       try {
         if (response.ok && streaming !== undefined && isEventStream(response)) {
@@ -287,9 +300,7 @@ export const createHttpModelClient = (
             response,
             url,
             accumulator: streaming.createAccumulator(),
-            timeoutMs,
-            onData: armIdleTimer,
-            timedOut: () => idleTimedOut,
+            idle,
           });
         }
 
@@ -297,10 +308,11 @@ export const createHttpModelClient = (
         try {
           rawBody = await response.text();
         } catch (cause) {
-          throw idleTimedOut
-            ? new TransportError(`端点 ${url} 在 ${String(timeoutMs)}ms 内没有读完响应(空闲超时)`, {
-                retryable: true,
-              })
+          throw idle.didTimeout()
+            ? new TransportError(
+                `端点 ${url} 在 ${String(idle.timeoutMs)}ms 内没有读完响应(空闲超时)`,
+                { retryable: true },
+              )
             : new TransportError(`读 ${url} 的响应失败:${reasonOf(cause)}`, {
                 retryable: true,
                 status: response.status,
@@ -328,7 +340,7 @@ export const createHttpModelClient = (
         }
         return spec.parseResponse(json);
       } finally {
-        disarmIdleTimer();
+        idle.stop();
       }
     },
   };

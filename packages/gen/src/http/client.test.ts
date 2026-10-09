@@ -39,17 +39,22 @@ const json = (res: ServerResponse, status: number, body: unknown): void => {
   res.end(JSON.stringify(body));
 };
 
-/** 开一个 SSE 响应:之后用 `sseFrame` / `sseDone` 逐帧写(分块传输,写一帧即发一个 chunk)。 */
+/** 开一个 SSE 响应:假端点每次 `write` 就是独立一个 chunk,故能逐帧控制到达时机(测拆帧 / 空闲超时都靠它)。 */
 const openSse = (res: ServerResponse): void => {
   res.writeHead(200, { "content-type": "text/event-stream" });
 };
 
-/** 写一帧 `data: <json>`,按 SSE 的空行分帧。 */
+/** 写一帧 `data: <json>`:SSE 以空行分帧,写完不关连接,模拟真实流「一帧一帧到」。 */
 const sseFrame = (res: ServerResponse, frame: unknown): void => {
   res.write(`data: ${JSON.stringify(frame)}\n\n`);
 };
 
-/** 收尾帧并关掉响应。 */
+/** 写一段正文增量帧:线上正文本就摊在多帧,测试这样一帧一帧拼才贴近真实形状。 */
+const sseContent = (res: ServerResponse, text: string): void => {
+  sseFrame(res, { choices: [{ delta: { content: text }, finish_reason: null }] });
+};
+
+/** 收尾并关连接:客户端以 `[DONE]` 判定流正常结束,缺它就应算中断。 */
 const sseDone = (res: ServerResponse): void => {
   res.write("data: [DONE]\n\n");
   res.end();
@@ -196,8 +201,8 @@ it("chat-completions:text/event-stream 多帧累积出与非流式同形的 text
     sseFrame(res, {
       choices: [{ delta: { reasoning_content: "让我想想…" }, finish_reason: null }],
     });
-    sseFrame(res, { choices: [{ delta: { content: "脚本" }, finish_reason: null }] });
-    sseFrame(res, { choices: [{ delta: { content: "正文" }, finish_reason: null }] });
+    sseContent(res, "脚本");
+    sseContent(res, "正文");
     sseFrame(res, { choices: [{ delta: {}, finish_reason: "stop" }] });
     sseFrame(res, {
       choices: [],
@@ -269,7 +274,7 @@ it("chat-completions:CRLF 行尾、注释行与 event/id 行都被容忍(只认 
 it("chat-completions:SSE 截断帧 finish_reason=length 原样透传(重试交给 retry.ts,此处不重试)", async () => {
   const ep = await endpoint((_captured, res) => {
     openSse(res);
-    sseFrame(res, { choices: [{ delta: { content: "半截脚本" }, finish_reason: null }] });
+    sseContent(res, "半截脚本");
     sseFrame(res, { choices: [{ delta: {}, finish_reason: "length" }] });
     sseFrame(res, { choices: [], usage: { prompt_tokens: 1, completion_tokens: 8 } });
     sseDone(res);
@@ -286,7 +291,7 @@ it("chat-completions:SSE 截断帧 finish_reason=length 原样透传(重试交�
 it("chat-completions:SSE 在 [DONE] 之前断掉 → TransportError retryable=true", async () => {
   const ep = await endpoint((_captured, res) => {
     openSse(res);
-    sseFrame(res, { choices: [{ delta: { content: "写到一半" }, finish_reason: null }] });
+    sseContent(res, "写到一半");
     res.end(); // 没有 [DONE]
   });
   const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
@@ -300,7 +305,7 @@ it("chat-completions:SSE 在 [DONE] 之前断掉 → TransportError retryable=tr
 it("chat-completions:SSE 帧里带 error → TransportError retryable=true、消息不含凭证", async () => {
   const ep = await endpoint((_captured, res) => {
     openSse(res);
-    sseFrame(res, { choices: [{ delta: { content: "开头" }, finish_reason: null }] });
+    sseContent(res, "开头");
     sseFrame(res, { error: { message: "upstream timeout", type: "server_error" } });
     sseDone(res);
   });
@@ -317,7 +322,7 @@ it("chat-completions:SSE 帧里带 error → TransportError retryable=true、消
 it("chat-completions:帧间静默超过 timeoutMs → 空闲超时 TransportError(retryable=true、无 status)", async () => {
   const ep = await endpoint((_captured, res) => {
     openSse(res);
-    sseFrame(res, { choices: [{ delta: { content: "起了个头" }, finish_reason: null }] });
+    sseContent(res, "起了个头");
     // 之后永不吐帧、也不收尾:让空闲计时器触发。
   });
   const client = createHttpModelClient(config("chat-completions", ep.baseUrl), { timeoutMs: 80 });
@@ -333,11 +338,11 @@ it("chat-completions:总时长超过 timeoutMs 但帧间隔始终小于它 → �
   const gapMs = 40;
   const ep = await endpoint((_captured, res) => {
     openSse(res);
-    sseFrame(res, { choices: [{ delta: { content: "a" }, finish_reason: null }] });
+    sseContent(res, "a");
     setTimeout(() => {
-      sseFrame(res, { choices: [{ delta: { content: "b" }, finish_reason: null }] });
+      sseContent(res, "b");
       setTimeout(() => {
-        sseFrame(res, { choices: [{ delta: { content: "c" }, finish_reason: null }] });
+        sseContent(res, "c");
         setTimeout(() => {
           sseFrame(res, { choices: [{ delta: {}, finish_reason: "stop" }] });
           sseDone(res);
