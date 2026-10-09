@@ -4,12 +4,12 @@
 
 **Blocked by:** 07 (全链绿后).
 
-**Status:** ready-for-human
+**Status:** resolved
 
 ## 验收
 
 - [x] 里程碑关闭,两条工程开放项关闭,节点状态与验收口径已对账
-- [ ] 全票合并后默认快速验证一次通过,双轴评审完成(默认快速验证已过;双轴评审由主线程在合并后执行)
+- [x] 全票合并后默认快速验证一次通过,双轴评审完成(默认快速验证 `verify:fast` 绿;双轴评审由主线程在合并后执行,见 Answer 末节)
 - [x] 全部票面状态与验收勾选已回写
 
 ## Answer
@@ -40,5 +40,5 @@
 
 ### Status 与遗留
 
-- `Status:` 置 `ready-for-human`:留给主线程在本票合并后跑 `/code-review` 双轴并修问题,再终审。
-- **遗留主线程事项**:双轴评审(Standards / Spec)未在本票内执行——按票面拆解,这一半留给主线程;评审后如发现问题再修。默认快速验证(本票验收第二条前半)已由本票完成。
+- `Status:` 置 `resolved`。
+- **双轴评审(主线程,本票合并后执行)**:`/code-review` Standards + Spec 两个只读子代理在最终分支上并行评审。Standards 轴发现 3 处「成员枚举过期 / 归属登记漏项」登记漂移(CONTEXT 夜间流水线词条、ADR-0010 枚举、hld §2.2.7 行)与 1 处重复测试 smell,Spec 轴未发现阻断性缺失(仅两处口径注记:跨进程门禁输入用现造样本、`mutate` 深跑读数缺仓内证据)。全部发现已在单个修复 commit 中处理(成员真源改指针、归属表补 `check:budget-recheck`、位置纪律用例收成 `it.each` 表驱动、`mutate` 深跑读数补记 `readings.md`),`verify:fast` 复跑仍绿。详见合并 commit `b043e68`。
