@@ -521,6 +521,110 @@ it("稳态:空脚本连跑约 600 tick,tick 末存活堆不随 tick 增长(斜�
   }
 }, 60_000);
 
+// ── 上游缺陷规避:`Array.prototype.find` 家族的中断二次释放(quickjs-ng #1792) ──────────
+//
+// `js_array_find` 在每轮顶部的 `js_poll_interrupts` 处被中断时,异常出口会把上一轮已释放的
+// 元素再释放一次(而数组仍持有它)。此后任一 `runGC()` 都会在 `gc_decref_child` /
+// `js_free_shape0` 命中断言并 WASM trap。规避由宿主在载入脚本前灌一段等价 JS 实现
+// (见 `array-search-shim.ts`)。两条用例:①替换实现后仍与规范同语义;②中断落在 find 里之后
+// 再强制回收不再崩。
+
+it("find 家族换上等价实现后仍与规范同语义(值 / 索引 / thisArg / 空洞 / TypeError)", async () => {
+  const session = await openSandbox({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: "function loop() {}",
+    seat: 0,
+  });
+  try {
+    // 值与索引:三个方向都要对。
+    expect(
+      session.probe("Array.prototype.find.call([1, 2, 3], function (x) { return x > 1; })"),
+    ).toBe(2);
+    expect(
+      session.probe("Array.prototype.findIndex.call([1, 2, 3], function (x) { return x > 1; })"),
+    ).toBe(1);
+    expect(
+      session.probe("Array.prototype.findLast.call([1, 2, 3], function (x) { return x < 3; })"),
+    ).toBe(2);
+    expect(
+      session.probe(
+        "Array.prototype.findLastIndex.call([1, 2, 3], function (x) { return x < 3; })",
+      ),
+    ).toBe(1);
+    // 未命中回 `undefined`。
+    expect(
+      session.probe("Array.prototype.find.call([1, 2, 3], function () { return false; })"),
+    ).toBe(undefined);
+    // `thisArg` 透传;空洞不参与谓词调用(按 HasProperty 判)。
+    expect(
+      session.probe(
+        "Array.prototype.find.call([1, 2, 3], function (x) { return x === this.k; }, { k: 2 })",
+      ),
+    ).toBe(2);
+    expect(
+      session.probe(
+        "(function () { var seen = 0; Array.prototype.find.call([, 1], function () { seen += 1; return false; }); return seen; })()",
+      ),
+    ).toBe(1);
+    // 非函数谓词抛 `TypeError`;类数组也可用。
+    expect(
+      session.probe(
+        "(function () { try { Array.prototype.find.call([1], 5); return 'no-throw'; } catch (e) { return e.name; } })()",
+      ),
+    ).toBe("TypeError");
+    expect(
+      session.probe(
+        "Array.prototype.find.call({ length: 2, 0: 'a', 1: 'b' }, function (x) { return x === 'b'; })",
+      ),
+    ).toBe("b");
+    // 命中元素只读一次(规范是 kValue;若读两次,把 getter 会被多叫一次)。
+    expect(
+      session.probe(
+        "(function () { var reads = 0; var o = { length: 1 }; Object.defineProperty(o, 0, { get: function () { reads += 1; return 'v'; } }); var r = Array.prototype.find.call(o, function (x) { return x === 'v'; }); return reads + ':' + r; })()",
+      ),
+    ).toBe("1:v");
+  } finally {
+    session.dispose();
+  }
+}, 30_000);
+
+it("规避 quickjs-ng #1792:中断落在 find 里之后再强制回收不再断言崩溃", async () => {
+  // 载入期建好大数组(此时计数未 arm,不烧事件);每 tick 的 `loop()` 只做一次 find。
+  // 事件上限压到 10000,find 扫描途中必被中断——未规避时下一次 `runGC()` 即 trap。
+  const script = [
+    "var items = [];",
+    "for (var i = 0; i < 20000; i += 1) { items.push({ v: i }); }",
+    "function loop() { items.find(function (x) { return false; }); }",
+  ].join("\n");
+  const session = await openSandbox({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: script,
+    seat: 0,
+    eventTickLimit: 10000,
+  });
+  try {
+    for (let tick = 0; tick < 8; tick++) {
+      session.setSnapshot(snapshotOf(tick));
+      session.beginTick();
+      try {
+        session.runLoop();
+        session.pumpJobs();
+      } catch {
+        // 事件计数截停本 tick:与真执行器同路,不当作 engine-crash。
+      }
+      session.endTick();
+      // 真执行器 tick 末的次序:强制回收 → 读存活堆 → 交回意图。
+      session.runGC();
+      session.memoryUsage();
+      session.drainIntents();
+    }
+  } finally {
+    session.dispose();
+  }
+}, 30_000);
+
 // ── 双计数(票 07):控制流事件计数 + API 调用计数 ────────────────────────────
 //
 // 两个计数都是**宿主 authored 的纯整数计数**,互为盲区:纯计算死循环由事件计数抓,API 轰炸由
