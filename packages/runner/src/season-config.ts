@@ -157,11 +157,15 @@ const issueMessageOf = (issue: z.core.$ZodIssue, data: Record<string, unknown>):
   switch (root) {
     case "masterSeed":
       return '必填字段 "masterSeed" 缺失或不是非空字符串';
-    case "ruleset":
-      return data["ruleset"] === undefined
-        ? '必填字段 "ruleset" 缺失'
-        : `必填字段 "ruleset" 取值 "${String(data["ruleset"])}" ` +
-            `与当前规则版本 "${RULESET_VERSION}" 不一致`;
+    case "ruleset": {
+      const ruleset = data["ruleset"];
+      if (ruleset === undefined) {
+        return '必填字段 "ruleset" 缺失';
+      }
+      // 非字符串(如映射/数组)用 JSON 形态展示,避免 `String(object)` 的 `[object Object]`。
+      const displayed = typeof ruleset === "string" ? ruleset : (JSON.stringify(ruleset) ?? "null");
+      return `必填字段 "ruleset" 取值 "${displayed}" ` + `与当前规则版本 "${RULESET_VERSION}" 不一致`;
+    }
     case "seeds":
       return '必填字段 "seeds" 必须是 ≥1 的整数(K,种子数)';
     case "concurrency":
