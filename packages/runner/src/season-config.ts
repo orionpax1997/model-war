@@ -164,7 +164,9 @@ const issueMessageOf = (issue: z.core.$ZodIssue, data: Record<string, unknown>):
       }
       // 非字符串(如映射/数组)用 JSON 形态展示,避免 `String(object)` 的 `[object Object]`。
       const displayed = typeof ruleset === "string" ? ruleset : (JSON.stringify(ruleset) ?? "null");
-      return `必填字段 "ruleset" 取值 "${displayed}" ` + `与当前规则版本 "${RULESET_VERSION}" 不一致`;
+      return (
+        `必填字段 "ruleset" 取值 "${displayed}" ` + `与当前规则版本 "${RULESET_VERSION}" 不一致`
+      );
     }
     case "seeds":
       return '必填字段 "seeds" 必须是 ≥1 的整数(K,种子数)';
