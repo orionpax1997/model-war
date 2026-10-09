@@ -169,27 +169,17 @@
 
 #### 2.2.7 脚本分层与 CI 质量门禁
 
-门禁以**命名脚本手工触发**,不建 CI/CD 流水线(ADR-0002;流水线形态与仓库首个真实实现强相关)。下表是 `package.json` 里的实际内容,不是计划:
+门禁以**命名脚本手工触发**,不建 CI/CD 流水线(ADR-0002;流水线形态与仓库首个真实实现强相关)。下表**只登记归属层**——哪道门禁归哪一层、它管什么;**命令清单永远以 `package.json` 为真源,本文不复制**(复制过一次就漂:本表曾把 `check:quick` 写成 5 项,实际是 **6 步**):
 
-| 脚本 | 实际内容 | 用途 |
+| 归属层 | 入口(命令真源永远是 `package.json`) | 用途与归属说明 |
 |---|---|---|
-| `check:quick` | `oxfmt --check` + `oxlint` + 工具版本耦合断言 + 禁浮点门禁 + 预算结构门禁 | agent 每轮编辑循环 |
-| `check:no-float` | `node packages/tools/src/gate/run-no-float-gate.ts`(禁浮点门禁) | 仓库源码禁浮点字面量 |
-| `check:budget` | `node packages/tools/src/gate/run-budget-gate.ts`(预算结构门禁) | 挂在 `check:quick`:**已定稿**的预算键满足各自的结构约束(事件计数上限是中断粒度的整数倍;中断粒度常量与它在文档里的三处副本逐字一致);**零构建**,只读规则集取值、键清单源码与文档文本;读到零个预算键 / 零个已定稿键按失败处理 |
-| `generate` | `tsc -b packages/schema && node packages/tools/src/generate/run-generate.ts && tsc -b` | 重跑生成器,产出全部生成物并入库(§3.1);**要一次构建**,故不是门禁而是提交前的动作 |
-| `check:declared-deps` | `node packages/tools/src/gate/run-declared-deps-gate.ts` | 挂在 `check` 末尾:工具包运行时源码里 import 的第三方包必须在它自己的 `package.json` 里声明(§3.2);**零构建**,与读 `dist` 的 `check:deps` 互补 |
-| `check:drift` | `node packages/tools/src/generate/run-drift-gate.ts`(生成物漂移检查) | 挂在 `check` 末尾,**不进 `check:quick`**:它需要一次 `tsc -b`(生产函数 import 真源包),而 `check:types` 里已经有,快门禁的零构建性质因此不受影响 |
-| `check:bench` | `node packages/tools/src/benchmarks/run-benchmarks-gate.ts`(基准产物门禁) | 挂在 `check` 末尾:入库的基准产物必须是 `tsconfig.scripts.json` 真跑出来的那一份(逐字节判);**不进 `check:quick`**:它要 spawn 一次 `tsc` |
-| `check:selfproof` | `node packages/tools/src/selfproof/run-selfproof-gate.ts`(契约自证门禁) | **按需跑,不在 `check` 里**:拿终稿契约把 `benchmarks/` 的三份产物**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同);改契约、改 `rulesets/`、改自证桩时手工敲;反例在 `test:slow` |
-| `check:types` | `check:quick` + `tsc -b` + `oxlint --type-aware` | 改完一个 issue 跑一次 |
-| `check:deps` | `tsc -b` + dependency-cruiser(巡航 `dist` 而非 `src`,§2.2.10) | 依赖方向 |
-| `check` | `check:types` + vitest(`unit` + `property` 两个 project)+ `check:deps` + `check:declared-deps` + `check:drift` + `check:bench` | 完整仓库门禁(约 9s) |
-| `test` | `vitest run --project unit --project property` | 快速功能测试;不含类型检查、门禁自测或慢测试 |
-| `verify:fast` | `pnpm run check:quick && pnpm run test` | AI 实现与 spec 收口的默认快速验证入口 |
-| `test:props` | `vitest run --project property` | 长时属性测试,单独跑 |
-| `test:gates` | `vitest run --project gates`(门禁自测的快的一半:每道门禁的退出码与反向用例) | 按需单独运行;**不进默认 `test` 或 `check`**,避免快速功能测试与质量门禁自测混在一起 |
-| `test:slow` | `vitest run --project slow`(门禁自测里慢的一半:契约自证四问 + 三个反例 + 会 spawn `check` 的那一条) | 按需手工跑;**不进 `check`,也不进默认 `test`**(同套娃理由 + 耗时理由,见下) |
-| `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 | — |
+| 编辑循环(每轮) | `check:quick`(**6 步**) | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁;**零构建**,所以贴得住每轮编辑循环。链上的 `check:no-float` / `check:budget` 同样可单独敲(`check:budget` 只读规则集取值、键清单源码与文档文本,读到零个预算键 / 零个已定稿键按失败处理) |
+| 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);AI 实现与 spec 收口的唯一默认入口 |
+| 提交前全量 | `check` | `check:types` + 默认 `test` + `check:deps`(巡航 `dist` 而非 `src`,§2.2.10)+ `check:declared-deps`(读源码清单,与 `check:deps` 互补)+ **末尾复核组**;末尾复核组 = `check:drift` / `check:bench` / `check:runtime`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`);`check:runtime` 判 runtime bundle **三段**——入库产物与重新构建逐字节一致、sha256 与冻结常量相符、不含模块语法 |
+| 按需 → 夜间 | `check:selfproof`、`test:gates`、`test:slow` | 慢门禁自测与契约自证;`check:selfproof` 拿终稿契约把 `benchmarks/` 三份产物过静态校验器 → 跑标定环那个桩的矩阵,只回答四问(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同),改契约、改 `rulesets/`、改自证桩时手工敲;`test:gates` 是门禁自测的快一半,`test:slow` 是慢的一半(契约自证四问 + 三个反例 + 会 spawn `check` 的那一条);三者**都不进 `check`、也不进默认 `test`**,按需手工跑,归属夜间流水线 |
+| 按需 → 夜间(未落) | `mutate` / `scan` | **尚未落脚本**:Stryker 配置随引擎结算管线落地;`scc` 是手动装的外部工具 |
+
+> `check:drift` / `check:bench` 刻意**不进 `check:quick`**:前者要一次 `tsc -b`(生产函数 import 真源包),后者要 spawn 一次 `tsc`。`check:declared-deps` 零构建,但要在每轮编辑循环里多付一次全源码树遍历加读 manifest,所以也留在 `check`。命名脚本里另有 `test`(默认功能测试:`unit` + `property`,不含类型检查、门禁自测或慢测试)、`generate`(提交前动作:重跑生成器产出全部生成物并入库,要一次构建,不是门禁)与 `test:props`(只跑 property,长时属性测试单独跑)。
 
 **参赛脚本静态校验器(§6.2 那个工具)不是本仓库的门禁**:`package.json` 里没有它的 `check:*` 脚本,它也不巡航本仓库源码——它服务于生成管线,调用方式是 gen 管线以子进程 spawn 它的入口(§6.2)。**要说清的是「不进 `check`」这句限定只到「它不是一道仓库门禁」为止,不是说它的测试不跑**:`check` 含 `vitest run --project unit`,而该工具的规则与入口自测落在 `unit` 的拾取范围(`packages/*/src/**/*.test.ts`)内,所以每次 `check` 都会跑到它们。真把它们抽出去只能像 `gates` 那样单开一个 project,而那会让这些反例失去常态覆盖。
 
@@ -199,22 +189,27 @@
 
 **门禁耗时(实测;观测项,不是承诺)**。测量方法:在合并后的仓库树上先跑一次 `pnpm run build`,随后**连续 5 次**取该门禁的墙钟(`/usr/bin/time` 墙钟),**报中位数**(不报单次最好成绩);环境 Node v24.15.0 / Linux x64。
 
-| 门禁 | 5 次取样(s,2026-10-03 复测,基线提交 `a7f41f6` + 本票的文档改动) | 中位数 | 上一轮中位数(2026-10-01) |
-|---|---|---|---|
-| `check:quick` | 1.05 / 1.03 / 1.05 / 1.05 / 1.08 | **1.05s** | 1.04s |
-| `check:types` | 1.83 / 1.79 / 1.82 / 1.86 / 1.88 | **1.83s** | 1.75s |
-| `check`(全量) | 5.49 / 5.65 / 5.81 / 5.65 / 5.78 | **5.65s** | 4.52s |
+| 门禁 | 2026-10-01 中位 | 2026-10-03 复测 5 次取样(s,基线 `a7f41f6`) | 2026-10-03 中位 | 本轮 2026-10-09 中位(基线 `ea23863`) |
+|---|---|---|---|---|
+| `check:quick` | 1.04s | 1.05 / 1.03 / 1.05 / 1.05 / 1.08 | **1.05s** | **1.68s** |
+| `check:types` | 1.75s | 1.83 / 1.79 / 1.82 / 1.86 / 1.88 | **1.83s** | **3.00s** |
+| `check`(全量) | 4.52s | 5.49 / 5.65 / 5.81 / 5.65 / 5.78 | **5.65s** | **94.04s** |
+| `test:gates` | — | — | — | **68.97s** |
+| `test:slow` | — | — | — | **396.16s** |
+| `check:selfproof` | — | — | — | **120s** |
 
-**先说清楚这些数字的适用边界**:两次取数之间,`oxfmt --check` 的目标清单从 49 个文件长到 **77 个**(apps/ 与 packages/ 下 68 个 + 根 9 个配置文件),`check` 里的测试从空壳变成 17 个测试文件、152 条用例(含门禁自测的反例),于是全量门禁的中位数从 4.52s 涨到 5.65s——**这就是同一方法重测一次能拿到的信息:增长是可测的,不需要靠猜**。快门禁几乎没动(1.04s → 1.05s),因为新增的代码与测试都不在它的巡航面上;生成物漂移检查与「声明即依赖」门禁都刻意**不进快门禁**——前者要一次 `tsc -b`(ADR-0003 给这一条记了实测数字),后者要在每轮编辑循环里多付一次全源码树遍历加读 manifest;快门禁那四项本身在两次取数之间没有变过,这是分层取舍,不是遗漏。
+> 本轮(2026-10-09,基线 `ea23863`)六道门禁的逐次样本、机器与方法,以及同旧基线的并列对照,见 `.scratch/release-gates/readings.md`(原始证据 `readings-raw.log`);本文只登记中位数,不复制逐次样本。`test:gates` / `test:slow` / `check:selfproof` 本轮才首次单列。
 
-即便如此,它**仍然只在这个规模上成立**:引擎、结算管线、赛季调度、生成管线都还不存在,`check` 跑的是校验器与门禁这一层的测试。门禁耗时随源码量与依赖图规模增长——77 个文件仍然不是真实仓库。
+**先说清楚这些数字的适用边界**:两次取数之间,`oxfmt --check` 的目标清单从 49 个文件长到 **77 个**(apps/ 与 packages/ 下 68 个 + 根 9 个配置文件),`check` 里的测试从空壳变成 17 个测试文件、152 条用例(含门禁自测的反例),于是全量门禁的中位数从 4.52s 涨到 5.65s——**这就是同一方法重测一次能拿到的信息:增长是可测的,不需要靠猜**。快门禁几乎没动(1.04s → 1.05s),因为新增的代码与测试都不在它的巡航面上;生成物漂移检查与「声明即依赖」门禁都刻意**不进快门禁**——前者要一次 `tsc -b`(ADR-0003 给这一条记了实测数字),后者要在每轮编辑循环里多付一次全源码树遍历加读 manifest;快门禁那几项本身在两次取数之间没有变过,这是分层取舍,不是遗漏。
+
+即便如此,它**仍然只在这个规模上成立**。本轮的 `check` 已经跑到 F/G/H/I 落地后的真实覆盖面:引擎内核与结算管线(`packages/engine`)、沙箱执行器与预算裁决、生成管线(`packages/gen`)、赛季调度与排名报告(`packages/runner` + `apps/cli` 六子命令)都在,`check` 里的 vitest(`unit` + `property`)覆盖 **92 个测试文件 / 987 条用例**,`oxfmt --check` 巡航 **284 个文件**,dependency-cruiser 巡航 **182 个模块 / 506 条依赖边**,「声明即依赖」门禁检查 51 个文件——**这早已不是 77 文件时代的那几个校验器与门禁测试**。但它仍不是终局:规则侧开放项与地图池扩展会继续把源码量与依赖图往上推,门禁耗时随规模增长,重测一次能拿到的是**增长量**,不是承诺。
 
 > 上一版这里写的是「`check:quick` 目标 < 5s」,那是一个没有实测支撑的许愿。现在有数字了,但**它不能变成承诺**:`< 5s` 若写成硬约束,后来者为了凑数字能改门禁的覆盖面(少查几个包、把类型感知挪出快门),而那比慢 5s 坏得多。**正确用法是把它当基线**:仓库长大后用同一方法(同机、5 次取样、报中位数)重测一次;只有重测出来的中位数显著上升,才谈是否再加一层分层。先前那条未经验证的许愿到此作废。
 
 **契约自证门禁按需跑(决策记录,不是承诺)**。它曾挂在 `check` 末尾,单次实测墙钟 95s、其中它自己 82s
 (64 场对局、标定环那个桩、6 路并行;8 核机上并发上限是 `min(6, cpus-2)`,提到 8 最多省 20s,
 **并发这条路没有肉**)。同机实测 `check` 各步:selfproof 80.6s / vitest unit+property 5.2s /
-`check:types` 1.9s / 其余四道 1.9s——**它占全量门禁的 89%**。于是它被摘出 `check`,`check` 回到约 9s。
+`check:types` 1.9s / 其余四道 1.9s——**它占全量门禁的 89%**。于是它被摘出 `check`,摘出当时 `check` 回到约 9s(F/G/H/I 落地后本轮的读数见上面的耗时表,`check` 已到 94s)。
 
 **理由不是「它慢」,是「命令名与它的时间代价对不上」**:`check` 的名义是「提交前跑一遍」,挂着它之后
 八成时间花在一道与提交内容无关的重测算上,于是人开始跳过它或者每次都无脑等它——**两种都等价于没有
@@ -225,8 +220,8 @@
 `契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`)同时盯着两半——「不在 `check` 里」与
 「有独立脚本 + `test:slow` 里的三个反例」,少任何一半,这个决定就没有代价交换。
 
-**快门禁与末尾复核不受影响**:`check:quick` 那几项一项没动;`check` 末尾的提交内容复核仍是
-`check:drift` + `check:bench`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`)。哪一道该进哪一层由它的
+**快门禁与末尾复核不受影响**:`check:quick` 那几项一项没动;`check` 末尾的提交内容复核是
+`check:drift` + `check:bench` + `check:runtime`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`)。哪一道该进哪一层由它的
 耗时与覆盖面决定,不由它在表里的位置决定。
 
 **`test:gates` 也有量(观测项,不是承诺)**:它是**门禁自测**,每道门禁的真跑加反向用例。它比 `check`

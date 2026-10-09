@@ -1,0 +1,1305 @@
+env: node v24.15.0
+env: Linux 7.0.0-34-generic x86_64 cpus=8
+date: 2026-10-09T15:01:18+08:00
+commit: ea23863
+== build ==
+$ tsc -b
+build 0.22 s
+== check:quick ==
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 62ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+SAMPLE check:quick 1 1.68 s exit=0
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 50ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+SAMPLE check:quick 2 1.68 s exit=0
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 47ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+SAMPLE check:quick 3 1.64 s exit=0
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 47ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+SAMPLE check:quick 4 1.64 s exit=0
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 73ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+SAMPLE check:quick 5 1.73 s exit=0
+== check:types ==
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 60ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+SAMPLE check:types 1 2.96 s exit=0
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 62ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+SAMPLE check:types 2 3.01 s exit=0
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 56ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+SAMPLE check:types 3 2.95 s exit=0
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 48ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+SAMPLE check:types 4 3.00 s exit=0
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 73ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+SAMPLE check:types 5 3.06 s exit=0
+== check ==
+$ pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 49ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 1 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 脚本体积 · 1 处 · 位置 无位置 · 脚本体积 83 字节,比上限 16 字节多出 67 字节。冻结期不接受这份产物,它必须缩到上限之内;改算法,不要拆直线代码:把循环摊成直线代码不会让它变小,只会让每格的工作量放大,而那一项正是预算的成本模型看不见的——要压的是重复的计算和分支,不是行数。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(2,10): error TS2304: Cannot find name 'missingName'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:缺凭证
+  非传输错误:缺凭证
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 beta 未通过(contract):模型 beta 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:429 rate limited
+  非传输错误:429 rate limited
+modelwar gen: 缺 --config <models.yaml>(用法:modelwar gen --config models.yaml)
+modelwar gen: 未知参数:--bogus
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+  非传输错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+modelwar run: 存档规则版本不一致:archive/alpha/r1 的 meta.ruleset = "v2",与赛季声明的 "v1" 不一致;赛季拒跑(规则版本隔离,不分版本分节)
+modelwar run: 对局 c0-arena-s0 退出码 1,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 4,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 被信号终止(null),赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 7,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 子进程无法启动:spawn modelwar ENOENT(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar replay: 用法:modelwar replay <replay.jsonl>
+modelwar replay: 读不到回放 /tmp/replay-render-CxWwVD/no-such.jsonl:ENOENT: no such file or directory, open '/tmp/replay-render-CxWwVD/no-such.jsonl'
+modelwar replay: /tmp/replay-render-CxWwVD/broken.jsonl 第 2 行不是合法 JSON:Expected property name or '}' in JSON at position 1 (line 1 column 2)(文件可能被截断或没写完)
+
+ Test Files  92 passed (92)
+      Tests  987 passed (987)
+   Start at  15:01:45
+   Duration  84.76s (tests 92%, import 4%, transform 3%)
+
+$ tsc -b --pretty false && depcruise packages/*/dist apps/*/dist
+
+✔ no dependency violations found (182 modules, 506 dependencies cruised)
+
+$ node packages/tools/src/gate/run-declared-deps-gate.ts
+声明即依赖门禁:检查 51 个文件,已声明 4 个依赖,无未声明引用。
+$ node packages/tools/src/generate/run-drift-gate.ts
+生成物漂移检查:注册 6 件,无漂移。
+$ node packages/tools/src/benchmarks/run-benchmarks-gate.ts
+✓ cell-a-melee-pressure:产物与重新编译的结果逐字节一致(6310 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-b-expansion-economy:产物与重新编译的结果逐字节一致(7579 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 24(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-c-claim-no-harvest:产物与重新编译的结果逐字节一致(5556 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+基准产物门禁:绿(3 份;产物是入库的,门禁跑的就是它)
+$ node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts
+✓ runtime bundle:入库的 packages/engine/sandbox-runtime/runtime.iife.js(12982 字节)与重新构建的结果逐字节一致;sha256 与常量相符;不含模块语法。
+runtime bundle 门禁:绿(产物是入库的,门禁跑的就是它)
+SAMPLE check 1 91.07 s exit=0
+$ pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 71ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 1 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 脚本体积 · 1 处 · 位置 无位置 · 脚本体积 83 字节,比上限 16 字节多出 67 字节。冻结期不接受这份产物,它必须缩到上限之内;改算法,不要拆直线代码:把循环摊成直线代码不会让它变小,只会让每格的工作量放大,而那一项正是预算的成本模型看不见的——要压的是重复的计算和分支,不是行数。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(2,10): error TS2304: Cannot find name 'missingName'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:缺凭证
+  非传输错误:缺凭证
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 beta 未通过(contract):模型 beta 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:429 rate limited
+  非传输错误:429 rate limited
+modelwar gen: 缺 --config <models.yaml>(用法:modelwar gen --config models.yaml)
+modelwar gen: 未知参数:--bogus
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+  非传输错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+modelwar run: 存档规则版本不一致:archive/alpha/r1 的 meta.ruleset = "v2",与赛季声明的 "v1" 不一致;赛季拒跑(规则版本隔离,不分版本分节)
+modelwar run: 对局 c0-arena-s0 退出码 1,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 4,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 被信号终止(null),赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 7,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 子进程无法启动:spawn modelwar ENOENT(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar replay: 用法:modelwar replay <replay.jsonl>
+modelwar replay: 读不到回放 /tmp/replay-render-rAcpOl/no-such.jsonl:ENOENT: no such file or directory, open '/tmp/replay-render-rAcpOl/no-such.jsonl'
+modelwar replay: /tmp/replay-render-rAcpOl/broken.jsonl 第 2 行不是合法 JSON:Expected property name or '}' in JSON at position 1 (line 1 column 2)(文件可能被截断或没写完)
+
+ Test Files  92 passed (92)
+      Tests  987 passed (987)
+   Start at  15:03:16
+   Duration  87.57s (tests 93%, import 4%, transform 3%)
+
+$ tsc -b --pretty false && depcruise packages/*/dist apps/*/dist
+
+✔ no dependency violations found (182 modules, 506 dependencies cruised)
+
+$ node packages/tools/src/gate/run-declared-deps-gate.ts
+声明即依赖门禁:检查 51 个文件,已声明 4 个依赖,无未声明引用。
+$ node packages/tools/src/generate/run-drift-gate.ts
+生成物漂移检查:注册 6 件,无漂移。
+$ node packages/tools/src/benchmarks/run-benchmarks-gate.ts
+✓ cell-a-melee-pressure:产物与重新编译的结果逐字节一致(6310 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-b-expansion-economy:产物与重新编译的结果逐字节一致(7579 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 24(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-c-claim-no-harvest:产物与重新编译的结果逐字节一致(5556 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+基准产物门禁:绿(3 份;产物是入库的,门禁跑的就是它)
+$ node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts
+✓ runtime bundle:入库的 packages/engine/sandbox-runtime/runtime.iife.js(12982 字节)与重新构建的结果逐字节一致;sha256 与常量相符;不含模块语法。
+runtime bundle 门禁:绿(产物是入库的,门禁跑的就是它)
+SAMPLE check 2 94.04 s exit=0
+$ pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 42ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 1 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 脚本体积 · 1 处 · 位置 无位置 · 脚本体积 83 字节,比上限 16 字节多出 67 字节。冻结期不接受这份产物,它必须缩到上限之内;改算法,不要拆直线代码:把循环摊成直线代码不会让它变小,只会让每格的工作量放大,而那一项正是预算的成本模型看不见的——要压的是重复的计算和分支,不是行数。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(2,10): error TS2304: Cannot find name 'missingName'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:缺凭证
+  非传输错误:缺凭证
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 beta 未通过(contract):模型 beta 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:429 rate limited
+  非传输错误:429 rate limited
+modelwar gen: 缺 --config <models.yaml>(用法:modelwar gen --config models.yaml)
+modelwar gen: 未知参数:--bogus
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+  非传输错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+modelwar run: 存档规则版本不一致:archive/alpha/r1 的 meta.ruleset = "v2",与赛季声明的 "v1" 不一致;赛季拒跑(规则版本隔离,不分版本分节)
+modelwar run: 对局 c0-arena-s0 退出码 1,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 4,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 被信号终止(null),赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 7,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 子进程无法启动:spawn modelwar ENOENT(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar replay: 用法:modelwar replay <replay.jsonl>
+modelwar replay: 读不到回放 /tmp/replay-render-5uDjxb/no-such.jsonl:ENOENT: no such file or directory, open '/tmp/replay-render-5uDjxb/no-such.jsonl'
+modelwar replay: /tmp/replay-render-5uDjxb/broken.jsonl 第 2 行不是合法 JSON:Expected property name or '}' in JSON at position 1 (line 1 column 2)(文件可能被截断或没写完)
+
+ Test Files  92 passed (92)
+      Tests  987 passed (987)
+   Start at  15:04:50
+   Duration  90.87s (tests 92%, import 4%, transform 3%)
+
+$ tsc -b --pretty false && depcruise packages/*/dist apps/*/dist
+
+✔ no dependency violations found (182 modules, 506 dependencies cruised)
+
+$ node packages/tools/src/gate/run-declared-deps-gate.ts
+声明即依赖门禁:检查 51 个文件,已声明 4 个依赖,无未声明引用。
+$ node packages/tools/src/generate/run-drift-gate.ts
+生成物漂移检查:注册 6 件,无漂移。
+$ node packages/tools/src/benchmarks/run-benchmarks-gate.ts
+✓ cell-a-melee-pressure:产物与重新编译的结果逐字节一致(6310 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-b-expansion-economy:产物与重新编译的结果逐字节一致(7579 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 24(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-c-claim-no-harvest:产物与重新编译的结果逐字节一致(5556 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+基准产物门禁:绿(3 份;产物是入库的,门禁跑的就是它)
+$ node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts
+✓ runtime bundle:入库的 packages/engine/sandbox-runtime/runtime.iife.js(12982 字节)与重新构建的结果逐字节一致;sha256 与常量相符;不含模块语法。
+runtime bundle 门禁:绿(产物是入库的,门禁跑的就是它)
+SAMPLE check 3 97.33 s exit=0
+$ pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 36ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 1 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 脚本体积 · 1 处 · 位置 无位置 · 脚本体积 83 字节,比上限 16 字节多出 67 字节。冻结期不接受这份产物,它必须缩到上限之内;改算法,不要拆直线代码:把循环摊成直线代码不会让它变小,只会让每格的工作量放大,而那一项正是预算的成本模型看不见的——要压的是重复的计算和分支,不是行数。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(2,10): error TS2304: Cannot find name 'missingName'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:缺凭证
+  非传输错误:缺凭证
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 beta 未通过(contract):模型 beta 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:429 rate limited
+  非传输错误:429 rate limited
+modelwar gen: 缺 --config <models.yaml>(用法:modelwar gen --config models.yaml)
+modelwar gen: 未知参数:--bogus
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+  非传输错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+modelwar run: 存档规则版本不一致:archive/alpha/r1 的 meta.ruleset = "v2",与赛季声明的 "v1" 不一致;赛季拒跑(规则版本隔离,不分版本分节)
+modelwar run: 对局 c0-arena-s0 退出码 1,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 4,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 被信号终止(null),赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 7,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 子进程无法启动:spawn modelwar ENOENT(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar replay: 用法:modelwar replay <replay.jsonl>
+modelwar replay: 读不到回放 /tmp/replay-render-8LmQOj/no-such.jsonl:ENOENT: no such file or directory, open '/tmp/replay-render-8LmQOj/no-such.jsonl'
+modelwar replay: /tmp/replay-render-8LmQOj/broken.jsonl 第 2 行不是合法 JSON:Expected property name or '}' in JSON at position 1 (line 1 column 2)(文件可能被截断或没写完)
+
+ Test Files  92 passed (92)
+      Tests  987 passed (987)
+   Start at  15:06:27
+   Duration  87.34s (tests 93%, import 4%, transform 3%)
+
+$ tsc -b --pretty false && depcruise packages/*/dist apps/*/dist
+
+✔ no dependency violations found (182 modules, 506 dependencies cruised)
+
+$ node packages/tools/src/gate/run-declared-deps-gate.ts
+声明即依赖门禁:检查 51 个文件,已声明 4 个依赖,无未声明引用。
+$ node packages/tools/src/generate/run-drift-gate.ts
+生成物漂移检查:注册 6 件,无漂移。
+$ node packages/tools/src/benchmarks/run-benchmarks-gate.ts
+✓ cell-a-melee-pressure:产物与重新编译的结果逐字节一致(6310 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-b-expansion-economy:产物与重新编译的结果逐字节一致(7579 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 24(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-c-claim-no-harvest:产物与重新编译的结果逐字节一致(5556 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+基准产物门禁:绿(3 份;产物是入库的,门禁跑的就是它)
+$ node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts
+✓ runtime bundle:入库的 packages/engine/sandbox-runtime/runtime.iife.js(12982 字节)与重新构建的结果逐字节一致;sha256 与常量相符;不含模块语法。
+runtime bundle 门禁:绿(产物是入库的,门禁跑的就是它)
+SAMPLE check 4 93.76 s exit=0
+$ pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime
+$ pnpm run check:quick && pnpm run lint:types
+$ pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget
+$ oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 41ms on 284 files using 8 threads.
+$ oxlint apps packages
+$ node packages/tools/src/toolchain-coupling.ts
+toolchain coupling ok: typescript 7.0.2 ⇄ oxlint-tsgolint 7.0.2003
+$ node packages/tools/src/gate/run-quickjs-coupling-gate.ts
+quickjs-wasi 版本耦合 ok:根依赖 3.6.2 ⇄ 冻结常量 3.6.2
+$ node packages/tools/src/gate/run-no-float-gate.ts
+禁浮点门禁:检查 47 个文件,无违规。
+$ node packages/tools/src/gate/run-budget-gate.ts
+预算结构门禁:检查 8 个预算键(已定稿 8 个),无违规。
+$ tsc -b --pretty false && oxlint --type-aware apps packages
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 1 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 脚本体积 · 1 处 · 位置 无位置 · 脚本体积 83 字节,比上限 16 字节多出 67 字节。冻结期不接受这份产物,它必须缩到上限之内;改算法,不要拆直线代码:把循环摊成直线代码不会让它变小,只会让每格的工作量放大,而那一项正是预算的成本模型看不见的——要压的是重复的计算和分支,不是行数。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(2,10): error TS2304: Cannot find name 'missingName'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:缺凭证
+  非传输错误:缺凭证
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(contract):模型 alpha 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 beta 未通过(contract):模型 beta 第 2 轮静态校验未通过
+  脚本静态校验未通过:1 处违规,按类别合并成 1 条。
+  - [拦截] 禁列全局名 · 1 处 · 位置 3:12 · 禁列全局名 `Date`:它是确定性污染源或这个 VM 之外的读数,参赛脚本里不能出现;请改用脚本自己算得出来的量(格数、步数、累计计数)。
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(tsc):模型 alpha 第 1 轮 tsc 编译失败
+  script.ts(1,1): error TS2304: Cannot find name 'x'.
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:429 rate limited
+  非传输错误:429 rate limited
+modelwar gen: 缺 --config <models.yaml>(用法:modelwar gen --config models.yaml)
+modelwar gen: 未知参数:--bogus
+modelwar gen: 模型 alpha 未通过(transport):模型 alpha 第 1 轮传输失败:不可重试的错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+  非传输错误:模型 alpha 缺凭证:环境变量 GEN_TEST_KEY 未设置或为空。请导出该变量,或写入 <root>/.env(凭证绝不入库、不进日志)。
+modelwar run: 存档规则版本不一致:archive/alpha/r1 的 meta.ruleset = "v2",与赛季声明的 "v1" 不一致;赛季拒跑(规则版本隔离,不分版本分节)
+modelwar run: 对局 c0-arena-s0 退出码 1,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 4,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 被信号终止(null),赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 退出码 7,赛季中止(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar run: 对局 c0-arena-s0 子进程无法启动:spawn modelwar ENOENT(码 1 / 4 为赛季级失败;2 / 3 重跑后仍触发则入问题清单而不中止)
+modelwar replay: 用法:modelwar replay <replay.jsonl>
+modelwar replay: 读不到回放 /tmp/replay-render-mbTuIK/no-such.jsonl:ENOENT: no such file or directory, open '/tmp/replay-render-mbTuIK/no-such.jsonl'
+modelwar replay: /tmp/replay-render-mbTuIK/broken.jsonl 第 2 行不是合法 JSON:Expected property name or '}' in JSON at position 1 (line 1 column 2)(文件可能被截断或没写完)
+
+ Test Files  92 passed (92)
+      Tests  987 passed (987)
+   Start at  15:08:01
+   Duration  91.13s (tests 93%, import 4%, transform 2%)
+
+$ tsc -b --pretty false && depcruise packages/*/dist apps/*/dist
+
+✔ no dependency violations found (182 modules, 506 dependencies cruised)
+
+$ node packages/tools/src/gate/run-declared-deps-gate.ts
+声明即依赖门禁:检查 51 个文件,已声明 4 个依赖,无未声明引用。
+$ node packages/tools/src/generate/run-drift-gate.ts
+生成物漂移检查:注册 6 件,无漂移。
+$ node packages/tools/src/benchmarks/run-benchmarks-gate.ts
+✓ cell-a-melee-pressure:产物与重新编译的结果逐字节一致(6310 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-b-expansion-economy:产物与重新编译的结果逐字节一致(7579 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 24(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+✓ cell-c-claim-no-harvest:产物与重新编译的结果逐字节一致(5556 字节),裸脚本,入口可调用=true;诊断 名字未声明 0 / 形参隐式 any 0 / 可能为 undefined 0(类型面已回填:第一项必须恒为 0,非 0 就是声明面与脚本对不上了)
+基准产物门禁:绿(3 份;产物是入库的,门禁跑的就是它)
+$ node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts
+✓ runtime bundle:入库的 packages/engine/sandbox-runtime/runtime.iife.js(12982 字节)与重新构建的结果逐字节一致;sha256 与常量相符;不含模块语法。
+runtime bundle 门禁:绿(产物是入库的,门禁跑的就是它)
+SAMPLE check 5 97.48 s exit=0
+== test:gates ==
+$ vitest run --project gates
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  15:09:35
+   Duration  68.37s (tests 100%)
+
+SAMPLE test:gates 1 68.97 s exit=0
+$ vitest run --project gates
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  15:10:45
+   Duration  75.22s (tests 100%)
+
+SAMPLE test:gates 2 75.91 s exit=0
+$ vitest run --project gates
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  15:12:00
+   Duration  71.47s (tests 100%)
+
+SAMPLE test:gates 3 72.16 s exit=0
+$ vitest run --project gates
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  15:13:13
+   Duration  64.06s (tests 100%)
+
+SAMPLE test:gates 4 64.64 s exit=0
+$ vitest run --project gates
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  15:14:17
+   Duration  64.85s (tests 100%)
+
+SAMPLE test:gates 5 65.41 s exit=0
+== test:slow ==
+$ vitest run --project slow
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:15:23
+   Duration  402.42s (tests 100%)
+
+SAMPLE test:slow 1 403.04 s exit=0
+$ vitest run --project slow
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:22:06
+   Duration  396.68s (tests 100%)
+
+SAMPLE test:slow 2 397.24 s exit=0
+$ vitest run --project slow
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:28:43
+   Duration  395.08s (tests 100%)
+
+SAMPLE test:slow 3 395.65 s exit=0
+$ vitest run --project slow
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:35:19
+   Duration  395.18s (tests 100%)
+
+SAMPLE test:slow 4 395.74 s exit=0
+$ vitest run --project slow
+
+ RUN  v5.0.3 /home/qingtian/workspace/model-war-wt/01
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:41:54
+   Duration  395.60s (tests 100%)
+
+SAMPLE test:slow 5 396.16 s exit=0
+== check:selfproof ==
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 64.7s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 1 66.82 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 118.4s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 2 120.42 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 114.1s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 1 120 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 113.3s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 3 116.32 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 117.1s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 2 122 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 115.7s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 4 119.74 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 116.2s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 3 122 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 113.9s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 5 118.71 s exit=0
+== DONE ==
+2026-10-09T15:57:32+08:00
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 99.7s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 4 105 s exit=0
+$ node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts
+契约自证门禁：终稿契约 × 三份基准脚本 × 标定环的桩
+
+口径（引用本读数时必须一起带）：
+- 「整局 ≈440」是**单矿储量 125 时代、全矩阵平均**的数，**不是「四份基准脚本」的数**；
+  基准脚本口径实测 351。这条命题的松紧度是被储量那一刀改掉的，不是被地图改掉的。
+  本报告的数字另起一代：终稿契约 + 终稿基准脚本，与 440 / 351 都不可互比。
+- **种子维度对消耗指标零方差**，每臂的有效独立样本只有 **4 个座位轮转**；
+  本报告每臂 16 场 = 4 座位轮转 × 4 种子，**不得写成「16 场独立样本」**。
+- 消耗 = 全图储量 − 终局剩余，逐场校验恒等于全场采获之和（自洽校验见下）；分母是总储量
+  （16 个资源点 × resourcePerSite 200 = 3200），不是单矿储量。
+- 本轮三份脚本与 #13 那一轮的四份脚本**不可互比**（契约形态、移动层、错误处理三层都变了，
+  抬头口径见 benchmarks/README.md）；可比的只有夹具、臂数、种子、判据与消耗口径。
+
+夹具闸门：farmer6 四方自战 p100=479/479/479/479、delivered=3080/3080/3080/3080
+（受控锚点 p100=479 / delivered=3080，逐字一致才跑正表）——一致，0% 漂移
+
+产物：A=benchmarks/cell-a-melee-pressure/script.js　B=benchmarks/cell-b-expansion-economy/script.js　C=benchmarks/cell-c-claim-no-harvest/script.js
+
+① 零静态违规：过（静态校验器逐份判定，--max-bytes 32768，来源：规则集文件的 scriptSizeLimit=32768）
+   ✓ A benchmarks/cell-a-melee-pressure/script.js：退出码 0
+   ✓ B benchmarks/cell-b-expansion-economy/script.js：退出码 0
+   ✓ C benchmarks/cell-c-claim-no-harvest/script.js：退出码 0
+
+② 正常终局：过（64 场 / 256 席，异常 tick 合计 0；终局原因 shortcut×60/victory×4）
+
+③ 消耗 ≤ 总储量 1/4（配额 25% = 800）：过
+   逐份脚本（每席位消耗 = 该席位采获；分母 = 总储量）
+   A：席位 64｜中位 200（6.3%）｜最坏单席 220（6.9%）｜中位判定 过｜最坏单席判定 过
+   B：席位 128｜中位 48（1.5%）｜最坏单席 62（1.9%）｜中位判定 过｜最坏单席判定 过
+   C：席位 64｜中位 0（0.0%）｜最坏单席 0（0.0%）｜中位判定 过｜最坏单席判定 过
+   逐臂整场（#13 那一轮的可比读数）
+   P0/fixture：16 场｜中位 312（9.8%）｜最坏 320（10.0%）｜配额 800
+   P1/corridor-split：16 场｜中位 300（9.4%）｜最坏 321（10.0%）｜配额 800
+   P1/fortress-core：16 场｜中位 282（8.8%）｜最坏 300（9.4%）｜配额 800
+   P1/open-clash：16 场｜中位 289（9.0%）｜最坏 296（9.3%）｜配额 800
+   全批：64 场｜中位 293｜最坏 321｜超配额 0 场
+   自洽校验「消耗 ≡ 全场采获」：逐场相等
+
+④ 取策略互不相同：过（每一对至少 3 项指标相对差 ≥ 25%）
+   A（64 席）：harvests=200 delivered=200 workerPeak=2 unitPeak=26 endMelee=24 workerSharePercent=24 captures=25 finalRank=1 eliminationPercent=0
+   B（128 席）：harvests=48 delivered=0 workerPeak=5 unitPeak=5 endMelee=0 workerSharePercent=39 captures=1 finalRank=3 eliminationPercent=100
+   C（64 席）：harvests=0 delivered=0 workerPeak=2 unitPeak=4 endMelee=0 workerSharePercent=20 captures=8 finalRank=2 eliminationPercent=100
+   A vs B：分开 9/9 项｜harvests 76% delivered 100% workerPeak 60% unitPeak 81% endMelee 100% workerSharePercent 38% captures 96% finalRank 67% eliminationPercent 100%
+   A vs C：分开 7/9 项｜harvests 100% delivered 100% workerPeak 0% unitPeak 85% endMelee 100% workerSharePercent 17% captures 68% finalRank 50% eliminationPercent 100%
+   B vs C：分开 5/9 项｜harvests 100% delivered 0% workerPeak 60% unitPeak 20% endMelee 0% workerSharePercent 49% captures 88% finalRank 33% eliminationPercent 0%
+
+桩与终稿契约的缺口（由兼容层补，不静默换口径）：
+   - 座位自认:getMyIndex() → 按座位注入常量函数(与终稿同义)
+   - 错误判别:isError / errCode → 按桩的裸字符串返回形态翻译(判断同义)
+   - 错误码常量:7 个 ERR_* → 按真源包注入面目录逐个铺成同名同值字符串
+   - 快照产线字段:site.producing → 脚本自己的订单簿 + getTick() 过期(与标定环老脚本同形)
+   - getObjectsByType('player') → 宿主账本:初始资金 + 下单扣款 + 交付入账
+   兼容层账本与引擎真值可能分叉的两处规模：产线忙被拒 0 次、基地易主退款 0 次。
+
+换契约版本时：判据不变、门禁仍绿是正常的，四问的取值会全部变——上面的数字不是回归基线。
+矩阵：64 场（4 臂 × 4 座位轮转 × 4 种子，桩 .scratch/rules-calibration/sim 未改），用时 61.9s
+契约自证门禁:绿（① 过 ② 过 ③ 过 ④ 过）
+SAMPLE check:selfproof 5 64 s exit=0
