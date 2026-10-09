@@ -1,0 +1,50 @@
+# topup 读数(12 异质 + 4 对称校准,共 16 局)
+h-corridor-split-s0 map=corridor-split cells=aabb rankings=[1,3,2,4] reason=shortcut territory=[60,0,0,0]
+h-corridor-split-s1 map=corridor-split cells=abba rankings=[1,2,3,4] reason=shortcut territory=[53,0,0,0]
+h-corridor-split-s2 map=corridor-split cells=bbaa rankings=[4,2,1,3] reason=timeout territory=[0,5,53,0]
+h-corridor-split-s3 map=corridor-split cells=baab rankings=[1,3,3,2] reason=timeout territory=[17,5,5,9]
+h-fortress-core-s0 map=fortress-core cells=aabb rankings=[1,4,2,2] reason=timeout territory=[52,0,5,5]
+h-fortress-core-s1 map=fortress-core cells=abba rankings=[1,3,4,2] reason=victory territory=[66,0,0,0]
+h-fortress-core-s2 map=fortress-core cells=bbaa rankings=[1,1,1,1] reason=timeout territory=[6,6,6,6]
+h-fortress-core-s3 map=fortress-core cells=baab rankings=[2,1,3,4] reason=shortcut territory=[0,59,0,0]
+h-open-clash-s0 map=open-clash cells=aabb rankings=[1,4,3,2] reason=victory territory=[69,0,0,0]
+h-open-clash-s1 map=open-clash cells=abba rankings=[1,3,4,2] reason=shortcut territory=[61,0,0,0]
+h-open-clash-s2 map=open-clash cells=bbaa rankings=[1,1,1,1] reason=timeout territory=[6,6,6,6]
+h-open-clash-s3 map=open-clash cells=baab rankings=[4,1,3,2] reason=shortcut territory=[0,67,0,0]
+s-aaaa-open-clash map=open-clash cells=aaaa rankings=[2,3,4,1] reason=timeout territory=[5,0,0,60]
+s-aaaa-corridor-split map=corridor-split cells=aaaa rankings=[3,1,2,4] reason=shortcut territory=[0,59,0,0]
+s-bbbb-open-clash map=open-clash cells=bbbb rankings=[2,2,1,2] reason=timeout territory=[8,8,12,8]
+s-bbbb-corridor-split map=corridor-split cells=bbbb rankings=[2,2,1,2] reason=timeout territory=[8,8,12,8]
+
+## H 异质:按座位(n=12/席)
+seat0 胜 9/12=75.0% Wilson95% [46.8%,91.1%] 均领土分 32.50
+seat1 胜 4/12=33.3% Wilson95% [13.8%,60.9%] 均领土分 12.33
+seat2 胜 3/12=25.0% Wilson95% [8.9%,53.2%] 均领土分 6.25
+seat3 胜 2/12=16.7% Wilson95% [4.7%,44.8%] 均领土分 2.17
+最大落差 58.3%
+
+## H 异质:按座位×脚本(每格 n=6)
+seat0×A 胜 6/6
+seat0×B 胜 3/6
+seat1×A 胜 2/6
+seat1×B 胜 2/6
+seat2×A 胜 3/6
+seat2×B 胜 0/6
+seat3×A 胜 2/6
+seat3×B 胜 0/6
+
+## H 异质:脚本总战绩
+A 坐席获胜 13 席次(12 局 × 并列可超)
+B 坐席获胜 5 席次(12 局 × 并列可超)
+
+## S 对称校准:按座位(n=4/席)
+seat0 胜 0/4 Wilson95% [0.0%,49.0%]
+seat1 胜 1/4 Wilson95% [4.6%,69.9%]
+seat2 胜 2/4 Wilson95% [15.0%,85.0%]
+seat3 胜 1/4 Wilson95% [4.6%,69.9%]
+
+## S 对称校准:按脚本
+A×2局(open-clash+corridor-split):[2,3,4,1]timeout [3,1,2,4]shortcut
+B×2局(open-clash+corridor-split):[2,2,1,2]timeout [2,2,1,2]timeout
+
+第二独立路径:meta↔input 逐席核对 16/16 通过
