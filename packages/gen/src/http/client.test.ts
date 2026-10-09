@@ -39,6 +39,22 @@ const json = (res: ServerResponse, status: number, body: unknown): void => {
   res.end(JSON.stringify(body));
 };
 
+/** 开一个 SSE 响应:之后用 `sseFrame` / `sseDone` 逐帧写(分块传输,写一帧即发一个 chunk)。 */
+const openSse = (res: ServerResponse): void => {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+};
+
+/** 写一帧 `data: <json>`,按 SSE 的空行分帧。 */
+const sseFrame = (res: ServerResponse, frame: unknown): void => {
+  res.write(`data: ${JSON.stringify(frame)}\n\n`);
+};
+
+/** 收尾帧并关掉响应。 */
+const sseDone = (res: ServerResponse): void => {
+  res.write("data: [DONE]\n\n");
+  res.end();
+};
+
 const startEndpoint = async (respond: Responder): Promise<FakeEndpoint> => {
   const requests: Captured[] = [];
   const server: Server = createServer((req, res) => {
@@ -128,7 +144,7 @@ afterEach(async () => {
   await Promise.all(endpoints.splice(0).map((created) => created.close()));
 });
 
-it("chat-completions:POST /chat/completions + Bearer 鉴权 + body 形状", async () => {
+it("chat-completions:POST /chat/completions + Bearer 鉴权 + 流式 body 形状", async () => {
   const ep = await endpoint((_captured, res) =>
     json(res, 200, {
       choices: [{ message: { content: "脚本正文" }, finish_reason: "stop" }],
@@ -144,12 +160,200 @@ it("chat-completions:POST /chat/completions + Bearer 鉴权 + body 形状", asyn
   expect(request?.path).toBe("/chat/completions");
   expect(request?.authorization).toBe(`Bearer ${TEST_KEY_VALUE}`);
   expect(request?.contentType).toContain("application/json");
+  // 声明了流式能力的端点族一律带流式字段发;这次回的是 application/json,客户端走回退路径解析。
   expect(request?.body).toEqual({
     model: "vendor/model-x",
     messages: [{ role: "user", content: "hi" }],
     temperature: 0.3,
+    stream: true,
+    stream_options: { include_usage: true },
   });
   expect(response).toEqual({ text: "脚本正文", finishReason: "stop", usage: { total_tokens: 5 } });
+});
+
+it("chat-completions:content-type=application/json 时回退按一次性 JSON 解析(回退用例)", async () => {
+  const ep = await endpoint((_captured, res) =>
+    json(res, 200, {
+      choices: [{ message: { content: "整段 JSON 也读得回" }, finish_reason: "stop" }],
+      usage: { total_tokens: 9 },
+    }),
+  );
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
+
+  const response = await client.send([user("hi")], {});
+
+  expect(response).toEqual({
+    text: "整段 JSON 也读得回",
+    finishReason: "stop",
+    usage: { total_tokens: 9 },
+  });
+});
+
+it("chat-completions:text/event-stream 多帧累积出与非流式同形的 text/finishReason/usage", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, { choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
+    sseFrame(res, {
+      choices: [{ delta: { reasoning_content: "让我想想…" }, finish_reason: null }],
+    });
+    sseFrame(res, { choices: [{ delta: { content: "脚本" }, finish_reason: null }] });
+    sseFrame(res, { choices: [{ delta: { content: "正文" }, finish_reason: null }] });
+    sseFrame(res, { choices: [{ delta: {}, finish_reason: "stop" }] });
+    sseFrame(res, {
+      choices: [],
+      usage: {
+        prompt_tokens: 17800,
+        completion_tokens: 900,
+        completion_tokens_details: { reasoning_tokens: 640 },
+      },
+    });
+    sseDone(res);
+  });
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
+
+  const response = await client.send([user("hi")], {});
+
+  expect(response).toEqual({
+    text: "脚本正文",
+    finishReason: "stop",
+    usage: {
+      prompt_tokens: 17800,
+      completion_tokens: 900,
+      completion_tokens_details: { reasoning_tokens: 640 },
+    },
+  });
+});
+
+it("chat-completions:一帧被切成两个 chunk 也拼得回(不假设一次 read 正好一帧)", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    const frame = `data: ${JSON.stringify({
+      choices: [{ delta: { content: "切开的帧" }, finish_reason: "stop" }],
+    })}\n\n`;
+    const cut = 20;
+    res.write(frame.slice(0, cut));
+    setTimeout(() => {
+      res.write(frame.slice(cut));
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }, 30);
+  });
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl), {
+    timeoutMs: 2_000,
+  });
+
+  const response = await client.send([user("hi")], {});
+
+  expect(response.text).toBe("切开的帧");
+});
+
+it("chat-completions:CRLF 行尾、注释行与 event/id 行都被容忍(只认 data: 行)", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    res.write(": 这是一条注释\r\n");
+    res.write("event: message\r\n");
+    res.write("id: 42\r\n");
+    res.write(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] })}\r\n\r\n`,
+    );
+    res.write("data: [DONE]\r\n\r\n");
+    res.end();
+  });
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
+
+  const response = await client.send([user("hi")], {});
+
+  expect(response).toEqual({ text: "ok", finishReason: "stop", usage: undefined });
+});
+
+it("chat-completions:SSE 截断帧 finish_reason=length 原样透传(重试交给 retry.ts,此处不重试)", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, { choices: [{ delta: { content: "半截脚本" }, finish_reason: null }] });
+    sseFrame(res, { choices: [{ delta: {}, finish_reason: "length" }] });
+    sseFrame(res, { choices: [], usage: { prompt_tokens: 1, completion_tokens: 8 } });
+    sseDone(res);
+  });
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
+
+  const response = await client.send([user("hi")], {});
+
+  expect(response.finishReason).toBe("length");
+  expect(response.text).toBe("半截脚本");
+  expect(ep.requests).toHaveLength(1);
+});
+
+it("chat-completions:SSE 在 [DONE] 之前断掉 → TransportError retryable=true", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, { choices: [{ delta: { content: "写到一半" }, finish_reason: null }] });
+    res.end(); // 没有 [DONE]
+  });
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
+
+  const error = await expectTransportError(client.send([user("hi")], {}));
+
+  expect(error.retryable).toBe(true);
+  expect(error.message).toContain("[DONE]");
+});
+
+it("chat-completions:SSE 帧里带 error → TransportError retryable=true、消息不含凭证", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, { choices: [{ delta: { content: "开头" }, finish_reason: null }] });
+    sseFrame(res, { error: { message: "upstream timeout", type: "server_error" } });
+    sseDone(res);
+  });
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
+
+  const error = await expectTransportError(client.send([user("hi")], {}));
+
+  expect(error.retryable).toBe(true);
+  expect(error.status).toBeUndefined();
+  expect(error.message).toContain("upstream timeout");
+  expect(error.message).not.toContain(TEST_KEY_VALUE);
+});
+
+it("chat-completions:帧间静默超过 timeoutMs → 空闲超时 TransportError(retryable=true、无 status)", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, { choices: [{ delta: { content: "起了个头" }, finish_reason: null }] });
+    // 之后永不吐帧、也不收尾:让空闲计时器触发。
+  });
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl), { timeoutMs: 80 });
+
+  const error = await expectTransportError(client.send([user("hi")], {}));
+
+  expect(error.retryable).toBe(true);
+  expect(error.status).toBeUndefined();
+  expect(error.message).toContain("空闲");
+});
+
+it("chat-completions:总时长超过 timeoutMs 但帧间隔始终小于它 → 成功(证明超时是空闲口径)", async () => {
+  const gapMs = 40;
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, { choices: [{ delta: { content: "a" }, finish_reason: null }] });
+    setTimeout(() => {
+      sseFrame(res, { choices: [{ delta: { content: "b" }, finish_reason: null }] });
+      setTimeout(() => {
+        sseFrame(res, { choices: [{ delta: { content: "c" }, finish_reason: null }] });
+        setTimeout(() => {
+          sseFrame(res, { choices: [{ delta: {}, finish_reason: "stop" }] });
+          sseDone(res);
+        }, gapMs);
+      }, gapMs);
+    }, gapMs);
+  });
+  // 单帧间隔 40ms,总时长 ≈120ms;若超时还是 wall-clock 口径,这条必然失败。
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl), {
+    timeoutMs: gapMs * 3,
+  });
+
+  const response = await client.send([user("hi")], {});
+
+  expect(response.text).toBe("abc");
+  expect(response.finishReason).toBe("stop");
 });
 
 it("messages:system 抽到顶层、不进 messages;stop_reason=max_tokens 归一成 length", async () => {
