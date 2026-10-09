@@ -665,6 +665,20 @@ it(
   },
 );
 
+it(
+  "`verify` 回放里插一行非回放行即红:统一到 parseReplay 后不再静默忽略,退 1",
+  { timeout: 120_000 },
+  () => {
+    const [replayPath, root] = matchToReplay();
+    // 自家 parseLines 是裸 cast:非回放行会被随后的 filter/find 静默忽略,verify 反而退 0;
+    // 走 parseReplay 后这类行一律拒跑。这条测试盯着「唯一读入端」的统一不再被拆开。
+    editReplay(replayPath, (lines) => {
+      lines.splice(1, 0, { type: "bogus" });
+    });
+    expect(run(["verify", replayPath, "--root", root]).status).toBe(1);
+  },
+);
+
 // ── 真实基准脚本:CLI 公开面完整跑通(match 写回放 → verify 复算) ─────────────────
 
 /**
