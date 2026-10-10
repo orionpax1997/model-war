@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -454,4 +461,166 @@ it("同一 fixture 下并发 4 与串行 1 产出的 report.json 逐字节相同
   // 顺带钉住:即使并发,输入也各自落在自己的目录(互不干扰)。
   const report = readReport(parallel.root);
   expect(new Set(report.matches.map((match) => match.inputPath)).size).toBe(4);
+});
+
+// ── 票 13:赛季断点续跑(同 outputDir + 同配置再跑即续跑) ───────────────────────
+
+/** 第二次跑的计数桩:被调即记数并写一份合法回放(若续跑生效,应一次都不被调)。 */
+const countingSpawn =
+  (counts: Map<string, number>, resultReason = "timeout"): SeasonSchedulerDeps["spawnMatch"] =>
+  async (inputPath) => {
+    const matchName = basename(dirname(inputPath));
+    counts.set(matchName, (counts.get(matchName) ?? 0) + 1);
+    writeFakeReplay(inputPath, resultReason);
+    return { code: 0 };
+  };
+
+/** 首跑:全量 spawn,断言退 0,返回报告。 */
+const runSeasonGreen = async (
+  root: string,
+  configPath: string,
+  spawnMatch: SeasonSchedulerDeps["spawnMatch"] = scriptedSpawn(() => 0).spawnMatch,
+): Promise<ReportShape> => {
+  const code = await scheduleSeason({ root, configPath }, { spawnMatch });
+  expect(code).toBe(0);
+  return readReport(root);
+};
+
+/** 续跑:计数桩再跑,断言退 0,返回每局 spawn 次数。`resultReason` 让新回放可辨认(证新鲜)。 */
+const resumeWithCounting = async (
+  root: string,
+  configPath: string,
+  resultReason = "timeout",
+): Promise<Map<string, number>> => {
+  const counts = new Map<string, number>();
+  const code = await scheduleSeason(
+    { root, configPath },
+    { spawnMatch: countingSpawn(counts, resultReason) },
+  );
+  expect(code).toBe(0);
+  return counts;
+};
+
+it("同配置再跑即续跑:第二次 0 spawn、退 0、matches 仍全、matchIssues 口径不变", async () => {
+  const { root, configPath } = buildFixture({ concurrency: 2 });
+  const firstReport = await runSeasonGreen(root, configPath);
+  expect(firstReport.matches).toHaveLength(4);
+
+  const counts = await resumeWithCounting(root, configPath);
+  expect([...counts.values()]).toEqual([]);
+
+  const report = readReport(root);
+  expect(report.matches).toHaveLength(4);
+  expect(report.matchIssues).toHaveLength(firstReport.matchIssues.length);
+  expect(report.matches.map((match) => match.matchId)).toEqual(
+    firstReport.matches.map((match) => match.matchId),
+  );
+  expect(report.matches.map((match) => match.rankings)).toEqual(
+    firstReport.matches.map((match) => match.rankings),
+  );
+});
+
+it("篡改某局 input.json(模拟配置变更)→ 仅该局重跑,其余跳过", async () => {
+  const { root, configPath } = buildFixture({ concurrency: 2 });
+  const firstReport = await runSeasonGreen(root, configPath);
+  expect(firstReport.matches).toHaveLength(4);
+
+  // 篡改一局的输入字节:与本次物化逐字节比较必不等,该局须重跑。
+  const tampered = join(root, "runs/fixture/matches/c0-arena-s1/input.json");
+  writeFileSync(tampered, `${readFileSync(tampered, "utf8")} `);
+
+  // 新回放用另一终局原因:该局报告条目须来自新回放,不只是 spawn 次数对。
+  const counts = await resumeWithCounting(root, configPath, "victory");
+  expect(counts.get("c0-arena-s1")).toBe(1);
+  expect(counts.size).toBe(1);
+
+  const report = readReport(root);
+  expect(report.matches).toHaveLength(4);
+  expect(report.matches.find((match) => match.matchId === "c0-arena-s1")?.reason).toBe("victory");
+  expect(
+    report.matches
+      .filter((match) => match.matchId !== "c0-arena-s1")
+      .every((match) => match.reason === "timeout"),
+  ).toBe(true);
+});
+
+it("截断某局回放(模拟中断半截)→ 仅该局重跑", async () => {
+  const { root, configPath } = buildFixture({ concurrency: 2 });
+  const firstReport = await runSeasonGreen(root, configPath);
+  expect(firstReport.matches).toHaveLength(4);
+
+  // 只留 meta 行:末行不是 result,该局须重跑。
+  const truncated = join(root, "runs/fixture/matches/c0-arena-s2/replay.jsonl");
+  writeFileSync(
+    truncated,
+    `${JSON.stringify({ type: "meta", schemaVersion: 1, ruleset: "v1" })}\n`,
+  );
+
+  const counts = await resumeWithCounting(root, configPath);
+  expect(counts.get("c0-arena-s2")).toBe(1);
+  expect(counts.size).toBe(1);
+  expect(readReport(root).matches).toHaveLength(4);
+});
+
+it("续跑跳过的 memory-pressure 局,披露仍从观测文件读出", async () => {
+  const { root, configPath } = buildFixture({ concurrency: 1 });
+  const base = scriptedSpawn(() => 0);
+  const firstDeps: SeasonSchedulerDeps = {
+    spawnMatch: async (inputPath) => {
+      const result = await base.spawnMatch(inputPath);
+      if (basename(dirname(inputPath)) === "c0-arena-s1") {
+        writeObservations(inputPath, ["wall-clock-soft", "memory-pressure"]);
+      }
+      return result;
+    },
+  };
+  const firstReport = await runSeasonGreen(root, configPath, firstDeps.spawnMatch);
+  expect(firstReport.matchIssues).toHaveLength(1);
+
+  // 第二次 0 spawn:披露须由跳过路径上的 completedOf 原样读出。
+  const counts = await resumeWithCounting(root, configPath);
+  expect([...counts.values()]).toEqual([]);
+
+  const report = readReport(root);
+  expect(report.matches.map((match) => match.matchId)).toContain("c0-arena-s1");
+  expect(report.standings.every((entry) => entry.countedMatches === 4)).toBe(true);
+  expect(report.matchIssues).toHaveLength(1);
+  expect(report.matchIssues[0]?.reason).toBe("memory-pressure");
+  expect(report.matchIssues[0]?.exitCode).toBe(0);
+  expect(report.matchIssues[0]?.excludedFromRanking).toBe(false);
+});
+
+it("跨配置旧回放不混进新赛季:改配置后崩溃残留旧 result,同配置再跑仍重跑", async () => {
+  const { root, configPath } = buildFixture({ concurrency: 1 });
+  // 配置 A 全跑通;s0 顺带留一条 memory-pressure 披露(验旧观测一并被清掉)。
+  const baseA = scriptedSpawn(() => 0);
+  await runSeasonGreen(root, configPath, async (inputPath) => {
+    const result = await baseA.spawnMatch(inputPath);
+    if (basename(dirname(inputPath)) === "c0-arena-s0") {
+      writeObservations(inputPath, ["memory-pressure"]);
+    }
+    return result;
+  });
+
+  // 改配置:alpha 脚本一改,含它的全 4 局输入字节都变(四人局每局都有 alpha)。
+  appendFileSync(join(root, "archive/alpha/r1/script.js"), "// tweak\n");
+
+  // 配置 B 首跑:s0 码 2 两次进问题清单;崩溃的子进程写不出合法回放,只剩 A 的旧 result。
+  const planB = scriptedSpawn((name) => (name === "c0-arena-s0" ? 2 : 0));
+  const bCode = await scheduleSeason({ root, configPath }, { spawnMatch: planB.spawnMatch });
+  expect(bCode).toBe(0);
+  const bReport = readReport(root);
+  expect(bReport.matches).toHaveLength(3);
+  expect(bReport.matchIssues.map((issue) => issue.reason)).toEqual(["engine-crash"]);
+
+  // 配置 B 再跑:s0 必须被 spawn(A 的旧 result 不可复用);新回放用 victory 证新鲜。
+  const counts = await resumeWithCounting(root, configPath, "victory");
+  expect(counts.get("c0-arena-s0")).toBe(1);
+  expect(counts.size).toBe(1);
+
+  const report = readReport(root);
+  expect(report.matches).toHaveLength(4);
+  expect(report.matches.find((match) => match.matchId === "c0-arena-s0")?.reason).toBe("victory");
+  // A 的旧披露未泄漏进 B 的赛季:B 的成功局无观测,问题清单须为空。
+  expect(report.matchIssues).toHaveLength(0);
 });

@@ -1,5 +1,6 @@
 /**
- * 赛季调度器:并发子进程池 + 退出码驱动的异常重跑/剔除(hld §8.1 / §8.3 / §9,票 06 → 07)。
+ * 赛季调度器:并发子进程池 + 退出码驱动的异常重跑/剔除(hld §8.1 / §8.3 / §9,票 06 → 07)
+ * + 断点续跑(票 13):同 `outputDir` + 同配置再跑,已完成局跳过 spawn。
  *
  * ── 这一票把「串行」换成「并发池」 ────────────────────────────────────────
  *
@@ -60,7 +61,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { parseReplay, readLinesOf } from "@model-war/replay";
@@ -328,10 +329,42 @@ const matchLocation = (
 };
 
 /**
- * 执行一局:物化 `input.json` → spawn → **只认退出码**分流 → (必要时)重跑一次。
+ * 断点续跑判据:该局目录已有可复用的完成产物时跳过 spawn,直接读名次。
  *
- * 物化发生在 spawn 之前且只一次;每局一个目录,重跑复用同一路径(子进程重写 `replay.jsonl`),
- * 局与局之间无共享文件、互不干扰。
+ * 两条缺一即重跑:
+ * 1. `<matchDir>/input.json` 与本次 `materializeInput` 序列化逐字节一致——参赛存档引用 /
+ *    脚本与元哈希 / 地图与地图哈希 / 种子 / ruleset 任一变了,物化字节必变,故比较字节而非
+ *    只看文件存在,旧回放永不混进新配置的赛季。
+ * 2. `replay.jsonl` 经 `parseReplay` 读通且末行是 `result`——中断半截(末行非 result)与坏回放
+ *    (读不动抛错)天然不满足;同配置下码 2 / 3 两次挂掉的局没有合法末行,同样照常重跑。
+ *    跨配置的旧回放(旧配置跑通后残留的合法末行)靠 `runMatchUp` 重跑前删旧文件挡掉,不靠本判据。
+ *
+ * 纯读盘 + 纯函数比较,worker 间无共享可变状态,不新增竞态。
+ */
+const isResumable = (matchDir: string, inputPath: string, expectedInputBytes: string): boolean => {
+  let existing: string;
+  try {
+    existing = readFileSync(inputPath, "utf8");
+  } catch {
+    return false;
+  }
+  if (existing !== expectedInputBytes) {
+    return false;
+  }
+  try {
+    return parseReplay(join(matchDir, "replay.jsonl")).at(-1)?.type === "result";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * 执行一局:先看断点续跑(已完成即跳过 spawn)→ 否则物化 `input.json` → spawn →
+ * **只认退出码**分流 → (必要时)重跑一次。
+ *
+ * 跳过的局走同一条 `completedOf`(含 `observations.jsonl` 的 memory-pressure 披露),
+ * 报告组装路径零分叉。物化发生在 spawn 之前且只一次;每局一个目录,重跑复用同一路径
+ * (子进程重写 `replay.jsonl`),局与局之间无共享文件、互不干扰。
  *
  * `deps.spawnMatch` 抛错(子进程无法启动)不在此处吞掉——由调用方定为赛季级中止。
  */
@@ -342,8 +375,21 @@ const runMatchUp = async (
   deps: SeasonSchedulerDeps,
 ): Promise<AttemptResult> => {
   const { matchDir, inputPath } = matchLocation(outputDir, matchUp);
+  const expectedInputBytes = `${JSON.stringify(materializeInput(root, matchUp), null, 2)}\n`;
+
+  // 断点续跑:`season.yaml` 以 `outputDir` pin 住输出目录,同配置再跑一条命令即续跑,
+  // 不新增配置项、不加 CLI 参数。已完成的局不重写 `input.json`(字节本就一致)、不 spawn。
+  if (isResumable(matchDir, inputPath, expectedInputBytes)) {
+    return completedOf(matchDir);
+  }
+
   mkdirSync(matchDir, { recursive: true });
-  writeFileSync(inputPath, `${JSON.stringify(materializeInput(root, matchUp), null, 2)}\n`);
+  // 非续跑即重跑:先删旧回放与旧观测——崩溃/超时的子进程写不出合法回放(码 2 / 3 在
+  // `modelwar match` 写回放之前返回),且无观测的成功局不落盘旧观测文件;不删,下次同配置
+  // 再跑会把旧配置的名次/披露当成新赛季的(逐字节 input 对上 + 陈旧 result 末行)。
+  rmSync(join(matchDir, "replay.jsonl"), { force: true });
+  rmSync(join(matchDir, "observations.jsonl"), { force: true });
+  writeFileSync(inputPath, expectedInputBytes);
 
   const name = matchDirName(matchUp);
   const first = classifyExitCode((await deps.spawnMatch(inputPath)).code);

@@ -797,7 +797,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 命令 | 模块 | 说明 |
 |---|---|---|
 | `modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>]` | gen | 生成并冻结脚本;根目录解析同 `match`(默认 cwd),`--config` 相对根;`--model` 只跑一个模型。gen 启动时若 `<root>/.env` 存在即 `process.loadEnvFile()`,凭据只经 `process.env[credentialEnvVar]` 读 |
-| `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告。根目录解析同 `match`(默认 cwd),`--config` 相对根;对局阶段**不联网**,故**不加载 `.env`**(与 `gen` 相反) |
+| `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告。根目录解析同 `match`(默认 cwd),`--config` 相对根;对局阶段**不联网**,故**不加载 `.env`**(与 `gen` 相反);同 `outputDir` + 同配置再跑即断点续跑(已完成局跳过 spawn) |
 | `modelwar match <input.json>` | engine | 执行一个对局(runner 与调试都走这条路径) |
 | `modelwar replay <replay.jsonl>` | apps/cli → `replay` | 终端 ASCII 回放,单步/暂停;只读回放,**不依赖 engine** |
 | `modelwar verify <replay.jsonl>` | apps/cli → engine + `replay` | 按 input.json 重新执行,逐 tick hash 比对(CI 调用);不起子进程 |
