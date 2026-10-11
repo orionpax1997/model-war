@@ -166,6 +166,8 @@ it("一批两模型一败一成:失败记录与成功三件套并存,退出码�
     root,
     configPath: "models.yaml",
     createClient: (config: ModelConfig): ModelClient => (config.slug === "alpha" ? alpha : beta),
+    // 成功分支走试跑通过桩：本文件不断言真试跑。
+    trial: () => ({ passed: true, stdout: "" }),
   });
   expect(code).toBe(1);
 
@@ -201,6 +203,8 @@ it("一批两模型一败一成:失败记录与成功三件套并存,退出码�
     root,
     configPath: "models.yaml",
     createClient: (config: ModelConfig): ModelClient => (config.slug === "alpha" ? alpha : beta),
+    // 成功分支走试跑通过桩：本文件不断言真试跑。
+    trial: () => ({ passed: true, stdout: "" }),
   });
   expect(code).toBe(1);
 

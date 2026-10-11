@@ -66,6 +66,7 @@ it("顺利路径:经端口发一次请求、回得合法脚本,退出码 0", asy
     root,
     configPath: "models.yaml",
     createClient: () => stub,
+    trial: () => ({ passed: true, stdout: "" }),
   });
   expect(code).toBe(0);
   expect(stub.calls).toHaveLength(1);
@@ -125,6 +126,7 @@ it("`--model` 只跑选中的那一个,其余模型不发请求", async () => {
     configPath: "models.yaml",
     modelFilter: "beta",
     createClient: (config: ModelConfig): ModelClient => (config.slug === "beta" ? beta : alpha),
+    trial: () => ({ passed: true, stdout: "" }),
   });
   expect(code).toBe(0);
   expect(beta.calls).toHaveLength(1);

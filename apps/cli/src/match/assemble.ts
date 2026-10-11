@@ -159,8 +159,10 @@ const BUDGET_FIELDS = [
  * 判据是键清单里那一个两态字段 `calibration.state`:未定值(`undetermined`)就不传这个字段——
  * 引擎不认识「未定值」这个概念(spec《未定值与预算配置》)。票 07 之后八键全部定稿,七项运行时字段
  * 都进预算;判据仍读 `state` 而不是「值是不是 0」,失效后回未定值时会自动把对应轨摘下。
+ *
+ * 试跑(`trial/`)跑在现行上限下,复用同一份解析,不另读一份阈值——上限的家只有这一处。
  */
-const budgetOf = (ruleset: Ruleset): NonNullable<RunMatchParams["budget"]> => {
+export const budgetOf = (ruleset: Ruleset): NonNullable<RunMatchParams["budget"]> => {
   const budget: Record<string, number> = {};
   for (const field of BUDGET_FIELDS) {
     // 把标定状态当作两态联合读:`BUDGET_FIELDS` 当前每一项都已定稿,直接与 `"undetermined"`
@@ -174,18 +176,26 @@ const budgetOf = (ruleset: Ruleset): NonNullable<RunMatchParams["budget"]> => {
   return budget as NonNullable<RunMatchParams["budget"]>;
 };
 
-/** meta 头:真沙箱那一支的五栏读数都是工程常量/入库产物 hash,不是对局参数。 */
-const headOf = (input: MatchInput): RunMatchParams["head"] => ({
+/**
+ * meta 头:真沙箱那一支的读数都是工程常量/入库产物 hash,不是对局参数。
+ *
+ * 试跑(`trial/`)复用它:试跑没有对局输入,只有一份地图哈希,所以入参就是哈希本身;
+ * `headOf` 是它在有输入时的薄包装(只取 `input.mapSha256`)。
+ */
+export const headForMap = (mapSha256: string): RunMatchParams["head"] => ({
   runner: "quickjs",
   // 装载时区(与本局无关;WASI 时区是另一栏 `wasiTimezoneOffset`)。
   timezoneOffset: "+00:00",
-  mapHash: input.mapSha256,
+  mapHash: mapSha256,
   quickjsWasiVersion: QUICKJS_WASI_VERSION,
   sandboxRuntimeHash: measureSandboxRuntimeHash(),
   wasiClock: String(WASI_CLOCK_MS),
   wasiRandomFill: WASI_RANDOM_FILL,
   wasiTimezoneOffset: String(WASI_TIMEZONE_OFFSET_MINUTES),
 });
+
+/** 有对局输入时的包装:哈希取自输入(见 `headForMap`)。 */
+const headOf = (input: MatchInput): RunMatchParams["head"] => headForMap(input.mapSha256);
 
 /**
  * 装载 + 校验一局:`input.json` → 四份存档 → 地图 → 规则集 → 沙箱字节。
@@ -361,8 +371,10 @@ export type ExecutedRun =
 /**
  * 把已启用的预算轨阈值透传给执行器。**缺席的轨不写进选项**——于是连对应的计数回调/读钟都不装,
  * 引擎与执行器都不必认识「未定值」这个概念(判据与缺席语义见 `budgetOf`)。
+ *
+ * 试跑(`trial/`)复用同一份映射:试跑与联赛跑在同一组计数回调下, throttle 行为才一致。
  */
-const budgetTracksOf = (
+export const budgetTracksOf = (
   budget: NonNullable<RunMatchParams["budget"]>,
 ): Partial<QuickJsRunnerOptions> => ({
   ...(budget.eventTickLimit === undefined ? {} : { eventTickLimit: budget.eventTickLimit }),

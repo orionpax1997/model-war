@@ -1,16 +1,18 @@
 /**
- * 单模型的生成轮:发一次 → 编译 → 静态校验 → 原子冻结,失败则**只回喂校验文本**再试(hld §2.2.6 / §7.4;契约 §2.2 / §4)。
+ * 单模型的生成轮:发一次 → 编译 → 静态校验 → 冻结期试跑 → 原子冻结,失败则**只回喂校验/试跑文本**再试
+ * (hld §2.2.6 / §7.4;契约 §2.2 / §4)。
  *
- * ── 票 04 的边界:≤N 轮只回喂校验文本 ──
+ * ── 票 04 的边界:≤N 轮只回喂校验文本;试跑票追加试跑文本 ──
  *
- * 一轮的全部动作(发 → 编译 → 迭代期校验 → 冻结期校验)收在 `sendOneRound` 里,吃**这一轮
+ * 一轮的全部动作(发 → 编译 → 迭代期校验 → 冻结期校验 → 冻结期试跑)收在 `sendOneRound` 里,吃**这一轮
  * 完整发出的 messages**,吐这一轮的结论(`RoundResult`)。`generateOneModel` 把它包进
  * `for` 循环:第 1 轮 = 初次生成;第 r>1 轮把上一轮驱动失败的**面向模型文本**逐字追加为一条
  * **新增的 user 消息**(前置一条 `assistant` = 上一轮模型回文本),每轮把**整个 messages 全量
  * 重发**——不依赖 provider 会话状态(契约 §2.2)。
  *
- * 回喂内容**只有**校验文本:合约静态校验失败 = 校验器 stdout;编译失败 = tsc 诊断文本。不加
- * 前后缀、不加引擎诊断、不含任何对局信息。轮数上限 `protocolRounds` 是**模型调用总轮数,
+ * 回喂内容**只有**校验/试跑文本:合约静态校验失败 = 校验器 stdout;编译失败 = tsc 诊断文本;
+ * 试跑拦下 = 试跑子进程 stdout（第几场、第几 tick、哪项预算、超了多少）。不加
+ * 前后缀、不加引擎诊断、不含任何对局信息（试跑 stdout 本身就是面向模型的，不含胜负与名次）。轮数上限 `protocolRounds` 是**模型调用总轮数,
  * 含第 1 轮**(`config.protocolRounds ?? request.maxRounds ?? 5`),用尽即止。
  *
  * ── `prompts` / `generationLog` 逐轮追加 ──
@@ -29,8 +31,10 @@
  *
  * ── `kind` 与 `errorCodes` 的取值(票 07 定稿) ──
  *
- * `kind` 取「驱动本轮结论的那一栏」:编译没过 → `tsc`;编译过了 → `contract`(校验阶段,
- * 过或不过都算它驱动,所以**成功轮的 kind 也是 `contract`**)。这一栏是「哪一栏驱动」的唯一可读标记。
+ * `kind` 取「驱动本轮结论的那一栏」:编译没过 → `tsc`;编译过了 → `contract`(校验与试跑阶段,
+ * 过或不过都算它驱动,所以**成功轮的 kind 也是 `contract`**)。试跑拦下的轮与静态校验拦下的轮
+ * 同属 `contract`（日志形状不为试跑另开一栏）；两者的区分只在人类可读的 `message`（见 `messageOfFailure`），
+ * 不进机器字段。这一栏是「哪一栏驱动」的唯一可读标记。
  *
  * `errorCodes` 的来源**只有一处**:编译失败时从 tsc 诊断文本里拾取 `TS####`(可复算:同一份
  * 诊断文本总能捞出同一组码)。合约失败时**留空数组**,这是**有意写死的决定**,不是留白:
@@ -60,11 +64,13 @@ import {
   sha256Hex,
 } from "./archive.js";
 import { compileScript } from "./compile.js";
+import { extractScriptSource } from "./extract.js";
 import type { ModelConfig } from "./config.js";
 import type { ChatMessage, ModelParams } from "./model-client.js";
 import { renderBaseTemplate } from "./prompt.js";
 import { retryTransport, type TransportFailure } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
+import { runTrialScript, type TrialProbe } from "./trial.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
 /** 未在配置里给 `protocolRounds` 时的 gen 内部默认:模型调用总轮数,含第 1 轮。 */
@@ -155,8 +161,14 @@ type RoundResult =
       /** 本轮模型回文本(下一轮把它当前置 `assistant` 消息)。 */
       readonly text: string;
       readonly classification: "tsc" | "contract";
+      /**
+       * 失败发生在哪一段：`static` = 试跑之前的任一栏（编译/tsc 与静态校验），
+       * `trial` = 冻结期试跑。只决定人类可读的 `message`（见 `messageOfFailure`），
+       * 不进 `generationLog`（那一栏的取值仍是票 07 定稿的两档）。
+       */
+      readonly stage: "static" | "trial";
       readonly log: GenerationLogEntry;
-      /** 逐字回喂的**面向模型文本**:tsc 诊断,或校验器 stdout(契约 §2.2)。 */
+      /** 逐字回喂的**面向模型文本**:tsc 诊断、校验器 stdout 或试跑 stdout(契约 §2.2)。 */
       readonly feedback: string;
       readonly diagnostics: readonly string[];
     }
@@ -167,12 +179,16 @@ type RoundResult =
     };
 
 /**
- * 跑一轮:发一次 → 编译 → 迭代期校验 → 冻结期校验。
+ * 跑一轮:发一次 → 编译 → 迭代期校验 → 冻结期校验 → 冻结期试跑。
  *
  * 它吃**这一轮完整发出的 messages**(第 r>1 轮已含前置 `assistant` 与新增 `user` 回喂),
  * 把整份 transcript 全量重发。**传输层收口**:一次 `send` 由 `retryTransport` 包住,退避重试
  * 同一轮;重试耗尽 / 不可重试时返回 `kind:"transport"`(轮循环不涨轮数、不建存档)。落盘与失败
  * 清理归 `generateOneModel`。
+ *
+ * 试跑是冻结期校验通过之后的下一栏：用刚编译好的产物跑三场完整对局（子进程，见 `trial.ts`），
+ * 拦下即本轮失败（`contract` 分类、`trial` 段），回喂试跑 stdout 逐字。试跑子进程抛错
+ *（infra，非 0/1 退出）不在这里收口——它不是候选的错，直接抛给编排层大声失败。
  */
 const sendOneRound = async (options: {
   readonly request: GenerationRequest;
@@ -182,8 +198,9 @@ const sendOneRound = async (options: {
   readonly params: ModelParams;
   readonly maxBytes: number;
   readonly round: number;
+  readonly trial: TrialProbe;
 }): Promise<RoundResult> => {
-  const { request, config, stagingDir, messages, params, maxBytes, round } = options;
+  const { request, config, stagingDir, messages, params, maxBytes, round, trial } = options;
   // 一轮一个客户端:重试在**同一次 `send` 之内**完成(同一份 messages),协议轮数不动(契约 §2.1)。
   const client = request.createClient(config);
   const attempt = await retryTransport({ send: () => client.send(messages, params) });
@@ -201,12 +218,19 @@ const sendOneRound = async (options: {
     finishReason: response.finishReason,
   } as const;
 
-  const compile = compileScript({ root: request.root, stagingDir, source: text });
+  // 模型裸文本先进剥包装再进编译(ADR-0012):围栏/引导语只包在头尾,剥后行号自第一行代码起算,
+  // 诊断仍对得上;transcript 里留原文(回喂链可解释),落盘与校验都吃剥后文本。
+  const compile = compileScript({
+    root: request.root,
+    stagingDir,
+    source: extractScriptSource(text),
+  });
   if (!compile.ok) {
     return {
       kind: "failed",
       text,
       classification: "tsc",
+      stage: "static",
       log: { ...base, kind: "tsc", errorCodes: tsErrorCodes(compile.diagnostics) },
       // 编译失败的回喂文本 = tsc 诊断文本,逐字回喂(契约 §2.2)。
       feedback: compile.diagnostics,
@@ -226,6 +250,7 @@ const sendOneRound = async (options: {
       kind: "failed",
       text,
       classification: "contract",
+      stage: "static",
       log: { ...base, kind: "contract", errorCodes: [] },
       // 合约失败的回喂文本 = 校验器 stdout,逐字回喂(契约 §2.2)。
       feedback: iteration.stdout,
@@ -245,9 +270,26 @@ const sendOneRound = async (options: {
       kind: "failed",
       text,
       classification: "contract",
+      stage: "static",
       log: { ...base, kind: "contract", errorCodes: [] },
       feedback: freeze.stdout,
       diagnostics: nonEmptyLines(freeze.stdout),
+    };
+  }
+
+  // 冻结期试跑：三场完整对局，任一场预算超限即本轮失败（`contract` 分类、`trial` 段）。
+  // 回喂试跑 stdout 逐字——它是面向模型的（第几场、第几 tick、哪项预算、超了多少），
+  // 不含胜负与名次，走既有回喂通道，不需要新格式。
+  const trialResult = trial({ root: request.root, artifactPath: compile.jsPath });
+  if (!trialResult.passed) {
+    return {
+      kind: "failed",
+      text,
+      classification: "contract",
+      stage: "trial",
+      log: { ...base, kind: "contract", errorCodes: [] },
+      feedback: trialResult.stdout,
+      diagnostics: nonEmptyLines(trialResult.stdout),
     };
   }
 
@@ -262,10 +304,14 @@ const sendOneRound = async (options: {
   };
 };
 
-const messageOfFailure = (slug: string, result: RoundResult & { kind: "failed" }): string =>
-  result.classification === "tsc"
-    ? `模型 ${slug} 第 ${String(result.log.round)} 轮 tsc 编译失败`
+const messageOfFailure = (slug: string, result: RoundResult & { kind: "failed" }): string => {
+  if (result.classification === "tsc") {
+    return `模型 ${slug} 第 ${String(result.log.round)} 轮 tsc 编译失败`;
+  }
+  return result.stage === "trial"
+    ? `模型 ${slug} 第 ${String(result.log.round)} 轮冻结期试跑未通过`
     : `模型 ${slug} 第 ${String(result.log.round)} 轮静态校验未通过`;
+};
 
 /**
  * 单模型逐轮回喂环(契约 §2.2):第 1 轮初次生成,之后每轮**只回喂上一轮的校验文本**,
@@ -285,6 +331,8 @@ export const generateOneModel = async (
   // 契约 §2.2:配置优先;`maxRounds` 是编排层可注入的缺省替代(测试用),最后才是 gen 默认 5。
   const protocolRounds = config.protocolRounds ?? request.maxRounds ?? DEFAULT_PROTOCOL_ROUNDS;
   const maxBytes = scriptSizeLimit(request.root);
+  // 缺席即真子进程（`trial.ts`）：生产冻结前必跑三场；测试注入桩，保持单测毫秒级。
+  const trial: TrialProbe = request.trial ?? runTrialScript;
 
   const basePrompt = renderBaseTemplate(request.template, request.docs, config.strategy);
   // 无状态全量重发:每轮把整个 messages 发出,后续轮在其后追加 assistant + user(契约 §2.2)。
@@ -304,6 +352,7 @@ export const generateOneModel = async (
         params,
         maxBytes,
         round,
+        trial,
       });
 
       // 传输层收口:该轮没有收敛(重试耗尽 / 不可重试),不进 prompts / generationLog、不占

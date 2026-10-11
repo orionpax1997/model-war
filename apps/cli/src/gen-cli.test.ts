@@ -83,7 +83,12 @@ type Captured = {
  * 起一个本地假端点,对任何请求都回一个合法脚本(chat-completions 方言)。返回值里带上收到的请求,
  * 好让断言能钉住「CLI 真的按配置打到了这个端点、带上了鉴权头」。
  */
-const startFakeEndpoint = async (): Promise<{
+/**
+ * 起一个本地假端点，对任何请求都回 `scriptText`（缺省是过 tsc + 静态校验的合法脚本）。
+ */
+const startFakeEndpoint = async (
+  scriptText: string = VALID_SCRIPT,
+): Promise<{
   readonly baseUrl: string;
   readonly requests: readonly Captured[];
   readonly close: () => Promise<void>;
@@ -104,9 +109,7 @@ const startFakeEndpoint = async (): Promise<{
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
-          choices: [
-            { message: { role: "assistant", content: VALID_SCRIPT }, finish_reason: "stop" },
-          ],
+          choices: [{ message: { role: "assistant", content: scriptText }, finish_reason: "stop" }],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         }),
       );
@@ -137,6 +140,11 @@ const mkRoot = (baseUrl: string): string => {
   symlinkSync(join(repoRoot, "node_modules"), join(root, "node_modules"), "dir");
   symlinkSync(join(repoRoot, "packages"), join(root, "packages"), "dir");
   symlinkSync(join(repoRoot, "tsconfig.scripts.json"), join(root, "tsconfig.scripts.json"));
+  // 真试跑（冻结期最后一栏）从安装根读入口产物、地图与基准对手：三处符号链接，
+  // 与编译/校验走安装面的fixture 纪律一致（只读，不写回仓库）。
+  symlinkSync(join(repoRoot, "apps"), join(root, "apps"), "dir");
+  symlinkSync(join(repoRoot, "maps"), join(root, "maps"), "dir");
+  symlinkSync(join(repoRoot, "benchmarks"), join(root, "benchmarks"), "dir");
 
   mkdirSync(join(root, "docs", "rules-v2"), { recursive: true });
   writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
@@ -222,3 +230,37 @@ it("冒烟:假端点后端到端跑通 `gen`,退出 0,存档三件套落地", { 
     await endpoint.close();
   }
 });
+
+/** 死循环惯犯：过得了 tsc 与静态校验，但每 tick 必然触碰事件计数上限。 */
+const HABITUAL_SCRIPT = `function loop() {\n  while (true) {\n  }\n}\n`;
+
+it(
+  "试跑拦下惯犯:死循环脚本退出非零,失败记录分类 contract 且诊断含试跑明细",
+  { timeout: 120_000 },
+  async () => {
+    const endpoint = await startFakeEndpoint(HABITUAL_SCRIPT);
+    try {
+      const root = mkRoot(endpoint.baseUrl);
+      const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
+      // 冻结失败 → 非零退出（早停：首场首 tick 即拦，不必跑满三场）。
+      expect(result.status, result.stderr).toBe(1);
+
+      // 不建存档目录，只留失败记录（旁证），且记录指明是试跑拦的。
+      const slugDir = join(root, "archive", "alpha");
+      const names = readdirSync(slugDir);
+      expect(names).toEqual([expect.stringMatching(/^failed-.*\.json$/)]);
+      const record = JSON.parse(readFileSync(join(slugDir, names[0] as string), "utf8")) as {
+        classification: string;
+        diagnostics: readonly string[];
+        message: string;
+      };
+      expect(record.classification).toBe("contract");
+      expect(record.message).toContain("试跑");
+      const diagnostics = record.diagnostics.join("\n");
+      expect(diagnostics).toContain("试跑未通过");
+      expect(diagnostics).toContain("控制流事件计数");
+    } finally {
+      await endpoint.close();
+    }
+  },
+);

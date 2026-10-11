@@ -20,6 +20,7 @@ import { join, resolve } from "node:path";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs, type RuleDocs } from "./contract.js";
 import { writeFailureRecord } from "./failure.js";
+import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
 import type { ModelClient } from "./model-client.js";
 import { generateOneModel } from "./pipeline.js";
@@ -37,6 +38,11 @@ export type GenerationRequest = {
   readonly createClient: (config: ModelConfig) => ModelClient;
   readonly now: () => Date;
   readonly maxRounds?: number;
+  /**
+   * 冻结期试跑探针。缺席即走真子进程（`trial.ts`）；测试注入桩，保持单测毫秒级
+   * （真试跑跑三场完整对局，约十秒，只属于 e2e 与手工冒烟）。
+   */
+  readonly trial?: TrialProbe;
 };
 
 export type GenerationOptions = {
@@ -47,6 +53,8 @@ export type GenerationOptions = {
   readonly modelFilter?: string;
   /** 测试注入桩;缺省用真实 HTTP 客户端(`http/client.ts`,唯一允许联网的代码)。 */
   readonly createClient?: (config: ModelConfig) => ModelClient;
+  /** 测试注入桩;缺省跑真试跑子进程（三场完整对局，见 `trial.ts`）。 */
+  readonly trial?: TrialProbe;
 };
 
 const messageOf = (cause: unknown): string =>
@@ -112,6 +120,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     template,
     createClient,
     now,
+    ...(options.trial === undefined ? {} : { trial: options.trial }),
   };
 
   let failures = 0;

@@ -152,14 +152,25 @@ const tscFeedback = (root: string, source: string): string => {
   }
 };
 
-/** 直接构造一份 `GenerationRequest`(绕开 `runGeneration` 的 `new Date()`,让 runId 可控)。 */
-const requestWith = (root: string, stub: StubClient, runId: string): GenerationRequest => ({
+/**
+ * 直接构造一份 `GenerationRequest`(绕开 `runGeneration` 的 `new Date()`,让 runId 可控)。
+ *
+ * 试跑默认注入通过桩：真试跑跑三场完整对局（约十秒），只属于 e2e 与手工冒烟；
+ * 单测只关心管线与试跑的接缝（拦/放行两种结论的走向），不断言真试跑本身。
+ */
+const requestWith = (
+  root: string,
+  stub: StubClient,
+  runId: string,
+  trial: GenerationRequest["trial"] = () => ({ passed: true, stdout: "" }),
+): GenerationRequest => ({
   root,
   runId,
   docs: readRuleDocs(root),
   template: loadBaseTemplate(root),
   createClient: () => stub,
   now: () => new Date("2026-01-01T00:00:00Z"),
+  trial,
 });
 
 it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退出码 0", async () => {
@@ -169,6 +180,7 @@ it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退
     root,
     configPath: "models.yaml",
     createClient: () => stub,
+    trial: () => ({ passed: true, stdout: "" }),
   });
   expect(code).toBe(0);
 
@@ -655,4 +667,91 @@ it("编译诊断与契约诊断同池:tsc 失败 → 契约失败 → 合法,轮
   expect(log.map((entry) => entry.kind)).toEqual(["tsc", "contract", "contract"]);
   expect(log[0]?.errorCodes).toEqual(["TS2304"]);
   expect(log[1]?.errorCodes).toEqual([]);
+});
+
+it("试跑拦下:失败分类 contract，诊断与回喂都是试跑文本逐字，不建存档", async () => {
+  const root = mkRoot();
+  const runId = "2026-01-01T00-00-00-000Z";
+  const feedback = "试跑未通过：第 1 场第 0 tick 触发预算超限。\n";
+  const seen: { readonly root: string; readonly artifactPath: string }[] = [];
+  const outcome = await generateOneModel(
+    requestWith(root, stubClient([reply(VALID_SCRIPT)]), runId, (options) => {
+      seen.push(options);
+      return { passed: false, stdout: feedback };
+    }),
+    { ...firstModelConfig(root), protocolRounds: 1 },
+  );
+
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") {
+    return;
+  }
+  expect(outcome.failure.classification).toBe("contract");
+  expect(outcome.failure.message).toContain("试跑");
+  // 回喂与诊断都是试跑 stdout 逐字：诊断取非空行，回喂取整段。
+  expect(outcome.failure.diagnostics).toEqual([feedback.trim()]);
+  expect(outcome.failure.prompts).toHaveLength(1);
+  expect(outcome.failure.generationLog).toHaveLength(1);
+  const log = JSON.parse(outcome.failure.generationLog[0] ?? "{}") as Record<string, unknown>;
+  expect(log.round).toBe(1);
+  expect(log.kind).toBe("contract");
+  expect(log.errorCodes).toEqual([]);
+  // 探针收到的产物是本轮编译产物：根一致、文件名是 script.js。
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.root).toBe(root);
+  expect(seen[0]?.artifactPath.endsWith("script.js")).toBe(true);
+  // 失败不建存档目录，也不留半截。
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
+});
+
+it("试跑回喂:首轮被拦、次轮通过 → 恰好回喂一次，反馈逐字，轮数 = 2", async () => {
+  const root = mkRoot();
+  const feedback = "试跑未通过：第 1 场第 0 tick 触发预算超限。\n";
+  let calls = 0;
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  const outcome = await generateOneModel(
+    requestWith(root, stub, "2026-01-01T00-00-00-000Z", () => {
+      calls += 1;
+      return calls === 1 ? { passed: false, stdout: feedback } : { passed: true, stdout: "" };
+    }),
+    { ...firstModelConfig(root), protocolRounds: 2 },
+  );
+
+  // 恰好发生一次回喂：桩只被调 2 次。
+  expect(stub.calls).toHaveLength(2);
+  const round2 = callAt(stub, 1);
+  expect(round2.messages[1]?.role).toBe("assistant");
+  expect(round2.messages[1]?.content).toBe(VALID_SCRIPT);
+  // 严格相等：新增的 user 消息逐字等于试跑的回喂文本，不含任何非试跑文本。
+  expect(round2.messages[2]?.role).toBe("user");
+  expect(round2.messages[2]?.content).toBe(feedback);
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") {
+    return;
+  }
+  expect(outcome.meta.protocolRounds).toBe(2);
+  expect(outcome.meta.prompts).toHaveLength(2);
+  expect(outcome.meta.prompts[1]).toContain(feedback);
+  const log = parsedLog(outcome.meta);
+  expect(log.map((entry) => entry.kind)).toEqual(["contract", "contract"]);
+});
+
+it("剥围栏接线:围栏包裹的合法脚本首轮直接冻结,落盘字节是剥后文本", async () => {
+  const root = mkRoot();
+  // 首行围栏 + 尾行围栏:不剥就是 TS2349@(1,1)(本案 opus 的挂法);剥后即 VALID_SCRIPT 本体。
+  const fenced = `\`\`\`typescript\n${VALID_SCRIPT}\`\`\``;
+  const stub = stubClient([reply(fenced)]);
+  const outcome = await generateOneModel(requestWith(root, stub, "2026-01-01T00-00-00-000Z"), {
+    ...firstModelConfig(root),
+    protocolRounds: 1,
+  });
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") {
+    return;
+  }
+  expect(outcome.meta.protocolRounds).toBe(1);
+  expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(VALID_SCRIPT);
 });

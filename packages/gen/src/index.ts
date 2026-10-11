@@ -50,6 +50,7 @@ export {
   type ScriptLintPhase,
   type ValidateResult,
 } from "./validate.js";
+export { runTrialScript, type TrialProbe, type TrialResult } from "./trial.js";
 export {
   ARCHIVE_META_NAME,
   STAGING_DIR_PREFIX,
@@ -70,6 +71,7 @@ export {
   type ModelFailure,
   type ModelOutcome,
 } from "./pipeline.js";
+export { extractScriptSource } from "./extract.js";
 export {
   generateAndFreeze,
   runGeneration,
