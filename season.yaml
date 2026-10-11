@@ -20,9 +20,12 @@
 
 # 赛季根种子:决定全部对局种子的源头(`种子 = H(masterSeed, combo, mapIndex, seedIndex)`)。
 # 新赛季换新种子:N 变了组合全变,种子本就全变,换个名字标记清楚。
-masterSeed: "2026-n11"
+masterSeed: "2026-s1"
 
-# 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v1)一致,否则装载期拒跑。
+# 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v2)一致,否则装载期拒跑。
+# 2026-10-11 用 v1 存档重跑过一季(运行标识 2026-10-11T01-04-35-383Z,当时本行暂回 v1):
+# 名次与测试季逐项一致,回放多出 1391 条 exception 事件。S1 跑 v2:11 条 v1 脚本直迁(只改标签,
+# 依据见 docs/adr/0011),sol 换已冻好的零 findPath 版。
 ruleset: v2
 
 # ── 选填字段 ──
@@ -57,4 +60,4 @@ participants:
   - archive/mimo-v2.6-pro/2026-10-10T16-09-59-286Z
   - archive/claude-haiku-5-5/2026-10-10T16-31-38-484Z
   - archive/minimax-m3.1-flash/2026-10-10T19-51-00-601Z
-  - archive/gpt-6.1-sol/2026-10-10T20-02-06-549Z
+  - archive/gpt-6.1-sol/2026-10-10T23-08-53-678Z

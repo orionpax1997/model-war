@@ -9,7 +9,7 @@
   "generationLog": [
     "{\"round\":1,\"model\":\"deepseek/deepseek-v4.1-flash\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":17802,\"completion_tokens\":28833,\"total_tokens\":46635,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":17792,\"cache_write_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"text_tokens\":0,\"image_tokens\":0,\"video_tokens\":0},\"completion_tokens_details\":{\"audio_tokens\":0,\"reasoning_tokens\":26606,\"accepted_prediction_tokens\":0,\"rejected_prediction_tokens\":0,\"text_tokens\":0,\"image_tokens\":0,\"video_tokens\":0}},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

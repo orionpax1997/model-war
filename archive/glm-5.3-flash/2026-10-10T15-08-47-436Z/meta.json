@@ -9,7 +9,7 @@
   "generationLog": [
     "{\"round\":1,\"model\":\"glm-5.3-flash\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":17860,\"completion_tokens\":10854,\"total_tokens\":28714,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":null},\"completion_tokens_details\":{\"reasoning_tokens\":8657}},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

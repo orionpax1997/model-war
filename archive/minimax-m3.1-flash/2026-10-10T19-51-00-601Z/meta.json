@@ -11,7 +11,7 @@
     "{\"round\":1,\"model\":\"MiniMax-M3.1-Flash-Preview\",\"params\":{\"temperature\":0},\"usage\":{\"total_tokens\":67389,\"total_characters\":0,\"prompt_tokens\":17300,\"completion_tokens\":50089,\"completion_tokens_details\":{\"reasoning_tokens\":42449},\"prompt_tokens_details\":{\"cached_tokens\":199}},\"finishReason\":\"stop\",\"kind\":\"tsc\",\"errorCodes\":[\"TS2532\",\"TS2322\"]}",
     "{\"round\":2,\"model\":\"MiniMax-M3.1-Flash-Preview\",\"params\":{\"temperature\":0},\"usage\":{\"total_tokens\":36909,\"total_characters\":0,\"prompt_tokens\":25209,\"completion_tokens\":11700,\"completion_tokens_details\":{\"reasoning_tokens\":3937},\"prompt_tokens_details\":{\"cached_tokens\":17300}},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

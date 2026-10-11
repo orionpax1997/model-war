@@ -9,7 +9,7 @@
   "generationLog": [
     "{\"round\":1,\"model\":\"gpt-6-luna\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":20353,\"completion_tokens\":10882,\"total_tokens\":31235,\"prompt_tokens_details\":{\"cached_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":7768,\"image_tokens\":0},\"cache_creation_input_tokens\":20350},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

@@ -9,7 +9,7 @@
   "generationLog": [
     "{\"round\":1,\"model\":\"mimo-v2.6-pro\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":18905,\"completion_tokens\":52024,\"total_tokens\":70929,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":46975}},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

@@ -11,7 +11,7 @@
     "{\"round\":1,\"model\":\"step-5-preview-free\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":17783,\"completion_tokens\":60145,\"total_tokens\":77928,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":17728,\"cache_write_tokens\":0},\"completion_tokens_details\":{\"audio_tokens\":0,\"reasoning_tokens\":53349}},\"finishReason\":\"stop\",\"kind\":\"tsc\",\"errorCodes\":[\"TS2345\"]}",
     "{\"round\":2,\"model\":\"step-5-preview-free\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":24696,\"completion_tokens\":16016,\"total_tokens\":40712,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":0,\"cache_write_tokens\":0},\"completion_tokens_details\":{\"audio_tokens\":0,\"reasoning_tokens\":8963}},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

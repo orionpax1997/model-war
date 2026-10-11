@@ -9,7 +9,7 @@
   "generationLog": [
     "{\"round\":1,\"model\":\"claude-haiku-5-5\",\"params\":{\"max_tokens\":32768},\"usage\":{\"input_tokens\":27762,\"output_tokens\":16506,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens_details\":{\"thinking_tokens\":13094},\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0}},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

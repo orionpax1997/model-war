@@ -11,7 +11,7 @@
     "{\"round\":1,\"model\":\"meta/muse-spark-1.3-contributor\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":18105,\"completion_tokens\":12014,\"total_tokens\":30119,\"prompt_tokens_details\":{\"cached_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":6903,\"image_tokens\":0},\"cache_creation_input_tokens\":0},\"finishReason\":\"stop\",\"kind\":\"tsc\",\"errorCodes\":[\"TS7006\",\"TS2345\"]}",
     "{\"round\":2,\"model\":\"meta/muse-spark-1.3-contributor\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":23460,\"completion_tokens\":7104,\"total_tokens\":30564,\"prompt_tokens_details\":{\"cached_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":1889,\"image_tokens\":0},\"cache_creation_input_tokens\":0},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []

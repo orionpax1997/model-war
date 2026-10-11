@@ -9,7 +9,7 @@
   "generationLog": [
     "{\"round\":1,\"model\":\"xiaomi/mimo-v2.6-flash\",\"params\":{\"temperature\":0},\"usage\":{\"prompt_tokens\":18905,\"completion_tokens\":83855,\"total_tokens\":102760,\"prompt_tokens_details\":{\"cached_tokens\":18880,\"audio_tokens\":0,\"video_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":79084,\"image_tokens\":0},\"cache_creation_input_tokens\":0},\"finishReason\":\"stop\",\"kind\":\"contract\",\"errorCodes\":[]}"
   ],
-  "ruleset": "v1",
+  "ruleset": "v2",
   "validation": {
     "passed": true,
     "errors": []
