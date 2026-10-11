@@ -8,68 +8,52 @@
 # ── 字段 ──
 #
 # 必填五项:slug(存档目录以它分家,须唯一)、endpointFamily(chat-completions / messages /
-# responses)、baseUrl、modelId(必须带 provider 前缀)、credentialEnvVar(凭证只从环境变量读)。
+# responses)、baseUrl、modelId(透传给端点的模型标识,按端点 /models 返回的 id 原样填)、credentialEnvVar(凭证只从环境变量读)。
 # 可选项:contextLength(契约 token 预算核对)、protocolRounds(模型调用总轮数,含第 1 轮,
 # 缺省 5)、strategy(策略取向一行文,缺省则模板里 {{strategy}} 整段不注入)、params(透传端点族的
 # 请求参数)。
 #
-# ── 本季参赛集(5+4+1+1 条) ──
+# ── 本季参赛集(8+1+2 条) ──
 #
-# 前五条服务商 = Command Code(聚合);中间四条走 opencode go 订阅端点;末两条走直连/中转。
+# 前八条走 opencode go 订阅端点;末三条走直连/中转(其中 opus 经 yomiapi 中转)。Command Code 订阅已到期,本季不再用。
 # baseUrl 一条通吃三端点族,端点路径由 endpointFamily 决定(族→路径映射见 gen/src/http/endpoints.ts)。
-# 五条 strategy 注入**同一句**(赛模型,不赛策略;策略是常量才赛得出模型差异)。
+# 十一条 strategy 注入**同一句**(赛模型,不赛策略;策略是常量才赛得出模型差异)。
 
 models:
-  - slug: deepseek-v4-flash
-    endpointFamily: chat-completions
-    baseUrl: https://api.commandcode.ai/provider/v1
-    modelId: deepseek/deepseek-v4-flash
-    credentialEnvVar: COMMAND_CODE_API_KEY
-    contextLength: 1000000
-    protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
-    params:
-      temperature: 0
-
   - slug: deepseek-v4.1-flash
     endpointFamily: chat-completions
-    baseUrl: https://api.commandcode.ai/provider/v1
-    modelId: deepseek/deepseek-v4.1-flash
-    credentialEnvVar: COMMAND_CODE_API_KEY
-    contextLength: 1000000
+    baseUrl: https://opencode.ai/zen/go/v1
+    modelId: deepseek-v4.1-flash
+    credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
     strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
   - slug: gpt-6-luna
-    endpointFamily: chat-completions
-    baseUrl: https://api.commandcode.ai/provider/v1
+    endpointFamily: responses
+    baseUrl: https://opencode.ai/zen/go/v1
     modelId: gpt-6-luna
-    credentialEnvVar: COMMAND_CODE_API_KEY
-    contextLength: 1050000
+    credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
     strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
-    params:
-      temperature: 0
+    # 注意:该模型在 opencode go 上不支持 temperature(透传即 400),params 整段不填。
 
   - slug: mimo-v2.6-flash
     endpointFamily: chat-completions
-    baseUrl: https://api.commandcode.ai/provider/v1
-    modelId: xiaomi/mimo-v2.6-flash
-    credentialEnvVar: COMMAND_CODE_API_KEY
-    contextLength: 1048576
+    baseUrl: https://opencode.ai/zen/go/v1
+    modelId: mimo-v2.6-flash
+    credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
     strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
   - slug: muse-spark-1.3-contributor
-    endpointFamily: chat-completions
-    baseUrl: https://api.commandcode.ai/provider/v1
-    modelId: meta/muse-spark-1.3-contributor
-    credentialEnvVar: COMMAND_CODE_API_KEY
-    contextLength: 1048576
+    endpointFamily: responses
+    baseUrl: https://opencode.ai/zen/go/v1
+    modelId: muse-spark-1.3-contributor
+    credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
     strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
@@ -132,6 +116,16 @@ models:
     baseUrl: https://api.pptoken.cc/v1
     modelId: gpt-6.1-sol
     credentialEnvVar: PPTOKEN_API_KEY
+    protocolRounds: 5
+    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
+    params:
+      temperature: 0
+
+  - slug: claude-opus-5-5
+    endpointFamily: chat-completions
+    baseUrl: https://api.yomiapi.com/v1
+    modelId: claude-opus-5-5
+    credentialEnvVar: YOMI_API_KEY
     protocolRounds: 5
     strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:

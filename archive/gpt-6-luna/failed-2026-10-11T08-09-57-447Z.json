@@ -1,0 +1,15 @@
+{
+  "model": "gpt-6-luna",
+  "modelVersion": "gpt-6-luna",
+  "generatedAt": "2026-10-11T08:09:57.447Z",
+  "runId": "2026-10-11T08-09-57-447Z",
+  "ruleset": "v2",
+  "classification": "transport",
+  "protocolRounds": 0,
+  "prompts": [],
+  "generationLog": [],
+  "diagnostics": [
+    "传输错误(HTTP 400):端点 https://opencode.ai/zen/go/v1/chat/completions 返回 400 Bad Request: {\"type\":\"error\",\"error\":{\"type\":\"ModelProtocolUnsupported\",\"message\":\"Model does not support this protocol.\"}}"
+  ],
+  "message": "模型 gpt-6-luna 第 1 轮传输失败:不可重试的错误:端点 https://opencode.ai/zen/go/v1/chat/completions 返回 400 Bad Request: {\"type\":\"error\",\"error\":{\"type\":\"ModelProtocolUnsupported\",\"message\":\"Model does not support this protocol.\"}}"
+}

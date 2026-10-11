@@ -1,0 +1,15 @@
+{
+  "model": "gpt-6-luna",
+  "modelVersion": "gpt-6-luna",
+  "generatedAt": "2026-10-11T10:06:07.998Z",
+  "runId": "2026-10-11T10-06-07-998Z",
+  "ruleset": "v2",
+  "classification": "transport",
+  "protocolRounds": 0,
+  "prompts": [],
+  "generationLog": [],
+  "diagnostics": [
+    "传输错误(HTTP 400):端点 https://opencode.ai/zen/go/v1/responses 返回 400 Bad Request: {\"model\":\"gpt-6-luna\",\"error\":{\"message\":\"Unsupported parameter: 'temperature' is not supported with this model.\",\"type\":\"invalid_request_error\",\"param\":\"temperature\",\"code\":null}}"
+  ],
+  "message": "模型 gpt-6-luna 第 1 轮传输失败:不可重试的错误:端点 https://opencode.ai/zen/go/v1/responses 返回 400 Bad Request: {\"model\":\"gpt-6-luna\",\"error\":{\"message\":\"Unsupported parameter: 'temperature' is not supported with this model.\",\"type\":\"invalid_request_error\",\"param\":\"temperature\",\"code\":null}}"
+}
