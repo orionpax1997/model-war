@@ -18,8 +18,8 @@
 # 赛季根种子:决定全部对局种子的源头(`种子 = H(masterSeed, combo, mapIndex, seedIndex)`)。
 masterSeed: "2026-m4"
 
-# 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v1)一致,否则装载期拒跑。
-ruleset: v1
+# 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v2)一致,否则装载期拒跑。
+ruleset: v2
 
 # ── 选填字段(缺省语义见各条注释;缺省值由调用方注入,装载器不探环境)──
 

@@ -71,7 +71,7 @@ const DEFAULT_CELL: BenchmarkCell = "cell-a-melee-pressure";
 /** 与 `cli.test.ts` 的 `writeMatchInput` 同一颗种子,样本因此逐次可复现。 */
 const DEFAULT_SEED = 20260101;
 const MAP_NAME = "open-clash";
-const RULESET_VERSION = "v1";
+const RULESET_VERSION = "v2";
 const MODEL_SLOTS = ["alpha", "beta", "gamma", "delta"] as const;
 
 // ── 命令行 ──────────────────────────────────────────────────────────────────

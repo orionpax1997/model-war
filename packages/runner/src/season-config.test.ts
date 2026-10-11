@@ -32,7 +32,7 @@ it("仓库根的 season.example.yaml 读得通,且与本赛季 5 条参赛集一
   const config = loadSeasonConfig(join(repoRoot, "season.example.yaml"));
   expect(config).toMatchObject({
     masterSeed: "2026-m4",
-    ruleset: "v1",
+    ruleset: "v2",
     seeds: 4,
     concurrency: 8,
     rankPoints: [3, 2, 1, 0],
@@ -50,7 +50,7 @@ it("仓库根的 season.example.yaml 读得通,且与本赛季 5 条参赛集一
 
 it("只写必填四项也合法,可选字段缺席(不是 undefined 键)", () => {
   const config = loadSeasonConfig(
-    writeConfig(["masterSeed: m", "ruleset: v1", "seeds: 4", roster, ""].join("\n")),
+    writeConfig(["masterSeed: m", "ruleset: v2", "seeds: 4", roster, ""].join("\n")),
   );
   expect(config.masterSeed).toBe("m");
   expect(config.seeds).toBe(4);
@@ -66,7 +66,7 @@ it("含全部可选字段时逐项读入", () => {
     writeConfig(
       [
         "masterSeed: m",
-        "ruleset: v1",
+        "ruleset: v2",
         "concurrency: 2",
         "rankPoints:",
         "  - 5",
@@ -95,14 +95,15 @@ it("缺必填字段:逐字段点名,并一次看完", () => {
 });
 
 it("ruleset 与当前版本不一致时明确报错", () => {
-  const path = writeConfig(["masterSeed: m", "ruleset: v2", "seeds: 4", roster, ""].join("\n"));
+  // 用上一版当坏值:旧版声明在新版引擎下同样拒收(版本隔离),正好覆盖迁移场景。
+  const path = writeConfig(["masterSeed: m", "ruleset: v1", "seeds: 4", roster, ""].join("\n"));
   expect(() => loadSeasonConfig(path)).toThrow(/ruleset.*v2/);
 });
 
 it("seeds 必须是 ≥1 的整数", () => {
   for (const bad of ["0", "-1", "1.5", "四"]) {
     const path = writeConfig(
-      ["masterSeed: m", "ruleset: v1", `seeds: ${bad}`, roster, ""].join("\n"),
+      ["masterSeed: m", "ruleset: v2", `seeds: ${bad}`, roster, ""].join("\n"),
     );
     expect(() => loadSeasonConfig(path), `seeds=${bad}`).toThrow(/seeds/);
   }
@@ -112,7 +113,7 @@ it("参赛者少于 4 条明确报错", () => {
   const path = writeConfig(
     [
       "masterSeed: m",
-      "ruleset: v1",
+      "ruleset: v2",
       "seeds: 4",
       "participants:",
       "  - archive/a/r1",
@@ -126,7 +127,7 @@ it("参赛者少于 4 条明确报错", () => {
 
 it("participants 不是数组时报错", () => {
   const path = writeConfig(
-    ["masterSeed: m", "ruleset: v1", "seeds: 4", "participants: 5", ""].join("\n"),
+    ["masterSeed: m", "ruleset: v2", "seeds: 4", "participants: 5", ""].join("\n"),
   );
   expect(() => loadSeasonConfig(path)).toThrow(/participants/);
 });
@@ -135,7 +136,7 @@ it("participants 含非字符串项时报错", () => {
   const path = writeConfig(
     [
       "masterSeed: m",
-      "ruleset: v1",
+      "ruleset: v2",
       "seeds: 4",
       "participants:",
       "  - archive/a/r1",
@@ -150,7 +151,7 @@ it("participants 含非字符串项时报错", () => {
 
 it("显式给出 maps 时 M × K ≢ 0 (mod 4) 报错", () => {
   const path = writeConfig(
-    ["masterSeed: m", "ruleset: v1", "maps:", "  - m1", "  - m2", "seeds: 3", roster, ""].join(
+    ["masterSeed: m", "ruleset: v2", "maps:", "  - m1", "  - m2", "seeds: 3", roster, ""].join(
       "\n",
     ),
   );
@@ -159,7 +160,7 @@ it("显式给出 maps 时 M × K ≢ 0 (mod 4) 报错", () => {
 
 it("缺省 maps 时判不了 M,均摊条件留给枚举器(不误报)", () => {
   const config = loadSeasonConfig(
-    writeConfig(["masterSeed: m", "ruleset: v1", "seeds: 3", roster, ""].join("\n")),
+    writeConfig(["masterSeed: m", "ruleset: v2", "seeds: 3", roster, ""].join("\n")),
   );
   expect(config.maps).toBeUndefined();
   expect(config.seeds).toBe(3);
@@ -169,7 +170,7 @@ it("rankPoints 长度不是 4 时报清晰错误", () => {
   const path = writeConfig(
     [
       "masterSeed: m",
-      "ruleset: v1",
+      "ruleset: v2",
       "seeds: 4",
       "rankPoints:",
       "  - 3",
@@ -186,7 +187,7 @@ it("rankPoints 含非有限数时报清晰错误", () => {
   const path = writeConfig(
     [
       "masterSeed: m",
-      "ruleset: v1",
+      "ruleset: v2",
       "seeds: 4",
       "rankPoints:",
       "  - 3",
@@ -202,7 +203,7 @@ it("rankPoints 含非有限数时报清晰错误", () => {
 
 it("concurrency 必须是 ≥1 的整数", () => {
   const path = writeConfig(
-    ["masterSeed: m", "ruleset: v1", "concurrency: 0", "seeds: 4", roster, ""].join("\n"),
+    ["masterSeed: m", "ruleset: v2", "concurrency: 0", "seeds: 4", roster, ""].join("\n"),
   );
   expect(() => loadSeasonConfig(path)).toThrow(/concurrency/);
 });

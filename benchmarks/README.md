@@ -25,9 +25,9 @@
 
 | 目录 | 策略标签(行为描述) | 标签的行为依据 | 模型标识 | 生成参数 | 静态校验结果 | 契约版本 | 源码体积 | 产物体积 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `cell-a-melee-pressure/` | A 爆兵压制:留 2 个农民,其余全投近战 | 每个自家基地先读 `producing`,空才下单;农民下限 2,其余全投 `melee`;农民满载回家 `transfer`、否则在自家资源点 `harvest`;战斗单位取**全场最近的敌方单位**,射程内 `attack`、射程外 `moveTo` 追;全场无敌人时压向最近的非己方点位并 `moveTo` 到**点位格坐标**(站上去驱动占领) | `commandcode/deepseek/deepseek-v4.1-flash` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;11.9 min;契约回喂 0 轮(一次输出撞长度上限,`pi --continue` 续写,非回喂) | 零违规(err 0 / warn 0) | `v1` | 5968 字节 | 6310 字节 |
-| `cell-b-expansion-economy/` | B 扩张运营:5 农起步(250 tick 后维持 3)、其余投近战,派 1 农占中立矿 | 生产目标 `workerCap = 5`(tick < 250)之后再维持 3,其余全投 `melee`,先读 `producing` 空才下单;农民满载在相邻己方基地 `transfer`、否则在**己方**资源点 `harvest`;**工人够 4 个且存在中立资源点时**,把其中一个标为 capturer `moveTo` 到中立资源点的**点位格坐标**(已在点位格上就本 tick 不发意图,让进度推进);战斗单位射程内 `attack`,否则追最近敌方单位 | `minimax-cn/MiniMax-M3` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;11.8 min;契约回喂 0 轮 | 零违规(err 0 / warn 0) | `v1` | 6675 字节 | 7579 字节 |
-| `cell-c-claim-no-harvest/` | C 占点(不采集):零农民纯近战占点 | 只造 `melee`,每个空产线一单,余额 < 8 停手;**全程不造农民、不调 `harvest`、不调 `transfer`**;开局 16 资源出 2 个近战后归零,**经济死亡且不可逆**,靠占点与残兵继续;射程内有敌人就 `attack`,否则认领一个未占点位并 `moveTo` 到**点位格坐标**,已在点位格上就原地驻守(`if (u.x === tgtX[pick] && u.y === tgtY[pick]) continue;`) | `commandcode/deepseek/deepseek-v4.1-flash`(**降级**) | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;5.9 min;契约回喂 0 轮;**编译面回喂 1 轮**(严格 `tsc` 的 `TS2345`×3,**非**契约静态校验回喂) | 零违规(err 0 / warn 0) | `v1` | 5104 字节 | 5556 字节 |
+| `cell-a-melee-pressure/` | A 爆兵压制:留 2 个农民,其余全投近战 | 每个自家基地先读 `producing`,空才下单;农民下限 2,其余全投 `melee`;农民满载回家 `transfer`、否则在自家资源点 `harvest`;战斗单位取**全场最近的敌方单位**,射程内 `attack`、射程外 `moveTo` 追;全场无敌人时压向最近的非己方点位并 `moveTo` 到**点位格坐标**(站上去驱动占领) | `commandcode/deepseek/deepseek-v4.1-flash` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;11.9 min;契约回喂 0 轮(一次输出撞长度上限,`pi --continue` 续写,非回喂) | 零违规(err 0 / warn 0) | `v2` | 5968 字节 | 6310 字节 |
+| `cell-b-expansion-economy/` | B 扩张运营:5 农起步(250 tick 后维持 3)、其余投近战,派 1 农占中立矿 | 生产目标 `workerCap = 5`(tick < 250)之后再维持 3,其余全投 `melee`,先读 `producing` 空才下单;农民满载在相邻己方基地 `transfer`、否则在**己方**资源点 `harvest`;**工人够 4 个且存在中立资源点时**,把其中一个标为 capturer `moveTo` 到中立资源点的**点位格坐标**(已在点位格上就本 tick 不发意图,让进度推进);战斗单位射程内 `attack`,否则追最近敌方单位 | `minimax-cn/MiniMax-M3` | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;11.8 min;契约回喂 0 轮 | 零违规(err 0 / warn 0) | `v2` | 6675 字节 | 7579 字节 |
+| `cell-c-claim-no-harvest/` | C 占点(不采集):零农民纯近战占点 | 只造 `melee`,每个空产线一单,余额 < 8 停手;**全程不造农民、不调 `harvest`、不调 `transfer`**;开局 16 资源出 2 个近战后归零,**经济死亡且不可逆**,靠占点与残兵继续;射程内有敌人就 `attack`,否则认领一个未占点位并 `moveTo` 到**点位格坐标**,已在点位格上就原地驻守(`if (u.x === tgtX[pick] && u.y === tgtY[pick]) continue;`) | `commandcode/deepseek/deepseek-v4.1-flash`(**降级**) | `--thinking high`;单流;bwrap 隔离舱;舱内交付名 `script.v1.ts`;5.9 min;契约回喂 0 轮;**编译面回喂 1 轮**(严格 `tsc` 的 `TS2345`×3,**非**契约静态校验回喂) | 零违规(err 0 / warn 0) | `v2` | 5104 字节 | 5556 字节 |
 
 **两处口径随表一起带**:
 
@@ -57,7 +57,7 @@
 1. **它全程不造农民**:生产只有一条线——每个空产线下一单 `melee`,余额 < 8 停手;
    源码里 `worker` 这个兵种名一次都没出现过。
 2. **它不调 `harvest`、不调 `transfer`**:采集与交付两个动作在整份脚本里一次都没被调用。
-3. **开局即经济死亡**:开局 16 资源出 2 个近战后归零,按 `docs/rules-v1/rules.md` §4.3
+3. **开局即经济死亡**:开局 16 资源出 2 个近战后归零,按 `docs/rules-v2/rules.md` §4.3
    经济死亡且不可逆——它就是靠占点与残兵继续的,而这恰好是契约 §4.3 写明的合法打法。
 4. **它的占领靠「站在点位格上」**:契约 §5〈占领〉本轮**已落库**,写明了「站上去才驱动;
    站相邻格不累积、也不衰减、不产生任何错误码」。C 舱据此刻画行为——源码注释
@@ -71,7 +71,7 @@
 
 ## 3. 契约版本与重跑规则
 
-**契约版本:`v1`**(`rulesets/v1.json`、`docs/rules-v1/`、真源包的 `RULESET_VERSION` 三处一致)。
+**契约版本:`v2`**(`rulesets/v2.json`、`docs/rules-v2/`、真源包的 `RULESET_VERSION` 三处一致)。
 
 **换契约版本时,基准脚本一律重跑,不保留**:
 
@@ -82,6 +82,10 @@
   旧的三份连同它们的产物移出本目录(它们的证据仍在 `.scratch/rules-landing/blind/` 与
   `archive/` 侧,`archive/` 的冻结脚本永远入库,不会因为移出基准目录而消失)。
 - 判读与「不可互比」那条口径必须跟着重写一遍,不许沿用。
+
+**v2 豁免记**:v1→v2 只改了两个预算终值(`eventTickLimit` 10000→50000、`apiCallTickLimit`
+300→800),机制、散文、快照面一字未动;三份基准脚本在两版上限下的实测峰值都在 5000 上下(远离两条线),
+读数不受影响,故本次未重新盲写。若将来 v3 动了机制或快照面,本条豁免作废,重走上面三条。
 
 **本轮已执行一次**:§5 / §9 落库就是契约换了版本的那一刀——旧三份「站相邻」脚本已移出 `benchmarks/`,
 本轮三份由模型在同一份新契约下重新盲写、重新落库、本表随之重写。这是这条规则第一次被真正走过,

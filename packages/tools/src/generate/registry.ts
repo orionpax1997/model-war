@@ -31,7 +31,12 @@
 import { apiOutcomeTable, apiSurfaceTables } from "./api-surface.ts";
 import { builtinGlobalsAllowlist } from "./builtin-globals.ts";
 import type { GeneratedArtifact } from "./artifact.ts";
-import { apiValueTable, rulesValueTable } from "./rules-value-table.ts";
+import {
+  apiV2ValueTable,
+  apiValueTable,
+  rulesV2ValueTable,
+  rulesValueTable,
+} from "./rules-value-table.ts";
 import { scriptSurfaceNames } from "./script-surface.ts";
 
 /**
@@ -51,6 +56,8 @@ export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [
   scriptSurfaceNames,
   rulesValueTable,
   apiValueTable,
+  rulesV2ValueTable,
+  apiV2ValueTable,
   apiSurfaceTables,
   apiOutcomeTable,
 ];

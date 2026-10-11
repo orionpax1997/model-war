@@ -82,9 +82,9 @@ const mkRoot = (scriptSizeLimit?: number): string => {
   symlinkSync(join(repoRoot, "packages"), join(root, "packages"), "dir");
   symlinkSync(join(repoRoot, "tsconfig.scripts.json"), join(root, "tsconfig.scripts.json"));
 
-  mkdirSync(join(root, "docs", "rules-v1"), { recursive: true });
-  writeFileSync(join(root, "docs", "rules-v1", "rules.md"), CONTRACT_RULES);
-  writeFileSync(join(root, "docs", "rules-v1", "api.md"), CONTRACT_API);
+  mkdirSync(join(root, "docs", "rules-v2"), { recursive: true });
+  writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
+  writeFileSync(join(root, "docs", "rules-v2", "api.md"), CONTRACT_API);
   mkdirSync(join(root, "prompts"), { recursive: true });
   writeFileSync(join(root, "prompts", "base.md"), "契约:\n\n{{contract}}\n");
   writeFileSync(join(root, "models.yaml"), MODELS_YAML);

@@ -49,8 +49,12 @@ import {
  * 取值文件的路径与规则文档目录的路径。**版本号由这三处名字承担**(文件名、目录名、版本常量),
  * 文件内部没有版本键,所以下面那两处名字是从仓库布局的真实路径上取的,不是手写的字面量。
  */
-const RULESET_PATH = fileURLToPath(new URL("../../../rulesets/v1.json", import.meta.url));
-const RULES_DOC_DIR_PATH = fileURLToPath(new URL("../../../docs/rules-v1", import.meta.url));
+const RULESET_PATH = fileURLToPath(
+  new URL(`../../../rulesets/${RULESET_VERSION}.json`, import.meta.url),
+);
+const RULES_DOC_DIR_PATH = fileURLToPath(
+  new URL(`../../../docs/rules-${RULESET_VERSION}`, import.meta.url),
+);
 
 /** 版本三处一致判据的另两处:装载方把它知道的名字交进来,判一致性是校验器的活。 */
 const PROVENANCE = {
@@ -95,13 +99,14 @@ const UNDETERMINED_KEYS = RULESET_KEYS.filter(
 );
 
 /**
- * 定稿键的终值,**逐字抄自标定环交接单 §1 与预算标定读数**(`resourcePerSite` 是票 09 改值后的
- * 200,不是草案里的 125;预算键的终值由读数按 spec《Implementation Decisions》第 1 条的规则代入,
- * 算式记在 `.scratch/budget-calibration/readings.md` 的「终值推导」节;四条兵种线的 `spawnTicks`
+ * 定稿键的终值,**逐字抄自标定结论**:v1 的值抄自标定环交接单 §1(`resourcePerSite` 是票 09 改值后的
+ * 200,不是草案里的 125);v2 只动两个预算键——`eventTickLimit` 50000 / `apiCallTickLimit` 800 取自
+ * 测试赛季 1320 局的真峰测量(10 非退化模型 events 真峰 ≤35000、apis 真峰 ≤635,各加余量;旧 sol 单 tick
+ * 5.5 万的退化峰值仍在线上,照拦),其余键沿用 v1。四条兵种线的 `spawnTicks`
  * 与 `⌈cost × α⌉` 一致,下面另有断言逐条对)。
  *
  * **这份抄本存在的唯一理由是把「文件里的数 = 交接单的数」变成机器可判的**,取值真源仍是
- * `rulesets/v1.json`;抄本与文件不一致时红的是下面那条断言,而不是一次看不出所以然的失败。
+ * `rulesets/v2.json`;抄本与文件不一致时红的是下面那条断言,而不是一次看不出所以然的失败。
  * 抄本的键集必须**与 `FINAL_KEYS` 完全重合**:八个预算键分批落定稿时,每落一个就得在这里
  * 补上它的终值,否则下面那条断言会以「要一个终值」失败。
  * 类型标注是 `Partial<Ruleset>`:键名拼错、兵种线六个子字段写错或写漏,由 `tsc -b` 先拦一道。
@@ -123,8 +128,8 @@ const FINAL_VALUES: Partial<Ruleset> = {
   // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键,票 07 落墙钟两键与体积键);
   // 票 07 之后八键全部定稿,未定键集为空。
   exceptionTickLimit: 3,
-  eventTickLimit: 10000,
-  apiCallTickLimit: 300,
+  eventTickLimit: 50000,
+  apiCallTickLimit: 800,
   memoryLimit: 4194304,
   memoryTickCeiling: 524288,
   wallClockSoftLimit: 50,
@@ -172,9 +177,9 @@ it("版本三处一致:取值文件名与规则文档目录名都对得上版本
   expect(PROVENANCE.rulesDocDirName).toBe(`rules-${RULESET_VERSION}`);
 
   // 反例:只错一处同样拒(「三处一致」不是三选二),诊断指向根——它说的不是哪个键不对,
-  // 而是「这份文件整个不属于本仓的这个版本」。
+  // 而是「这份文件整个不属于本仓的这个版本」。错处用上一版的名字,正好覆盖旧版拒收。
   const result = rejected(V1, {
-    rulesetFileName: "v2.json",
+    rulesetFileName: "v1.json",
     rulesDocDirName: PROVENANCE.rulesDocDirName,
   });
   expect(keywordsOf(result)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);

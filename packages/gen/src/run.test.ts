@@ -37,9 +37,9 @@ const installRuntime = (root: string): void => {
 const writeRoot = (modelsYaml: string, baseTemplate = "契约:\n\n{{contract}}\n"): string => {
   const root = mkdtempSync(`${scratch}/root-`);
   installRuntime(root);
-  mkdirSync(join(root, "docs", "rules-v1"), { recursive: true });
-  writeFileSync(join(root, "docs", "rules-v1", "rules.md"), CONTRACT_RULES);
-  writeFileSync(join(root, "docs", "rules-v1", "api.md"), CONTRACT_API);
+  mkdirSync(join(root, "docs", "rules-v2"), { recursive: true });
+  writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
+  writeFileSync(join(root, "docs", "rules-v2", "api.md"), CONTRACT_API);
   mkdirSync(join(root, "prompts"), { recursive: true });
   writeFileSync(join(root, "prompts", "base.md"), baseTemplate);
   writeFileSync(join(root, "models.yaml"), modelsYaml);

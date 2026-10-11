@@ -49,10 +49,21 @@ import { endpointSpec, type StreamAccumulator } from "./endpoints.js";
  */
 export const DEFAULT_TIMEOUT_MS = 300_000;
 
+/**
+ * 自报家门:opencode go 要求客户端亮明身份,不用通用 SDK 的 User-Agent(见其 go 文档
+ * "Where can I use it")。固定串,不跟版本号,避免发版即漂移。
+ */
+const GEN_USER_AGENT = "modelwar-gen";
+
 /** `createHttpModelClient` 的可选覆盖:测试用极短超时避免拖慢(生产不传)。 */
 export type HttpModelClientOptions = {
   /** 覆盖 `DEFAULT_TIMEOUT_MS`(毫秒);缺省用常量。 */
   readonly timeoutMs?: number;
+  /**
+   * 会话 ID:发 `x-opencode-session` 头。同一模型一次冻结的多轮回喂与重试共用它
+   * (服务端做路由与 prompt 缓存);缺省不发这个头。
+   */
+  readonly sessionId?: string;
 };
 
 /** 拼接 `baseUrl` 与端点路径:去掉 baseUrl 末尾斜杠、补上路径前导斜杠,绝不产生 `//`。 */
@@ -277,6 +288,13 @@ export const createHttpModelClient = (
           headers: {
             "content-type": "application/json",
             authorization: `Bearer ${credential}`,
+            "user-agent": GEN_USER_AGENT,
+            // Anthropic 原生形态(messages 族)的鉴权头:后端认 `x-api-key`,不认 Bearer。
+            // Bearer 照发(无害),x-api-key 只给 messages 族加,别的族请求字节不变。
+            ...(config.endpointFamily === "messages" ? { "x-api-key": credential } : {}),
+            // 有会话 ID 才发这个头:它是 opencode go 的反滥用要求,别的端点收不到也无害,
+            // 但缺省不发,保持对旧端点的请求字节不变。
+            ...(options.sessionId === undefined ? {} : { "x-opencode-session": options.sessionId }),
           },
           body,
           signal: idle.signal,

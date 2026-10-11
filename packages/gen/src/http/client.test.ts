@@ -23,6 +23,9 @@ type Captured = {
   readonly path: string;
   readonly authorization: string | undefined;
   readonly contentType: string | undefined;
+  readonly sessionId: string | undefined;
+  readonly userAgent: string | undefined;
+  readonly apiKey: string | undefined;
   readonly body: unknown;
 };
 
@@ -60,6 +63,10 @@ const sseDone = (res: ServerResponse): void => {
   res.end();
 };
 
+/** 索引取头的值可能是 `string[]`;测试只关心单值,取首个。 */
+const singleHeader = (value: string | string[] | undefined): string | undefined =>
+  Array.isArray(value) ? value[0] : value;
+
 const startEndpoint = async (respond: Responder): Promise<FakeEndpoint> => {
   const requests: Captured[] = [];
   const server: Server = createServer((req, res) => {
@@ -74,6 +81,9 @@ const startEndpoint = async (respond: Responder): Promise<FakeEndpoint> => {
         path: req.url ?? "",
         authorization: req.headers.authorization,
         contentType: req.headers["content-type"],
+        sessionId: singleHeader(req.headers["x-opencode-session"]),
+        userAgent: singleHeader(req.headers["user-agent"]),
+        apiKey: singleHeader(req.headers["x-api-key"]),
         body: raw.length > 0 ? (JSON.parse(raw) as unknown) : undefined,
       };
       requests.push(captured);
@@ -165,6 +175,11 @@ it("chat-completions:POST /chat/completions + Bearer 鉴权 + 流式 body 形状
   expect(request?.path).toBe("/chat/completions");
   expect(request?.authorization).toBe(`Bearer ${TEST_KEY_VALUE}`);
   expect(request?.contentType).toContain("application/json");
+  expect(request?.userAgent).toBe("modelwar-gen");
+  // 非 messages 族不发 x-api-key。
+  expect(request?.apiKey).toBeUndefined();
+  // 缺省不发会话头:保持对旧端点的请求字节不变。
+  expect(request?.sessionId).toBeUndefined();
   // 声明了流式能力的端点族一律带流式字段发;这次回的是 application/json,客户端走回退路径解析。
   expect(request?.body).toEqual({
     model: "vendor/model-x",
@@ -386,6 +401,8 @@ it("messages:system 抽到顶层、不进 messages;stop_reason=max_tokens 归一
   const request = ep.requests[0];
   expect(request?.path).toBe("/messages");
   expect(request?.authorization).toBe(`Bearer ${TEST_KEY_VALUE}`);
+  expect(request?.userAgent).toBe("modelwar-gen");
+  expect(request?.apiKey).toBe(TEST_KEY_VALUE);
   expect(request?.body).toEqual({
     model: "vendor/model-x",
     max_tokens: 4000,
@@ -397,6 +414,24 @@ it("messages:system 抽到顶层、不进 messages;stop_reason=max_tokens 归一
     ],
   });
   expect(response).toEqual({ text: "abcd", finishReason: "length", usage: { output_tokens: 7 } });
+});
+
+it("options.sessionId:发 x-opencode-session 头(缺省不发)", async () => {
+  const ep = await endpoint((_captured, res) =>
+    json(res, 200, {
+      choices: [{ message: { content: "脚本正文" }, finish_reason: "stop" }],
+      usage: { total_tokens: 5 },
+    }),
+  );
+  const withSession = createHttpModelClient(config("chat-completions", ep.baseUrl), {
+    sessionId: "modelwar-gen-run1-model-x",
+  });
+  await withSession.send([user("hi")], {});
+  expect(ep.requests[0]?.sessionId).toBe("modelwar-gen-run1-model-x");
+
+  const plain = createHttpModelClient(config("chat-completions", ep.baseUrl));
+  await plain.send([user("hi")], {});
+  expect(ep.requests[1]?.sessionId).toBeUndefined();
 });
 
 it("responses:POST /responses + body(model/input)+ output_text 拼接 + incomplete → length", async () => {
@@ -423,6 +458,7 @@ it("responses:POST /responses + body(model/input)+ output_text 拼接 + incomple
   const request = ep.requests[0];
   expect(request?.path).toBe("/responses");
   expect(request?.authorization).toBe(`Bearer ${TEST_KEY_VALUE}`);
+  expect(request?.userAgent).toBe("modelwar-gen");
   expect(request?.body).toEqual({
     model: "vendor/model-x",
     input: [

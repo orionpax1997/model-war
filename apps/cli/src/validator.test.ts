@@ -386,7 +386,7 @@ it("规则版本错配在装载期被拒,不静默降级", () => {
   // 与真源包导出的常量一致的那一个必须被接受——判据挂在常量上,不是写死字符串。
   expect(validateMap(bad(MINIMAL, { rulesetMin: RULESET_VERSION })).ok).toBe(true);
 
-  const tooNew = reject(bad(MINIMAL, { rulesetMin: "v2" }));
+  const tooNew = reject(bad(MINIMAL, { rulesetMin: "v3" }));
   expect(keywordsOf(tooNew)).toEqual([RULESET_TOO_NEW_KEYWORD]);
   expect(tooNew.machineDiagnostics[0]?.pointer).toBe("/rulesetMin");
 
@@ -642,7 +642,7 @@ it("规则版本错配在装载期被拒,不静默降级(文件名与规则文�
   // 与真源包的版本常量一致的那一组必须被接受——判据挂在常量上,不是写死字符串。
   expect(validateRuleset(V1, GOOD_PROVENANCE).ok).toBe(true);
 
-  const both = rejectRuleset(V1, { rulesetFileName: "v2.json", rulesDocDirName: "rules-v2" });
+  const both = rejectRuleset(V1, { rulesetFileName: "v1.json", rulesDocDirName: "rules-v1" });
   expect(rulesetKeywords(both)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
   expect(both.machineDiagnostics[0]?.pointer).toBe("/");
 
@@ -1037,14 +1037,14 @@ it("input:各文件哈希与实测不符即被拒,诊断指到那一个座位(�
 it("meta:规则集版本错配即被拒(声明值 / 装载方读到的版本两头都红)", () => {
   expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
 
-  const declared = rejectMeta(badMeta(GOOD_META, { ruleset: "v2" }));
+  const declared = rejectMeta(badMeta(GOOD_META, { ruleset: "v1" }));
   expect(metaKeywords(declared)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
   expect(metaPointers(declared)).toEqual(["/ruleset"]);
 
   // 装载方那一头错同样拒:「三处一致」不是三选二,更不是「内容对就行」。
   const loaded = rejectMeta(GOOD_META, {
     ...GOOD_META_PROVENANCE,
-    loadedRulesetVersion: "v2",
+    loadedRulesetVersion: "v1",
   });
   expect(metaKeywords(loaded)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
 
@@ -1055,18 +1055,18 @@ it("meta:规则集版本错配即被拒(声明值 / 装载方读到的版本两�
 it("input:规则集版本错配即被拒,文件名与规则文档目录名各错一处都红", () => {
   expect(validateMatchInput(GOOD_INPUT, GOOD_INPUT_PROVENANCE).ok).toBe(true);
 
-  const declared = rejectInput(badInput(GOOD_INPUT, { ruleset: "v2" }));
+  const declared = rejectInput(badInput(GOOD_INPUT, { ruleset: "v1" }));
   expect(inputKeywords(declared)).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
   expect(inputPointers(declared)).toEqual(["/ruleset"]);
 
   expect(
     inputKeywords(
-      rejectInput(GOOD_INPUT, { ...GOOD_INPUT_PROVENANCE, rulesetFileName: "v2.json" }),
+      rejectInput(GOOD_INPUT, { ...GOOD_INPUT_PROVENANCE, rulesetFileName: "v1.json" }),
     ),
   ).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
   expect(
     inputKeywords(
-      rejectInput(GOOD_INPUT, { ...GOOD_INPUT_PROVENANCE, rulesDocDirName: "rules-v2" }),
+      rejectInput(GOOD_INPUT, { ...GOOD_INPUT_PROVENANCE, rulesDocDirName: "rules-v1" }),
     ),
   ).toEqual([RULESET_VERSION_MISMATCH_KEYWORD]);
 });
@@ -1241,7 +1241,7 @@ it("同一份坏数据两次校验给出同一份诊断(诊断本身必须稳定
   const brokenMeta = badMeta(GOOD_META, { scriptSha256: HASH.script3 }, ["tscVersion"]);
   expect(rejectMeta(brokenMeta)).toEqual(rejectMeta(brokenMeta));
 
-  const brokenInput = badInput(GOOD_INPUT, { ruleset: "v2" });
+  const brokenInput = badInput(GOOD_INPUT, { ruleset: "v1" });
   expect(rejectInput(brokenInput)).toEqual(rejectInput(brokenInput));
 });
 

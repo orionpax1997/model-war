@@ -47,10 +47,10 @@ export {
 /** 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
  */
-export type RulesetVersion = "v1";
+export type RulesetVersion = "v1" | "v2";
 
 /** 规则集版本真源。各包一律引用本常量,不得各自硬编码字符串。 */
-export const RULESET_VERSION: RulesetVersion = "v1";
+export const RULESET_VERSION: RulesetVersion = "v2";
 
 /**
  * JSON 可表示的值。数据格式定义归本包所有(hld §2.2.5):

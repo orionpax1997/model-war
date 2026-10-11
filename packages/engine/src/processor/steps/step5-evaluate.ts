@@ -75,6 +75,11 @@ const eliminateStage: EvaluateStage = (context) => {
       continue;
     }
     state = apply(state, ruleset.raw, { kind: "eliminate-player", seat, tick: state.tick });
+    if (caughtByExceptions) {
+      // 异常淘汰同时落一条 `exception` 事件:回放只读 events 流,不落这条,超预算死的局就无声无息
+      // (STEP_OF 早给 exception 留了 0 号位,reporter 的「异常出局」文案也在等它)。正常淘汰(无单位/无基地)不落。
+      collector.exception(seat);
+    }
     collector.playerEliminated(seat);
   }
   return { ...context, state };

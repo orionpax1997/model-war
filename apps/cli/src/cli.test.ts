@@ -339,7 +339,7 @@ const writeMatchInput = (
       protocolRounds: 1,
       prompts: [`prompt ${model}`],
       generationLog: [`generated ${model}`],
-      ruleset: "v1",
+      ruleset: "v2",
       validation: { passed: true, errors: [] },
       tscVersion: "7.0.2",
       scriptSha256: scriptSha,
@@ -364,7 +364,7 @@ const writeMatchInput = (
     map: "open-clash",
     mapSha256: mapSha,
     seed: 20260101,
-    ruleset: options.tamper === "ruleset" ? "v2" : "v1",
+    ruleset: options.tamper === "ruleset" ? "v1" : "v2",
   };
   const runDir = join(root, "runs", "r1", "matches", "c0");
   mkdirSync(runDir, { recursive: true });
@@ -375,8 +375,8 @@ const writeMatchInput = (
   writeFileSync(join(root, "maps", "open-clash.json"), mapBytes);
   mkdirSync(join(root, "rulesets"), { recursive: true });
   writeFileSync(
-    join(root, "rulesets", "v1.json"),
-    readFileSync(fileURLToPath(new URL("../../../rulesets/v1.json", import.meta.url))),
+    join(root, "rulesets", "v2.json"),
+    readFileSync(fileURLToPath(new URL("../../../rulesets/v2.json", import.meta.url))),
   );
 
   // 真沙箱把 runtime bundle 与 wasm 当**安装根下的资源**读(路径真源在 `@model-war/schema`);
@@ -474,7 +474,7 @@ it("`match` 不再走「未实现」那条路径:处理器住在 CLI 的 match �
  *
  * 显式给 `outputDir`,让产物目录名**确定**(默认 `runs/<时间戳>` 不可预测,断言无从下手)。
  * `M=1 × K=4 = 4 ≡ 0 (mod 4)`,四方一名册 → 1 组合 × 1 图 × 4 种子 = 4 局(真沙箱串行)。
- * `ruleset` 传非 v1 时改掉 alpha 的 `meta.ruleset`,用来钉住「前置拒绝」那条路径。
+ * `ruleset` 传非 v2 时改掉 alpha 的 `meta.ruleset`,用来钉住「前置拒绝」那条路径。
  */
 const writeSeasonRoot = (
   options: { readonly ruleset?: string } = {},
@@ -491,7 +491,7 @@ const writeSeasonRoot = (
     join(root, "season.yaml"),
     [
       'masterSeed: "season-1"',
-      "ruleset: v1",
+      "ruleset: v2",
       "seeds: 4",
       "outputDir: runs/season",
       "maps:",
@@ -539,7 +539,7 @@ it(
 );
 
 it("`run` 规则版本不一致(存档 meta.ruleset ≠ 赛季 ruleset)→ 退 1,不物化任何对局", () => {
-  const { root } = writeSeasonRoot({ ruleset: "v2" });
+  const { root } = writeSeasonRoot({ ruleset: "v1" });
   const result = run(["run", "--config", "season.yaml", "--root", root]);
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("规则版本");

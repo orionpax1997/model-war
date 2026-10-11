@@ -65,6 +65,12 @@ const writeFailure = (message: string): number => {
 const runIdOf = (at: Date): string => at.toISOString().replaceAll(":", "-").replace(".", "-");
 
 /**
+ * 会话 ID 派生:`modelwar-gen-<runId>-<slug>`。两段都已是目录安全形态,拼接即稳定:
+ * 同一模型一次冻结的多轮回喂与重试共用它,跨模型、跨批次互不相同。
+ */
+const sessionIdOf = (runId: string, slug: string): string => `modelwar-gen-${runId}-${slug}`;
+
+/**
  * 多模型编排:读配置 + 契约 + 模板,逐模型串行跑 `generateOneModel`。
  *
  * 返回进程退出码:全部模型冻结成功 = 0,任一失败 = 1。单模型失败不中断整批(失败的模型把诊断
@@ -89,12 +95,19 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     );
   }
 
-  const createClient = options.createClient ?? createHttpModelClient;
   // runId 与 generatedAt 取同一个时刻:前者进目录名 / 失败记录文件名,后者进记录里的留档位。
   const startedAt = now();
+  const runId = runIdOf(startedAt);
+  // 默认客户端包一层,把会话 ID 传进去(测试注入桩保持原样)。绑定必须在 runId 就绪之后,
+  // 且 ID 由 runId + slug 确定性派生——pipeline 每轮现造客户端,重试重走 send,若在里面
+  // 现生成随机 ID,多轮回喂会拿到不同会话,直接违反服务端的缓存要求。
+  const createClient =
+    options.createClient ??
+    ((config: ModelConfig): ModelClient =>
+      createHttpModelClient(config, { sessionId: sessionIdOf(runId, config.slug) }));
   const request: GenerationRequest = {
     root,
-    runId: runIdOf(startedAt),
+    runId,
     docs,
     template,
     createClient,

@@ -59,7 +59,7 @@ const buildFixture = (
       protocolRounds: 1,
       prompts: [`prompt ${model}`],
       generationLog: [`generated ${model}`],
-      ruleset: options.mismatch === true && model === "alpha" ? "v2" : "v1",
+      ruleset: options.mismatch === true && model === "alpha" ? "v1" : "v2",
       validation: { passed: true, errors: [] },
       tscVersion: "7.0.2",
       scriptSha256: "a".repeat(64),
@@ -71,7 +71,7 @@ const buildFixture = (
   writeFileSync(join(root, "maps", "arena.json"), `${JSON.stringify({ name: "arena" })}\n`);
   const season = [
     'masterSeed: "seed-1"',
-    "ruleset: v1",
+    "ruleset: v2",
     "seeds: 4",
     `outputDir: ${options.outputDir ?? "runs/fixture"}`,
     ...(options.concurrency !== undefined ? [`concurrency: ${options.concurrency}`] : []),
@@ -88,7 +88,7 @@ const buildFixture = (
 /** 在 `input.json` 同目录写一份合法回放(meta + 末行 result)。 */
 const writeFakeReplay = (inputPath: string, reason = "timeout"): void => {
   const lines = [
-    JSON.stringify({ type: "meta", schemaVersion: 1, ruleset: "v1" }),
+    JSON.stringify({ type: "meta", schemaVersion: 1, ruleset: "v2" }),
     JSON.stringify({
       type: "result",
       rankings: [1, 2, 3, 4],
@@ -183,7 +183,7 @@ it("跑通一整季:退 0,每局物化 input.json(键集恰 5 项)并写出 repo
   expect(code).toBe(0);
 
   const report = readReport(root);
-  expect(report.ruleset).toBe("v1");
+  expect(report.ruleset).toBe("v2");
   expect(typeof report.runId).toBe("string");
   expect(report.masterSeed).toBe("seed-1");
   expect(report.rankPoints).toEqual([3, 2, 1, 0]);
@@ -553,7 +553,7 @@ it("截断某局回放(模拟中断半截)→ 仅该局重跑", async () => {
   const truncated = join(root, "runs/fixture/matches/c0-arena-s2/replay.jsonl");
   writeFileSync(
     truncated,
-    `${JSON.stringify({ type: "meta", schemaVersion: 1, ruleset: "v1" })}\n`,
+    `${JSON.stringify({ type: "meta", schemaVersion: 1, ruleset: "v2" })}\n`,
   );
 
   const counts = await resumeWithCounting(root, configPath);

@@ -1,13 +1,15 @@
-# 本赛季 `season.yaml`——I 真实赛季(票 11)的一次真跑配置。
+# 本赛季 `season.yaml`——11 模型赛季配置(V0 之后的首个扩编赛季)。
 #
-# ── 这份文件的定位 ──
+# 字段真源在 `packages/runner/src/season-config.ts`(纯装载器 + 校验)。`participants` 指向
+# 各自批次的冻结存档:老 5 条是 commandcode 批次(`runId = 2026-10-09T01-09-09-599Z`),
+# 新 6 条是各次单跑批次(单跑一次一个 runId,见各行)。混 runId 可跑:入场校验只认
+# `meta.ruleset` 与字节自洽,不认同批次(输入字节自 10-09 起未变,已核对)。
 #
-# 字段真源在 `packages/runner/src/season-config.ts`(纯装载器 + 校验)。本文件与
-# `season.example.yaml`(格式范例)同形,区别只在 `participants` 指向的是**本季真实冻结存档**
-# (由 `modelwar gen --config models.yaml` 一次批次产出,共享 `runId = 2026-10-09T01-09-09-599Z`)。
-#
-# 规模:N=5,M=3,K=4,`M × K = 12 ≡ 0 (mod 4)` ✓ ⇒ 对局总数 `C(4,5) × 3 × 4 = 60`,
-# 每模型出场 `C(3,4) × 3 × 4 = 48` 局。五条 `strategy` 注入同一句(赛模型,不赛策略)。
+# 规模:N=11,M=1,K=4,`M × K = 4 ≡ 0 (mod 4)` ✓ ⇒ 对局总数 `C(11,4) × 1 × 4 = 1320`,
+# 每模型出场 `C(10,3) × 1 × 4 = 480` 局。M 取 1 而不取 2 的原因:M=2,K=2 虽过门禁,
+# 但座位轮换取值是 {0,1,1,2},第 4 档永远用不到;M=1,K=4 取满 {0,1,2,3},四座位精确均摊。
+# 地图只留一张是精简代价:全量 M=3,K=4 要 3960 局(约 80 分钟/11GB),以后想加再加。
+# 十一条 `strategy` 注入同一句(赛模型,不赛策略)。
 #
 # ── 为什么用块序列而非内联 `[a, b, c]` ──
 #
@@ -17,10 +19,11 @@
 # ── 必填字段 ──
 
 # 赛季根种子:决定全部对局种子的源头(`种子 = H(masterSeed, combo, mapIndex, seedIndex)`)。
-masterSeed: "2026-m4"
+# 新赛季换新种子:N 变了组合全变,种子本就全变,换个名字标记清楚。
+masterSeed: "2026-n11"
 
 # 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v1)一致,否则装载期拒跑。
-ruleset: v1
+ruleset: v2
 
 # ── 选填字段 ──
 
@@ -34,20 +37,24 @@ rankPoints:
   - 1
   - 0
 
-# 地图池(引用 maps/ 下的 slug);M × K = 3 × 4 = 12 ≡ 0 (mod 4) ✓。
+# 地图池(引用 maps/ 下的 slug);精简赛季只留一张,M × K = 1 × 4 = 4 ≡ 0 (mod 4) ✓。
 maps:
   - corridor-split
-  - fortress-core
-  - open-clash
 
 # 种子数 K。
 seeds: 4
 
-# 参赛存档引用(archive/<slug>/<runId>),**下标即 playerIndex**;名册去重后按 slug 升序参与枚举。
-# 五条同属本季一次 gen 批次(共享 runId),五条均 `meta.validation.passed = true`。
+# 参赛存档引用(archive/<slug>/<runId>);名册去重后按 slug 升序参与枚举,文件里的顺序只影响排名表行序。
+# 老五条同属 commandcode 一次 gen 批次(共享 runId),新六条各是单跑批次(各一个 runId),五条均 `meta.validation.passed = true`。
 participants:
   - archive/deepseek-v4-flash/2026-10-09T01-09-09-599Z
   - archive/deepseek-v4.1-flash/2026-10-09T01-09-09-599Z
   - archive/gpt-6-luna/2026-10-09T01-09-09-599Z
   - archive/mimo-v2.6-flash/2026-10-09T01-09-09-599Z
   - archive/muse-spark-1.3-contributor/2026-10-09T01-09-09-599Z
+  - archive/glm-5.3-flash/2026-10-10T15-08-47-436Z
+  - archive/step-5-preview/2026-10-10T16-37-07-689Z
+  - archive/mimo-v2.6-pro/2026-10-10T16-09-59-286Z
+  - archive/claude-haiku-5-5/2026-10-10T16-31-38-484Z
+  - archive/minimax-m3.1-flash/2026-10-10T19-51-00-601Z
+  - archive/gpt-6.1-sol/2026-10-10T20-02-06-549Z

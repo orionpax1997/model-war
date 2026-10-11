@@ -50,7 +50,7 @@ const buildSeasonRoot = (): { readonly root: string; readonly configPath: string
       protocolRounds: 1,
       prompts: [`prompt ${model}`],
       generationLog: [`generated ${model}`],
-      ruleset: "v1",
+      ruleset: "v2",
       validation: { passed: true, errors: [] },
       tscVersion: "7.0.2",
       scriptSha256: "a".repeat(64),
@@ -64,7 +64,7 @@ const buildSeasonRoot = (): { readonly root: string; readonly configPath: string
     join(root, "season.yaml"),
     [
       'masterSeed: "seed-1"',
-      "ruleset: v1",
+      "ruleset: v2",
       "seeds: 4",
       "outputDir: runs/fixture",
       "maps:",
