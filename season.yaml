@@ -1,16 +1,19 @@
-# 本赛季 `season.yaml`——11 模型赛季配置(V0 之后的首个扩编赛季)。
+# 本赛季 `season.yaml`——10 模型自由策略赛季(S2)。
 #
 # 字段真源在 `packages/runner/src/season-config.ts`(纯装载器 + 校验)。`participants` 指向
-# 各自批次的冻结存档:v2 全量重跑批次(`runId = 2026-10-11T08-09-57-447Z` 整批 8 条 +
-# luna/muse 各一次单跑 + opus 剥围栏后单跑),11 条 `meta.ruleset` 皆为 v2。`deepseek-v4-flash`
-# 已退役,本季由 `claude-opus-5-5` 接替,总数仍 11。混 runId 可跑:入场校验只认
+# 各自批次的冻结存档:自由策略 gen 批次(`runId = 2026-10-11T12-43-20-061Z` 整批 9 条 +
+# glm-5.3-flash 单跑 `2026-10-11T14-55-32-019Z`),10 条 `meta.ruleset` 皆为 v2。
+# `step-5-preview` 缺席:opencode 上该端口持续 429(`Endpoint is unavailable`,两批 8 连挂),
+# 待端口恢复后单跑冻结,再打 11 家完整季。混 runId 可跑:入场校验只认
 # `meta.ruleset` 与字节自洽,不认同批次。
 #
-# 规模:N=11,M=1,K=4,`M × K = 4 ≡ 0 (mod 4)` ✓ ⇒ 对局总数 `C(11,4) × 1 × 4 = 1320`,
-# 每模型出场 `C(10,3) × 1 × 4 = 480` 局。M 取 1 而不取 2 的原因:M=2,K=2 虽过门禁,
+# 本季脚本全在**无策略注入**下生成(决定见 docs/adr/0013),与上一季(11 模型统一策略句,
+# 运行标识 2026-10-11T11-10-03-696Z)口径不同,排名不可跨季对比。
+#
+# 规模:N=10,M=1,K=4,`M × K = 4 ≡ 0 (mod 4)` ✓ ⇒ 对局总数 `C(10,4) × 1 × 4 = 840`,
+# 每模型出场 `C(9,3) × 1 × 4 = 336` 局。M 取 1 而不取 2 的原因:M=2,K=2 虽过门禁,
 # 但座位轮换取值是 {0,1,1,2},第 4 档永远用不到;M=1,K=4 取满 {0,1,2,3},四座位精确均摊。
-# 地图只留一张是精简代价:全量 M=3,K=4 要 3960 局(约 80 分钟/11GB),以后想加再加。
-# 十一条 `strategy` 注入同一句(赛模型,不赛策略)。
+# 地图只留一张是精简代价:全量 M=3,K=4 要 2520 局(约 50 分钟/7GB),以后想加再加。
 #
 # ── 为什么用块序列而非内联 `[a, b, c]` ──
 #
@@ -21,12 +24,9 @@
 
 # 赛季根种子:决定全部对局种子的源头(`种子 = H(masterSeed, combo, mapIndex, seedIndex)`)。
 # 新赛季换新种子:N 变了组合全变,种子本就全变,换个名字标记清楚。
-masterSeed: "2026-s1"
+masterSeed: "2026-s2"
 
 # 赛季唯一规则版本;须与当前 `RULESET_VERSION`(v2)一致,否则装载期拒跑。
-# 2026-10-11 用 v1 存档重跑过一季(运行标识 2026-10-11T01-04-35-383Z,当时本行暂回 v1):
-# 名次与测试季逐项一致,回放多出 1391 条 exception 事件。S1 跑 v2:11 条 v1 脚本直迁(只改标签,
-# 依据见 docs/adr/0011),sol 换已冻好的零 findPath 版。
 ruleset: v2
 
 # ── 选填字段 ──
@@ -49,17 +49,16 @@ maps:
 seeds: 4
 
 # 参赛存档引用(archive/<slug>/<runId>);名册去重后按 slug 升序参与枚举,文件里的顺序只影响排名表行序。
-# 整批 8 条同属一次 v2 全量 gen 批次(共享 runId),luna/muse/opus 各是单跑批次(各一个 runId),
-# 十一条均 `meta.validation.passed = true` 且 `meta.ruleset = v2`。
+# 9 条同属一次自由策略 gen 批次(共享 runId),glm 是单跑批次(一个 runId),
+# 十条均 `meta.validation.passed = true` 且 `meta.ruleset = v2`。
 participants:
-  - archive/claude-haiku-5-5/2026-10-11T08-09-57-447Z
-  - archive/claude-opus-5-5/2026-10-11T11-00-05-971Z
-  - archive/deepseek-v4.1-flash/2026-10-11T08-09-57-447Z
-  - archive/glm-5.3-flash/2026-10-11T08-09-57-447Z
-  - archive/gpt-6-luna/2026-10-11T10-23-55-807Z
-  - archive/gpt-6.1-sol/2026-10-11T08-09-57-447Z
-  - archive/mimo-v2.6-flash/2026-10-11T08-09-57-447Z
-  - archive/mimo-v2.6-pro/2026-10-11T08-09-57-447Z
-  - archive/minimax-m3.1-flash/2026-10-11T08-09-57-447Z
-  - archive/muse-spark-1.3-contributor/2026-10-11T10-06-11-871Z
-  - archive/step-5-preview/2026-10-11T08-09-57-447Z
+  - archive/claude-haiku-5-5/2026-10-11T12-43-20-061Z
+  - archive/claude-opus-5-5/2026-10-11T12-43-20-061Z
+  - archive/deepseek-v4.1-flash/2026-10-11T12-43-20-061Z
+  - archive/glm-5.3-flash/2026-10-11T14-55-32-019Z
+  - archive/gpt-6-luna/2026-10-11T12-43-20-061Z
+  - archive/gpt-6.1-sol/2026-10-11T12-43-20-061Z
+  - archive/mimo-v2.6-flash/2026-10-11T12-43-20-061Z
+  - archive/mimo-v2.6-pro/2026-10-11T12-43-20-061Z
+  - archive/minimax-m3.1-flash/2026-10-11T12-43-20-061Z
+  - archive/muse-spark-1.3-contributor/2026-10-11T12-43-20-061Z

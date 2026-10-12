@@ -1,0 +1,18 @@
+{
+  "model": "step-5-preview",
+  "modelVersion": "step-5-preview-free",
+  "generatedAt": "2026-10-11T12:43:20.061Z",
+  "runId": "2026-10-11T12-43-20-061Z",
+  "ruleset": "v2",
+  "classification": "transport",
+  "protocolRounds": 0,
+  "prompts": [],
+  "generationLog": [],
+  "diagnostics": [
+    "传输错误(HTTP 429):端点 https://opencode.ai/zen/go/v1/chat/completions 返回 429 Too Many Requests: {\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}",
+    "传输错误(HTTP 429):端点 https://opencode.ai/zen/go/v1/chat/completions 返回 429 Too Many Requests: {\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}",
+    "传输错误(HTTP 429):端点 https://opencode.ai/zen/go/v1/chat/completions 返回 429 Too Many Requests: {\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}",
+    "传输错误(HTTP 429):端点 https://opencode.ai/zen/go/v1/chat/completions 返回 429 Too Many Requests: {\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}"
+  ],
+  "message": "模型 step-5-preview 第 1 轮传输失败:重试 3 次后仍失败(共 4 次尝试)"
+}

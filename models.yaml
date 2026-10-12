@@ -17,7 +17,7 @@
 #
 # 前八条走 opencode go 订阅端点;末三条走直连/中转(其中 opus 经 yomiapi 中转)。Command Code 订阅已到期,本季不再用。
 # baseUrl 一条通吃三端点族,端点路径由 endpointFamily 决定(族→路径映射见 gen/src/http/endpoints.ts)。
-# 十一条 strategy 注入**同一句**(赛模型,不赛策略;策略是常量才赛得出模型差异)。
+# 本季不注入 strategy(赛策略:各模型自由发挥;模板里 {{strategy}} 整段不注入,不留占位)。
 
 models:
   - slug: deepseek-v4.1-flash
@@ -26,7 +26,6 @@ models:
     modelId: deepseek-v4.1-flash
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -36,7 +35,6 @@ models:
     modelId: gpt-6-luna
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     # 注意:该模型在 opencode go 上不支持 temperature(透传即 400),params 整段不填。
 
   - slug: mimo-v2.6-flash
@@ -45,7 +43,6 @@ models:
     modelId: mimo-v2.6-flash
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -55,7 +52,6 @@ models:
     modelId: muse-spark-1.3-contributor
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -65,7 +61,6 @@ models:
     modelId: glm-5.3-flash
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -75,7 +70,6 @@ models:
     modelId: step-5-preview-free
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -85,7 +79,6 @@ models:
     modelId: mimo-v2.6-pro
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -95,7 +88,6 @@ models:
     modelId: claude-haiku-5-5
     credentialEnvVar: OPENCODE_GO_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       # 注意:claude-haiku-5-5 上游已废弃 temperature,传了直接 400;只留 max_tokens。
       max_tokens: 32768
@@ -107,7 +99,6 @@ models:
     credentialEnvVar: MINIMAX_API_KEY
     contextLength: 1000000
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -117,7 +108,6 @@ models:
     modelId: gpt-6.1-sol
     credentialEnvVar: PPTOKEN_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
 
@@ -127,6 +117,5 @@ models:
     modelId: claude-opus-5-5
     credentialEnvVar: YOMI_API_KEY
     protocolRounds: 5
-    strategy: 扩张运营:先稳住经济与点位,攒够家底再转军事,按 tick 节奏推进不冒进。
     params:
       temperature: 0
