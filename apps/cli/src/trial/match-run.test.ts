@@ -186,3 +186,113 @@ it("作废故障透出来（墙钟硬超时那条轨：整场作废而非判罚�
   });
   expect(outcome.fault).not.toBeNull();
 });
+
+it(
+  "空转的一局：候选座位的无得分来源读数随局返回（只观测，不带判定）",
+  { timeout: 30_000 },
+  async () => {
+    const outcome = await runTrialMatch({
+      runners: [...quiet],
+      players: [...players],
+      ruleset,
+      map,
+      seed: 101,
+      budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+      head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+      matchIndex: 0,
+    });
+    expect(outcome.scoreSource.noScoreSource).toBe(true);
+    expect(outcome.trips).toHaveLength(0);
+  },
+);
+
+/* ───────────────────── 无得分来源的**接线**（上面那条空转用例证明不了） ─────────────────────
+ *
+ * 空转一局里所有座位都没产出，于是「只观测候选座位」与「一个座位都不观测」在读数上完全一样——
+ * 那条用例钉不住接线。真正钉得住的是把产出**按座位分开**：候选动 → 读数变；候选不动而别人动
+ * → 读数不变。合成地图把两边都摆在一张 16×16 空场上，四方各一工人，产出只可能来自
+ * `capturingStub` 让谁站上中立点位。
+ */
+
+const openTerrain = Array.from({ length: 16 }, () => ".".repeat(16));
+
+/** 四方各一个主基地；4 号中立点贴着 0 号基地，5 号贴着 1 号基地。 */
+const wiringMap: MapDefinition = {
+  name: "trial-wiring",
+  size: 16,
+  rulesetMin: "v1",
+  terrain: openTerrain,
+  sites: [
+    { id: 0, kind: "base", x: 1, y: 1, initialOwner: 0 },
+    { id: 1, kind: "base", x: 14, y: 1, initialOwner: 1 },
+    { id: 2, kind: "base", x: 14, y: 14, initialOwner: 2 },
+    { id: 3, kind: "base", x: 1, y: 14, initialOwner: 3 },
+    { id: 4, kind: "resource", x: 3, y: 1, initialOwner: null },
+    { id: 5, kind: "resource", x: 12, y: 1, initialOwner: null },
+  ],
+  spawnUnits: [0, 1, 2, 3].map((owner) => ({ owner, type: "worker", offset: [1, 0] })),
+  variantSlots: [],
+};
+
+/** 快照里这个桩要读的两栏（引擎的 `Snapshot` 不导出，桩只声明自己用到的那部分）。 */
+type WireSnapshot = {
+  readonly units: readonly { readonly id: number; readonly owner: number; readonly type: string }[];
+  readonly sites: readonly {
+    readonly id: number;
+    readonly owner: number;
+    readonly x: number;
+    readonly y: number;
+  }[];
+};
+
+/**
+ * 会占点的桩：把自己的工人开到 `siteId` 那一格并站到易主为止，除此之外什么也不做。
+ * 到达之前每 tick 重发 `moveTo`（已经在格上时它落空，工人不动），所以不需要路径规划。
+ */
+const capturingStub = (seat: number, siteId: number) => {
+  let snapshot: WireSnapshot | null = null;
+  return {
+    setSnapshot: (latest: WireSnapshot): void => {
+      snapshot = latest;
+    },
+    drainIntents: () => {
+      const site = snapshot?.sites.find((candidate) => candidate.id === siteId);
+      const worker = snapshot?.units.find((unit) => unit.owner === seat && unit.type === "worker");
+      if (site === undefined || worker === undefined || site.owner === seat) {
+        return { intents: [], observations: [] };
+      }
+      return {
+        intents: [{ kind: "moveTo" as const, unitId: worker.id, x: site.x, y: site.y }],
+        observations: [],
+      };
+    },
+  };
+};
+
+it("接线：候选座位占下中立点位 → 读数记下这 1 次占点，不命中", { timeout: 30_000 }, async () => {
+  const outcome = await runTrialMatch({
+    runners: [capturingStub(0, 4), recordingStub({}), recordingStub({}), recordingStub({})],
+    players: [...players],
+    ruleset,
+    map: wiringMap,
+    seed: 101,
+    budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  expect(outcome.scoreSource).toEqual({ delivered: 0, captures: 1, noScoreSource: false });
+});
+
+it("接线：他座位占下中立点位不算候选的得分来源 → 候选仍判命中", { timeout: 30_000 }, async () => {
+  const outcome = await runTrialMatch({
+    runners: [recordingStub({}), capturingStub(1, 5), recordingStub({}), recordingStub({})],
+    players: [...players],
+    ruleset,
+    map: wiringMap,
+    seed: 101,
+    budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  expect(outcome.scoreSource).toEqual({ delivered: 0, captures: 0, noScoreSource: true });
+});

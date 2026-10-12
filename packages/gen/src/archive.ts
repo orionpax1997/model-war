@@ -7,6 +7,10 @@
  * (hld §7.4)。编译步骤(怎么从 `script.ts` 得到 `script.js`)归 `compile.ts`;本文件只认
  * 「三件套叫什么、以什么顺序、落到哪里」,并把这条拓扑做成常量供编译步骤与测试共用。
  *
+ * **`archive/<modelSlug>/` 下还有旁挂文件,它们不归本文件**:`failed-<runId>.json`(失败记录,
+ * 归 `failure.ts`)与 `observed-<runId>.jsonl`(试跑观测,归 `observations.ts`)。两者与存档目录
+ * **同层**而不是目录内——「目录存在 ⇔ 三件套完整」那条不变量因此不受它们影响。
+ *
  * ── 为什么临时目录必须建在 `archive/<slug>/` 下 ──
  *
  * `fs.rename` 只在**同一文件系统**内是原子的。若临时目录建在 `os.tmpdir()`(在容器里常是

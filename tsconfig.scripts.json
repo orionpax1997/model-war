@@ -31,7 +31,8 @@
 
     // 入口签名:顶层 `function loop()` 就是入口,返回类型可省略(终稿契约的裁决,不是 `function loop(): void`)。
     // 「顶层声明入口函数」这一半不由配置判定——配置的作用是清空类型环境,它无从要求某个名字出现;
-    // 它在生成管线的编译步骤里查产物( typeof loop === "function" ),配置这一侧只保证不逼人写错形状。
+    // 它在静态校验器的脚本入口规则里查产物的顶层声明(`packages/tools/src/rules/script-entry.ts`),
+    // 配置这一侧只保证不逼人写错形状。
 
     // TS 7 已移除 outFile,单文件 script-mode 产物只能走输出目录;名字见上方 .gitignore 那段。
     "outDir": "script-products",

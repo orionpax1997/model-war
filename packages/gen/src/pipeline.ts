@@ -67,6 +67,7 @@ import { compileScript } from "./compile.js";
 import { extractScriptSource } from "./extract.js";
 import type { ModelConfig } from "./config.js";
 import type { ChatMessage, ModelParams } from "./model-client.js";
+import { observationsPathOf } from "./observations.js";
 import { renderBaseTemplate } from "./prompt.js";
 import { retryTransport, type TransportFailure } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
@@ -90,6 +91,12 @@ export type GenerationLogEntry = {
   readonly params: ModelParams;
   readonly usage: unknown;
   readonly finishReason: string;
+  /**
+   * 本轮模型调用段的墙钟毫秒(整数):从发出第一次 `send` 到拿到回文本,**含退避重试的等待**
+   * (重试是模型端延迟的一部分,也是用户真等的时间)。不含编译、校验与冻结期试跑——那些是本地
+   * 动作,计进来会把对局时长灌进「模型耗时」。传输失败耗尽的那一轮不进日志,它的耗时不记。
+   */
+  readonly sendMs: number;
   /** 编译失败时是诊断里的 `TS####`;合约轮为空(来源与理由见文件头注,票 07 定稿)。 */
   readonly errorCodes: readonly string[];
 };
@@ -199,11 +206,25 @@ const sendOneRound = async (options: {
   readonly maxBytes: number;
   readonly round: number;
   readonly trial: TrialProbe;
+  /** 观测文件落盘点（`observations.ts` 是真源）；每模型一份，逐轮透传。 */
+  readonly observationsPath: string;
 }): Promise<RoundResult> => {
-  const { request, config, stagingDir, messages, params, maxBytes, round, trial } = options;
+  const {
+    request,
+    config,
+    stagingDir,
+    messages,
+    params,
+    maxBytes,
+    round,
+    trial,
+    observationsPath,
+  } = options;
   // 一轮一个客户端:重试在**同一次 `send` 之内**完成(同一份 messages),协议轮数不动(契约 §2.1)。
   const client = request.createClient(config);
+  const startedAt = performance.now();
   const attempt = await retryTransport({ send: () => client.send(messages, params) });
+  const sendMs = Math.round(performance.now() - startedAt);
   if (!attempt.ok) {
     return { kind: "transport", failure: attempt.failure };
   }
@@ -216,6 +237,7 @@ const sendOneRound = async (options: {
     params,
     usage: response.usage,
     finishReason: response.finishReason,
+    sendMs,
   } as const;
 
   // 模型裸文本先进剥包装再进编译(ADR-0012):围栏/引导语只包在头尾,剥后行号自第一行代码起算,
@@ -280,7 +302,11 @@ const sendOneRound = async (options: {
   // 冻结期试跑：三场完整对局，任一场预算超限即本轮失败（`contract` 分类、`trial` 段）。
   // 回喂试跑 stdout 逐字——它是面向模型的（第几场、第几 tick、哪项预算、超了多少），
   // 不含胜负与名次，走既有回喂通道，不需要新格式。
-  const trialResult = trial({ root: request.root, artifactPath: compile.jsPath });
+  const trialResult = trial({
+    root: request.root,
+    artifactPath: compile.jsPath,
+    observationsPath,
+  });
   if (!trialResult.passed) {
     return {
       kind: "failed",
@@ -333,6 +359,9 @@ export const generateOneModel = async (
   const maxBytes = scriptSizeLimit(request.root);
   // 缺席即真子进程（`trial.ts`）：生产冻结前必跑三场；测试注入桩，保持单测毫秒级。
   const trial: TrialProbe = request.trial ?? runTrialScript;
+  // 观测文件是**每模型一份**的落盘点，与轮次无关：每轮试跑都往同一个路径整份重写，
+  // 于是留在盘上的恒是最后一次试跑调用（定结论的那一次）的读数（口径见 `observations.ts`）。
+  const observationsPath = observationsPathOf(request.root, slug, runId);
 
   const basePrompt = renderBaseTemplate(request.template, request.docs, config.strategy);
   // 无状态全量重发:每轮把整个 messages 发出,后续轮在其后追加 assistant + user(契约 §2.2)。
@@ -353,6 +382,7 @@ export const generateOneModel = async (
         maxBytes,
         round,
         trial,
+        observationsPath,
       });
 
       // 传输层收口:该轮没有收敛(重试耗尽 / 不可重试),不进 prompts / generationLog、不占

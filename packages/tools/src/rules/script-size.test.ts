@@ -22,6 +22,9 @@ import {
 /** 那半条规则信息本身。断言它出现,就是断言「这句话是规则的一部分」而不是润色。 */
 const ADVICE = "改算法,不要拆直线代码";
 
+/** 合法产物必须有的顶层入口:给片段样本补上它,结论才只由被测规则驱动。 */
+const LOOP_ENTRY = "function loop() {}\n";
+
 /** 一份干净的产物(编译后的样子:单文件 script-mode、顶层 `function loop`)。 */
 const CLEAN = `function loop() {
   let n = 0;
@@ -45,7 +48,7 @@ it("边界三态:低于上限通过、恰好等于上限通过、高于上限违
 it("量的对象是编译后产物的字节数,不是字符串长度", () => {
   // 这份产物里只有一处多字节字符,所以长度与字节数不相等;上限取「字符串长度以上、字节数以下」,
   // 按字符串长度判会放行,按字节数判才拦得住——量的到底是哪一个,这条用例就钉住了它。
-  const source = `const a = "中";\n`;
+  const source = `const a = "中";\n${LOOP_ENTRY}`;
   expect(bytes(source)).toBeGreaterThan(source.length);
   expect(
     validateScriptSource(source, { maxBytes: source.length, phase: "freeze" }).map(
@@ -95,7 +98,7 @@ it("诊断说清超出多少字节,便于模型判断要缩多少", () => {
 it("违规没有位置,且落在判定链输出的末尾", () => {
   // 体积级不是 AST 规则:硬给它一个 `1:1` 只会让「这个位置是猜的」消失在数据里;
   // 排序契约把无位置的违规落在末尾,免得「第一行是什么违规」随有没有超标而变。
-  const violations = validateScriptSource("const a = Date.now();\nconst b = 1;\n", {
+  const violations = validateScriptSource("const a = Date.now();\nconst b = 1;\n" + LOOP_ENTRY, {
     maxBytes: 5,
     phase: "freeze",
   });
@@ -106,9 +109,9 @@ it("违规没有位置,且落在判定链输出的末尾", () => {
 });
 
 it("体积超标不掩盖别的规则:同一份源码里两类违规各自都报", () => {
-  // 体积级在链上吃字节数,其余三级吃 AST,两者互不吞掉:否则「体积超标」会把一份还用了
+  // 体积级在链上吃字节数,其余四级吃 AST,两者互不吞掉:否则「体积超标」会把一份还用了
   // 禁列全局名的产物缩成只收到一句体量提醒,模型改完体积那一半又撞上另一半。
-  const violations = validateScriptSource("const a = Date.now();\n", {
+  const violations = validateScriptSource("const a = Date.now();\n" + LOOP_ENTRY, {
     maxBytes: 1,
     phase: "freeze",
   });

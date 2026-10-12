@@ -2,14 +2,14 @@
  * 参赛脚本静态校验的**判定链**:一段编译后的产物源码 → 一组有序的违规。
  *
  * ── 顺序是裁决,不是实现细节 ──────────────────────────────────────────────────
- * 固定顺序:**语法失败 → 禁列 → 桥前缀 → 模块系统 → 体积**。
+ * 固定顺序:**语法失败 → 禁列 → 桥前缀 → 模块系统 → 脚本入口 → 体积**。
  * 禁列排在最前不是随意排的:禁列表里有 `Math.random`,而 `Math` 在内置全局白名单里;
  * 按白名单先判就会把 `Math.random` 放行(spec《规则清单与判定链》)。往本文件里插一级时
  * **按它在表里的位置插,不要按实现方便的顺序插**。
  *
  * ── 上下文为什么长这样 ────────────────────────────────────────────────────────
  * 一级一个纯函数,形状统一成「吃上下文、吐违规」,好处是**每级都不必知道别的级存在**,
- * 而上下文本身(三条 AST 规则吃已解析好的树、体积级吃字节数)由 `rules/script-lint.ts` 定义,
+ * 而上下文本身(四条 AST 规则吃已解析好的树、体积级吃字节数)由 `rules/script-lint.ts` 定义,
  * 不在这里——理由是依赖方向只能是 `validate/` → `rules/`,见那个文件的头注。
  *
  * ── 解析失败独占结果 ──────────────────────────────────────────────────────────
@@ -26,6 +26,7 @@ import { forbiddenGlobalStage } from "../rules/forbidden-globals.ts";
 import { hostBridgeStage } from "../rules/host-bridge.ts";
 import { moduleSystemStage } from "../rules/module-system.ts";
 import { scriptSizeStage } from "../rules/script-size.ts";
+import { scriptEntryStage } from "../rules/script-entry.ts";
 import {
   compareViolations,
   type ScriptLintContext,
@@ -35,12 +36,12 @@ import {
 } from "../rules/script-lint.ts";
 
 /**
- * 五级判定链,按裁决排定。**五个槽位已齐,注释占位机制就此收工**——占位服务的是
+ * 六级判定链,按裁决排定。**六个槽位已齐,注释占位机制就此收工**——占位服务的是
  * 「后面几张票还没写」的那段时间(免得这里引用一个还不存在的导出,那会让 `tsc -b` 直接红,
- * 后面的票无路可走)。五级都落地之后它只会让后来者误以为还有槽位没填,于是连同它那行
+ * 后面的票无路可走)。六级都落地之后它只会让后来者误以为还有槽位没填,于是连同它那行
  * 「下面 N 级的槽位」一并删掉:新加一级直接**插在表里它该在的那一格**,顺序不许改。
  *
- * 每一格的白盒断言在 `pipeline.test.ts`(禁列 / 桥前缀 / 模块系统各一条,体积那条在
+ * 每一格的白盒断言在 `pipeline.test.ts`(禁列 / 桥前缀 / 模块系统 / 脚本入口各一条,体积那条在
  * `rules/script-size.test.ts`):动顺序会让它们一起红,所以顺序有钉子,不必靠这份注释盯。
  * 各级的形状(`ScriptLintStage` 与它吃的上下文)归 `rules/script-lint.ts`,不在本文件。
  */
@@ -48,6 +49,7 @@ export const SCRIPT_LINT_STAGES: readonly ScriptLintStage[] = [
   forbiddenGlobalStage, // 禁列:标识符链整条命中禁列表(票 01)
   hostBridgeStage, // 桥前缀:任何标识符链的根带宿主桥前缀(票 03)
   moduleSystemStage, // 模块系统:export / import / import() / require / 动态 eval(票 02)
+  scriptEntryStage, // 脚本入口:顶层没有可被引擎取到的 `loop` 函数
   scriptSizeStage, // 体积:字节数超过 maxBytes,iteration 只提示、freeze 拦(票 04)
 ];
 

@@ -26,6 +26,7 @@ const RULE_LABELS: Record<ScriptLintRule, string> = {
   "forbidden-global": "禁列全局名",
   "host-bridge": "宿主桥前缀",
   "module-system": "模块系统",
+  "script-entry": "脚本入口",
   "script-size": "脚本体积",
 };
 

@@ -174,6 +174,20 @@ const mkRoot = (baseUrl: string): string => {
   return root;
 };
 
+/** 读回试跑观测文件（`archive/<slug>/observed-<runId>.jsonl`）的每一行；形状由入口那一侧写。 */
+type ObservationRow = {
+  readonly matchIndex: number;
+  readonly delivered: number;
+  readonly captures: number;
+  readonly noScoreSource: boolean;
+};
+
+const readObservationLines = (path: string): readonly ObservationRow[] =>
+  readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as ObservationRow);
+
 /** 跑 CLI 子进程到退出;异步等待,让本进程的假端点能应答(见文件头注)。 */
 const runCli = (
   args: readonly string[],
@@ -196,29 +210,32 @@ const runCli = (
     });
   });
 
-it("冒烟:假端点后端到端跑通 `gen`,退出 0,存档三件套落地", { timeout: 120_000 }, async () => {
+it("冒烟:假端点后端到端跑通 `gen`，退出 0，存档三件套落地", { timeout: 120_000 }, async () => {
   const endpoint = await startFakeEndpoint();
   try {
     const root = mkRoot(endpoint.baseUrl);
     const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
     expect(result.status, result.stderr).toBe(0);
 
-    // 真打到了假端点:POST /chat/completions,带上 Bearer 鉴权头。
+    // 真打到了假端点：POST /chat/completions，带上 Bearer 鉴权头。
     expect(endpoint.requests).toHaveLength(1);
     expect(endpoint.requests[0]?.method).toBe("POST");
     expect(endpoint.requests[0]?.path).toBe("/chat/completions");
     expect(endpoint.requests[0]?.authorization).toBe("Bearer smoke-fake-key");
 
-    // 三件套落地(单轮成功)。
+    // 三件套落地（单轮成功）。存档目录里除目录外只有那份观测文件（旁挂，不进三件套）。
     const slugDir = join(root, "archive", "alpha");
-    const runIds = readdirSync(slugDir);
+    const entries = readdirSync(slugDir, { withFileTypes: true });
+    const runIds = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    const sidecars = entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name);
     expect(runIds).toHaveLength(1);
     const runId = runIds[0] as string;
+    // 失败记录不该出现在成功路径里。
+    expect(runIds.some((name) => name.startsWith("failed-"))).toBe(false);
+    expect(sidecars).toEqual([`observed-${runId}.jsonl`]);
     expect(existsSync(join(slugDir, runId, "script.ts"))).toBe(true);
     expect(existsSync(join(slugDir, runId, "script.js"))).toBe(true);
     expect(existsSync(join(slugDir, runId, "meta.json"))).toBe(true);
-    // 失败记录不该出现在成功路径里。
-    expect(runIds.some((name) => name.startsWith("failed-"))).toBe(false);
 
     const meta = JSON.parse(readFileSync(join(slugDir, runId, "meta.json"), "utf8")) as {
       protocolRounds: number;
@@ -226,6 +243,17 @@ it("冒烟:假端点后端到端跑通 `gen`,退出 0,存档三件套落地", { 
     };
     expect(meta.protocolRounds).toBe(1);
     expect(meta.prompts).toHaveLength(1);
+
+    // 试跑观测落地：三场各一行（这个候选整局无所作为，三场都命中「无得分来源」）。
+    // 这是「留痕进得去 gen 的记录」那一条的接线断言——不落盘，这条缺口就还在。
+    const observations = readObservationLines(join(slugDir, `observed-${runId}.jsonl`));
+    expect(observations).toHaveLength(3);
+    expect(observations.map((line) => line.matchIndex)).toEqual([0, 1, 2]);
+    expect(
+      observations.every(
+        (line) => line.noScoreSource && line.delivered === 0 && line.captures === 0,
+      ),
+    ).toBe(true);
   } finally {
     await endpoint.close();
   }
@@ -245,11 +273,13 @@ it(
       // 冻结失败 → 非零退出（早停：首场首 tick 即拦，不必跑满三场）。
       expect(result.status, result.stderr).toBe(1);
 
-      // 不建存档目录，只留失败记录（旁证），且记录指明是试跑拦的。
+      // 不建存档目录，只留失败记录（旁证）+ 试跑观测，且记录指明是试跑拦的。
       const slugDir = join(root, "archive", "alpha");
       const names = readdirSync(slugDir);
-      expect(names).toEqual([expect.stringMatching(/^failed-.*\.json$/)]);
-      const record = JSON.parse(readFileSync(join(slugDir, names[0] as string), "utf8")) as {
+      const failureName = names.find((name) => name.startsWith("failed-")) as string;
+      expect(names).toEqual(expect.arrayContaining([failureName]));
+      const record = JSON.parse(readFileSync(join(slugDir, failureName), "utf8")) as {
+        runId: string;
         classification: string;
         diagnostics: readonly string[];
         message: string;
@@ -259,6 +289,13 @@ it(
       const diagnostics = record.diagnostics.join("\n");
       expect(diagnostics).toContain("试跑未通过");
       expect(diagnostics).toContain("控制流事件计数");
+
+      // 被拦下的候选同样留观测（旁证不挑结论）：runId 与失败记录同源，行数 = 跑过的场数
+      // （首场首 tick 即拦 → 早停，后面两场没跑，也就没有读数）。
+      expect(names).toContain(`observed-${record.runId}.jsonl`);
+      const observations = readObservationLines(join(slugDir, `observed-${record.runId}.jsonl`));
+      expect(observations).toHaveLength(1);
+      expect(observations[0]?.matchIndex).toBe(0);
     } finally {
       await endpoint.close();
     }

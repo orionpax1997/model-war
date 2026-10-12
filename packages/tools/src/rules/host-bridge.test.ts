@@ -27,6 +27,9 @@ const where = (source: string): readonly string[] =>
 /** 体积上限随便给一个大数:体积级不归本规则,不让一个未定值参与判定。 */
 const OPTS = { maxBytes: 1_000_000, phase: "freeze" } as const;
 
+/** 合法产物必须有的顶层入口:给片段样本补上它,结论才只由被测规则驱动。 */
+const LOOP_ENTRY = "function loop() {}\n";
+
 it("干净源码无违规", () => {
   const source = `function loop(count) {
   let n = 0;
@@ -133,13 +136,16 @@ it("解析不过时本规则不报违规:那条结论归判定链独占", () => 
 });
 
 it("判定链上桥前缀排在禁列之后、体积之前", () => {
-  // 五级顺序是裁决;这一级排在第 2 位(紧跟禁列),插错了位置会让「禁列必须先判」那句话落空。
+  // 六级顺序是裁决;这一级排在第 2 位(紧跟禁列),插错了位置会让「禁列必须先判」那句话落空。
   expect(SCRIPT_LINT_STAGES[1]).toBe(hostBridgeStage);
 });
 
 it("判定链上两类违规都报,按源码位置有序", () => {
   // 桥前缀一级既不吞禁列的违规、也不被禁列吞掉:一份源码里两类都在,两条都在输出里。
-  const violations = validateScriptSource("const a = Date.now();\nconst b = __host;\n", OPTS);
+  const violations = validateScriptSource(
+    "const a = Date.now();\nconst b = __host;\n" + LOOP_ENTRY,
+    OPTS,
+  );
   expect(violations.map((violation) => `${violation.rule} @ ${violation.line}`)).toEqual([
     "forbidden-global @ 1",
     "host-bridge @ 2",
@@ -176,7 +182,9 @@ it("重叠裁决的另一面:禁列名单里的名字不会被本规则顺手多
   // 钉住的就是它的结论形状,所以这一条钉住的是「不会两条都落进模型那一行」。
   for (const name of FORBIDDEN_GLOBAL_NAMES) {
     expect(
-      validateScriptSource(`const a = ${name};\n`, OPTS).map((violation) => violation.rule),
+      validateScriptSource(`const a = ${name};\n${LOOP_ENTRY}`, OPTS).map(
+        (violation) => violation.rule,
+      ),
       `名单里的 ${name} 只应当判成禁列`,
     ).toEqual(["forbidden-global"]);
   }

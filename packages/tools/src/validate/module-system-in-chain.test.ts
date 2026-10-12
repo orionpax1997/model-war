@@ -26,6 +26,9 @@ const entry = here("./run-validate-script.ts");
 
 const OPTS = { maxBytes: 1_000_000, phase: "freeze" } as const;
 
+/** 合法产物必须有的顶层入口:给片段样本补上它,结论才只由被测规则驱动。 */
+const LOOP_ENTRY = "function loop() {}\n";
+
 /** 五种形态的样本。`form` 是诊断文本里必须出现的那个形态名。 */
 const FORMS: readonly { readonly case: string; readonly source: string; readonly form: string }[] =
   [
@@ -65,7 +68,8 @@ const run = (source: string): { readonly status: number; readonly stdout: string
 
 it("五种形态经判定链都判成模块系统违规,且一律拦截", () => {
   for (const { case: name, source } of FORMS) {
-    const violations = validateScriptSource(source, OPTS);
+    // 补上顶层入口,让结论只由模块系统那一级驱动(入口级有自己的用例,不让它抢走结论)。
+    const violations = validateScriptSource(`${source}${LOOP_ENTRY}`, OPTS);
     expect(
       violations.map((violation) => violation.rule),
       name,
@@ -79,7 +83,7 @@ it("五种形态经判定链都判成模块系统违规,且一律拦截", () => 
 
 it("五种形态经入口都被拦:退出码非零,诊断里点名那个形态", () => {
   for (const { case: name, source, form } of FORMS) {
-    const outcome = run(source);
+    const outcome = run(`${source}${LOOP_ENTRY}`);
     expect(outcome.status, name).not.toBe(0);
     expect(outcome.stdout, name).toContain("模块系统");
     expect(outcome.stdout, name).toContain(form);
@@ -112,7 +116,7 @@ it("解析失败独占结果:带 import 的残树不产出模块系统违规", (
 });
 
 it("同类合并:五种形态落在同一个类别上,并成一行", () => {
-  const source = FORMS.map(({ source: one }) => one).join("");
+  const source = `${FORMS.map(({ source: one }) => one).join("")}${LOOP_ENTRY}`;
   const outcome = run(source);
   expect(outcome.status).toBe(1);
   const merged = outcome.stdout.split("\n").filter((line) => line.includes("模块系统"));

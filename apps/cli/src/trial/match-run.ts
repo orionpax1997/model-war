@@ -20,13 +20,20 @@
 
 import { runMatch, type RunMatchParams } from "@model-war/engine";
 
-import type { RecordedTrip } from "./trial.js";
+import { CANDIDATE_SEAT, type RecordedTrip } from "./trial.js";
+import {
+  createScoreSourceTracker,
+  type ScoreSourceReading,
+  type ScoreSourceSnapshot,
+} from "./score-source.js";
 
 type TrialRunner = RunMatchParams["runners"][number];
 
 /** 单场的试跑结论：记下的全部触限，以及作废故障（墙钟硬超时那条轨）。 */
 export type TrialMatchOutcome = {
   readonly trips: readonly RecordedTrip[];
+  /** 候选座位的「无得分来源」读数（只观测，不参与判定）。 */
+  readonly scoreSource: ScoreSourceReading;
   /** 作废即无结论：本场 void，调用方按"无法判定"处理（重跑一次，仍作废则大声失败）。 */
   readonly fault: { readonly tick: number } | null;
 };
@@ -34,17 +41,27 @@ export type TrialMatchOutcome = {
 /**
  * 包一层记录器：tick 在 `setSnapshot` 处记（快照的 tick 与同 tick 回放行同号），
  * 触限在 `drainIntents` 的返回载荷里收（座位是包的是第几个 runner）。
+ *
+ * `observe` 是可选的旁挂：它接到哪一侧**不影响读数**——四个 runner 拿到的是同一份
+ * 全世界的只读快照（步 0 只建一次），而「只算本座位」的真源是 tracker 内部的 `owner` 比较
+ * （`score-source.ts`，那边有对应用例）。挑候选座位那一侧挂只是因为它最省：座位被淘汰后
+ * 步 0 不再给它的 runner 发快照（`step0-dispatch.ts`），而常规淘汰的那一刻它已无单位也无基地
+ * （`step5-evaluate.ts` 的淘汰条件即此），之后不可能再有交付或占点——观测到淘汰为止等于观测了
+ * 整局。例外是异常轨淘汰（`exceptionTickLimit` 打满）：那时单位还留着，只是收不到 intent 而
+ * 采不了；本票不追那条边。
  */
 const wrapWithRecorder = (
   runner: TrialRunner,
   seat: number,
   matchIndex: number,
   trips: RecordedTrip[],
+  observe: ((snapshot: ScoreSourceSnapshot) => void) | null,
 ): TrialRunner => {
   let tick = 0;
   return {
     setSnapshot: (snapshot) => {
       tick = snapshot.tick;
+      observe?.(snapshot);
       runner.setSnapshot(snapshot);
     },
     drainIntents: () => {
@@ -83,6 +100,7 @@ export const runTrialMatch = (options: {
   readonly matchIndex: number;
 }): TrialMatchOutcome => {
   const trips: RecordedTrip[] = [];
+  const tracker = createScoreSourceTracker(CANDIDATE_SEAT);
   const outcome = runMatch({
     ruleset: options.ruleset,
     map: options.map,
@@ -90,13 +108,20 @@ export const runTrialMatch = (options: {
     head: options.head,
     players: options.players,
     runners: options.runners.map((runner, seat) =>
-      wrapWithRecorder(runner, seat, options.matchIndex, trips),
+      wrapWithRecorder(
+        runner,
+        seat,
+        options.matchIndex,
+        trips,
+        seat === CANDIDATE_SEAT ? tracker.observe : null,
+      ),
     ),
     budget: options.budget,
     sink: { write: () => {} },
   });
+  const scoreSource = tracker.reading();
   if (outcome.status === "uncertain-timeout") {
-    return { trips, fault: { tick: outcome.tick } };
+    return { trips, scoreSource, fault: { tick: outcome.tick } };
   }
-  return { trips, fault: null };
+  return { trips, scoreSource, fault: null };
 };

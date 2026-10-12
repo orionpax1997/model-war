@@ -80,6 +80,7 @@ export { hostBridgeStage, hostBridgeViolations } from "./rules/host-bridge.ts";
 export type { ChainReference, ChainSegment } from "./rules/identifier-chain.ts";
 export { referenceChainsOf } from "./rules/identifier-chain.ts";
 export { moduleSystemStage, moduleSystemViolations } from "./rules/module-system.ts";
+export { scriptEntryStage, scriptEntryViolations } from "./rules/script-entry.ts";
 // 体积上限是入参(`maxBytes`)、时机由 `phase` 分两级,所以这里导出的是「字节数 → 违规」的缝。
 export type { ScriptSizeOptions } from "./rules/script-size.ts";
 export { scriptSizeStage, scriptSizeViolations } from "./rules/script-size.ts";

@@ -18,6 +18,8 @@
 
 import type { ReplaySeat } from "@model-war/schema";
 
+import type { ScoreSourceReading } from "./score-source.js";
+
 /** 试跑场数：零容忍，K 场爆 1 次就打回。 */
 export const TRIAL_MATCH_COUNT = 3;
 
@@ -105,5 +107,25 @@ export const renderTrialFeedback = (verdict: TrialVerdict): string => {
     `- ${label}超限（读数 ${String(trip.value)}，上限 ${String(trip.limit)}，` +
     `超出 ${String(trip.value - trip.limit)}）。\n` +
     `${String(TRIAL_MATCH_COUNT)} 场试跑零容忍：任一场超限即打回。${hint}。`
+  );
+};
+
+/**
+ * 「无得分来源」的留痕文案（只进 stderr，**不回喂、不拦**）。未命中给 `null`。
+ *
+ * 只观测的理由与口径见 `score-source.ts` 头注；升级为判定另票裁决。
+ *
+ * 留痕行数**可以少于场数**：首场触限后的早停会把后场整场省掉，于是那一局没有读数也没有留痕。
+ * 早停是为了省 VM 时间而早有的，不动它——观测不影响结论，少几行读数不改变任何判定。
+ */
+export const renderScoreSourceObservation = (
+  matchIndex: number,
+  reading: ScoreSourceReading,
+): string | null => {
+  if (!reading.noScoreSource) {
+    return null;
+  }
+  return (
+    `试跑观测（不拦）：候选在第 ${String(matchIndex + 1)} 场整局无交付、无占点` + `（无得分来源）。`
   );
 };

@@ -13,9 +13,9 @@
  * `module` = 仓库自身源码(TS),`script` = 参赛脚本的**编译产物**(JS)。
  *
  * 收紧的落点选在这里而不是校验入口(实测与理由见 `docs/hld.md` §6.2):规则层的
- * `forbidden-globals` / `host-bridge` / `module-system` 三条各自独立调 `parseToAst(source, "script")`,
- * 入口声明源形态的话要在四处各传一次,任何一处漏传就静默回到「判据更宽」——而更宽正是本层
- * 要消除的方向。改这一处,四个调用点一起受益且绕不开。
+ * `forbidden-globals` / `host-bridge` / `module-system` / `script-entry` 四条各自独立调 `parseToAst(source, "script")`,
+ * 入口声明源形态的话要在五处各传一次,任何一处漏传就静默回到「判据更宽」——而更宽正是本层
+ * 要消除的方向。改这一处,五个调用点一起受益且绕不开。
  *
  * **收紧不等于模块系统那一级可以删**(实测,2026-10-04,oxc-parser 0.152.0):
  * `lang: "js"` 只让解析层不再接受 **TS 注解**,对模块语法毫无作用——`export const` / `import x` /

@@ -4,6 +4,7 @@ import {
   forbiddenGlobalStage,
   hostBridgeStage,
   moduleSystemStage,
+  scriptEntryStage,
   scriptSizeStage,
   validateScriptSource,
 } from "../index.ts";
@@ -15,8 +16,8 @@ import {
  * 规则本身的判据在 `rules/forbidden-globals.test.ts`、`rules/host-bridge.test.ts`、
  * `rules/script-size.test.ts` 与 `rules/module-system.test.ts` 里。
  *
- * 槽位断言(禁列 / 桥前缀 / 模块系统各一条)钉的是**判定链里哪一格归谁**:
- * 五级顺序是裁决,插错一格没有任何外部可观察的等价物,所以只能白盒钉。
+ * 槽位断言(禁列 / 桥前缀 / 模块系统 / 脚本入口各一条)钉的是**判定链里哪一格归谁**:
+ * 六级顺序是裁决,插错一格没有任何外部可观察的等价物,所以只能白盒钉。
  */
 
 /**
@@ -26,6 +27,9 @@ import {
  * `rules/script-size.test.ts` 里,不在这里重复。
  */
 const OPTS = { maxBytes: 1_000_000, phase: "freeze" } as const;
+
+/** 合法产物必须有的顶层入口:给片段样本补上它,结论才只由被测规则驱动。 */
+const LOOP_ENTRY = "function loop() {}\n";
 
 /** 收成「类别@行列」,违规文本的措辞改动不必连带改这里。 */
 const where = (source: string, options = OPTS): readonly string[] =>
@@ -63,7 +67,7 @@ it("解析失败时体积级也不参与判定,上限给再小也一样", () => 
 });
 
 it("未编译的 TS 源码被拒:独占一条 syntax-error,且一条规则违规都不报", () => {
-  // 判定链的输入是**编译产物**(hld §6.2「四条规则统一跑在编译产物上」)。一份还带着
+  // 判定链的输入是**编译产物**(hld §6.2「五条规则统一跑在编译产物上」)。一份还带着
   // 类型标注的源码此刻根本无法判定,所以它落在解析失败那一支——与「解析过了但有违规」
   // 是两件不同的事,后者要等的编译诊断由生成管线的编译步骤透传(hld §6.2「编译」那一行)。
   const violations = validateScriptSource(
@@ -111,7 +115,7 @@ it("顺序漏洞的锁死用例:禁列里的成员路径挂在白名单内的全
   // `Math` 在内置全局白名单里,而 `Math.random` 在禁列表里。按白名单先判就会把它放行。
   // 这条用例的作用就是把那条链钉死:哪一级先判它都仍然是 forbidden-global。
   const violations = validateScriptSource(
-    "const a = Math.random();\nconst b = Math.floor(1);\n",
+    "const a = Math.random();\nconst b = Math.floor(1);\n" + LOOP_ENTRY,
     OPTS,
   );
   expect(violations.map((v) => v.rule)).toEqual(["forbidden-global"]);
@@ -127,6 +131,7 @@ it("三条 AST 规则对括号写法一视同仁:括号是纯分组,不是绕过
     "const a = (Math).random();",
     "const b = (__setSnapshot)(1);",
     "(eval)(s);",
+    LOOP_ENTRY.trimEnd(),
     "",
   ].join("\n");
   expect(where(source)).toEqual([
@@ -137,13 +142,13 @@ it("三条 AST 规则对括号写法一视同仁:括号是纯分组,不是绕过
 });
 
 it("禁列是判定链的第一级", () => {
-  // 这条是白盒的,却必须留:五级顺序是裁决而不是实现细节,而顺序没有任何外部可观察的等价物
-  // ——后面几张票(桥前缀 / 模块系统 / 体积)落地时,各自会在这里再加一条钉住自己那个槽位。
+  // 这条是白盒的,却必须留:六级顺序是裁决而不是实现细节,而顺序没有任何外部可观察的等价物
+  // ——后面几张票(桥前缀 / 模块系统 / 脚本入口 / 体积)落地时,各自会在这里再加一条钉住自己那个槽位。
   expect(SCRIPT_LINT_STAGES[0]).toBe(forbiddenGlobalStage);
 });
 
-it("模块系统落在第三格:禁列 → 桥前缀 → 模块系统 → 体积", () => {
-  // 同样是一条白盒断言,理由同上:模块系统这一格在五级顺序里的位置是裁决。
+it("模块系统落在第三格:禁列 → 桥前缀 → 模块系统 → 脚本入口 → 体积", () => {
+  // 同样是一条白盒断言,理由同上:模块系统这一格在六级顺序里的位置是裁决。
   // **钉的是第三格(索引 2),不是「前面那几格」**——桥前缀(票 03)落地后它把自己的那格插到了
   // 本级前面,于是索引从 1 挪到 2。与其钉一个会随邻居落地而漂的索引,不如把两侧的邻居
   // 一起写出来:索引 + 三条相对顺序,任何一次插错槽位都会让本条红。
@@ -154,6 +159,14 @@ it("模块系统落在第三格:禁列 → 桥前缀 → 模块系统 → 体积
 });
 
 it("违规都是拦截项,退出码那一侧因此只有一个 0/1", () => {
-  const violations = validateScriptSource("const a = Date.now();\n", OPTS);
+  const violations = validateScriptSource("const a = Date.now();\n" + LOOP_ENTRY, OPTS);
   expect(violations.every((violation) => violation.blocking)).toBe(true);
+});
+
+it("脚本入口落在第四格:禁列 → 桥前缀 → 模块系统 → 脚本入口 → 体积", () => {
+  // 同样是一条白盒断言:入口级与另外几级互不遮蔽,但它插在哪一格仍是裁决。
+  // 它排在体积之前——体积级吃字节数、不分位置,是本链唯一带提示档的一级。
+  expect(SCRIPT_LINT_STAGES[3]).toBe(scriptEntryStage);
+  expect(SCRIPT_LINT_STAGES.indexOf(scriptEntryStage)).toBeGreaterThan(2);
+  expect(SCRIPT_LINT_STAGES.indexOf(scriptSizeStage)).toBeGreaterThan(3);
 });

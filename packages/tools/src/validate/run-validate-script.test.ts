@@ -56,6 +56,9 @@ const run = (file: string, args: readonly string[] = []): Outcome => {
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 };
 
+/** 合法产物必须有的顶层入口:给片段样本补上它,结论才只由被测规则驱动。 */
+const LOOP_ENTRY = "function loop() {}\n";
+
 const CLEAN = `function loop() {
   let n = 0;
   for (let i = 0; i < 8; i += 1) {
@@ -82,11 +85,19 @@ it("禁列违规被拦:退出码 1,stdout 点名那条链", () => {
 it("锁死顺序漏洞:禁列里的成员路径挂在白名单内的全局名下,仍然被拦", () => {
   // `Math` 在内置全局白名单里而 `Math.random` 在禁列表里。这份产物只差 `Math.floor` 是合规的:
   // 修掉违规那一句之后同一个文件回到退出码 0,两者只差这一个名字。
-  const bad = run(artifact("const a = Math.random();\nconst b = Math.floor(1);\n"));
+  const bad = run(artifact("const a = Math.random();\nconst b = Math.floor(1);\n" + LOOP_ENTRY));
   expect(bad.status).toBe(1);
   expect(bad.stdout).toContain("Math.random");
-  const fixed = run(artifact("const a = Math.floor(1);\nconst b = Math.floor(2);\n"));
+  const fixed = run(artifact("const a = Math.floor(1);\nconst b = Math.floor(2);\n" + LOOP_ENTRY));
   expect(fixed.status).toBe(0);
+});
+
+it("没有顶层 loop 入口:退出码 1,诊断点名脚本入口", () => {
+  // 空产物(tsc 把空源码编译成 `"use strict";`)曾经一路绿灯冻进赛季:静态四级都无事可查。
+  const outcome = run(artifact('"use strict";\n'));
+  expect(outcome.status).toBe(1);
+  expect(outcome.stdout).toContain("脚本入口");
+  expect(outcome.stdout).toContain("function loop()");
 });
 
 it("同类合并:五处同类违规在 stdout 上并成一行", () => {

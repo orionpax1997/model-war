@@ -224,6 +224,10 @@ it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退
   expect(log.round).toBe(1);
   expect(log.kind).toBe("contract");
   expect(log.errorCodes).toEqual([]);
+  // 逐轮耗时(模型调用段的墙钟毫秒,整数):每轮一个,供报告侧算模型延迟。
+  expect(log.sendMs).toEqual(expect.any(Number));
+  expect(Number.isInteger(log.sendMs)).toBe(true);
+  expect(log.sendMs as number).toBeGreaterThanOrEqual(0);
 });
 
 it("冻结期体积超限:不建目标目录、无半截三件套、退出码非零", async () => {
@@ -262,6 +266,43 @@ it("冻结期体积超限:失败分类 contract,诊断是校验器 stdout", asyn
   const log = JSON.parse(outcome.failure.generationLog[0] ?? "{}") as Record<string, unknown>;
   expect(log.round).toBe(1);
   expect(log.kind).toBe("contract");
+});
+
+it("空产物(空围栏)也算 contract 失败:没有顶层 loop 入口就不冻结、不建存档", async () => {
+  // 回归:模型只回一个空代码围栏时,提取结果是空串;tsc 把空源码编译成 `"use strict";` 照样
+  // 成功,静态校验与试跑都放行,于是空产物被冻进赛季。判据是产物里得有顶层 loop 入口。
+  const root = mkRoot();
+  const runId = "2026-01-01T00-00-00-000Z";
+  const outcome = await generateOneModel(
+    requestWith(root, stubClient([reply("```typescript\n```")]), runId),
+    { ...firstModelConfig(root), protocolRounds: 1 },
+  );
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") {
+    return;
+  }
+  expect(outcome.failure.classification).toBe("contract");
+  expect(outcome.failure.diagnostics.join("\n")).toContain("脚本入口");
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
+});
+
+it("空产物回喂后第 2 轮补上入口 → 冻结,轮数 = prompt 条数 = 2", async () => {
+  const root = mkRoot();
+  const stub = stubClient([reply("```typescript\n```"), reply(VALID_SCRIPT)]);
+  const outcome = await generateOneModel(requestWith(root, stub, "2026-01-01T00-00-00-000Z"), {
+    ...firstModelConfig(root),
+    protocolRounds: 2,
+  });
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") {
+    return;
+  }
+  expect(outcome.meta.protocolRounds).toBe(2);
+  expect(outcome.meta.prompts).toHaveLength(2);
+  // 第 2 轮新增的那条 user 消息是第 1 轮校验器 stdout 逐字,点名脚本入口。
+  const round2 = callAt(stub, 1);
+  expect(round2.messages[2]?.content).toContain("脚本入口");
 });
 
 it("tsc 编译失败:失败分类 tsc,日志 kind=tsc 并带 TS 错误码,不建存档", async () => {
@@ -703,6 +744,24 @@ it("试跑拦下:失败分类 contract，诊断与回喂都是试跑文本逐字
   // 失败不建存档目录，也不留半截。
   expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
   expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
+});
+
+it("试跑探针收到观测文件路径:旁挂 archive/<slug>/observed-<runId>.jsonl，不进三件套", async () => {
+  const root = mkRoot();
+  const runId = "2026-01-01T00-00-00-000Z";
+  const seen: { readonly observationsPath: string }[] = [];
+  const outcome = await generateOneModel(
+    requestWith(root, stubClient([reply(VALID_SCRIPT)]), runId, (options) => {
+      seen.push(options);
+      return { passed: true, stdout: "" };
+    }),
+    { ...firstModelConfig(root), protocolRounds: 1 },
+  );
+
+  expect(outcome.kind).toBe("frozen");
+  // 路径由 gen 算（见 observations.ts）并交给入口，入口照它落盘；桩只负责收下。
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.observationsPath).toBe(join(root, "archive", "alpha", `observed-${runId}.jsonl`));
 });
 
 it("试跑回喂:首轮被拦、次轮通过 → 恰好回喂一次，反馈逐字，轮数 = 2", async () => {

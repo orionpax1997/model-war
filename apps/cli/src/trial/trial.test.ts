@@ -19,6 +19,7 @@ import {
   TRIAL_MATCH_COUNT,
   TRIAL_OPPONENTS,
   TRIAL_SEEDS,
+  renderScoreSourceObservation,
   renderTrialFeedback,
   verdictOfTrips,
   type RecordedTrip,
@@ -136,4 +137,20 @@ it("多场多触限 → 报首触（先到的场优先），反馈只讲第一�
   const feedback = renderTrialFeedback(verdict);
   expect(feedback).toContain("第 3 场");
   expect(feedback).not.toContain("控制流事件计数");
+});
+
+it("无得分来源观测：命中给留痕文案（写明第几场、注明不拦），未命中给 null", () => {
+  const hit = renderScoreSourceObservation(1, {
+    delivered: 0,
+    captures: 0,
+    noScoreSource: true,
+  });
+  expect(hit).toContain("第 2 场");
+  expect(hit).toContain("不拦");
+  expect(
+    renderScoreSourceObservation(0, { delivered: 20, captures: 0, noScoreSource: false }),
+  ).toBeNull();
+  expect(
+    renderScoreSourceObservation(0, { delivered: 0, captures: 1, noScoreSource: false }),
+  ).toBeNull();
 });
