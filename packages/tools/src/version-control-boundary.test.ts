@@ -27,11 +27,18 @@ const isIgnored = (path: string): boolean => {
   throw new Error(`git check-ignore 意外退出码 ${result.status}: ${String(result.stderr)}`);
 };
 
-it("冻结脚本入库:archive/ 下的产物不被忽略", () => {
-  expect(isIgnored("archive/.gitkeep")).toBe(false);
-  expect(isIgnored("archive/openai/gpt-x/run-0001/script.ts")).toBe(false);
-  expect(isIgnored("archive/openai/gpt-x/run-0001/script.js")).toBe(false);
-  expect(isIgnored("archive/openai/gpt-x/run-0001/meta.json")).toBe(false);
+it("本地模型与赛季配置不入库", () => {
+  expect(isIgnored("models.yaml")).toBe(true);
+  expect(isIgnored("season.yaml")).toBe(true);
+  expect(isIgnored("models.example.yaml")).toBe(false);
+  expect(isIgnored("season.example.yaml")).toBe(false);
+});
+
+it("本地冻结档案不入库:archive/ 下的新产物被忽略", () => {
+  expect(isIgnored("archive/.gitkeep")).toBe(true);
+  expect(isIgnored("archive/openai/gpt-x/run-0001/script.ts")).toBe(true);
+  expect(isIgnored("archive/openai/gpt-x/run-0001/script.js")).toBe(true);
+  expect(isIgnored("archive/openai/gpt-x/run-0001/meta.json")).toBe(true);
 });
 
 it("对局运行产物不入库:runs/ 下的内容被忽略", () => {
@@ -69,11 +76,11 @@ it("沙箱 runtime bundle 产物入库:落点不在任何 dist/ 下", () => {
   expect(isIgnored("packages/engine/sandbox-runtime/dist/runtime.iife.js")).toBe(true);
 });
 
-it("沙箱行为探针输出入库:落点不被忽略", () => {
-  // 探针输出落盘的唯一理由是「可复核」:指得出某个读数出自哪次运行。若落点被 `.gitignore` 吞掉,
-  // 它就又变成 spike 里那个「引用了输出、而输出无处可查」的缺口(票 10)。
-  expect(isIgnored(".scratch/sandbox-executor/probe-output/probes.txt")).toBe(false);
+it("本地工作记录与探针输出不入库:.scratch/ 下的新内容被忽略", () => {
+  expect(isIgnored(".scratch/feature/spec.md")).toBe(true);
+  expect(isIgnored(".scratch/feature/issues/01-task.md")).toBe(true);
+  expect(isIgnored(".scratch/sandbox-executor/probe-output/probes.txt")).toBe(true);
   expect(
     isIgnored(".scratch/sandbox-executor/probe-output/probe-03-interrupt-granularity.txt"),
-  ).toBe(false);
+  ).toBe(true);
 });

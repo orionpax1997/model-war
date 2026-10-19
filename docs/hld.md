@@ -163,7 +163,7 @@
 | prompt 模板 | `prompts/base.md` 单模板数据文件(不进 gen 代码):占位符 `{{contract}}`(= 契约读入那两份文档拼接)与可选 `{{strategy}}`,外加一份只写「见 `rules.md` §X / `api.md` §Y」的指针清单——判据文本不复制,真源仍是 `docs/rules-vN` | 改提示词不必改代码;与 `docs/rules-v1` 同为 gen 的输入 |
 | 契约读入 | 每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘(`RULESET_VERSION` 取自 `@model-war/schema` 常量),不嵌入副本;目录名 / 文件缺失或不符即报错退出 | 契约更新自动生效,且与 §7.4 的 `meta.ruleset` 三处一致判据同源 |
 | 模型 API 客户端 | gen 内定义 `ModelClient` 接口(`send(messages, params) → { text, finishReason, usage }`),真实实现 = OpenAI-compatible HTTP 客户端 + **三个端点族分支**(`chat-completions` / `messages` / `responses`),**不引厂商 SDK**——本期全部已开通模型都落在这三族,按厂商再包一层只是让依赖面随节点扩张;测试实现 = 可编程 stub | 新模型接入只改配置(FR-5 AC3);凭证一律走环境变量;CI 无凭证(§CI),自动化测试必须离线可跑 |
-| 模型配置 | `models.yaml`(入库,内容非密钥)只登记本季参赛集:`{ slug, endpointFamily, baseUrl, modelId, credentialEnvVar, 可选 contextLength / protocolRounds / strategy / generationPolicy（旧配置仍可读取 params） }`;配置 `protocolRounds` 只限制未开启事实优化时的总调用轮数;opt-in 按批次统一阶段上限(§6.2),不读取逐模型此值。类型与加载校验是 **gen 包私有**,不进 `schema` 的五类数据形状 | FR-5 AC3;那五类是跨进程交换的数据形状,配置不经进程边界。参数及支持描述真源仅为 `models.yaml` 的 `generationPolicy`，不在 ruleset 或文档复制各模型取值；配置加载、参数映射与 HTTP 发送前共用离线校验 |
+| 模型配置 | `models.yaml`(本地配置,不入库,凭证仅引用环境变量名)只登记本季参赛集:`{ slug, endpointFamily, baseUrl, modelId, credentialEnvVar, 可选 contextLength / protocolRounds / strategy / generationPolicy（旧配置仍可读取 params） }`;配置 `protocolRounds` 只限制未开启事实优化时的总调用轮数;opt-in 按批次统一阶段上限(§6.2),不读取逐模型此值。类型与加载校验是 **gen 包私有**,不进 `schema` 的五类数据形状 | FR-5 AC3;那五类是跨进程交换的数据形状,配置不经进程边界。参数及支持描述真源仅为 `models.yaml` 的 `generationPolicy`，不在 ruleset 或文档复制各模型取值；配置加载、参数映射与 HTTP 发送前共用离线校验 |
 | 重试与限流 | 指数退避 + 每模型并发 1;退避参数(初始间隔 / 倍数 / 上限 / 最大重试)是 **gen 内部常量**,不进 `rulesets/*.json`——它是与厂商 API 打交道的工程参数,与对局规则无关 | 生成阶段无性能压力 |
 | 生成日志 | 每条一行序列化 JSON 字符串,填进 `meta.generationLog`(不新增 meta 字段,守十一键冻结);收敛轮记 `round/kind/model/params/usage/finishReason/errorCodes/sendMs`，规范配置另记 `requestEvidence/stopDetails/attemptEvidence/responseConverged`；`sendMs` 为调用段墙钟（含退避重试，不含编译/校验/试跑）。规范 transport 耗尽可追加 `kind=transport,responseConverged=false,round=protocolRounds+1` 末行，仅存尝试证据，不伪造顶层 usage/停止状态。`protocolRounds/prompts` 只计收敛响应；全部 HTTP 尝试消费与顶层响应有重叠，不累加作账单 | FR-6 AC1 |
 
@@ -806,7 +806,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 
 ### 8.1 对局枚举与座位轮换
 
-- 输入:`season.yaml`(参赛存档引用列表、地图池、种子数 K、并发度、`rankPoints`、ruleset 版本、根种子 `masterSeed`)。字段、取值域与默认值的真源 = `packages/runner` 的 zod season schema(`src/season-config.ts`);格式范例见仓库根 `season.example.yaml`。**本节只写字段意图,不复制 schema 细节**。
+- 输入:`season.yaml`(本地配置,不入库;参赛存档引用列表、地图池、种子数 K、并发度、`rankPoints`、ruleset 版本、根种子 `masterSeed`)。字段、取值域与默认值的真源 = `packages/runner` 的 zod season schema(`src/season-config.ts`);格式范例见仓库根 `season.example.yaml`。**本节只写字段意图,不复制 schema 细节**。
 - 枚举:全部 4 人组合 × M 地图 × K 种子(srs FR-7 AC1);种子值 = 确定性函数(根种子、组合、地图、序号),同一对局的输入物化对全体参赛者一致。正式评测共用同一赛季配置与派生规则,不按模型或候选表现挑选。
 - **优化/选拔种子隔离**:赛季完成配置和归档解析后、任何 input 写出/续跑/spawn 前,核对正式评测计划全部 seed 与各参赛归档实际记录的优化试跑集合及可选选拔集合无交集,存在交集即明确拒绝,包括用户所选根种子派生后导致的碰撞;不同根种子不自动证明无交集。比较按 `seed % 2^31` 归一化（`101 + 2^31` 与 `101` 同一随机源初态）。校验不静默替换 seed,不改变原座位轮换与对局数量。配置接线：season 可选 `evaluationSeeds`（与 `seeds` 等长，不改对局规模；省略时沿用 masterSeed 派生）。无 `optimization` 的纯旧档沿用旧行为；有优化但无 `selection` 的旧档只检查其记录的优化 seeds，不从目录推测参加过新选拔。
 - **座位轮换**:把组合内 4 名参赛者按 slug 升序为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4` 循环移位。**精确均摊要求 `M × K ≡ 0 (mod 4)`**(地图数通常为 3,故 K 需为 4 的倍数;K 具体取多少由 gdd《开放项》#6 的裁决给出,本节只给均摊条件);不满足时**直接报错**(不静默产生偏移清单)。分配对全体一致且完全确定(FR-7 AC1)。

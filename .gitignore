@@ -18,6 +18,14 @@ stryker.log
 
 # 本地子代理模型配置
 .pi/subagents-lite.json
+
+# 本地模型与赛季配置
+/models.yaml
+/season.yaml
+
+# 本地工作记录、实验与模型生成档案;已跟踪的历史文件不受忽略规则影响
+/.scratch/
+/archive/
 # codegraph 索引(由源码重建)
 .codegraph/
 
@@ -30,7 +38,6 @@ stryker.log
 .modelwar-providers.md
 .modelwar-models.json
 
-# 对局运行产物:体量随 tick 数线性增长,且可由冻结脚本 + 规则集重生成(hld §3.1)。
-# 冻结脚本本身在 archive/ 下,必须入库,否则新克隆永远无法复算历史对局。
+# 对局运行产物:体量随 tick 数线性增长,保留在本地。
 runs/**
 !runs/.gitkeep
