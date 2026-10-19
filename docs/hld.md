@@ -30,7 +30,7 @@
 │  docs/rules-vN + docs/rules-vN/api.md + models.yaml + prompts/    │
 │        ↓ prompt 组装 → 模型 API(各厂商)→ 脚本 + 模型名           │
 │  静态校验(tsc 编译 + API 误用 lint)                              │
-│        │ 失败:仅回喂校验错误,≤5 轮                               │
+│        │ 默认:诊断修复至配置上限;opt-in 循环见 §6.2             │
 │        ↓ 通过                                                     │
 │  冻结脚本:archive/<model>/<runId>/{script.ts, script.js, meta.json}│
 └───────────────────────────────────────────────────────────────────┘
@@ -144,11 +144,11 @@
 | 真源 | **`schema` 包 = 六类数据形状(规则集 / 地图 / 存档 meta / result / 回放行 / 失败记录)的 TS 类型与 JSON Schema(失败记录只交 TS 类型与文件名前缀常量——它不走读入端校验,不配半截 schema,见 §7.4)+ 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移。每类形状的**家只有这一个**,别的包不再重复声明(§3.1、§7.5) |
 | JSON Schema 的形态 | **导出的数据对象(`.ts` 里 `export const X_JSON_SCHEMA`),不是独立 `.json` 文件** | ajv 接受 JS 对象,不需要文件;`description` 是写给模型看的说明,写在源码里自然,顺带避开 `resolveJsonModule` 与本仓库编译配置的组合风险(ADR-0003) |
 | 文档生成 | **数值表**由 `rulesets/v1.json` + `schema` 的参数键清单(键序、量纲、标定状态、说明)共同生成,且在 `rules.md` 与 `api.md` **两份文档里各挂一份、逐字节相同**——两个落点出自同一个生产函数,不是两处各自维护;**API 表 / 常量表**由 `schema` 的注入面符号表生成,落在 `api.md`。**散文部分人工编写**,两者是同一份文件里的两种所有权,所以生成物取**区块形态**(两行定界标记之间是生成物,标记之外不比) | 生成物进版本库,漂移检查(`check:drift`,§2.2.7)逐件判定「重生成后无差异 + 生成物在版本库里」,未重新生成或未提交即报错(FR-10 AC1:文档里的数值表与 API 表必须真的是当前规则集的) |
-| 数据格式校验 | JSON Schema 归真源包(交付**数据**),**校验器只在 `apps/cli` 一处**(唯一一份 `ajv` 实例,导出 `validateMap` / `validateRuleset` 两个纯函数) | 真源包受 §3.2 的包依赖规则约束、不能依赖 ajv;CLI 是唯一用户面,外部数据(文件 / 参数 / 子进程输出)全从它进来,一处校验覆盖全部入口(§2.2.8)。诊断分两层:机器层透出 ajv 原始条目,面向模型层渲染成短句并**对同类错误合并成一行** |
+| 数据格式校验 | JSON Schema 归真源包(交付**数据**),**对局装载的 ajv 实例只在 `apps/cli` 一处**。私有试跑旁证的 gen/报告读入端可从同一 JSON Schema 派生验证器并检查短跨字段/候选身份关系,不得手写第二份形状(ADR-0003、ADR-0016) | 真源包受 §3.2 的包依赖规则约束、不能依赖 ajv 或交付运行时验证器;CLI 统一承载对局装载校验(§2.2.8)。诊断分两层:机器层透出 ajv 原始条目,面向模型层渲染成短句并**对同类错误合并成一行** |
 | hash | `node:crypto` SHA-256(标准库) | stateHash、地图 hash、存档完整性校验,零第三方依赖 |
 | 随机数与 ID | **归 `driver` 所有**:整数 LCG + `IdGen`;RNG 消费顺序写入 rules-vN | 确定性原语不散落;消费顺序是回放断裂的经典成因(§4.6) |
 
-**「读入端强制校验」的覆盖面现在是六类,其中四类由对局内核这一格新接线;它仍然不完整,但「为什么不完整」的理由与上一版不同**。本仓有 JSON Schema 且**家都在真源包**(见上表第一行)的六类数据是:**规则集、地图、存档元数据(`archive-meta`)、对局输入(`input.json`)、回放行(`meta` / `tick`)、终局结果(`result` 行)**——六类全部落库(规则集与地图早于此;存档元数据 / 对局输入 / 回放行 / 终局结果由本 feature 的 01、02b、09 三票落库)。**逐类说清接线在哪一层**:① **规则集**与② **地图**走唯一一份 ajv 校验器(`apps/cli/src/validator.ts` 的 `validateRuleset` / `validateMap`,后者另有 `modelwar map-lint` 那条通路);本 feature 把规则集那一侧的调用点接进了 `modelwar match` 的装载段,`rulesets/v1.json` 的版本号三处(文件名 / 目录名 / 版本常量)对不上即拒跑(FR-10 AC2 的错配拒跑)。③ **存档元数据**与④ **对局输入**也在本 feature 接进 `modelwar match`:`validateMatchInput` 判版本三处一致、四个座位存档在不在、各文件哈希与实测是否相等;`validateArchiveMeta` 逐座位判缺档与元数据完整性。⑤ **回放行**(`meta` / `tick` 两行的形状与 JSON Schema 都在真源包)**尚未接进任何生产路径**,读盘渲染器(住 `@model-war/replay`)只 `JSON.parse` 后防御式读栏,不做 schema 校验;⑥ **终局结果**同理:`validateReplayResultLine` 已交付(纯函数 + 用例),但没有生产调用点。
+**「读入端强制校验」的覆盖面现在是六类,其中四类由对局内核这一格新接线;它仍然不完整,但「为什么不完整」的理由与上一版不同**。本仓有 JSON Schema 且**家都在真源包**(见上表第一行)的六类数据是:**规则集、地图、存档元数据(`archive-meta`)、对局输入(`input.json`)、回放行(`meta` / `tick`)、终局结果(`result` 行)**——六类全部落库(规则集与地图早于此;存档元数据 / 对局输入 / 回放行 / 终局结果由本 feature 的 01、02b、09 三票落库)。**逐类说清接线在哪一层**:① **规则集**与② **地图**走唯一一份 ajv 校验器(`apps/cli/src/validator.ts` 的 `validateRuleset` / `validateMap`,后者另有 `modelwar map-lint` 那条通路);本 feature 把规则集那一侧的调用点接进了 `modelwar match` 的装载段,`rulesets/v1.json` 的版本号三处(文件名 / 目录名 / 版本常量)对不上即拒跑(FR-10 AC2 的错配拒跑)。③ **存档元数据**与④ **对局输入**也在本 feature 接进 `modelwar match`:`validateMatchInput` 判版本三处一致、四个座位存档在不在、各文件哈希与实测是否相等;`validateArchiveMeta` 逐座位判缺档与元数据完整性。⑤ **回放行**(`meta` / `tick` 两行的形状与 JSON Schema 都在真源包)**尚未接进任何生产路径**,读盘渲染器(住 `@model-war/replay`)只 `JSON.parse` 后防御式读栏,不做 schema 校验;⑥ **终局结果**在正式回放读取路径仍按原策略处理;新选拔证据中的全部 result 由 runner 从共享 JSON Schema 派生验证器检查并复算（§6.3）,不另建结果形状。
 
 **为什么仍然不完整,与上一版的理由不同**:上一版缺的是「字段未回填」,本 feature 之后字段全已落库,缺的只剩两处接线与一处的**值**。⑤⑥ 两类的形状与 JSON Schema 都已生成,缺的只是**读入端调用点**——那要在回放的**读入端**才落地,而读盘渲染器住 `@model-war/replay`(依赖方向 `schema ← replay`),不能反向依赖持有唯一 ajv 实例的 `apps/cli`(§3.2),接线归「回放读入端校验归哪一层」那次有意的裁定,等**赛季调度(`I`)**那一格(它才是回放的正式消费者与报告路径)。③ 存档元数据那一路虽然形状与读入端校验都已到位,但它记的**字段值**由**生成管线(`H`)**写出:H 落地前读入端只能校验到形状与实测哈希一致,H 落地后才第一次校验到真实存档产物。**写在这里是为了不让后来者以为六类都已兑现**,也为了说明为什么不写半截 schema:放行额外属性的空 schema 等于不校验,却会让人以为「存档 meta 已校验」,比不写更坏。
 
@@ -163,9 +163,9 @@
 | prompt 模板 | `prompts/base.md` 单模板数据文件(不进 gen 代码):占位符 `{{contract}}`(= 契约读入那两份文档拼接)与可选 `{{strategy}}`,外加一份只写「见 `rules.md` §X / `api.md` §Y」的指针清单——判据文本不复制,真源仍是 `docs/rules-vN` | 改提示词不必改代码;与 `docs/rules-v1` 同为 gen 的输入 |
 | 契约读入 | 每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘(`RULESET_VERSION` 取自 `@model-war/schema` 常量),不嵌入副本;目录名 / 文件缺失或不符即报错退出 | 契约更新自动生效,且与 §7.4 的 `meta.ruleset` 三处一致判据同源 |
 | 模型 API 客户端 | gen 内定义 `ModelClient` 接口(`send(messages, params) → { text, finishReason, usage }`),真实实现 = OpenAI-compatible HTTP 客户端 + **三个端点族分支**(`chat-completions` / `messages` / `responses`),**不引厂商 SDK**——本期全部已开通模型都落在这三族,按厂商再包一层只是让依赖面随节点扩张;测试实现 = 可编程 stub | 新模型接入只改配置(FR-5 AC3);凭证一律走环境变量;CI 无凭证(§CI),自动化测试必须离线可跑 |
-| 模型配置 | `models.yaml`(入库,内容非密钥)只登记本季参赛集:`{ slug, endpointFamily, baseUrl, modelId, credentialEnvVar, 可选 contextLength / protocolRounds / strategy / params }`;类型与加载校验是 **gen 包私有**,不进 `schema` 的五类数据形状 | FR-5 AC3;那五类是跨进程交换的数据形状,配置不经进程边界 |
+| 模型配置 | `models.yaml`(入库,内容非密钥)只登记本季参赛集:`{ slug, endpointFamily, baseUrl, modelId, credentialEnvVar, 可选 contextLength / protocolRounds / strategy / generationPolicy（旧配置仍可读取 params） }`;配置 `protocolRounds` 只限制未开启事实优化时的总调用轮数;opt-in 按批次统一阶段上限(§6.2),不读取逐模型此值。类型与加载校验是 **gen 包私有**,不进 `schema` 的五类数据形状 | FR-5 AC3;那五类是跨进程交换的数据形状,配置不经进程边界。参数及支持描述真源仅为 `models.yaml` 的 `generationPolicy`，不在 ruleset 或文档复制各模型取值；配置加载、参数映射与 HTTP 发送前共用离线校验 |
 | 重试与限流 | 指数退避 + 每模型并发 1;退避参数(初始间隔 / 倍数 / 上限 / 最大重试)是 **gen 内部常量**,不进 `rulesets/*.json`——它是与厂商 API 打交道的工程参数,与对局规则无关 | 生成阶段无性能压力 |
-| 生成日志 | 每条一行序列化 JSON 字符串,填进 `meta.generationLog`(不新增 meta 字段,守十一键冻结);逐轮记 `{ round, kind: "tsc" \| "contract", model, params, usage, finishReason, errorCodes, sendMs }`;`sendMs` 为本轮模型调用段的墙钟毫秒（含退避重试，不含编译/校验/试跑；传输失败轮不进日志故不记） | FR-6 AC1 |
+| 生成日志 | 每条一行序列化 JSON 字符串,填进 `meta.generationLog`(不新增 meta 字段,守十一键冻结);收敛轮记 `round/kind/model/params/usage/finishReason/errorCodes/sendMs`，规范配置另记 `requestEvidence/stopDetails/attemptEvidence/responseConverged`；`sendMs` 为调用段墙钟（含退避重试，不含编译/校验/试跑）。规范 transport 耗尽可追加 `kind=transport,responseConverged=false,round=protocolRounds+1` 末行，仅存尝试证据，不伪造顶层 usage/停止状态。`protocolRounds/prompts` 只计收敛响应；全部 HTTP 尝试消费与顶层响应有重叠，不累加作账单 | FR-6 AC1 |
 
 #### 2.2.7 脚本分层与 CI 质量门禁
 
@@ -388,7 +388,7 @@ packages/tools ──→ @model-war/schema   依赖图的根,本包唯一允许�
 - `schema` 只含类型、常量与 JSON Schema,**无运行时代码**;各包共享数据格式定义不违反 NFR-4 AC2(该条款约束的是运行时进程隔离,与测试代码无关)。
 - `replay` 只依赖 `schema`;**库包一律不得含 `bin`**,唯一 bin 在 `apps/cli`。
 - `runner` 与报告/叙事代码**不得 import `engine`**:只以子进程 + 文件消费。`apps/cli` 通过 engine 公共 API 调用 match / verify,而 map-lint 是 CLI 自己的模块(§3.1、§9)。
-- `engine` 不 import `runner`/`gen`;`gen ⇎ engine`,且 `gen` 禁 import 任何 result 类型(FR-5 AC1)。
+- `engine` 不 import `runner`/`gen`;`gen ⇎ engine`,且 `gen` 禁 import 任何 result 类型(FR-5 AC1)。优化试跑的终局事实只经 schema 的纯数据摘要进入 gen;真实执行与计分投影由 CLI 承载(§7.4),不放宽 result 符号或包边界门禁。
 - `engine` 内除 `node:crypto` 外禁一切 `node:*`。
 - `engine` 内部单向:`world → driver → processor → replay-writer`;`world → snapshot → runner(SeatRunner 缝 → sandbox-runtime)`。`sandbox-runtime` 不 import 宿主代码,只消费 `schema` 生成的常量/API 名表。
 - 上述规则全部由 dependency-cruiser 强制(§2.2.10),违规直接导致全量门禁失败。
@@ -579,6 +579,8 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 - **WASI 覆盖**(三件套取值定为工程常量,非对局参数):`clock_time_get` 覆盖为 `1700000000000`(`Date.now()`/`new Date()`/`performance.now()` 在对局内因此定格;QuickJS 内部 PRNG 以该值播种 xorshift64*,同值即同 `Math.random()` 序列,故冻钟同时冻住随机源),`timezoneOffset` 固定为 0;不加载 crypto 扩展,故**不覆盖 `random_get`**。三件套取值与 `quickjs-wasi` 版本号一并写入回放 meta 行(§7.5),可审计。
 - 脚本可见全局 = runtime bundle 暴露的 API + `schema` 生成的常量表 + 纯函数子集;`fetch`/`fs`/`process` 等宿主能力一律不注入——隔离靠"不给"而非"拿掉"。**不加载任何 `.so` 扩展**(url/encoding/headers/crypto/structured-clone 均不启用)。
 - 载入次序:`evalCode(runtimeBundle)` 建 API 面 → 取两个桥的函数 handle → 从全局**删除**桥函数 → 注入按座位的 `getMyIndex` → `evalCode(script.js, {filename})` 载入选手脚本 → 取入口 handle。每 tick:`__setSnapshot(snapshot)` → `callFunction(loopFn)` → `executePendingJobs()` 排空到不动点 → `__drainIntents()`。runtime bundle 与脚本同处一个全局环境,但 runtime 的内部计数器与宿主桥引用都在闭包内,且桥函数在**载入期(脚本之前)**即被删除(§4.5);宿主仍持桥的函数 handle,照常调得动。
+- **行动事实采集**:六类行动在 runtime 内部直接递增固定私有调用/公开错误码计数,覆盖非法兵种早退;每 tick 随现有 `setSnapshot` 清零、随现有 `drainIntents` 返回。采集不使用用户脚本 wrapper、不新增桥、不逐动作跨宿主调用。正常返回及 API 超限可取得载荷;事件截停、未吞异常及其他未返回载荷的 tick 不额外执行 guest 补读,只累计 `missingTicks`。行动调用/错误计数与原预算 API 计数分别命名,不从 `undefined`、静默拒绝或调用减错误推出行动成功。
+- **采集计量**:新增 guest 固定计数和 host 聚合有真实开销,沿用完整事件/内存计量与原规则集阈值,不承诺与旧 runtime 的读数逐字相同。官方构建只压缩内部标识符,保留公开属性名与控制流,减少 guest 常驻编译数据开销。改动需重建 runtime bundle,运行受影响的真实 runtime 测试、runtime 漂移与预算复核门禁;宿主结算效果采集开/关须保持相同回放、状态 hash 与判定(ADR-0016)。
 - 定时器与异步调度源在 QuickJS 内默认即不存在;`vm.executePendingJobs()` 每 tick 排空。跨 tick 记忆只认模块级变量。
 
 ### 5.2 异常裁决(gdd《异常与出局》的实现化)
@@ -616,6 +618,10 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 升级条款:若赛中"tick 内瞬时借满即还"型脚本普遍牟利,升级为 patch quickjs-wasi 加 sticky OOM 标志、判据回到确证事件(后备设计已评估,触发条件由运营定)。
 
+**脚本异常详情旁挂**：执行器已有的 `tripped` 仍经步 0 唯一入口累加异常计数，同时把安全详情送至已有观测出口；正式 `match` 与赛季对局将其写入同目录 `observations.jsonl`，不改回放、事件、`stateHash`、输入或排名。单行合同唯一归 `schema/observation-line.ts`：旧六栏 `ObservationLine` 不变，新增 `ExceptionLine`（`type: "exception"`、从零起的 tick、seat、diagnostic，以及该轨启用时的 `exceptionTickLimit`），合称 `MatchObservationLine`。累计阈值取当局已解析预算，独立于单次预算详情的 limit；累计数仍从回放玩家状态读取，旧数据缺阈值保持未知。普通软观测仍每座位每类只记首条；异常每次触发均保留，同 tick 内存与 API 双轨各一条，计数与裁决不去重、不改变。文件行数受实际 tick 数、四座位与固定异常轨数限制；每行仅闭合字段、固定枚举与非负安全整数。硬墙钟超时仍整场作废，不作为玩家异常或异常详情落盘。
+
+**详情安全策略**：预算类别保存宿主既有的 used/limit（事件计数、API 次数或 tick 末存活堆字节）；未捕获异常只保存标准错误名白名单或 `unknown`，包括宿主栈溢出的 `RangeError`。guest 错误须经 VM 内部 Error 标签检查，名称从宿主包装器已有缓存投影；普通 throw 字符串/对象及未知名称不回显。标准名仍可能被脚本改写，因此只是类型提示，不是不可伪造的归因证明。不保存任意 message、源码、stack 或 throw 值，也不从脚本可伪造的 stack 提取行列；这依靠不采集自由文本，不声称正则能通用脱敏。缺少异常旁挂的旧产物详情为未知，不能倒推类别；详情不进入模型事实反馈。
+
 #### 标定判据(只写规则,不写取值)
 
 八键的取值规则以「读数 × 系数」表达,最终数字由重采读数代入得出。三条通用纪律:**任何键都不得以 p50 级读数作依据**(事件计数的 p50 恒为零,是粒度假象);**统计单元**是先取「每场每席的峰值」、再在这组峰值上取全局最坏(墙钟软限用 p95、硬超时用全局峰值);**余量分轨而非统一系数**——两条计数轨贴边(诚实与对抗差着数量级,贴边无风险),两条物理量轨(内存、墙钟)留宽(受机器负载与地图规模影响)。
@@ -638,7 +644,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 **异常计数**的累加点有四处(事件计数轨 / 内存判罚线 / API 计数轨 / `loop()` 抛异常),计次数、不清零,同 tick 最多叠加两次(事件计数轨截停后早退,内存与 API 可叠;`loop()` 抛异常即中止本 tick、只计一次,故不与任何轨叠加)。本轮标定的读数由**三轨异常探针**给出:三类探针各自反复触发对应的轨、产出异常计数读数,`exceptionTickLimit` 的下限由此得出。
 
-**终值的常驻守卫与失效触发表**:终值一旦落库就**不可就地修改**,只有三类事件使它失效——契约散文修订、快照结构变更、沙箱 runtime 版本或中断粒度变更(`docs/adr/0009-budget-final-values-are-revocable.md`)。三类事件**都不会让默认门禁变红**,故这条纪律落成一条按需门禁 `check:budget-recheck`(重跑预算探针与三份基准脚本,判探针仍被截停、基准仍不被截停,并核终值推导与规则集逐键一致);命令与判定真源在根 `package.json` 与该门禁脚本,三类事件各跑哪条命令、红了开重标节点的触发表在 `.scratch/release-gates/budget-recheck-triggers.md`。
+**终值的常驻守卫与失效触发表**:终值一旦落库就**不可就地修改**,契约散文修订、快照结构变更、沙箱 runtime 版本或中断粒度变更触发专用复核,判红才确认失效并开重标节点(`docs/adr/0009-budget-final-values-are-revocable.md`)。三类事件**都不会让默认门禁变红**,故这条纪律落成一条按需门禁 `check:budget-recheck`(重跑预算探针与三份基准脚本,判探针仍被截停、基准仍不被截停,并核终值推导与规则集逐键一致);命令与判定真源在根 `package.json` 与该门禁脚本,三类事件各跑哪条命令、红了开重标节点的触发表在 `.scratch/release-gates/budget-recheck-triggers.md`。
 
 ## 6. 脚本契约与静态校验
 
@@ -684,7 +690,27 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 **测试边界沿用禁浮点门禁那条先例:遍历层不单独测**——本工具的输入是**一份产物文件,不是一棵目录**,所以连「目录遍历」这一层都不存在,入口只做「读文件 → 判定链 → 退出码」;测的是退出码与面向模型的文本。
 
-校验失败 → 仅错误信息回喂模型(≤5 轮,FR-5 AC1);`gen` 代码中不存在对战结果回传路径。
+编译、静态校验和冻结期候选预算失败 → 原始诊断回喂模型,下一轮携带完整历史与上轮回答。默认流程的总调用轮数仍受模型配置 `protocolRounds` 上限约束(FR-5 AC1)。`gen` 不导入引擎或赛季调度器,通过子进程与文件进行冻结期试跑,不回喂正式赛季结果。
+
+**统一事实优化**默认关闭,沿用显式 `--score-source-feedback` 开关。开启后执行“初次有效候选 → 自身行动事实与终局事实回喂 → 第一次优化有效候选 → 自身行动事实与终局事实回喂 → 第二次优化有效候选 → 最后试跑并保存终局事实”;未开启选拔时最后有效阶段定版,同时开启选拔时走 §6.3 后定版。共三个通过编译、静态校验与候选预算检查的有效候选,只有前两个触发事实回喂。`noScoreSource`、非零行动、胜负或其他表现都不参与是否继续的判断;第三个有效候选不再回喂;优化编排不按表现提前结束或额外改写。独立选拔不改变这些生成机会。机会分配取代 ADR-0015 与 ADR-0016 的按全零读数补救一次口径,理由见 [ADR-0017](./adr/0017-uniform-two-fact-feedback.md);现行反馈内容升级见 [ADR-0019](./adr/0019-terminal-match-facts-feedback.md)。
+
+**阶段与计数**:初次生成、第一次优化、第二次优化分别拥有独立阶段预算。opt-in 不读取逐模型 `protocolRounds` 或测试替代 `maxRounds`:每阶段统一最多五次有结论的生成调用,包括一次阶段首次响应与至多四次诊断修复。编译、静态或候选预算不通过时只回喂诊断,继续当前阶段,不增加有效候选数或完成的优化轮数。阶段通过才进入下一阶段并重置阶段计数,累计实际调用序号持续递增,完整消息历史继续保留。成功流程最多十五次有结论的生成调用,两次事实优化与阶段修复分别计数。阶段修复耗尽按该阶段失败收口,保留已有候选证据,不得将较早候选冒充最终候选。传输重试仍重发同一调用,不消耗阶段轮数;不确定墙钟超时的作废重跑仍是同一试跑,不新增优化轮或候选,正常游戏超时保留合法终局,正式淘汰规则不变。
+
+**优化试跑与正式评测**:所有启用模型的三个有效候选使用同一固定试跑计划,seed 为 101/202/303;地图模板固定为 `corridor-split`,候选固定 seat0,三基准 `cell-a-melee-pressure` / `cell-b-expansion-economy` / `cell-c-claim-no-harvest` 固定 seat1/2/3。每个 seed 的地图实例与已安装的规则集、runtime、基准字节在各阶段共享,不按候选表现随机抽取或更换。跨进程 seed/候选座位身份真源归 `schema/trial-plan.ts`,地图与基准由 CLI 的试跑安装面承载,各消费者不得另立计划配置。正式评测采用统一赛季配置与种子选择规则,实际物化的评测种子集合必须与该优化集合不相交,碰撞时拒绝运行,不静默替换(§8.1);正式结果不回喂。需求与验收见 srs FR-5/FR-7/FR-8/NFR-2,不将固定试跑读数写成正式成绩。
+
+原 `scoreSource` 是候选 runner 在结算前所见快照的差分:交付取本座位单位相邻快照载量下降之和,占点取属主由非本座位变为本座位的次数(开局归属不计)。该口径有末 tick 与异常淘汰缺口,只保留观测作用,不称为完整实际账本,也不再作为事实回喂触发条件。新增宿主结算效果来自实际成功 apply 的移动、采集、交付、易主和生产订单变更,仅聚合候选座位,覆盖末结算 tick 与候选 runner 停止后的结算;已移动后死亡不撤销移动格数,订单开始不等于生产完成。
+
+两次反馈按固定对局/seed 顺序陈述前一有效候选的完整行动事实(调用数、公开错误码计数、独立宿主结算效果)与三场真实终局摘要(§7.4),原 delivered/captures 明示为快照读数;hash 只留归档侧。终局摘要明确四方座位及身份,列出终局控制基地数、控制资源点数、存活单位总造价、计分组成、领土分、名次、名次积分、存活状态、淘汰时间及结束原因,使用统一、确定、可审计的格式。允许回喂这些优化试跑结果,仍不回喂独立选拔或正式评测结果,也不回喂动作参数、坐标、对象 ID、路径、完整快照、异常消息/堆栈、目标切换、占领进度或因果/策略建议。后缀只沿既有契约要求返回完整脚本,非零读数不得套用“全部无得分来源”的旧文案。
+
+旧四栏与缺少终局摘要的历史观测继续兼容读取,只陈述实际基础快照读数,终局事实标为未知;不完整行动事实只陈述基础读数与覆盖缺失,不发送部分行动计数,缺失不补零。行动采集覆盖与合法终局是分别校验的证据,不能从其中一个推断另一个。新流程前两个有效候选若缺少本次三场可用终局摘要或所需试跑观测,不得捏造、跳过反馈后宣称完成优化;停止该生成,披露未完成阶段与已有证据。最后有效阶段保存终局事实但无新增回喂要求,观测写出或最终兼容路径发布失败沿旁证警告口径,报告披露缺失。损坏与 hash/seed/seat 归属违约按严格协议错误收口,基础设施失败不转成策略反馈。各候选证据分开保存(§7.4),生成归档报告明确区分初次候选、各优化候选与最终候选,不并入赛季排名;未开启流程沿用原生成调用与定版行为。
+
+### 6.3 独立有效候选选拔
+
+`--select-best-candidate` 必须同时启用事实优化;gen 在首次请求前取得本轮预定计划,三个有效阶段完成后通过最小 `SelectionProbe` 调 CLI 私有子进程。CLI 承载真实执行、runner 名次积分和完整复算;gen 只交换 schema 数据,不 import runner/engine/replay 或直接消费 result 计分。子进程 `--plan`/默认执行/`--validate` 共用本轮真实安装面,返回值按未知输入复算并核对环境及全部候选身份,在发布前再核对。
+
+跨进程计划及身份真源为 `schema/selection-plan.ts`。`selection.version` 保持不变,形状同时允许新理由 `later-stage` 与历史理由 `earlier-stage`;runner 公共读取器遇到历史理由时按原决胜算法完整复算,仍拒绝错误的 selected 身份、计分或 reason。新 CLI `--validate` 额外拒绝 `earlier-stage`,防止历史规则产物进入新生成流程;公共 meta、正式装载与报告读取保留旧档兼容,不重写历史字节。候选数组始终按 stage 升序保存,胜者单独记录于 selected。兼容边界见 [ADR-0020](./adr/0020-selection-tiebreak-compatibility.md)。固定独立 seeds 为 401/402/403,每 seed 对候选与三基准整组循环左移四次,相对环形顺序不变,候选覆盖四座;每候选十二个完整终局,三个阶段最多三十六个本地选拔对局。规则、地图、runtime 和三基准沿用真实优化试跑安装面,hash 由实际读取与执行的同一份字节产生。`selectionInputSha256` 覆盖计划、候选 JS 与对局条件,不是正式赛季 `input.json` 的字节 hash。
+
+仅 `completed` 的完整终局可入证据。计分/决胜规则归 gdd §3.3,沿用 runner `rankSeason/perMatchScores`（积分及并列计算归 §8.2）,不复用赛季异常剔除分母。相同 JS、相同计划可复用较早阶段全部十二场证据,记 `reusedFromStage`,TS/hash/实际协议轮仍独立。选拔不发模型请求、不回喂分数,不增加模型响应预算;失败实际执行了多少对局未被完整记录时报告 `null`,不猜测为零。模型阶段与响应上限沿用 §6.2,规则与沙箱预算沿用 §5,均不因选拔或模型而变化。取舍见 [ADR-0018](./adr/0018-generation-policy-and-candidate-selection.md)。
 
 ## 7. 数据设计
 
@@ -745,12 +771,19 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ```
 
 - 编译责任在 gen 包(定版前完成),engine 不引入 tsc(§2.2.8)。
-- `meta.json` 的十一项字段的形状家在 `packages/schema/src/archive-meta.ts`(类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。
+- `meta.json` 的十一项字段的形状家在 `packages/schema/src/archive-meta.ts`(类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。统一两轮优化就是这样一次有意的形状变更：在十一项必填冻结之外追加第十二个**可选**键 `optimization`（跨进程候选契约，见 §12 #12）；旧档无此键继续通过。选拔另追加可选 `selection`；完整形状与版本归 `schema/selection-plan.ts`。
 - **runner 启动即校验元数据完整性**,缺档**报错退出**(FR-6 AC2,不跳过)。**这里的「runner」指本 feature 的那个进程——第一个执行脚本的进程**(即 `modelwar match` 的装载段),不是赛季调度器 `runner` 那个包;赛季调度复用同一条校验路径,不复写。不消歧的话「runner」两个包都算。
 - **写盘原子、一跑一目录**:`script.ts` + `script.js` + `meta.json` 先在临时目录组装,冻结期校验(编译步骤 + `run-validate-script.ts --phase freeze --max-bytes <rulesets 取值>`)全过,才 rename 到 `archive/<modelSlug>/<runId>/`;目标已存在(秒级 `runId` 撞车)即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量,§7.1 的缺档判据不会被半截产物误触。`runId` 是生成时间戳,旧目录不删——这就是「定版副本不可变」的落地方式。
-- **协议轮数与 prompt 链**:`meta.protocolRounds` 是**模型调用总轮数,含初次生成**(第 1 轮 = 初次生成,之后每轮回喂一次校验错误);`meta.prompts` 逐条记该轮**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等(读入端已断言,§2.2.5)。传输层错误(429 / 5xx / 超时)与截断(`finishReason = length`)走退避**重试同一轮、不消耗协议轮数**,重试耗尽才另记一类失败——如此「轮数上限」始终指校验驱动的迭代、跨模型可比。
-- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport`),供报告侧(I)读成失败名单。`archive/` 下的**存档目录**只收已通过校验的冻结脚本(FR-5 AC2、FR-6);目录旁边可以并着两类旁挂文件——失败记录与试跑观测——它们都不是存档,装载段一律不读。名字与语义见 CONTEXT 的《校验失败记录》,形状家归真源包(§2.2.5),`packages/schema/src/failure-record.ts`。
-- **试跑观测旁挂 `archive/<modelSlug>/observed-<runId>.jsonl`**:与存档目录、失败记录**同层**的第三个条目,由试跑入口(`run-trial-script.js --observations <路径>`)在跑完冻结期试跑那几场后**整份重写**,内容恒等于**最后一次跑完**的调用(中途 infra 的那一次不写,旧内容留着);某次调用中途 infra 时上一次跑完的读数留在盘上。一行一场,四栏 `{ matchIndex, delivered, captures, noScoreSource }`——**每场都写,命中与否都写**(命中的读数恒为 0/0,只记命中等于没有读数;早停时行数少于场数)。它不进三件套(那三件是装载期判完整性的不变量)、也不进 `meta.json`(十一键冻结,§2.2.5);**它不参与任何判定**:写盘失败只在 stderr 留一行警告,退出码与 verdict 不变。路径与前缀真源 `packages/gen/src/observations.ts`(前缀**不**像失败记录那个住真源包——报告侧还没读它,没有跨包读者就不进真源包),写出侧 `apps/cli/src/trial/observations.ts`;行的形状同样待报告侧第一次真读它时再提到真源包。
+- **协议轮数与 prompt 链**:`meta.protocolRounds` 继续记录**实际收敛模型响应总轮数,含初次生成**,不填优化轮数或阶段上限;`meta.prompts` 逐条记该调用**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等(读入端已断言,§2.2.5)。`generationLog.round` 也按全程实际调用序号递增,不随优化阶段重置。默认流程的配置上限与实际总数沿原口径;opt-in 的每阶段上限、诊断修复与两次事实回喂分别计量(§6.2),阶段与候选角色的跨进程关联接口见 §12 #12。传输层错误(429 / 5xx / 超时)与截断(`finishReason = length`)走退避**重试同一调用、不消耗协议轮数**,重试耗尽才另记一类失败。
+- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport` / `selection` + 已有候选描述),供报告侧(I)读成失败名单。`archive/` 下的**存档目录**只收已通过校验的冻结脚本(FR-5 AC2、FR-6);目录旁边可以并着两类旁挂文件——失败记录与试跑观测——它们都不是存档,装载段一律不读。名字与语义见 CONTEXT 的《校验失败记录》,形状家归真源包(§2.2.5),`packages/schema/src/failure-record.ts`。
+- **试跑观测旁挂**:最终候选路径为 `archive/<modelSlug>/observed-<runId>.jsonl`;默认生成保持每次成功跑完试跑后整份重写,中途 infra 不写新内容。显式事实优化沿用逐实际调用轮号的 `observed-<runId>-round-<N>.jsonl` 旁挂,试跑前将本轮实际编译 JS 与源码 TS 不覆盖地保存为该路径加 `.candidate.js` / `.candidate.ts`,可凭原输入/日志和该 JS 重跑;不同候选及 archive 不相互覆盖。仅成功提交冻结脚本后将最终 JSONL 发布到兼容路径,不把各轮相加称为最终成绩。每行一个实际完成对局,保留旧四栏并增加可选 `actionFacts` 与 `terminalSummary`;预算早停只写实际完成的对局,不确定墙钟超时重跑不累加作废 attempt。类型、固定行动/错误码清单、前缀与闭合 JSON Schema 真源为 `packages/schema/src/trial-observation.ts`,写出侧为 `apps/cli/src/trial/observations.ts`,路径组装在 gen。旁挂不进三件套或 meta 十一键;观测 JSONL 写出或最终发布失败在试跑写出侧仅警告,不改变候选预算 verdict/试跑退出码,但 opt-in 生成编排在前两个有效候选缺少所需观测时按 §6.2 停止,不能把写出警告当作优化已经完成。用于事实可重放的独占 `.candidate.js` 保存失败或撞名则是生成基础设施错误,停止该生成并保留既有证据。触发与反馈见 §6.2。
+- **行动事实归属与完整性**:`actionFacts` 绑定当前编译 JS 的 `scriptSha256`、本对局 seed 与候选 seat,带版本、`complete`、`observedTicks/missingTicks`(仅候选实际被调度的执行 tick,淘汰后未调度不算缺失)、固定 `calls/errors` 与独立 `effects`。所有计数为非负安全整数,各行动错误总数不得超过调用数,`complete` 当且仅当 `missingTicks=0`;缺失不补零。gen 在本轮编译 JS 上独立计算 hash,核对对局下标对应固定 seed 与候选座位。读取拒绝未知版本、额外键、非法计数及归属违约,额外内容不得进入模型。
+- **终局事实采集与纯数据合同**:`terminalSummary` 只从引擎 `completed` 分支的真实 `result/finalState` 产生;CLI 在结束时读取四方点位控制、存活单位与淘汰记录,使用当局 ruleset 的权重和单位造价,并复用 runner `perMatchScores` 及实际名次积分表计算积分(§8.2),不从末次行动快照或累计读数反推。摘要保存版本、seed、结束原因、终局时间读数、实际使用的权重/单位造价/名次积分表与按座位排列的四方计分依据及结果;计分组成与存活兵种数量供复算,字段形状唯一归 `schema/trial-observation.ts`。schema 只交付类型、常量与 JSON Schema,不承载运行或评分行为;gen 只消费该数据,不 import engine/runner/replay 或 result 符号。正常游戏 `timeout`、提前获胜、合法淘汰及并列均有真实摘要;`uncertain-timeout`、执行故障或缺失终局不生成零分或完整结果。
+- **终局时间读数**:`terminalSummary.tick` 原样保存 `finalState.tick`,它等于 `runMatch.tickCount`,表示已执行并结算的 tick 数,也是下一 tick 的编号。它不是从零起算的最后结算 tick 编号,不得静默减一;`eliminatedAtTick` 则保存引擎记录的从零起算的淘汰 tick 编号,存活者为 `null`。真实终局中的淘汰编号应小于已执行 tick 数,二者不能直接当作同一种时间读数。
+- **终局摘要读取与安全投影**:CLI、gen 与报告读入端从共享 JSON Schema 派生形状校验,另核对对局下标/seed、四方座位顺序与实际候选/基准身份、候选旁挂归属及行动事实 seed/seat 关系。按摘要所保存的当局权重与造价复算存活单位总造价、各计分组成和领土分;名次核对 gdd §3.1 的胜利、存活/淘汰、领土分与并列关系,名次积分核对既有并列区间均分规则。未知版本、额外键、非法数值、不自洽结果或身份违约不作为可用摘要;gen 按协议错误停止,公开报告只披露白名单状态与缺失范围,不回显坏行或任意扩展字段。缺少摘要的旧观测保持未知,不补零、不追填历史。通过校验后逐项白名单投影,模型消息、读取回调、JSON 与 Markdown 出口共用该边界。
+- **候选与冻结身份**:共享 `archive-optimization.ts` 从 ArchiveMeta JSON Schema 派生读取形状,CLI 校验器、赛季准入与报告共用 `validateArchiveCandidateRelations`。优化阶段固定按原 stage0/1/2 和实际协议轮保存;旧优化档要求 stage2 JS=顶层 JS hash,新 selection 档要求完整复算胜者 JS=顶层 JS hash,并与优化阶段和环境身份一致。新档 CLI 对实际冻结 TS/JS 都量 hash;发布从胜者旁挂复制确切原字节,不重新编译较早 TS,同盘 rename 前检查冻结 TS/JS。失败无冻结身份;selection 失败保留三阶段候选及可选 `selectionFailure` 预定计划/TS/JS 身份,不伪造部分分数或胜者。阶段旁挂与兼容观测仍指向最后生成阶段,不能当作胜者观测。
+- **生成归档报告**:公共入口为 runner 的 `readArchiveReports` / `runArchiveReport`,返回对象本身即安全摘要,JSON、Markdown、读取回调及错误文本共用该边界。只投影固定参数键、能力状态枚举、已知停止码、非负安全整数 token 及共享 schema 验证的观测与候选身份;不透传任意旧日志中的 rawUsage/未知 token 值、请求头/证据来源自由文本、prompt/响应、provider 错误、失败 diagnostics/message 或坏行。未知停止文本只显示 `unknown` 状态,停止值不回显;失败只展示白名单分类与诊断条数。收敛用量完整合计和已记录小计/覆盖分别显示,全部尝试逐条列出,传输错误消费未知,不叠加两套读数作费用。transport 未收敛末行不是新增协议轮,其顶层用量/停止状态不展示。
+- **报告范围与预算**:显式 `--run-id` 标出本轮,其他记录为历史,不按目录最新项推断;未给标识时为未分轮。失败记录数不代表参赛失败模型数或当前资格,正式名册只引用成功冻结档。报告分别披露有效阶段数、不同 JS 数、每候选完整分母/均分/TS/JS/复用、胜者/理由、冻结字节状态和计划环境 hash。模型预算展示 §6.2 额度、实际收敛轮数、HTTP 尝试证据覆盖和未知消费;本地预算展示有效候选优化观测（不包含未记录无效候选/作废重跑总量）、选拔上限及完整证据证明的执行/复用场数;失败实际场数保持未知。新旧观测、行动事实完整性及终局摘要沿用本节各自判据;逐候选分开显示行动事实和真实终局计分依据/四方结果,缺失或不可用终局标为未知,不将行动采集不完整等同于没有合法终局。不合并候选读数、不补零、不并入正式成绩,新字段不追填历史。
 - 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。哈希取每座存档的 `script.js` / `meta.json` 各一份与地图一份,**不含 `script.ts`**(复算认编译产物,定版源码的不可变由 gen 保证,FR-6 AC1);**座位由 `archives` 的下标承载**(下标即 `playerIndex`),轮换算法归赛季调度物化期,不进这份文件。
 
 ### 7.5 回放 JSONL(`matches/<...>/replay.jsonl`)
@@ -766,6 +799,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 - **meta 行共十三栏,`runner` 是判别式**(取值 `"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,缺这一栏就把可读性押在「五个沙箱栏同时为空」这个约定上。**`runner === "stub"` 时五个沙箱栏(`quickjsWasiVersion` / `sandboxRuntimeHash` / `wasiClock` / `wasiRandomFill` / `wasiTimezoneOffset`)全为 `null`**(不是空串、不是 `0`——「未发生」与「恰好是空串」要能区分),故桩回放五栏皆 `null`;`runner === "quickjs"` 时五栏都是非空字符串(十进制毫秒 / 十六进制字节不带前缀 / 十进制分钟),填错在类型上编译不过(判别联合)。
 - 每 tick 记录足以绘制完整画面的状态:点位归属、占领进度条、单位位置血量携带、玩家资源。
 - **events 事件流**(叙事战报的统一来源,**七种**):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态;墙钟软限与内存压力是**观测行**(`observations.jsonl`),不进事件流、更不进 `stateHash`。
+- **异常详情读取**：与回放同目录的 `observations.jsonl` 可含 §5.3 的 `ExceptionLine`，读者按 tick/seat 关联展示。它独立于 replay schemaVersion 与哈希；旧回放的 `exception` 事件仍表示异常阈值出局，不新增每 tick 异常事件，不推测历史缺失详情。
 - **`first-contact` 的判据是观测量,不是规则参数**:任意敌对单位 Chebyshev ≤ 2、**整局第一次**一条,故不进 `rulesets/v1.json`(它不判胜负、不判合法、不影响移动,只给事件流标一个时刻)。判据的定性半句在 gdd 首触那一段(「首触判据吃的是接近度」),**给予它的精确定义是 gdd 那一侧的欠账**;引擎按该口径实现并在 `packages/engine/src/processor/steps/step2-movement.ts` 的注释里注明出处。
 
 ## 8. runner 与排名概要设计
@@ -773,13 +807,14 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ### 8.1 对局枚举与座位轮换
 
 - 输入:`season.yaml`(参赛存档引用列表、地图池、种子数 K、并发度、`rankPoints`、ruleset 版本、根种子 `masterSeed`)。字段、取值域与默认值的真源 = `packages/runner` 的 zod season schema(`src/season-config.ts`);格式范例见仓库根 `season.example.yaml`。**本节只写字段意图,不复制 schema 细节**。
-- 枚举:全部 4 人组合 × M 地图 × K 种子(srs FR-7 AC1);种子值 = 确定性函数(组合、地图、序号),同一对局的输入物化对全体参赛者一致。
+- 枚举:全部 4 人组合 × M 地图 × K 种子(srs FR-7 AC1);种子值 = 确定性函数(根种子、组合、地图、序号),同一对局的输入物化对全体参赛者一致。正式评测共用同一赛季配置与派生规则,不按模型或候选表现挑选。
+- **优化/选拔种子隔离**:赛季完成配置和归档解析后、任何 input 写出/续跑/spawn 前,核对正式评测计划全部 seed 与各参赛归档实际记录的优化试跑集合及可选选拔集合无交集,存在交集即明确拒绝,包括用户所选根种子派生后导致的碰撞;不同根种子不自动证明无交集。比较按 `seed % 2^31` 归一化（`101 + 2^31` 与 `101` 同一随机源初态）。校验不静默替换 seed,不改变原座位轮换与对局数量。配置接线：season 可选 `evaluationSeeds`（与 `seeds` 等长，不改对局规模；省略时沿用 masterSeed 派生）。无 `optimization` 的纯旧档沿用旧行为；有优化但无 `selection` 的旧档只检查其记录的优化 seeds，不从目录推测参加过新选拔。
 - **座位轮换**:把组合内 4 名参赛者按 slug 升序为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4` 循环移位。**精确均摊要求 `M × K ≡ 0 (mod 4)`**(地图数通常为 3,故 K 需为 4 的倍数;K 具体取多少由 gdd《开放项》#6 的裁决给出,本节只给均摊条件);不满足时**直接报错**(不静默产生偏移清单)。分配对全体一致且完全确定(FR-7 AC1)。
 - 并发:进程池语义的对局子进程池,并发度默认 `min(cpus, 8)`;对局之间互不干扰。
 
 ### 8.2 排名(名次积分制)
 
-- 名次由 gdd《胜利与淘汰》的排序规则决定(引擎在 `outcome` 中给出),`runner:ranker` 只做**纯函数记账**:名次分向量由赛季配置给出(`season.yaml` 的 `rankPoints`,默认 `[3,2,1,0]`,**不进 `rulesets/`**——赛制不该经 rules-vN 泄漏给模型);并列名次分 = 并列名次区间分值之和 ÷ 并列人数(并列第 2 → (2+1)/2 = 1.5)。
+- 名次由 gdd《胜利与淘汰》的排序规则决定(引擎在 `outcome` 中给出),`runner:ranker` 只做**纯函数记账**:名次分向量由赛季配置给出(`season.yaml` 的 `rankPoints`,默认 `[3,2,1,0]`,**不进 `rulesets/`**——名次积分属于调度计分配置,不属于 rules-vN 的对局规则契约);并列名次分 = 并列名次区间分值之和 ÷ 并列人数(并列第 2 → (2+1)/2 = 1.5)。
 - 赛季总分 = Σ 对局得分;对局均分排名,只保证主排名(FR-8 AC1)。**Elo 不在 v0 内**——裁决见 `.scratch/season-scheduler/spec.md`《Out of Scope》,hld 不再把 Elo 写成 v0 的产物。
 
 ### 8.3 报告输出(`runs/<runId>/`)
@@ -798,14 +833,30 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 
 | 命令 | 模块 | 说明 |
 |---|---|---|
-| `modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>]` | gen | 生成并冻结脚本;根目录解析同 `match`(默认 cwd),`--config` 相对根;`--model` 只跑一个模型。gen 启动时若 `<root>/.env` 存在即 `process.loadEnvFile()`,凭据只经 `process.env[credentialEnvVar]` 读 |
+| `modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>] [--score-source-feedback] [--select-best-candidate]` | gen | 生成并冻结脚本;根目录解析同 `match`(默认 cwd),`--config` 相对根;`--model` 只跑一个模型。显式统一事实优化与独立阶段预算见 §6.2。gen 启动时若 `<root>/.env` 存在即 `process.loadEnvFile()`,凭据只经 `process.env[credentialEnvVar]` 读 |
 | `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告。根目录解析同 `match`(默认 cwd),`--config` 相对根;对局阶段**不联网**,故**不加载 `.env`**(与 `gen` 相反);同 `outputDir` + 同配置再跑即断点续跑(已完成局跳过 spawn) |
+| `modelwar report [--root <仓库根>] [--model <slug>] [--run-id <本轮标识>] [--json]` | runner | 只读生成记录摘要:实际协议轮数、逐轮/合计模型调用耗时、带来源的 token 读数与候选试跑观测;默认 Markdown,`--json` 为机器读数。不联网、不加载 `.env`,不启动赛季 |
 | `modelwar match <input.json>` | engine | 执行一个对局(runner 与调试都走这条路径) |
 | `modelwar replay <replay.jsonl>` | apps/cli → `replay` | 终端 ASCII 回放,单步/暂停;只读回放,**不依赖 engine** |
 | `modelwar verify <replay.jsonl>` | apps/cli → engine + `replay` | 按 input.json 重新执行,逐 tick hash 比对(CI 调用);不起子进程 |
 | `modelwar map-lint <maps/>` | apps/cli | 地图对称性与合法性校验 |
 
 > 唯一 bin 在 `apps/cli`;`index.ts` 只做路由,各子命令 `await import()` 动态加载。库包不含 `bin`。
+
+### 规范名册启动
+
+在已安装依赖与配置凭据的仓库根构建 CLI,再对 `models.yaml` 当前完整名册统一运行;不加 `--model` 过滤。名册、渠道、能力证据、推理控制和输出上限真源只有该配置文件,此处不复制各模型取值。下面生成命令会调用模型,由操作者显式启动;普通加载、报告和自动化测试均不探测渠道。
+
+```sh
+pnpm --filter @model-war/cli run build
+node apps/cli/dist/modelwar.mjs gen --config models.yaml --score-source-feedback --select-best-candidate
+node apps/cli/dist/modelwar.mjs report --run-id <本次生成runId>
+node apps/cli/dist/modelwar.mjs report --run-id <本次生成runId> --json
+```
+
+`--score-source-feedback` 控制统一事实优化;`--select-best-candidate` 控制完成全部阶段后的独立选拔,两者缺省都关闭。只启用前者仍定版最后有效阶段,只启用后者在配置读取/首次请求前拒绝。规范比较须对整个名册同时启用二者,共享生成机会、基准、地图和沙箱预算;渠道未知能力如实保留,离线测试通过不证明真实渠道执行了 high。报告 `--run-id` 仅标出本轮与历史,不删除历史记录;不指定时全部未分轮。
+
+正式赛季 participants 只填成功发布的 `archive/<slug>/<runId>`，不得引用候选旁挂或失败记录。优化 seeds 供事实反馈,选拔 seeds 供定版比较,正式 seeds 供横向评测;隔离由 §8.1 准入执行。选拔失败的模型不参赛,不能以其历史成功档代替本轮结果后宣称同批完成。
 
 ### 退出码表
 
@@ -846,10 +897,10 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | FR-2 确定性与回放 | §4.6、§7.5、§9 verify |
 | FR-3 脚本接口 | §4.2、§4.5、§6.1 |
 | FR-4 沙箱与预算 | §5(全节) |
-| FR-5 生成管线 | §2.1 离线侧、§6.2 |
+| FR-5 生成管线 | §2.1 离线侧、§6.2/§6.3、§7.4 事实反馈合同与投影 |
 | FR-6 可追溯存档 | §7.4 |
 | FR-7 赛季调度 runner | §8.1、§8.4 |
-| FR-8 排名与报告 | §8.2、§8.3 |
+| FR-8 排名与报告 | §8.2、§8.3、§7.4 生成归档报告 |
 | FR-9 CLI 回放查看器 | §9、§7.5 schemaVersion |
 | FR-10 规则文档 | §6.1、§7.1 |
 | NFR-1 确定性 | §4.6、§5.3 |
@@ -860,6 +911,8 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ## 12. 开放项(工程侧)
 
 规则侧的开放项(数值终值、地图坐标、机制取舍)见 gdd《开放项》,此处不重复。
+
+事实优化的循环、计数与种子边界见 §6.2/§8.1;跨进程候选保存和报告关联已收口于下表 #12。
 
 | # | 项 | 备注 |
 |---|---|---|
@@ -874,3 +927,4 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 | 9 | A 的两条等效命题在首轮赛季上的复验 | 承自 A 收口时的交办账(`docs/diagrams/v0-milestone-dag.md` §7),归本 spec(`.scratch/season-scheduler/spec.md`)票 11。旧处(`v0-milestone-dag.md` §7)已改成指向本行的指针。**已收口**:关账条件是「首轮赛季读数含两条等效命题的复验结论,若仍未排期则明文写出『仍未排期』」——两条各给结论:命题 **② 已在终稿契约下复验通过**(证据 `.scratch/rules-landing/selfproof/report.md`、门禁 `check:selfproof`;首轮赛季用的是真实模型脚本而非命题要求的基准脚本口径,故本季读数不构成又一次测量);命题 **① 仍未排期**(窗口本身可疑须重推,返工方向与触发条件在 gdd《开放项》#8 记录 #13,窗口定案前根本无从复验)。结论、口径与读数缺口均写进 `.scratch/season-scheduler/e2e-readings.md` §10,不是留空。本项关闭。 |
 | 10 | `match` 的 spawn / 进程池 / 重跑编排 | 承自 G 收口时的交办账(`v0-milestone-dag.md` §4 的 G 行②)——`match` 只做成子进程入口,不对局编排。归 `packages/runner` 的 `scheduler`,本 spec 票 06 / 07。旧处已改成指向本行的指针。**已收口**:一条 `modelwar run` 跑完整轮(退出码 0),`c3-corridor-split-s2` 以 `engine-crash`(退出码 2)按 §8.4 重跑 1 次仍触发,记入对局问题清单并排除出排名(`excludedFromRanking: true`)。读数在 `.scratch/season-scheduler/e2e-readings.md` §3 / §4。本项关闭。 |
 | 11 | H 的四项交办(选 ≥4 个真实模型 / `input.json` 物化 / 硬超时·崩溃重跑与剔除 / 回放读入端接线) | 承自 H 收口时的交办账(`.scratch/generation-pipeline/spec.md` 的历史件,原文不改),分别落本 spec 票 **11**(真实模型参赛集)/ **03**(对局元组,`input.json` 的物化输入)/ **07**(重跑与剔除)/ **02**(回放读入端 `parseReplay`)。**已收口**:五条真实模型冻结入库(`archive/<slug>/2026-10-09T01-09-09-599Z/`)、逐局 `input.json` 物化 60 份、崩溃/超时重跑剔除读数、`parseReplay` 读入端落地(`packages/replay/src/parse.ts`,经 `index.ts` 导出)——四项读数与位置均见 `.scratch/season-scheduler/e2e-readings.md` §1 / §4 / §5 与票面 Answer。本项关闭。 |
+| 12 | 统一事实优化的跨进程候选保存与报告关联接口 | **已收口**：候选旁挂、条件冻结身份、新旧共享消费者与生成报告边界归 §7.4；循环与独立选拔归 §6.2/§6.3，正式 seed 准入归 §8.1。历史 two-feedback 关系在无 selection 的旧档保持；新增 selection 不改写阶段身份。 |
