@@ -21,15 +21,13 @@
  * 再写一栏就是同一个事实的第二个家。引擎侧的载荷仍带 `track`(那是执行器的原生词),
  * 由写出侧投影掉。
  *
- * ── `tripped` 为什么不在这里 ──
- *
- * 触限(`tripped`)是**判罚**事实,它落成一条状态变更(累加 `exceptionTicks`)并随 tick 行进
- * 回放,报告从状态里读它。本文件只收「只披露、不判罚」的两类。
+ * 墙钟软限与内存压力沿用六栏观测；脚本异常详情用独立 `ExceptionLine`，均不进入回放或 stateHash。
+ * 普通观测每座位每类只记首条，异常行保留每次触发；两者组成 `MatchObservationLine`。
  */
 
 import type { ReplaySeat } from "./index.js";
 
-/** 只披露、不判罚的两类观测。`tripped` 不进这个文件(它落成状态变更)。 */
+/** 普通软观测的两类；异常行有独立的 type 判别式，不扩展这个旧枚举。 */
 export type ObservationLineKind = "wall-clock-soft" | "memory-pressure";
 
 /**
@@ -48,6 +46,89 @@ export type ObservationLine = {
   /** 当时那条轨的上限:墙钟软限是软限、内存是软阈(判罚线的推导项)。 */
   readonly limit: number;
 };
+
+/** 标准错误名的有限投影；不是任意 message，也不保证 guest 没有改写 Error.name。 */
+export type ScriptErrorName =
+  | "Error"
+  | "TypeError"
+  | "ReferenceError"
+  | "RangeError"
+  | "SyntaxError"
+  | "EvalError"
+  | "URIError"
+  | "AggregateError"
+  | "unknown";
+
+/** 安全异常详情。预算为宿主已有读数；异常只投影固定名字，绝不保存 message/stack/源码。 */
+export type ScriptExceptionDiagnostic =
+  | {
+      readonly category: "event-budget" | "api-budget" | "memory-budget";
+      readonly used: number;
+      readonly limit: number;
+    }
+  | { readonly category: "uncaught-exception"; readonly errorName: ScriptErrorName };
+
+export type ExceptionLine = {
+  readonly type: "exception";
+  readonly tick: number;
+  readonly seat: ReplaySeat;
+  /** 当局累计异常淘汰阈值；该轨未启用或旧数据缺失时不提供。 */
+  readonly exceptionTickLimit?: number;
+  readonly diagnostic: ScriptExceptionDiagnostic;
+};
+
+/** 正式对局 sidecar 的两种行；旧 ObservationLine 及其 schema 原样保留。 */
+export type MatchObservationLine = ObservationLine | ExceptionLine;
+
+/** 闭合且有界：无自由文本，数字只接受非负安全整数。 */
+export const EXCEPTION_LINE_JSON_SCHEMA = {
+  $schema: "http://json-schema.org/draft-07/schema#",
+  title: "model-war 脚本异常详情行",
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "tick", "seat", "diagnostic"],
+  properties: {
+    type: { enum: ["exception"] },
+    tick: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    seat: { enum: [0, 1, 2, 3] },
+    exceptionTickLimit: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    diagnostic: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["category", "used", "limit"],
+          properties: {
+            category: { enum: ["event-budget", "api-budget", "memory-budget"] },
+            used: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+            limit: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["category", "errorName"],
+          properties: {
+            category: { enum: ["uncaught-exception"] },
+            errorName: {
+              enum: [
+                "Error",
+                "TypeError",
+                "ReferenceError",
+                "RangeError",
+                "SyntaxError",
+                "EvalError",
+                "URIError",
+                "AggregateError",
+                "unknown",
+              ],
+            },
+          },
+        },
+      ],
+    },
+  },
+} as const;
 
 /** 键序即 `required` 序、书写序,不容另定一处。 */
 const OBSERVATION_LINE_REQUIRED_KEYS = ["type", "tick", "seat", "kind", "value", "limit"] as const;

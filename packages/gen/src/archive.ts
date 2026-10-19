@@ -31,13 +31,23 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import {
   RULESET_VERSION,
   SANDBOX_RUNTIME_HASH,
   type ArchiveMeta,
+  type ArchiveOptimization,
+  type ArchiveSelection,
   type ArchiveValidation,
 } from "@model-war/schema";
 
@@ -69,6 +79,8 @@ export type BuildArchiveMetaInput = {
   readonly validation: ArchiveValidation;
   readonly tscVersion: string;
   readonly scriptSha256: string;
+  readonly optimization?: ArchiveOptimization;
+  readonly selection?: ArchiveSelection;
 };
 
 export const buildArchiveMeta = (input: BuildArchiveMetaInput): ArchiveMeta => ({
@@ -83,6 +95,8 @@ export const buildArchiveMeta = (input: BuildArchiveMetaInput): ArchiveMeta => (
   tscVersion: input.tscVersion,
   scriptSha256: input.scriptSha256,
   sandboxRuntimeHash: SANDBOX_RUNTIME_HASH,
+  ...(input.optimization === undefined ? {} : { optimization: input.optimization }),
+  ...(input.selection === undefined ? {} : { selection: input.selection }),
 });
 
 /** 在 `archive/<slug>/` 下开一个同文件系统的临时组装目录,返回它的绝对路径。 */
@@ -114,6 +128,16 @@ export const commitArchive = (options: {
   readonly stagingDir: string;
   readonly meta: ArchiveMeta;
 }): CommitResult => {
+  const selected = options.meta.selection?.selected;
+  if (
+    selected !== undefined &&
+    (selected.scriptSha256 !== options.meta.scriptSha256 ||
+      sha256Hex(readFileSync(join(options.stagingDir, SCRIPT_PRODUCT_NAME))) !==
+        selected.scriptSha256 ||
+      sha256Hex(readFileSync(join(options.stagingDir, SCRIPT_SOURCE_NAME))) !==
+        selected.sourceSha256)
+  )
+    return { ok: false, reason: "冻结 TS/JS 与选拔胜者身份不一致" };
   const targetDir = join(options.root, "archive", options.slug, options.runId);
   if (existsSync(targetDir)) {
     return { ok: false, reason: `目标存档目录已存在,拒绝覆盖:${targetDir}` };

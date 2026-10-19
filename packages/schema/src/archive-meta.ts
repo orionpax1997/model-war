@@ -34,6 +34,32 @@
  * 轮数与 prompt 条数是否相等)归 `apps/cli` 的装载期断言。
  */
 
+import { ARCHIVE_SELECTION_JSON_SCHEMA, type ArchiveSelection } from "./selection-plan.js";
+import { TRIAL_SEEDS } from "./trial-plan.js";
+
+/** 统一事实优化的跨进程政策；只有数据，没有运行时判定。 */
+export const OPTIMIZATION_VERSION = 1 as const;
+export const OPTIMIZATION_FEEDBACK_ROUNDS = 2 as const;
+export const OPTIMIZATION_STAGES = [0, 1, 2] as const;
+
+export type ArchiveOptimizationCandidate = {
+  readonly stage: (typeof OPTIMIZATION_STAGES)[number];
+  /** 全局 1 起协议轮号，包含诊断修复响应，不包含传输重试。 */
+  readonly protocolRound: number;
+  /** 相对 archive/<slug>/ 的独占旁挂 basename。 */
+  readonly scriptFile: string;
+  readonly observationsFile: string;
+  readonly scriptSha256: string;
+};
+
+export type ArchiveOptimization = {
+  readonly version: typeof OPTIMIZATION_VERSION;
+  readonly feedbackRounds: typeof OPTIMIZATION_FEEDBACK_ROUNDS;
+  readonly trialSeeds: typeof TRIAL_SEEDS;
+  /** 装载端校验 stage 顺序、协议轮号递增及最终候选 hash 关系。 */
+  readonly candidates: readonly ArchiveOptimizationCandidate[];
+};
+
 /** 一轮协议迭代的完整 prompt。刻意不写成带元字段的对象——见头注「逐轮」那一栏。 */
 export type ArchivePrompt = string;
 
@@ -51,7 +77,7 @@ export type ArchiveValidation = {
   readonly errors: readonly string[];
 };
 
-/** 冻结脚本 `meta.json` 的全部内容。十一项**全部必填**,没有可选键。 */
+/** 冻结脚本 `meta.json` 的全部内容。十一项必填；优化旁证可选，旧档兼容。 */
 export type ArchiveMeta = {
   readonly model: string;
   readonly modelVersion: string;
@@ -69,6 +95,8 @@ export type ArchiveMeta = {
   readonly scriptSha256: string;
   /** 沙箱 runtime 的 hash(小写十六进制 64 位)。 */
   readonly sandboxRuntimeHash: string;
+  readonly optimization?: ArchiveOptimization;
+  readonly selection?: ArchiveSelection;
 };
 
 /** 键序即 `required` 序、`meta.json` 的书写序,不容另定一处。 */
@@ -177,6 +205,47 @@ export const ARCHIVE_META_JSON_SCHEMA = {
       ...SHA256,
       description:
         "script.js 的 sha256。**复算认编译产物,不认定版源码**——同一份 script.ts 换一版 tsc 会产出不同的 script.js,所以哈希取在产物这一侧。装载期与实测比对,不等即拒跑。",
+    },
+    selection: ARCHIVE_SELECTION_JSON_SCHEMA,
+    optimization: {
+      type: "object",
+      additionalProperties: false,
+      required: ["version", "feedbackRounds", "trialSeeds", "candidates"],
+      properties: {
+        version: { type: "integer", const: OPTIMIZATION_VERSION },
+        feedbackRounds: { type: "integer", const: OPTIMIZATION_FEEDBACK_ROUNDS },
+        trialSeeds: {
+          type: "array",
+          minItems: TRIAL_SEEDS.length,
+          maxItems: TRIAL_SEEDS.length,
+          items: [
+            { type: "integer", const: TRIAL_SEEDS[0] },
+            { type: "integer", const: TRIAL_SEEDS[1] },
+            { type: "integer", const: TRIAL_SEEDS[2] },
+          ],
+          additionalItems: false,
+        },
+        candidates: {
+          type: "array",
+          minItems: OPTIMIZATION_STAGES.length,
+          maxItems: OPTIMIZATION_STAGES.length,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["stage", "protocolRound", "scriptFile", "observationsFile", "scriptSha256"],
+            properties: {
+              stage: { type: "integer", enum: OPTIMIZATION_STAGES },
+              protocolRound: { type: "integer", minimum: 1 },
+              scriptFile: { type: "string", pattern: "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._-]*$" },
+              observationsFile: {
+                type: "string",
+                pattern: "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._-]*$",
+              },
+              scriptSha256: SHA256,
+            },
+          },
+        },
+      },
     },
     sandboxRuntimeHash: {
       ...SHA256,

@@ -20,10 +20,12 @@ import {
   MAP_JSON_SCHEMA,
   MATCH_INPUT_JSON_SCHEMA,
   OBSERVATION_LINE_JSON_SCHEMA,
+  EXCEPTION_LINE_JSON_SCHEMA,
   REPLAY_RESULT_LINE_JSON_SCHEMA,
   RULESET_JSON_SCHEMA,
   RULESET_KEYS,
   RULESET_VERSION,
+  TRIAL_OBSERVATION_JSON_SCHEMA,
 } from "@model-war/schema";
 import type {
   ArchiveMeta,
@@ -34,9 +36,13 @@ import type {
   MatchInputArchive,
   ObservationLine,
   ObservationLineKind,
+  ExceptionLine,
+  ScriptErrorName,
+  ScriptExceptionDiagnostic,
   ReplayOutcomeReason,
   ReplayResultLine,
   Ruleset,
+  TrialObservationLine,
   UnitStats,
 } from "@model-war/schema";
 import { expect, it } from "vitest";
@@ -55,6 +61,7 @@ import {
   validateObservationLine,
   validateReplayResultLine,
   validateRuleset,
+  validateTrialObservation,
   type ArchiveMetaProvenance,
   type MatchInputProvenance,
 } from "./validator.js";
@@ -898,7 +905,36 @@ it("存档 meta 与对局输入:同一组 fixture 既过 TypeScript 类型(编�
   }
 });
 
-it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,且与 properties 一一对应", () => {
+const GOOD_OPTIMIZATION_META: ArchiveMeta = {
+  ...GOOD_META,
+  protocolRounds: 3,
+  prompts: ["initial", "optimization1", "optimization2"],
+  optimization: {
+    version: 1,
+    feedbackRounds: 2,
+    trialSeeds: [101, 202, 303],
+    candidates: [0, 1, 2].map((stage) => ({
+      stage: stage === 0 ? 0 : stage === 1 ? 1 : 2,
+      protocolRound: stage + 1,
+      scriptFile: `observed-run-round-${String(stage + 1)}.jsonl.candidate.js`,
+      observationsFile: `observed-run-round-${String(stage + 1)}.jsonl`,
+      scriptSha256: GOOD_META.scriptSha256,
+    })),
+  },
+};
+
+it("优化存档在 match 读入端拒绝阶段倒序，不能只校验字段形状", () => {
+  expect(validateArchiveMeta(GOOD_OPTIMIZATION_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  const changed = structuredClone(GOOD_OPTIMIZATION_META);
+  const candidates = changed.optimization?.candidates ?? [];
+  const value = {
+    ...changed,
+    optimization: { ...changed.optimization, candidates: [...candidates].reverse() },
+  };
+  expect(validateArchiveMeta(value, GOOD_META_PROVENANCE).ok).toBe(false);
+});
+
+it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有可选 optimization 与 selection", () => {
   // 名单是**抄 hld 的措辞**抄下来的,不是抄 schema 的:抄 schema 的话,少一项时两边一起少,
   // 这条断言就恒真了。逐项对照的是 hld.md:714-715 的十一项。
   const required = [...ARCHIVE_META_JSON_SCHEMA.required];
@@ -915,7 +951,11 @@ it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,且与 
     "scriptSha256",
     "sandboxRuntimeHash",
   ]);
-  expect([...required].sort()).toEqual(Object.keys(ARCHIVE_META_JSON_SCHEMA.properties).sort());
+  // 统一两轮优化新增可选 `optimization`（跨进程候选契约，见 two-feedback spec D3）：
+  // optimization 与版本化 selection 均可选，必填保持十一项，旧档继续通过。
+  expect(Object.keys(ARCHIVE_META_JSON_SCHEMA.properties).sort()).toEqual(
+    [...required, "optimization", "selection"].sort(),
+  );
 });
 
 it("input schema 的必填键集合就是 hld §7.4 那一栏的五项,且与 properties 一一对应", () => {
@@ -1427,4 +1467,165 @@ it("观测行:座位/读数/上限的类型与下界不对都被拒", () => {
   ]);
   expect(observationKeywords(rejectObservation(badObservation({ limit: "10" })))).toEqual(["type"]);
   expect(observationKeywords(rejectObservation(badObservation({ tick: 1.5 })))).toEqual(["type"]);
+});
+
+export type ExceptionRequiredKeysMatchType = Assert<
+  Equals<(typeof EXCEPTION_LINE_JSON_SCHEMA)["required"][number], RequiredKeysOf<ExceptionLine>>
+>;
+export type ExceptionPropertyKeysMatchType = Assert<
+  Equals<keyof (typeof EXCEPTION_LINE_JSON_SCHEMA)["properties"], keyof ExceptionLine>
+>;
+export type ExceptionErrorNamesMatchType = Assert<
+  Equals<
+    (typeof EXCEPTION_LINE_JSON_SCHEMA)["properties"]["diagnostic"]["oneOf"][1]["properties"]["errorName"]["enum"][number],
+    ScriptErrorName
+  >
+>;
+export type ExceptionCategoriesMatchType = Assert<
+  Equals<
+    | (typeof EXCEPTION_LINE_JSON_SCHEMA)["properties"]["diagnostic"]["oneOf"][0]["properties"]["category"]["enum"][number]
+    | (typeof EXCEPTION_LINE_JSON_SCHEMA)["properties"]["diagnostic"]["oneOf"][1]["properties"]["category"]["enum"][number],
+    ScriptExceptionDiagnostic["category"]
+  >
+>;
+
+it("异常详情schema：接受闭合的预算/错误名行，拒绝自由文本和越界数值", () => {
+  const base = { type: "exception", tick: 7, seat: 2 };
+  for (const diagnostic of [
+    { category: "event-budget", used: 10000, limit: 10000 },
+    { category: "api-budget", used: 4, limit: 3 },
+    { category: "memory-budget", used: 2048, limit: 1024 },
+    { category: "uncaught-exception", errorName: "TypeError" },
+    { category: "uncaught-exception", errorName: "unknown" },
+  ]) {
+    const line = { ...base, diagnostic };
+    expect(validateObservationLine(line).ok).toBe(true);
+  }
+  for (const diagnostic of [
+    { category: "uncaught-exception", errorName: "SECRET-custom-name" },
+    { category: "uncaught-exception", errorName: "Error", message: "secret" },
+    { category: "uncaught-exception", errorName: "Error", stack: "secret" },
+    { category: "api-budget", used: -1, limit: 3 },
+    { category: "api-budget", used: 1.5, limit: 3 },
+    { category: "api-budget", used: Number.MAX_SAFE_INTEGER + 1, limit: 3 },
+    { category: "api-budget", used: 2, limit: Infinity },
+    { category: "api-budget", used: "2", limit: 3 },
+    { category: "unknown", used: 2, limit: 3 },
+  ]) {
+    expect(validateObservationLine({ ...base, diagnostic }).ok).toBe(false);
+  }
+  const diagnostic = { category: "uncaught-exception", errorName: "Error" };
+  expect(validateObservationLine({ ...base, diagnostic, exceptionTickLimit: 3 }).ok).toBe(true);
+  for (const exceptionTickLimit of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, "3"]) {
+    expect(validateObservationLine({ ...base, diagnostic, exceptionTickLimit }).ok).toBe(false);
+  }
+  expect(validateObservationLine({ ...base, diagnostic, message: "secret" }).ok).toBe(false);
+  expect(validateObservationLine({ ...base, seat: 4, diagnostic }).ok).toBe(false);
+  expect(validateObservationLine({ ...base, tick: -1, diagnostic }).ok).toBe(false);
+  expect(
+    validateObservationLine({ ...base, tick: Number.MAX_SAFE_INTEGER + 1, diagnostic }).ok,
+  ).toBe(false);
+});
+
+// ── 试跑逐对局观测 ────────────────────────────────────────────────────────────
+
+export type TrialObservationRequiredKeysMatchType = Assert<
+  Equals<
+    (typeof TRIAL_OBSERVATION_JSON_SCHEMA)["required"][number],
+    RequiredKeysOf<TrialObservationLine>
+  >
+>;
+export type TrialObservationPropertyKeysMatchType = Assert<
+  Equals<keyof (typeof TRIAL_OBSERVATION_JSON_SCHEMA)["properties"], keyof TrialObservationLine>
+>;
+export type TrialObservationIsJsonValue = Assert<AssignableTo<TrialObservationLine, JsonValue>>;
+
+const GOOD_TRIAL_OBSERVATION: TrialObservationLine = {
+  matchIndex: 0,
+  delivered: 0,
+  captures: 0,
+  noScoreSource: true,
+};
+
+it("试跑观测:多一个未声明的键即被拒,诊断指向额外键", () => {
+  const result = validateTrialObservation({ ...GOOD_TRIAL_OBSERVATION, mystery: 1 });
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.machineDiagnostics.map(({ keyword }) => keyword)).toEqual([
+      "additionalProperties",
+    ]);
+    expect(result.machineDiagnostics.map(({ pointer }) => pointer)).toEqual(["/mystery"]);
+    expect(result.modelDiagnostics).toHaveLength(1);
+    expect(result.modelDiagnostics[0]).toContain("/mystery");
+  }
+});
+
+const badTrialObservation = (
+  patch: Record<string, JsonValue> = {},
+  drop: readonly string[] = [],
+): JsonValue =>
+  Object.fromEntries(
+    Object.entries({ ...GOOD_TRIAL_OBSERVATION, ...patch }).filter(([key]) => !drop.includes(key)),
+  );
+
+const rejectTrialObservation = (value: JsonValue) => {
+  const result = validateTrialObservation(value);
+  if (result.ok) {
+    throw new Error(`本该被拒绝,却被接受了:${JSON.stringify(value)}`);
+  }
+  return result;
+};
+
+it("试跑观测:类型化 fixture 通过 AJV,接受时交出原值", () => {
+  const scored: TrialObservationLine = {
+    matchIndex: 2,
+    delivered: 15,
+    captures: 1,
+    noScoreSource: false,
+  };
+  for (const fixture of [GOOD_TRIAL_OBSERVATION, scored]) {
+    const result = validateTrialObservation(fixture);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.observation).toBe(fixture);
+  }
+});
+
+it("试跑观测:删掉任意必填键即被拒,诊断指向缺键", () => {
+  for (const key of TRIAL_OBSERVATION_JSON_SCHEMA.required) {
+    const result = rejectTrialObservation(badTrialObservation({}, [key]));
+    expect(result.machineDiagnostics.map(({ keyword }) => keyword)).toEqual(["required"]);
+    expect(result.machineDiagnostics.map(({ pointer }) => pointer)).toEqual([`/${key}`]);
+  }
+});
+
+it("试跑观测:计数的负数、小数和错型均被拒,不做数值转换", () => {
+  for (const key of ["matchIndex", "delivered", "captures"] as const) {
+    for (const [value, keyword] of [
+      [-1, "minimum"],
+      [0.5, "type"],
+      ["0", "type"],
+      [null, "type"],
+      [true, "type"],
+    ] as const) {
+      const result = rejectTrialObservation(badTrialObservation({ [key]: value }));
+      expect(result.machineDiagnostics.map((diagnostic) => diagnostic.keyword)).toEqual([keyword]);
+      expect(result.machineDiagnostics.map(({ pointer }) => pointer)).toEqual([`/${key}`]);
+    }
+  }
+});
+
+it("试跑观测:布尔栏不接受字符串、数字、null或容器", () => {
+  for (const noScoreSource of ["false", 0, null, [], {}] as const) {
+    const result = rejectTrialObservation(badTrialObservation({ noScoreSource }));
+    expect(result.machineDiagnostics.map(({ keyword }) => keyword)).toEqual(["type"]);
+    expect(result.machineDiagnostics.map(({ pointer }) => pointer)).toEqual(["/noScoreSource"]);
+  }
+});
+
+it("试跑观测:根不是对象即被拒,诊断指向根", () => {
+  for (const value of [null, [], "observation", 0, false] as const) {
+    const result = rejectTrialObservation(value);
+    expect(result.machineDiagnostics.map(({ keyword }) => keyword)).toEqual(["type"]);
+    expect(result.machineDiagnostics.map(({ pointer }) => pointer)).toEqual(["/"]);
+  }
 });

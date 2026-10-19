@@ -16,28 +16,29 @@
  * 候选固定 0 号位（预算计数分座位独立，固定座位使回喂稳定）。
  */
 
-import type { ReplaySeat } from "@model-war/schema";
+import {
+  TRIAL_CANDIDATE_SEAT,
+  TRIAL_PLAYER_IDS,
+  TRIAL_SEEDS,
+  type ReplaySeat,
+} from "@model-war/schema";
 
 import type { ScoreSourceReading } from "./score-source.js";
 
 /** 试跑场数：零容忍，K 场爆 1 次就打回。 */
-export const TRIAL_MATCH_COUNT = 3;
+export const TRIAL_MATCH_COUNT = TRIAL_SEEDS.length;
 
-/** 三场的固定种子：同一组种子对所有候选，保证可复现与公平。 */
-export const TRIAL_SEEDS: readonly number[] = [101, 202, 303];
+/** 跨进程场次身份真源归 schema，执行与反馈读取共用。 */
+export { TRIAL_SEEDS };
 
 /** 试跑地图：赛季当前地图（三张地图同尺寸，"小"无差别）。 */
 export const TRIAL_MAP = "corridor-split";
 
 /** 三个固定对手：基准脚本目录名（下标 1..3 即座位，0 号位留给候选）。 */
-export const TRIAL_OPPONENTS: readonly string[] = [
-  "cell-a-melee-pressure",
-  "cell-b-expansion-economy",
-  "cell-c-claim-no-harvest",
-];
+export const TRIAL_OPPONENTS: readonly string[] = TRIAL_PLAYER_IDS.slice(1);
 
 /** 候选脚本的固定座位。 */
-export const CANDIDATE_SEAT: ReplaySeat = 0;
+export const CANDIDATE_SEAT = TRIAL_CANDIDATE_SEAT satisfies ReplaySeat;
 
 /** 试跑看的两条轨：tick 级 events/apis。其余轨（未吞异常、内存）进联赛三振，这里不判。 */
 export const WATCHED_TRACKS: readonly string[] = ["eventTickLimit", "apiCallTickLimit"];

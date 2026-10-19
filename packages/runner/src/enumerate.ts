@@ -40,6 +40,8 @@ export type EnumerateMatchUpsOptions = {
   readonly maps: readonly string[];
   /** 种子数 K。须满足 `M × K ≡ 0 (mod 4)`。 */
   readonly seeds: number;
+  /** 可选统一评测 seed；每个组合与地图按同一 seedIndex 使用。 */
+  readonly evaluationSeeds?: readonly number[];
   /** 赛季主种子,与组合 / 地图 / 种子序号一起决定每局种子。 */
   readonly masterSeed: string;
 };
@@ -92,7 +94,9 @@ export const enumerateMatchUps = (options: EnumerateMatchUpsOptions): readonly M
                 ruleset: RULESET_VERSION,
                 seats: rotateSeats(base, mapIndex + seedIndex),
                 map,
-                seed: deriveSeed(masterSeed, comboId, mapIndex, seedIndex),
+                seed:
+                  options.evaluationSeeds?.[seedIndex] ??
+                  deriveSeed(masterSeed, comboId, mapIndex, seedIndex),
                 comboId,
                 comboIndex,
                 mapIndex,
@@ -134,7 +138,7 @@ const bySlug = (left: string, right: string): number => {
  *
  * 分隔符与位序在本函数定死,由测试钉住;`shift` 取任意整数都收敛到 `0..3`。
  */
-const rotateSeats = (
+export const rotateSeats = (
   base: readonly [string, string, string, string],
   shift: number,
 ): readonly [string, string, string, string] => {

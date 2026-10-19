@@ -54,6 +54,8 @@ export const buildRuntimeCode = async (): Promise<string> => {
     format: "iife",
     platform: "neutral",
     write: false,
+    // 只压缩闭包内标识符，保留公开属性名和控制流；降低 guest 常驻编译数据开销。
+    minifyIdentifiers: true,
     // 钉住工作目录:esbuild 在产物里为每个源文件写一行 `// <path>` 注释,路径相对工作目录。
     // 不钉的话「在哪个目录跑构建」会改变产物字节,门禁的「现算 == 入库」就随 cwd 漂移。
     absWorkingDir: repoRoot,

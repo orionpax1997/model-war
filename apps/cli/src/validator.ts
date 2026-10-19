@@ -16,7 +16,7 @@
  *    面向模型层是渲染后的短句,含 JSON 指针,并**对同类错误合并成一行**
  *    (生成管线的五轮迭代预算撑不撑得住,取决于这个合并)。
  *
- * 本文件已有七份形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放 meta 行 / 回放末行 `result` / 观测行),走的是**同一个 Ajv 实例、
+ * 本文件的形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放 meta 行 / 回放末行 `result` / 观测行 / 试跑观测),走的是**同一个 Ajv 实例、
  * 同一套投影与合并渲染**。新增一种数据形状是「再加一个 `validateXxx` + 它的装载期断言」,
  * 不是新写一份校验器:真正的风险不是校验点少,而是日后有人为了让别的包也能校验而手写一份
  * 形状 if —— 那才是第二真源。
@@ -25,6 +25,7 @@
 // 取具名导出而不是默认导出:ajv 是 CJS 包且 `module.exports` 就是 Ajv 类本身,
 // 而它的 .d.ts 用 ESM 语法写成,于是 `import Ajv from "ajv"` 拿到的类型是整个命名空间
 // (不可构造)。具名导入两侧一致。
+import { validateArchiveCandidateRelations } from "@model-war/runner";
 import { Ajv } from "ajv";
 import type { ErrorObject, SchemaObject } from "ajv";
 import {
@@ -32,20 +33,23 @@ import {
   MAP_JSON_SCHEMA,
   MATCH_INPUT_JSON_SCHEMA,
   OBSERVATION_LINE_JSON_SCHEMA,
+  EXCEPTION_LINE_JSON_SCHEMA,
   REPLAY_META_LINE_JSON_SCHEMA,
   REPLAY_RESULT_LINE_JSON_SCHEMA,
   RULESET_JSON_SCHEMA,
   RULESET_UNIT_KEYS,
   RULESET_VERSION,
   SPAWN_TICKS_COEFFICIENT,
+  TRIAL_OBSERVATION_JSON_SCHEMA,
   type ArchiveMeta,
   type JsonValue,
   type MapDefinition,
   type MatchInput,
-  type ObservationLine,
+  type MatchObservationLine,
   type ReplayMetaLine,
   type ReplayResultLine,
   type Ruleset,
+  type TrialObservationLine,
   type UnitStats,
 } from "@model-war/schema";
 
@@ -131,7 +135,11 @@ export type ReplayMetaLineValidation =
   | ValidationRejection;
 
 export type ObservationLineValidation =
-  | { readonly ok: true; readonly observation: ObservationLine }
+  | { readonly ok: true; readonly observation: MatchObservationLine }
+  | ValidationRejection;
+
+export type TrialObservationValidation =
+  | { readonly ok: true; readonly observation: TrialObservationLine }
   | ValidationRejection;
 
 // `allErrors: true` 是合并的前提:默认的 fail-fast 只报第一条错,
@@ -154,6 +162,8 @@ const checkReplayMetaShape = ajv.compile(REPLAY_META_LINE_JSON_SCHEMA as SchemaO
 const checkReplayResultShape = ajv.compile(REPLAY_RESULT_LINE_JSON_SCHEMA as SchemaObject);
 // 观测行:回放之外那份 `observations.jsonl` 的一行(墙钟软限 / 内存压力两类只披露的观测)。
 const checkObservationShape = ajv.compile(OBSERVATION_LINE_JSON_SCHEMA as SchemaObject);
+const checkExceptionShape = ajv.compile(EXCEPTION_LINE_JSON_SCHEMA as SchemaObject);
+const checkTrialObservationShape = ajv.compile(TRIAL_OBSERVATION_JSON_SCHEMA as SchemaObject);
 
 const MAJOR_OF_VERSION = /^v([0-9]+)$/;
 
@@ -440,6 +450,8 @@ export type ArchiveMetaProvenance = {
   };
   /** 装载方当场算出的 `script.js` 的 sha256;缺档时传 `null`(此时只报缺档,不比对哈希)。 */
   readonly measuredScriptSha256: string | null;
+  /** 新选拔档必测原始 TS 字节；旧档不要求。 */
+  readonly measuredSourceSha256?: string | null;
   /** 本仓沙箱 runtime 的实测 hash(与 meta 里记的那个比,不是与另一份 meta 比)。 */
   readonly measuredSandboxRuntimeHash: string;
   /** 装载方实际装载的规则集版本(由 `rulesets/vN.json` 的文件名读出)。 */
@@ -503,6 +515,33 @@ const archiveMetaDiagnostics = (
       pointer: "/prompts",
       keyword: ARCHIVE_PROTOCOL_ROUNDS_KEYWORD,
       message: `协议迭代轮数写了 ${meta.protocolRounds},而逐轮 prompt 有 ${meta.prompts.length} 条`,
+    });
+  }
+
+  try {
+    validateArchiveCandidateRelations(meta);
+  } catch (cause) {
+    diagnostics.push({
+      pointer: meta.selection === undefined ? "/optimization/candidates" : "/selection",
+      keyword: "optimization-candidate-relations",
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+  if (meta.selection !== undefined && provenance.measuredScriptSha256 === null) {
+    diagnostics.push({
+      pointer: "/scriptSha256",
+      keyword: SHA256_MISMATCH_KEYWORD,
+      message: "选拔存档缺少冻结 JS 实测 hash",
+    });
+  }
+  if (
+    meta.selection !== undefined &&
+    provenance.measuredSourceSha256 !== meta.selection.selected.sourceSha256
+  ) {
+    diagnostics.push({
+      pointer: "/selection/selected/sourceSha256",
+      keyword: SHA256_MISMATCH_KEYWORD,
+      message: "冻结 script.ts 与选中阶段的 source hash 不一致或未测量",
     });
   }
 
@@ -719,10 +758,26 @@ export const validateReplayResultLine = (value: JsonValue): ReplayResultLineVali
  * `apps/cli/src/match/observations.ts` 的纯函数与它的单测钉住,不在这里。
  */
 export const validateObservationLine = (value: JsonValue): ObservationLineValidation => {
-  if (!checkObservationShape(value)) {
-    return rejectionOf((checkObservationShape.errors ?? []).map(toMachineDiagnostic));
+  // 按 type 选择形状，旧观测仍走原 schema，保留原有精确 keyword/pointer 诊断。
+  const check =
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "type" in value &&
+    value.type === "exception"
+      ? checkExceptionShape
+      : checkObservationShape;
+  if (!check(value)) {
+    return rejectionOf((check.errors ?? []).map(toMachineDiagnostic));
+  }
+  return { ok: true, observation: value as MatchObservationLine };
+};
+
+/** 校验试跑逐对局观测的单行形状；跨行下标与读数语义归协议读入方。 */
+export const validateTrialObservation = (value: JsonValue): TrialObservationValidation => {
+  if (!checkTrialObservationShape(value)) {
+    return rejectionOf((checkTrialObservationShape.errors ?? []).map(toMachineDiagnostic));
   }
 
-  // ajv 已经保证六栏齐、类型对、取值域在枚举内,故这次认作 `ObservationLine` 是安全的。
-  return { ok: true, observation: value as ObservationLine };
+  return { ok: true, observation: value as TrialObservationLine };
 };

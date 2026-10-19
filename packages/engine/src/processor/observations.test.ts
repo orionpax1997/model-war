@@ -1,7 +1,8 @@
 /**
  * 观测 → 变更这条路径(票 02 的预置件):执行器的返回载荷带观测,步 0 在它上面**不做裁决**——
- * 种类为 `tripped` 的观测落成一条 `count-exception-tick` 变更(累加 `exceptionTicks`),
- * 另外两类(`wall-clock-soft` / `memory-pressure`)转发给观测出口(缺席即静默丢弃)。
+ * 种类为 `tripped` 的观测落成一条 `count-exception-tick` 变更(累加 `exceptionTicks`)，
+ * 同时将安全异常详情旁路转发；另外两类(`wall-clock-soft` / `memory-pressure`)原样转发。
+ * 观测出口缺席时只丢弃披露，不影响计数。
  *
  * 本文件用一个**假执行器**(只实现缝的 `setSnapshot` / `drainIntents` 两条方法)证明这条路径通了。
  * 阈值判定与淘汰不在本票;桩路径的零回归(桩不产出观测 → `exceptionTicks` 恒 0)由
@@ -86,38 +87,57 @@ const fakeRunner = (output: RunnerOutput): SeatRunner => ({
 
 const EMPTY: RunnerOutput = { intents: [], observations: [] };
 
-it("tripped 观测经步 0 落成 exceptionTicks,另外两类走观测出口", () => {
+it("tripped 经步 0 累加计数并旁路安全详情，另外两类观测原样转发", () => {
   const recorded: ObservationRecord[] = [];
   const seat0 = fakeRunner({
     intents: [],
     observations: [
       { kind: "tripped", track: "eventTickLimit", value: 9001, limit: 9000 },
       { kind: "wall-clock-soft", track: "wallClockSoftLimit", value: 12, limit: 10 },
+      { kind: "memory-pressure", track: "memoryTickCeiling", value: 100, limit: 90 },
     ],
   });
   const result = processTick(
-    makeState(),
+    { ...makeState(), tick: 7 },
     [seat0, fakeRunner(EMPTY), fakeRunner(EMPTY), fakeRunner(EMPTY)],
     loadRuleset(RULESET),
     SINK,
     { record: (record) => void recorded.push(record) },
+    { exceptionTickLimit: 3 },
   );
-  // 「观测 → 唯一写入口」:tripped 只累加该座位的计数,别的座位不受影响。
+  // tripped 只累加该座位一次，两个软观测不计异常；未达到累计阈值，不判淘汰。
   expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([1, 0, 0, 0]);
-  // 另外两类原样转发,并在调用点补齐 tick 与座位;tripped 不进观测出口(它已经落成状态变更)。
+  expect(result.state.players.every((player) => player.alive)).toBe(true);
+  // 安全详情带发生 tick/seat、原读数及独立累计阈值；两个软观测保持原轨名与数值。
   expect(recorded).toEqual([
     {
-      tick: 0,
+      tick: 7,
+      seat: 0,
+      kind: "exception",
+      exceptionTickLimit: 3,
+      diagnostic: { category: "event-budget", used: 9001, limit: 9000 },
+    },
+    {
+      tick: 7,
       seat: 0,
       kind: "wall-clock-soft",
       track: "wallClockSoftLimit",
       value: 12,
       limit: 10,
     },
+    {
+      tick: 7,
+      seat: 0,
+      kind: "memory-pressure",
+      track: "memoryTickCeiling",
+      value: 100,
+      limit: 90,
+    },
   ]);
 });
 
-it("同 tick 两条不同轨的 tripped 各计一次", () => {
+it("同 tick 两条不同轨的 tripped 各计一次并各自披露，未启用累计阈值时不猜值", () => {
+  const recorded: ObservationRecord[] = [];
   const seat2 = fakeRunner({
     intents: [],
     observations: [
@@ -130,8 +150,23 @@ it("同 tick 两条不同轨的 tripped 各计一次", () => {
     [fakeRunner(EMPTY), fakeRunner(EMPTY), seat2, fakeRunner(EMPTY)],
     loadRuleset(RULESET),
     SINK,
+    { record: (record) => void recorded.push(record) },
   );
   expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([0, 0, 2, 0]);
+  expect(recorded).toEqual([
+    {
+      kind: "exception",
+      tick: 0,
+      seat: 2,
+      diagnostic: { category: "event-budget", used: 9001, limit: 9000 },
+    },
+    {
+      kind: "exception",
+      tick: 0,
+      seat: 2,
+      diagnostic: { category: "api-budget", used: 401, limit: 400 },
+    },
+  ]);
 });
 
 it("观测出口缺席时另外两类静默丢弃,tripped 仍落成状态变更", () => {

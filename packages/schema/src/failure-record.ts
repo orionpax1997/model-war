@@ -12,7 +12,7 @@
  * ── 键序即书写序 ──────────────────────────────────────────────────────────────
  *
  * 先标识(哪个模型 / 哪一跑 / 哪一版规则),再结论(分类 / 已收敛轮数 / 逐轮 prompt / 日志 /
- * 诊断 / 原因)。`writeFailureRecord`(住 `packages/gen/src/failure.ts`)按此序序列化,
+ * 诊断 / 原因 / 已有候选(仅统一优化中途失败时有))。`writeFailureRecord`(住 `packages/gen/src/failure.ts`)按此序序列化,
  * `2` 空格缩进且末尾换行——键序是本文件承诺的对外契约,不是 gen 侧的实现细节。
  *
  * ── 刻意不带 JSON Schema ──────────────────────────────────────────────────────
@@ -25,11 +25,14 @@
  * ── 本模块含运行时代码:只有末尾那一个前缀常量 ────────────────────────────────
  */
 
+import type { SelectionCandidateIdentity, SelectionPlan } from "./selection-plan.js";
+import type { ArchiveOptimizationCandidate } from "./archive-meta.js";
+
 /** 失败记录文件名的前缀:`failed-<runId>.json` 与存档目录 `<runId>/` 在同一父目录下并列。 */
 export const FAILURE_RECORD_PREFIX = "failed-";
 
-/** 失败分类:`tsc`(编译没过)/ `contract`(静态校验没过)/ `transport`(传输重试耗尽)。 */
-export type FailureClassification = "tsc" | "contract" | "transport";
+/** 失败分类:`tsc`(编译没过)/ `contract`(静态校验没过)/ `transport`(传输重试耗尽)/ `selection`(三阶段后的选拔未完成)。 */
+export type FailureClassification = "tsc" | "contract" | "transport" | "selection";
 
 /**
  * 失败记录的**身份字段**(哪个模型 / 哪一版 / 哪一跑 / 何时):生成侧 `buildFailureRecord` 与
@@ -71,4 +74,15 @@ export type FailureRecord = FailureIdentity & {
   readonly diagnostics: readonly string[];
   /** 一行人类可读原因。 */
   readonly message: string;
+  /**
+   * 统一优化中途失败时已验证的有效候选描述（stage 0 起，与 `ArchiveMeta.optimization.candidates`
+   * 同形状；缺席 = 无有效候选或旧记录）。报告侧据此分别标识初次/中间候选并核对 hash，
+   * selection 失败可以保留三个有效阶段；失败档没有冻结脚本。
+   */
+  readonly candidates?: readonly ArchiveOptimizationCandidate[];
+  /** 完成三阶段后选拔失败的预定输入与不可变候选身份，不伪造部分胜者。 */
+  readonly selectionFailure?: {
+    readonly plan: SelectionPlan;
+    readonly candidates: readonly SelectionCandidateIdentity[];
+  };
 };

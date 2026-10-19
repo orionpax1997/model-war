@@ -28,15 +28,18 @@ export type ChatMessage = {
  * 一次请求的模型参数(temperature / max_tokens 之类)。
  *
  * 形状是开放的键值对,而不是逐字段类型:参数是**厂商/端点族相关的工程细节**,不在 schema
- * 的五类数据形状里,也不进规则集;gen 只把它原样透传给适配器并记进生成日志。
+ * 的五类数据形状里,也不进规则集。旧配置透传；规范配置由 generationPolicy 校验、
+ * 映射为冻结参数，适配器在请求前复核，再记进生成日志。
  */
 export type ModelParams = Readonly<Record<string, unknown>>;
 
 export type ModelResponse = {
   readonly text: string;
-  /** 截断一律归一成 `"length"`(OpenAI 是 `"length"`,Anthropic 的 `"max_tokens"` 由 08 映射过来) */
+  /** 输出预算截断归一成 "length"，缺停止字段为 "unknown"；其他状态不冒充截断。 */
   readonly finishReason: string;
   readonly usage: unknown;
+  /** 协议原停止状态与原因；归一化 finishReason 仅用于既有重试判据。 */
+  readonly stopDetails?: { readonly status?: string; readonly reason?: string };
 };
 
 /** 一次生成调用的端口。实现 = HTTP 适配器(票 08)或可编程桩(测试与本地演练)。 */

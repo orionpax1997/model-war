@@ -32,6 +32,8 @@ import type { ModelConfig } from "../config.js";
 import type { ModelClient, ModelResponse } from "../model-client.js";
 import { isRecord } from "../record.js";
 import { TransportError } from "../transport-error.js";
+import { generationParams, generationTransport } from "../generation-policy.js";
+import { isDeepStrictEqual } from "node:util";
 import { endpointSpec, type StreamAccumulator } from "./endpoints.js";
 
 /**
@@ -183,7 +185,7 @@ type EventStreamRead = {
 };
 
 /**
- * 逐帧读 `text/event-stream` 直到 `[DONE]`,交给累积器拼回统一形状。
+ * 逐帧读 `text/event-stream` 直到 `[DONE]` 或累积器原生收尾,交给累积器拼回统一形状。
  *
  * 帧之间用空行分隔、行尾可能是 `\r\n`,一帧还可能被 TCP 切在两个 chunk 中间——所以按 `\n`
  * 切行、最后一段不完整的留在缓冲里等下一个 chunk,**不假设**「一次 read 正好一帧」。
@@ -226,6 +228,11 @@ const readEventStream = async (options: EventStreamRead): Promise<ModelResponse>
           break;
         }
         accumulator.push(parseSseFrame(payload, url));
+        // 没有 `[DONE]` 的端点族(如 Anthropic 系 `message_stop`)由累积器自己宣布收尾。
+        if (accumulator.done?.() === true) {
+          sawDone = true;
+          break;
+        }
       }
       if (sawDone) {
         break;
@@ -248,7 +255,7 @@ const readEventStream = async (options: EventStreamRead): Promise<ModelResponse>
   }
 
   if (!sawDone) {
-    throw new TransportError(`端点 ${url} 的流在 [DONE] 之前结束(连接被中途切断)`, {
+    throw new TransportError(`端点 ${url} 的流在收尾之前结束(连接被中途切断)`, {
       retryable: true,
       status: response.status,
     });
@@ -264,6 +271,9 @@ export const createHttpModelClient = (
   config: ModelConfig,
   options: HttpModelClientOptions = {},
 ): ModelClient => {
+  const canonicalParams =
+    config.generationPolicy === undefined ? undefined : generationParams(config);
+  const { authentication, anthropicVersion } = generationTransport(config);
   const spec = endpointSpec(config.endpointFamily);
   const streaming = spec.streaming;
   const url = joinUrl(config.baseUrl, spec.path);
@@ -271,6 +281,9 @@ export const createHttpModelClient = (
 
   return {
     send: async (messages, params): Promise<ModelResponse> => {
+      if (canonicalParams !== undefined && !isDeepStrictEqual(params, canonicalParams)) {
+        throw new Error(`${config.slug}:请求参数与规范政策不一致，拒绝修改采样/推理/输出预算`);
+      }
       const credential = readCredential(config);
       // 声明了流式能力的端点族一律带流式字段发;响应是不是真流式仍按 content-type 分派。
       const body = JSON.stringify(
@@ -287,11 +300,10 @@ export const createHttpModelClient = (
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: `Bearer ${credential}`,
+            ...(authentication === "api-key" ? {} : { authorization: `Bearer ${credential}` }),
             "user-agent": GEN_USER_AGENT,
-            // Anthropic 原生形态(messages 族)的鉴权头:后端认 `x-api-key`,不认 Bearer。
-            // Bearer 照发(无害),x-api-key 只给 messages 族加,别的族请求字节不变。
-            ...(config.endpointFamily === "messages" ? { "x-api-key": credential } : {}),
+            ...(authentication === "bearer" ? {} : { "x-api-key": credential }),
+            ...(anthropicVersion === undefined ? {} : { "anthropic-version": anthropicVersion }),
             // 有会话 ID 才发这个头:它是 opencode go 的反滥用要求,别的端点收不到也无害,
             // 但缺省不发,保持对旧端点的请求字节不变。
             ...(options.sessionId === undefined ? {} : { "x-opencode-session": options.sessionId }),

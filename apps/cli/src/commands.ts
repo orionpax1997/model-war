@@ -12,7 +12,7 @@
  * (包间类型引用经 exports + project references 解析,不用 paths),esbuild 在打包期把它们内联进单文件。
  */
 
-export type CommandName = "gen" | "run" | "match" | "replay" | "verify" | "map-lint";
+export type CommandName = "gen" | "run" | "report" | "match" | "replay" | "verify" | "map-lint";
 
 /**
  * 子命令处理器:拿到的参数是该命令名之后的一切(子命令自带参数解析),**返回进程退出码**。
@@ -46,7 +46,8 @@ export type CommandSpec = {
 export const COMMANDS: readonly CommandSpec[] = [
   {
     name: "gen",
-    usage: "modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>]",
+    usage:
+      "modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>] [--score-source-feedback] [--select-best-candidate]",
     summary: "生成并冻结参赛脚本(可 --model <slug> 单跑)",
     provider: "@model-war/gen",
     handler: "generateAndFreeze",
@@ -58,6 +59,14 @@ export const COMMANDS: readonly CommandSpec[] = [
     summary: "整轮赛季 + 报告",
     provider: "@model-war/runner",
     handler: "runSeason",
+    load: () => import("@model-war/runner"),
+  },
+  {
+    name: "report",
+    usage: "modelwar report [--root <仓库根>] [--model <slug>] [--run-id <本轮标识>] [--json]",
+    summary: "只读归档生成报告",
+    provider: "@model-war/runner",
+    handler: "runArchiveReport",
     load: () => import("@model-war/runner"),
   },
   {

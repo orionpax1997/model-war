@@ -64,6 +64,10 @@ export const buildFailureRecord = (input: BuildFailureRecordInput): FailureRecor
   generationLog: input.failure.generationLog,
   diagnostics: input.failure.diagnostics,
   message: input.failure.message,
+  ...(input.failure.selectionFailure === undefined
+    ? {}
+    : { selectionFailure: input.failure.selectionFailure }),
+  ...(input.failure.candidates !== undefined ? { candidates: input.failure.candidates } : {}),
 });
 
 /** `archive/<modelSlug>/failed-<runId>.json` 的绝对路径。 */

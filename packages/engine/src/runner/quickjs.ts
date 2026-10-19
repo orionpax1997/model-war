@@ -94,8 +94,8 @@
  * 这条开销进性能标定的考量,它的读数由 `quickjs.test.ts` 里那条「强制回收开销」用例记录在案。
  */
 
-import { QuickJS, type JSValueHandle, type MemoryUsage } from "quickjs-wasi";
-import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset } from "@model-war/replay";
+import { QuickJS, JSException, type JSValueHandle, type MemoryUsage } from "quickjs-wasi";
+import { MEMORY_SOFT_THRESHOLD_RATIO, type Ruleset, type ScriptErrorName } from "@model-war/replay";
 
 import type { Intent } from "../processor/intents.js";
 import type { PlayerIndex, Snapshot } from "../world/state.js";
@@ -103,9 +103,12 @@ import { ARRAY_PROTOTYPE_SEARCH_SHIM } from "./array-search-shim.js";
 import {
   HOST_BRIDGE_DRAIN_INTENTS,
   HOST_BRIDGE_SET_SNAPSHOT,
+  type ActionTickFacts,
   type Observation,
   type SeatRunner,
 } from "./index.js";
+
+export type { ActionTickFacts } from "./index.js";
 
 /** 冻钟的固定读数:十进制毫秒。三件套之一,取值是工程常量(见 spec《WASI 三件套与回放 meta》)。 */
 export const WASI_CLOCK_MS = 1_700_000_000_000;
@@ -362,10 +365,11 @@ export type SandboxSession = {
   readonly dispose: () => void;
 };
 
-/** `__drainIntents()` 载荷:意图加本 tick 的 API 调用计数(票 07)。 */
+/** `__drainIntents()` 载荷:意图、API 总调用数与本 tick 的行动事实。 */
 export type DrainedGuest = {
   readonly intents: readonly Intent[];
   readonly apiCalls: number;
+  readonly actionFacts: ActionTickFacts;
 };
 
 /** 一个 tick 的三类读数:事件计数截停 / 墙钟软限首越读数 / 墙钟硬超时。 */
@@ -539,6 +543,34 @@ export type QuickJsRunnerHandle = {
  * 引擎;guest 未吞掉的异常同路——中止本 tick、计一次异常,同样不中断其它三方与引擎、不重建 VM。
  * 阈值判定不在 guest 侧,guest 吞不吞异常都改不了读数。
  */
+/**
+ * 白名单投影已由 QuickJS 宿主包装器缓存的错误名，不读取 message/stack、不再执行 guest getter。
+ * isError 是 VM 内部标签检查；普通 throw 字符串/对象即使伪造 name 也只输出 unknown。
+ * 标准名仍可能由 guest 改写，所以这是名字提示，不是不可伪造的错误来源证明。
+ */
+const scriptErrorNameOf = (cause: unknown): ScriptErrorName => {
+  // quickjs-wasi 的深递归溢出是宿主 RangeError，不是 JSException(hld §5.0)。
+  if (cause instanceof RangeError) {
+    return "RangeError";
+  }
+  if (!(cause instanceof JSException) || !cause.handle.isError) {
+    return "unknown";
+  }
+  switch (cause.name) {
+    case "Error":
+    case "TypeError":
+    case "ReferenceError":
+    case "RangeError":
+    case "SyntaxError":
+    case "EvalError":
+    case "URIError":
+    case "AggregateError":
+      return cause.name;
+    default:
+      return "unknown";
+  }
+};
+
 export const createQuickJsRunner = async (
   options: QuickJsRunnerOptions,
 ): Promise<QuickJsRunnerHandle> => {
@@ -562,17 +594,19 @@ export const createQuickJsRunner = async (
       let readings: TickReadings;
       // 本 tick 是否有**未被吞掉**的 guest 异常(`loop()` / job 里抛的)。有它即本 tick 计一次异常。
       let uncaught = false;
+      let errorName: ScriptErrorName = "unknown";
       try {
         session.runLoop();
         session.pumpJobs();
         readings = session.endTick();
-      } catch {
+      } catch (cause) {
         readings = session.endTick();
         // 「本轨截停 / 硬超时」各有出口(事件轨 / 故障位),不当成 guest 异常;其余的抛出
         // (脚本自己 `throw`、引用已删桥、调未定义 action…)归本 tick 的一次异常计数,不再原样
         // 冒给宿主变成整场 `engine-crash`(hld §5.2 第一行)。
         if (!readings.eventTripped && !readings.hardTimedOut) {
           uncaught = true;
+          errorName = scriptErrorNameOf(cause);
         }
       }
       if (readings.hardTimedOut) {
@@ -606,7 +640,9 @@ export const createQuickJsRunner = async (
         // tick 的 `__setSnapshot` 清空,故不会跨 tick 残留)。
         return {
           intents: [],
-          observations: [{ kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 }],
+          observations: [
+            { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1, errorName },
+          ],
         };
       }
       const observations: Observation[] = [];
@@ -646,9 +682,9 @@ export const createQuickJsRunner = async (
           value: drained.apiCalls,
           limit: apiCallTickLimit,
         });
-        return { intents: [], observations };
+        return { intents: [], observations, actionFacts: drained.actionFacts };
       }
-      return { intents: drained.intents, observations };
+      return { intents: drained.intents, observations, actionFacts: drained.actionFacts };
     },
   };
   return { runner, dispose: session.dispose };

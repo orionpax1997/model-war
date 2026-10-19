@@ -1,13 +1,13 @@
 /**
  * gen 包的依赖边界测试(FR-5 AC1;hld §3.2、§6.2、§2.2.10)。
  *
- * AC1 的原文是「管线全程只回喂静态校验错误,代码中不存在将对局结果传回生成环节的路径」
- * (srs FR-5 AC1;hld §6.2 写作「`gen` 代码中不存在对战结果回传路径」)。它是一个「不存在」断言,
- * 而「不存在」只能被机器门禁证明。这句话的可执行化有**互不可替代**的两半:
+ * 当前反馈政策允许 CLI 采集的 schema 行动/终局纯数据摘要（ADR-0019）；
+ * gen 仍不得读取正式对局产物或依赖 engine / runner / replay。
+ * 包图与源码符号门禁分别约束直接执行/读取通路，不能由摘要反馈绕过。
  *
- * 1. 包图那一半(本文件):`gen` 不得 import engine / runner / replay。engine 持有对局结果类型
+ * 1. 包图那一半(本文件):`gen` 不得 import engine / runner / replay。engine 持有原始结果类型
  *    (`RunMatchParams` / `RunMatchResult`),runner 跑对局并把产物落 `runs/`,replay 读对局产物——
- *    三条边各是一条能把对局结果带回生成环节的通路。断言方式是机器门禁本身:spawn `depcruise`
+ *    gen 的试跑事实须经 CLI 与 schema 接缝接收，不能直接调用这些包。断言方式是机器门禁本身:spawn `depcruise`
  *    跑真实配置(`check:deps` 的同一条),退出码非零即为违规。规则名见 `.dependency-cruiser.js`。
  * 2. 源码符号那一半(`no-match-result-symbols.test.ts`):`gen` 运行时代码里不得出现对局结果符号。
  *    它不看构建产物,补上门禁看不见的那些字面量——`runs/` 这种字符串没有跨包边。
@@ -69,7 +69,8 @@ const runDepcruise = (): { status: number; output: string } => {
   return { status: result.status ?? -1, output: `${result.stdout}${result.stderr}` };
 };
 
-it("gen 的运行时代码不 import engine / runner / replay", () => {
+// 与 engine 全图巡航及真实沙箱集成并行，局部时限保留完整依赖断言。
+it("gen 的运行时代码不 import engine / runner / replay", { timeout: 30_000 }, () => {
   // depcruise 巡航的是 tsc -b 的产物(本仓库没有它能用的 TS 编译器,见 .dependency-cruiser.js 顶部),
   // 所以 dist 必须先在。`check:deps` 自带 tsc -b,vitest 的 globalSetup 也补一次;
   // 这里只在裸跑本文件时兜底,起法与 vitest.global-setup.ts 一致(process.execPath + tsc 入口)。

@@ -1,9 +1,9 @@
 "use strict";
 (() => {
   // packages/engine/src/pathfinding/find-path.ts
-  var STEP = 2;
-  var HEURISTIC_SCALE = 2;
-  var DIRECTIONS = [
+  var z = 2;
+  var ee = 2;
+  var ne = [
     [0, -1],
     [1, -1],
     [1, 0],
@@ -13,121 +13,121 @@
     [-1, 0],
     [-1, -1]
   ];
-  var indexOf = (x, y, size) => y * size + x;
-  var passable = (terrain, size, x, y) => {
-    if (x < 0 || y < 0 || x >= size || y >= size) {
+  var w = (e, n, r) => n * r + e;
+  var h = (e, n, r, t) => {
+    if (r < 0 || t < 0 || r >= n || t >= n) {
       return false;
     }
-    return terrain[y]?.[x] !== true;
+    return e[t]?.[r] !== true;
   };
-  var heuristic = (from, to) => HEURISTIC_SCALE * Math.max(Math.abs(from.x - to.x), Math.abs(from.y - to.y));
-  var less = (left, right, f) => f[left] < f[right] || f[left] === f[right] && left < right;
-  var heapPush = (heap, node, f) => {
-    heap.push(node);
-    let at = heap.length - 1;
-    while (at > 0) {
-      const parent = at - 1 >> 1;
-      if (!less(heap[at], heap[parent], f)) {
+  var C = (e, n) => ee * Math.max(Math.abs(e.x - n.x), Math.abs(e.y - n.y));
+  var G = (e, n, r) => r[e] < r[n] || r[e] === r[n] && e < n;
+  var B = (e, n, r) => {
+    e.push(n);
+    let t = e.length - 1;
+    while (t > 0) {
+      const o = t - 1 >> 1;
+      if (!G(e[t], e[o], r)) {
         break;
       }
-      [heap[at], heap[parent]] = [heap[parent], heap[at]];
-      at = parent;
+      [e[t], e[o]] = [e[o], e[t]];
+      t = o;
     }
   };
-  var heapPop = (heap, f) => {
-    if (heap.length === 0) {
+  var re = (e, n) => {
+    if (e.length === 0) {
       return void 0;
     }
-    const top = heap[0];
-    const last = heap.pop();
-    if (heap.length > 0) {
-      heap[0] = last;
-      let at = 0;
+    const r = e[0];
+    const t = e.pop();
+    if (e.length > 0) {
+      e[0] = t;
+      let o = 0;
       for (; ; ) {
-        const left = at * 2 + 1;
-        const right = left + 1;
-        let smallest = at;
-        if (left < heap.length && less(heap[left], heap[smallest], f)) {
-          smallest = left;
+        const a = o * 2 + 1;
+        const u = a + 1;
+        let l = o;
+        if (a < e.length && G(e[a], e[l], n)) {
+          l = a;
         }
-        if (right < heap.length && less(heap[right], heap[smallest], f)) {
-          smallest = right;
+        if (u < e.length && G(e[u], e[l], n)) {
+          l = u;
         }
-        if (smallest === at) {
+        if (l === o) {
           break;
         }
-        [heap[at], heap[smallest]] = [heap[smallest], heap[at]];
-        at = smallest;
+        [e[o], e[l]] = [e[l], e[o]];
+        o = l;
       }
     }
-    return top;
+    return r;
   };
-  var findPath = (terrain, size, from, to) => {
-    if (!passable(terrain, size, to.x, to.y)) {
+  var H = (e, n, r, t) => {
+    if (!h(e, n, t.x, t.y)) {
       return null;
     }
-    if (from.x === to.x && from.y === to.y) {
-      return [{ x: from.x, y: from.y }];
+    if (r.x === t.x && r.y === t.y) {
+      return [{ x: r.x, y: r.y }];
     }
-    const count = size * size;
-    const best = new Int32Array(count).fill(-1);
-    const estimate = new Int32Array(count).fill(-1);
-    const parent = new Int32Array(count).fill(-1);
-    const closed = new Uint8Array(count);
-    const start = indexOf(from.x, from.y, size);
-    const goal = indexOf(to.x, to.y, size);
-    best[start] = 0;
-    estimate[start] = heuristic(from, to);
-    const open = [];
-    heapPush(open, start, estimate);
+    const o = n * n;
+    const a = new Int32Array(o).fill(-1);
+    const u = new Int32Array(o).fill(-1);
+    const l = new Int32Array(o).fill(-1);
+    const S = new Uint8Array(o);
+    const b = w(r.x, r.y, n);
+    const v = w(t.x, t.y, n);
+    a[b] = 0;
+    u[b] = C(r, t);
+    const x = [];
+    B(x, b, u);
     while (true) {
-      const current = heapPop(open, estimate);
-      if (current === void 0) {
+      const _ = re(x, u);
+      if (_ === void 0) {
         return null;
       }
-      if (current === goal) {
+      if (_ === v) {
         break;
       }
-      if (closed[current] === 1) {
+      if (S[_] === 1) {
         continue;
       }
-      closed[current] = 1;
-      const cx = current % size;
-      const cy = Math.floor(current / size);
-      for (const [dx, dy] of DIRECTIONS) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (!passable(terrain, size, nx, ny)) {
+      S[_] = 1;
+      const Q = _ % n;
+      const X = Math.floor(_ / n);
+      for (const [Z, $] of ne) {
+        const V = Q + Z;
+        const U = X + $;
+        if (!h(e, n, V, U)) {
           continue;
         }
-        const next = indexOf(nx, ny, size);
-        if (closed[next] === 1) {
+        const E = w(V, U, n);
+        if (S[E] === 1) {
           continue;
         }
-        const tentative = best[current] + STEP;
-        if (best[next] === -1 || tentative < best[next]) {
-          best[next] = tentative;
-          parent[next] = current;
-          estimate[next] = tentative + heuristic({ x: nx, y: ny }, to);
-          heapPush(open, next, estimate);
+        const D = a[_] + z;
+        if (a[E] === -1 || D < a[E]) {
+          a[E] = D;
+          l[E] = _;
+          u[E] = D + C({ x: V, y: U }, t);
+          B(x, E, u);
         }
       }
     }
-    const path = [];
-    let node = goal;
-    while (node !== -1) {
-      path.push({ x: node % size, y: Math.floor(node / size) });
-      node = parent[node];
+    const g = [];
+    let N = v;
+    while (N !== -1) {
+      g.push({ x: N % n, y: Math.floor(N / n) });
+      N = l[N];
     }
-    return path.reverse();
+    return g.reverse();
   };
 
   // packages/engine/src/world/state.ts
-  var UNIT_TYPES = ["worker", "melee", "ranged", "cavalry"];
-  var isUnitType = (value) => UNIT_TYPES.includes(value);
+  var te = ["worker", "melee", "ranged", "cavalry"];
+  var M = (e) => te.includes(e);
 
   // packages/engine/src/processor/intent-verdicts.ts
-  var INTENT_ERR_CODES = [
+  var F = [
     "ERR_NOT_ENOUGH_RESOURCES",
     "ERR_INVALID_UNIT",
     "ERR_NOT_OWNER",
@@ -136,282 +136,411 @@
     "ERR_INVALID_SITE",
     "ERR_BAD_ARGS"
   ];
-  var OK = { ok: true };
-  var SILENT = { ok: false, code: null };
-  var fail = (code) => ({ ok: false, code });
-  var unitById = (view, id) => view.units.find((unit) => unit.id === id);
-  var siteById = (view, id) => view.sites.find((site) => site.id === id);
-  var playerOf = (view, seat2) => view.players.find((player) => player.index === seat2);
-  var costOf = (ruleset, unitType) => ruleset.statsOf(unitType).cost;
-  var chebyshev = (left, right) => Math.max(Math.abs(left.x - right.x), Math.abs(left.y - right.y));
-  var canHarvest = (unit) => unit.type === "worker";
-  var inBounds = (view, x, y) => x >= 0 && y >= 0 && x < view.size && y < view.size;
-  var isWall = (view, x, y) => view.terrain[y]?.[x] === true;
-  var moveTargetOf = (unit, intent) => {
-    if (intent.kind === "moveTo") {
-      return { x: intent.x, y: intent.y };
+  var c = { ok: true };
+  var oe = { ok: false, code: null };
+  var i = (e) => ({ ok: false, code: e });
+  var m = (e, n) => e.units.find((r) => r.id === n);
+  var W = (e, n) => e.sites.find((r) => r.id === n);
+  var ae = (e, n) => e.players.find((r) => r.index === n);
+  var ie = (e, n) => e.statsOf(n).cost;
+  var k = (e, n) => Math.max(Math.abs(e.x - n.x), Math.abs(e.y - n.y));
+  var Re = (e) => e.type === "worker";
+  var de = (e, n, r) => n >= 0 && r >= 0 && n < e.size && r < e.size;
+  var se = (e, n, r) => e.terrain[r]?.[n] === true;
+  var le = (e, n) => {
+    if (n.kind === "moveTo") {
+      return { x: n.x, y: n.y };
     }
-    if (intent.dx === 0 && intent.dy === 0) {
+    if (n.dx === 0 && n.dy === 0) {
       return null;
     }
-    return { x: unit.x + intent.dx, y: unit.y + intent.dy };
+    return { x: e.x + n.dx, y: e.y + n.dy };
   };
-  var nearestFriendlyResourceSite = (view, seat2, unit, ruleset) => {
-    const range = ruleset.statsOf(unit.type).range;
-    for (const site of view.sites) {
-      if (site.kind !== "resource" || site.owner !== seat2) {
+  var ue = (e, n, r, t) => {
+    const o = t.statsOf(r.type).range;
+    for (const a of e.sites) {
+      if (a.kind !== "resource" || a.owner !== n) {
         continue;
       }
-      if ((site.remaining ?? 0) <= 0) {
+      if ((a.remaining ?? 0) <= 0) {
         continue;
       }
-      if (chebyshev(unit, site) <= range) {
-        return site;
+      if (k(r, a) <= o) {
+        return a;
       }
     }
     return void 0;
   };
-  var nearestFriendlyBaseSite = (view, seat2, unit, ruleset) => {
-    const range = ruleset.statsOf(unit.type).range;
-    for (const site of view.sites) {
-      if (site.kind !== "base" || site.owner !== seat2) {
+  var _e = (e, n, r, t) => {
+    const o = t.statsOf(r.type).range;
+    for (const a of e.sites) {
+      if (a.kind !== "base" || a.owner !== n) {
         continue;
       }
-      if (chebyshev(unit, site) <= range) {
-        return site;
+      if (k(r, a) <= o) {
+        return a;
       }
     }
     return void 0;
   };
-  var moveVerdict = (view, seat2, intent) => {
-    const unit = unitById(view, intent.unitId);
-    if (unit === void 0) {
-      return fail("ERR_INVALID_UNIT");
+  var L = (e, n, r) => {
+    const t = m(e, r.unitId);
+    if (t === void 0) {
+      return i("ERR_INVALID_UNIT");
     }
-    if (unit.owner !== seat2) {
-      return fail("ERR_NOT_OWNER");
+    if (t.owner !== n) {
+      return i("ERR_NOT_OWNER");
     }
-    if (intent.kind === "move" && (Math.abs(intent.dx) > 1 || Math.abs(intent.dy) > 1)) {
-      return fail("ERR_BAD_ARGS");
+    if (r.kind === "move" && (Math.abs(r.dx) > 1 || Math.abs(r.dy) > 1)) {
+      return i("ERR_BAD_ARGS");
     }
-    const target = moveTargetOf(unit, intent);
-    if (target === null) {
-      return fail("ERR_BAD_ARGS");
+    const o = le(t, r);
+    if (o === null) {
+      return i("ERR_BAD_ARGS");
     }
-    if (!inBounds(view, target.x, target.y) || isWall(view, target.x, target.y)) {
-      return fail("ERR_INVALID_TARGET");
+    if (!de(e, o.x, o.y) || se(e, o.x, o.y)) {
+      return i("ERR_INVALID_TARGET");
     }
-    return OK;
+    return c;
   };
-  var attackVerdict = (view, seat2, rules2, intent) => {
-    const attacker = unitById(view, intent.unitId);
-    if (attacker === void 0) {
-      return fail("ERR_INVALID_UNIT");
+  var j = (e, n, r, t) => {
+    const o = m(e, t.unitId);
+    if (o === void 0) {
+      return i("ERR_INVALID_UNIT");
     }
-    if (attacker.owner !== seat2) {
-      return fail("ERR_NOT_OWNER");
+    if (o.owner !== n) {
+      return i("ERR_NOT_OWNER");
     }
-    if (rules2 !== null && rules2.statsOf(attacker.type).damage <= 0) {
-      return fail("ERR_INVALID_TARGET");
+    if (r !== null && r.statsOf(o.type).damage <= 0) {
+      return i("ERR_INVALID_TARGET");
     }
-    if (siteById(view, intent.targetId) !== void 0) {
-      return fail("ERR_INVALID_TARGET");
+    if (W(e, t.targetId) !== void 0) {
+      return i("ERR_INVALID_TARGET");
     }
-    const target = unitById(view, intent.targetId);
-    if (target === void 0) {
-      return fail("ERR_INVALID_UNIT");
+    const a = m(e, t.targetId);
+    if (a === void 0) {
+      return i("ERR_INVALID_UNIT");
     }
-    if (target.owner === seat2) {
-      return fail("ERR_INVALID_TARGET");
+    if (a.owner === n) {
+      return i("ERR_INVALID_TARGET");
     }
-    if (rules2 !== null && chebyshev(attacker, target) > rules2.statsOf(attacker.type).range) {
-      return fail("ERR_OUT_OF_RANGE");
+    if (r !== null && k(o, a) > r.statsOf(o.type).range) {
+      return i("ERR_OUT_OF_RANGE");
     }
-    return OK;
+    return c;
   };
-  var harvestVerdict = (view, seat2, rules2, intent) => {
-    const unit = unitById(view, intent.unitId);
-    if (unit === void 0) {
-      return fail("ERR_INVALID_UNIT");
+  var K = (e, n, r, t) => {
+    const o = m(e, t.unitId);
+    if (o === void 0) {
+      return i("ERR_INVALID_UNIT");
     }
-    if (unit.owner !== seat2) {
-      return fail("ERR_NOT_OWNER");
+    if (o.owner !== n) {
+      return i("ERR_NOT_OWNER");
     }
-    if (!canHarvest(unit)) {
-      return fail("ERR_INVALID_UNIT");
+    if (!Re(o)) {
+      return i("ERR_INVALID_UNIT");
     }
-    if (rules2 !== null && unit.carrying >= rules2.raw.carryLimit) {
-      return fail("ERR_INVALID_TARGET");
+    if (r !== null && o.carrying >= r.raw.carryLimit) {
+      return i("ERR_INVALID_TARGET");
     }
-    if (rules2 === null) {
-      return OK;
+    if (r === null) {
+      return c;
     }
-    if (nearestFriendlyResourceSite(view, seat2, unit, rules2) === void 0) {
-      return fail("ERR_INVALID_SITE");
+    if (ue(e, n, o, r) === void 0) {
+      return i("ERR_INVALID_SITE");
     }
-    return OK;
+    return c;
   };
-  var transferVerdict = (view, seat2, rules2, intent) => {
-    const unit = unitById(view, intent.unitId);
-    if (unit === void 0) {
-      return fail("ERR_INVALID_UNIT");
+  var Y = (e, n, r, t) => {
+    const o = m(e, t.unitId);
+    if (o === void 0) {
+      return i("ERR_INVALID_UNIT");
     }
-    if (unit.owner !== seat2) {
-      return fail("ERR_NOT_OWNER");
+    if (o.owner !== n) {
+      return i("ERR_NOT_OWNER");
     }
-    if (unit.carrying <= 0) {
-      return fail("ERR_INVALID_TARGET");
+    if (o.carrying <= 0) {
+      return i("ERR_INVALID_TARGET");
     }
-    if (rules2 !== null && nearestFriendlyBaseSite(view, seat2, unit, rules2) === void 0) {
-      return fail("ERR_INVALID_SITE");
+    if (r !== null && _e(e, n, o, r) === void 0) {
+      return i("ERR_INVALID_SITE");
     }
-    return OK;
+    return c;
   };
-  var spawnVerdict = (view, seat2, rules2, intent) => {
-    const site = siteById(view, intent.baseId);
-    if (site === void 0) {
-      return fail("ERR_INVALID_SITE");
+  var q = (e, n, r, t) => {
+    const o = W(e, t.baseId);
+    if (o === void 0) {
+      return i("ERR_INVALID_SITE");
     }
-    if (site.kind !== "base") {
-      return fail("ERR_INVALID_SITE");
+    if (o.kind !== "base") {
+      return i("ERR_INVALID_SITE");
     }
-    if (site.owner !== seat2) {
-      return fail("ERR_NOT_OWNER");
+    if (o.owner !== n) {
+      return i("ERR_NOT_OWNER");
     }
-    const player = playerOf(view, seat2);
-    if (player === void 0) {
-      return fail("ERR_INVALID_SITE");
+    const a = ae(e, n);
+    if (a === void 0) {
+      return i("ERR_INVALID_SITE");
     }
-    if (rules2 !== null && player.resources < costOf(rules2, intent.unitType)) {
-      return fail("ERR_NOT_ENOUGH_RESOURCES");
+    if (r !== null && a.resources < ie(r, t.unitType)) {
+      return i("ERR_NOT_ENOUGH_RESOURCES");
     }
-    if (site.producing !== null) {
-      return SILENT;
+    if (o.producing !== null) {
+      return oe;
     }
-    return OK;
+    return c;
   };
 
   // packages/engine/src/sandbox-runtime/index.ts
-  var guest = globalThis;
-  var setup = guest["__setSnapshot"];
-  var seat = setup?.seat ?? 0;
-  var injectedRuleset = setup?.ruleset;
-  var rules = injectedRuleset === void 0 ? null : { raw: injectedRuleset, statsOf: (unitType) => injectedRuleset[unitType] };
-  var snapshot = null;
-  var pending = [];
-  var apiCalls = 0;
-  var EMPTY = { tick: -1, size: 0, terrain: [], players: [], units: [], sites: [] };
-  var world = () => snapshot ?? EMPTY;
-  guest["__setSnapshot"] = (next) => {
-    snapshot = next;
-    pending = [];
-    apiCalls = 0;
+  var R = globalThis;
+  var J = R["__setSnapshot"];
+  var I = J?.seat ?? 0;
+  var P = J?.ruleset;
+  var O = P === void 0 ? null : { raw: P, statsOf: (e) => P[e] };
+  var d = null;
+  var A = [];
+  var s = 0;
+  var y = {
+    move: 0,
+    moveTo: 0,
+    attack: 0,
+    harvest: 0,
+    transfer: 0,
+    spawnUnit: 0
   };
-  guest["__drainIntents"] = () => {
-    const drained = pending;
-    pending = [];
-    return { intents: drained, apiCalls };
+  var f = {
+    move: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0
+    },
+    moveTo: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0
+    },
+    attack: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0
+    },
+    harvest: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0
+    },
+    transfer: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0
+    },
+    spawnUnit: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0
+    }
   };
-  guest.getTick = () => {
-    apiCalls += 1;
-    return snapshot === null ? -1 : snapshot.tick;
+  var ye = { tick: -1, size: 0, terrain: [], players: [], units: [], sites: [] };
+  var T = () => d ?? ye;
+  R["__setSnapshot"] = (e) => {
+    d = e;
+    A = [];
+    s = 0;
+    y = { move: 0, moveTo: 0, attack: 0, harvest: 0, transfer: 0, spawnUnit: 0 };
+    f = {
+      move: {
+        ERR_NOT_ENOUGH_RESOURCES: 0,
+        ERR_INVALID_UNIT: 0,
+        ERR_NOT_OWNER: 0,
+        ERR_OUT_OF_RANGE: 0,
+        ERR_INVALID_TARGET: 0,
+        ERR_INVALID_SITE: 0,
+        ERR_BAD_ARGS: 0
+      },
+      moveTo: {
+        ERR_NOT_ENOUGH_RESOURCES: 0,
+        ERR_INVALID_UNIT: 0,
+        ERR_NOT_OWNER: 0,
+        ERR_OUT_OF_RANGE: 0,
+        ERR_INVALID_TARGET: 0,
+        ERR_INVALID_SITE: 0,
+        ERR_BAD_ARGS: 0
+      },
+      attack: {
+        ERR_NOT_ENOUGH_RESOURCES: 0,
+        ERR_INVALID_UNIT: 0,
+        ERR_NOT_OWNER: 0,
+        ERR_OUT_OF_RANGE: 0,
+        ERR_INVALID_TARGET: 0,
+        ERR_INVALID_SITE: 0,
+        ERR_BAD_ARGS: 0
+      },
+      harvest: {
+        ERR_NOT_ENOUGH_RESOURCES: 0,
+        ERR_INVALID_UNIT: 0,
+        ERR_NOT_OWNER: 0,
+        ERR_OUT_OF_RANGE: 0,
+        ERR_INVALID_TARGET: 0,
+        ERR_INVALID_SITE: 0,
+        ERR_BAD_ARGS: 0
+      },
+      transfer: {
+        ERR_NOT_ENOUGH_RESOURCES: 0,
+        ERR_INVALID_UNIT: 0,
+        ERR_NOT_OWNER: 0,
+        ERR_OUT_OF_RANGE: 0,
+        ERR_INVALID_TARGET: 0,
+        ERR_INVALID_SITE: 0,
+        ERR_BAD_ARGS: 0
+      },
+      spawnUnit: {
+        ERR_NOT_ENOUGH_RESOURCES: 0,
+        ERR_INVALID_UNIT: 0,
+        ERR_NOT_OWNER: 0,
+        ERR_OUT_OF_RANGE: 0,
+        ERR_INVALID_TARGET: 0,
+        ERR_INVALID_SITE: 0,
+        ERR_BAD_ARGS: 0
+      }
+    };
   };
-  guest.getObjectById = (id) => {
-    apiCalls += 1;
-    if (snapshot === null) {
+  R["__drainIntents"] = () => {
+    const e = A;
+    A = [];
+    return { intents: e, apiCalls: s, actionFacts: { calls: y, errors: f } };
+  };
+  R.getTick = () => {
+    s += 1;
+    return d === null ? -1 : d.tick;
+  };
+  R.getObjectById = (e) => {
+    s += 1;
+    if (d === null) {
       return null;
     }
-    const unit = snapshot.units.find((candidate) => candidate.id === id);
-    if (unit !== void 0) {
-      return unit;
+    const n = d.units.find((r) => r.id === e);
+    if (n !== void 0) {
+      return n;
     }
-    return snapshot.sites.find((candidate) => candidate.id === id) ?? null;
+    return d.sites.find((r) => r.id === e) ?? null;
   };
-  guest.getObjectsByType = (kind, filter) => {
-    apiCalls += 1;
-    if (snapshot === null) {
+  R.getObjectsByType = (e, n) => {
+    s += 1;
+    if (d === null) {
       return [];
     }
-    if (kind === "unit") {
-      return snapshot.units.filter(
-        (unit) => (filter?.owner === void 0 || unit.owner === filter.owner) && (filter?.type === void 0 || unit.type === filter.type)
+    if (e === "unit") {
+      return d.units.filter(
+        (r) => (n?.owner === void 0 || r.owner === n.owner) && (n?.type === void 0 || r.type === n.type)
       );
     }
-    if (kind === "site") {
-      return snapshot.sites.filter(
-        (site) => (filter?.owner === void 0 || site.owner === filter.owner) && (filter?.kind === void 0 || site.kind === filter.kind)
+    if (e === "site") {
+      return d.sites.filter(
+        (r) => (n?.owner === void 0 || r.owner === n.owner) && (n?.kind === void 0 || r.kind === n.kind)
       );
     }
-    if (kind === "player") {
-      const players = snapshot.players.filter(
-        (player) => filter?.owner === void 0 || player.index === filter.owner
+    if (e === "player") {
+      const r = d.players.filter(
+        (t) => n?.owner === void 0 || t.index === n.owner
       );
-      return players;
+      return r;
     }
     return [];
   };
-  guest.getRange = (ax, ay, bx, by) => {
-    apiCalls += 1;
-    return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
+  R.getRange = (e, n, r, t) => {
+    s += 1;
+    return Math.max(Math.abs(e - r), Math.abs(n - t));
   };
-  guest.getTerrainAt = (x, y) => {
-    apiCalls += 1;
-    if (snapshot === null || x < 0 || y < 0 || x >= snapshot.size || y >= snapshot.size) {
+  R.getTerrainAt = (e, n) => {
+    s += 1;
+    if (d === null || e < 0 || n < 0 || e >= d.size || n >= d.size) {
       return "out";
     }
-    return snapshot.terrain[y]?.[x] === true ? "wall" : "plain";
+    return d.terrain[n]?.[e] === true ? "wall" : "plain";
   };
-  guest.findPath = (sx, sy, tx, ty) => {
-    apiCalls += 1;
-    if (snapshot === null) {
+  R.findPath = (e, n, r, t) => {
+    s += 1;
+    if (d === null) {
       return null;
     }
-    return findPath(snapshot.terrain, snapshot.size, { x: sx, y: sy }, { x: tx, y: ty });
+    return H(d.terrain, d.size, { x: e, y: n }, { x: r, y: t });
   };
-  var settle = (verdict, intent) => {
-    pending.push(intent);
-    if (verdict.ok || verdict.code === null) {
+  var p = (e, n) => {
+    A.push(n);
+    if (e.ok || e.code === null) {
       return void 0;
     }
-    return { code: verdict.code };
+    f[n.kind][e.code] += 1;
+    return { code: e.code };
   };
-  guest.move = (unitId, dx, dy) => {
-    apiCalls += 1;
-    const intent = { kind: "move", unitId, dx, dy };
-    return settle(moveVerdict(world(), seat, intent), intent);
+  R.move = (e, n, r) => {
+    s += 1;
+    y.move += 1;
+    const t = { kind: "move", unitId: e, dx: n, dy: r };
+    return p(L(T(), I, t), t);
   };
-  guest.moveTo = (unitId, x, y) => {
-    apiCalls += 1;
-    const intent = { kind: "moveTo", unitId, x, y };
-    return settle(moveVerdict(world(), seat, intent), intent);
+  R.moveTo = (e, n, r) => {
+    s += 1;
+    y.moveTo += 1;
+    const t = { kind: "moveTo", unitId: e, x: n, y: r };
+    return p(L(T(), I, t), t);
   };
-  guest.attack = (unitId, targetId) => {
-    apiCalls += 1;
-    const intent = { kind: "attack", unitId, targetId };
-    return settle(attackVerdict(world(), seat, rules, intent), intent);
+  R.attack = (e, n) => {
+    s += 1;
+    y.attack += 1;
+    const r = { kind: "attack", unitId: e, targetId: n };
+    return p(j(T(), I, O, r), r);
   };
-  guest.harvest = (unitId, siteId) => {
-    apiCalls += 1;
-    const intent = { kind: "harvest", unitId, siteId };
-    return settle(harvestVerdict(world(), seat, rules, intent), intent);
+  R.harvest = (e, n) => {
+    s += 1;
+    y.harvest += 1;
+    const r = { kind: "harvest", unitId: e, siteId: n };
+    return p(K(T(), I, O, r), r);
   };
-  guest.transfer = (unitId) => {
-    apiCalls += 1;
-    const intent = { kind: "transfer", unitId };
-    return settle(transferVerdict(world(), seat, rules, intent), intent);
+  R.transfer = (e) => {
+    s += 1;
+    y.transfer += 1;
+    const n = { kind: "transfer", unitId: e };
+    return p(Y(T(), I, O, n), n);
   };
-  guest.spawnUnit = (baseId, unitType) => {
-    apiCalls += 1;
-    if (!isUnitType(unitType)) {
+  R.spawnUnit = (e, n) => {
+    s += 1;
+    y.spawnUnit += 1;
+    if (!M(n)) {
+      f.spawnUnit.ERR_BAD_ARGS += 1;
       return { code: "ERR_BAD_ARGS" };
     }
-    const intent = { kind: "spawnUnit", baseId, unitType };
-    return settle(spawnVerdict(world(), seat, rules, intent), intent);
+    const r = { kind: "spawnUnit", baseId: e, unitType: n };
+    return p(q(T(), I, O, r), r);
   };
-  guest.getMyIndex = () => seat;
-  guest.isError = (result) => result !== null && typeof result === "object";
-  guest.errCode = (result) => result.code;
-  for (const code of INTENT_ERR_CODES) {
-    guest[code] = code;
+  R.getMyIndex = () => I;
+  R.isError = (e) => e !== null && typeof e === "object";
+  R.errCode = (e) => e.code;
+  for (const e of F) {
+    R[e] = e;
   }
 })();

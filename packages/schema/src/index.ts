@@ -90,3 +90,11 @@ export * from "./map.js";
 export * from "./pending.js";
 export * from "./ruleset.js";
 export * from "./ruleset-keys.js";
+
+// 冻结期试跑的逐对局观测与文件前缀，gen 回喂与报告读取共享同一真源。
+export * from "./trial-observation.js";
+export * from "./trial-plan.js";
+
+export * from "./selection-plan.js";
+
+export * from "./usage-evidence.js";

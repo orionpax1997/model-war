@@ -46,22 +46,22 @@ it("chat-completions 响应:取 choices[0].message.content / finish_reason / usa
     choices: [{ message: { content: "脚本正文" }, finish_reason: "length" }],
     usage: { total_tokens: 11 },
   });
-  expect(response).toEqual({
+  expect(response).toMatchObject({
     text: "脚本正文",
     finishReason: "length",
     usage: { total_tokens: 11 },
   });
 });
 
-it("chat-completions 响应缺字段时不崩,退到安全缺省", () => {
-  expect(endpointSpec("chat-completions").parseResponse({})).toEqual({
+it("chat-completions 缺停止字段时保持未知，不伪造 stop", () => {
+  expect(endpointSpec("chat-completions").parseResponse({})).toMatchObject({
     text: "",
-    finishReason: "stop",
+    finishReason: "unknown",
     usage: undefined,
   });
-  expect(endpointSpec("chat-completions").parseResponse("not an object")).toEqual({
+  expect(endpointSpec("chat-completions").parseResponse("not an object")).toMatchObject({
     text: "",
-    finishReason: "stop",
+    finishReason: "unknown",
     usage: undefined,
   });
 });
@@ -107,17 +107,21 @@ it("messages 响应:content 里只拼 type=text 的块;stop_reason 归一", () =
     stop_reason: "max_tokens",
     usage: { output_tokens: 9 },
   });
-  expect(response).toEqual({ text: "abcd", finishReason: "length", usage: { output_tokens: 9 } });
+  expect(response).toMatchObject({
+    text: "abcd",
+    finishReason: "length",
+    usage: { output_tokens: 9 },
+  });
 });
 
-it("messages 响应:end_turn → stop,stop_sequence → stop,未知原因透传,缺 stop_reason → stop", () => {
+it("messages 响应:end_turn → stop,stop_sequence → stop,未知原因透传,缺 stop_reason → unknown", () => {
   const spec = endpointSpec("messages");
   const reason = (stopReason: string | undefined): string =>
     spec.parseResponse(stopReason === undefined ? {} : { stop_reason: stopReason }).finishReason;
   expect(reason("end_turn")).toBe("stop");
   expect(reason("stop_sequence")).toBe("stop");
   expect(reason("pause_turn")).toBe("pause_turn");
-  expect(reason(undefined)).toBe("stop");
+  expect(reason(undefined)).toBe("unknown");
 });
 
 it("responses 请求体:model + input(含 system);params 透传", () => {
@@ -150,7 +154,9 @@ it("responses 响应:拼 output 里 message 的 output_text;completed → stop;i
       ],
     },
   ];
-  expect(spec.parseResponse({ status: "completed", output, usage: { total_tokens: 3 } })).toEqual({
+  expect(
+    spec.parseResponse({ status: "completed", output, usage: { total_tokens: 3 } }),
+  ).toMatchObject({
     text: "part1part2",
     finishReason: "stop",
     usage: { total_tokens: 3 },
@@ -168,9 +174,9 @@ it("responses 响应:拼 output 里 message 的 output_text;completed → stop;i
   ).toBe("length");
 });
 
-// ── 流式能力:只有 chat-completions 声明;其余族缺省即非流式 ──────────────────────
+// ── 流式能力:chat-completions 与 messages 声明;responses 缺省即非流式 ─────────────
 
-// 只有 chat-completions 声明了流式能力;若改坏了这个前提,直接抛比把 `undefined` 当成功更能指出问题。
+// 声明了流式能力的族缺一个,直接抛比把 `undefined` 当成功更能指出问题。
 const requireStreaming = (family: ModelConfig["endpointFamily"]) => {
   const streaming = endpointSpec(family).streaming;
   if (streaming === undefined) {
@@ -179,9 +185,9 @@ const requireStreaming = (family: ModelConfig["endpointFamily"]) => {
   return streaming;
 };
 
-it("流式能力是可选字段:只有 chat-completions 声明,messages / responses 缺省即非流式", () => {
+it("流式能力是可选字段:chat-completions / messages 声明,responses 缺省即非流式", () => {
   expect(endpointSpec("chat-completions").streaming).toBeDefined();
-  expect(endpointSpec("messages").streaming).toBeUndefined();
+  expect(endpointSpec("messages").streaming).toBeDefined();
   expect(endpointSpec("responses").streaming).toBeUndefined();
 });
 
@@ -215,7 +221,7 @@ it("chat-completions 流累积器:只拼 delta.content,忽略 reasoning_content"
   accumulator.push({ choices: [{ delta: { content: "正文" }, finish_reason: null }] });
   accumulator.push({ choices: [{ delta: {}, finish_reason: "stop" }] });
 
-  expect(accumulator.result()).toEqual({
+  expect(accumulator.result()).toMatchObject({
     text: "脚本正文",
     finishReason: "stop",
     usage: undefined,
@@ -236,9 +242,9 @@ it("chat-completions 流累积器:usage 取最后一个非空帧,`usage:null` �
     },
   });
 
-  expect(accumulator.result()).toEqual({
+  expect(accumulator.result()).toMatchObject({
     text: "x",
-    finishReason: "stop",
+    finishReason: "unknown",
     usage: {
       prompt_tokens: 17800,
       completion_tokens: 900,
@@ -251,17 +257,112 @@ it("chat-completions 流累积器:finish_reason 取最后一个非空值(截断�
   const accumulator = requireStreaming("chat-completions").createAccumulator();
   accumulator.push({ choices: [{ delta: { content: "半截" }, finish_reason: null }] });
   accumulator.push({ choices: [{ delta: {}, finish_reason: "length" }] });
-  expect(accumulator.result()).toEqual({ text: "半截", finishReason: "length", usage: undefined });
+  expect(accumulator.result()).toMatchObject({
+    text: "半截",
+    finishReason: "length",
+    usage: undefined,
+  });
+});
+
+it("messages 流式请求体 = 非流式体 + stream:true;params 同名键压不过本层", () => {
+  const body = requireStreaming("messages").buildBody(
+    config("messages"),
+    [{ role: "user", content: "u" }],
+    { max_tokens: 512, stream: false },
+  );
+  expect(body).toEqual({
+    model: "vendor/model-x",
+    max_tokens: 512,
+    messages: [{ role: "user", content: "u" }],
+    stream: true,
+  });
+});
+
+it("messages 流累积器:只拼 text_delta,thinking_delta/签名不进正文;message_stop 收尾", () => {
+  const accumulator = requireStreaming("messages").createAccumulator();
+  expect(accumulator.done?.()).toBe(false);
+  accumulator.push({ type: "message_start", message: { usage: { input_tokens: 32 } } });
+  accumulator.push({ type: "content_block_start", index: 0, content_block: { type: "text" } });
+  accumulator.push({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "thinking_delta", thinking: "先想" },
+  });
+  accumulator.push({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "text_delta", text: "脚本" },
+  });
+  accumulator.push({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "text_delta", text: "正文" },
+  });
+  accumulator.push({
+    type: "message_delta",
+    delta: { stop_reason: "end_turn" },
+    usage: { output_tokens: 2 },
+  });
+  expect(accumulator.done?.()).toBe(false);
+  accumulator.push({ type: "message_stop" });
+  expect(accumulator.done?.()).toBe(true);
+  expect(accumulator.result()).toMatchObject({
+    text: "脚本正文",
+    finishReason: "stop",
+    usage: { input_tokens: 32, output_tokens: 2 },
+    stopDetails: { reason: "end_turn" },
+  });
+});
+
+it("messages 流累积器:max_tokens → length;空累积器与非流式缺字段同一缺省", () => {
+  const accumulator = requireStreaming("messages").createAccumulator();
+  accumulator.push({ type: "message_delta", delta: { stop_reason: "max_tokens" }, usage: {} });
+  accumulator.push({ type: "message_stop" });
+  expect(accumulator.result()).toMatchObject({ text: "", finishReason: "length" });
+  expect(requireStreaming("messages").createAccumulator().result()).toMatchObject({
+    text: "",
+    finishReason: "unknown",
+    usage: undefined,
+  });
 });
 
 it("chat-completions 流累积器:一帧都没喂 / 空帧 → 与非流式缺字段时同一缺省", () => {
-  expect(requireStreaming("chat-completions").createAccumulator().result()).toEqual({
+  expect(requireStreaming("chat-completions").createAccumulator().result()).toMatchObject({
     text: "",
-    finishReason: "stop",
+    finishReason: "unknown",
     usage: undefined,
   });
   const accumulator = requireStreaming("chat-completions").createAccumulator();
   accumulator.push({ choices: [{ delta: {}, finish_reason: "" }] });
   accumulator.push("not an object");
-  expect(accumulator.result()).toEqual({ text: "", finishReason: "stop", usage: undefined });
+  expect(accumulator.result()).toMatchObject({
+    text: "",
+    finishReason: "unknown",
+    usage: undefined,
+  });
+});
+
+it.each([
+  [
+    "chat-completions",
+    { choices: [{ finish_reason: "content_filter" }] },
+    "content_filter",
+    { reason: "content_filter" },
+  ],
+  ["messages", { stop_reason: "max_tokens" }, "length", { reason: "max_tokens" }],
+  ["messages", { stop_reason: "refusal" }, "refusal", { reason: "refusal" }],
+  [
+    "responses",
+    { status: "incomplete", incomplete_details: { reason: "content_filter" } },
+    "incomplete",
+    { status: "incomplete", reason: "content_filter" },
+  ],
+  ["responses", { status: "failed" }, "failed", { status: "failed" }],
+  ["responses", {}, "unknown", {}],
+] as const)("停止证据保持原协议值：%s %j", (family, body, finishReason, stopDetails) => {
+  expect(endpointSpec(family).parseResponse(body)).toMatchObject({
+    finishReason,
+    stopDetails,
+    usage: undefined,
+  });
 });

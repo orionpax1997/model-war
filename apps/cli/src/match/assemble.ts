@@ -32,7 +32,7 @@ import {
   type JsonValue,
   type MapDefinition,
   type MatchInput,
-  type ObservationLine,
+  type MatchObservationLine,
   type ReplayPlayerRef,
   type ReplayResultLine,
   type ReplaySeat,
@@ -73,6 +73,7 @@ type ArchiveRead = {
   /** `script.js` 的源码(真沙箱的执行体);缺档时 `undefined`。 */
   readonly scriptSource: string | undefined;
   readonly scriptSha256: string | undefined;
+  readonly sourceSha256: string | undefined;
   readonly metaSha256: string | undefined;
 };
 
@@ -99,12 +100,14 @@ const readArchiveMeta = (archiveDir: string): ArchiveRead => {
   };
   const metaBytes = read("meta.json");
   const scriptBytes = read("script.js");
+  const sourceBytes = read("script.ts");
   return {
     present,
     meta:
       metaBytes === undefined ? undefined : (JSON.parse(metaBytes.toString("utf8")) as JsonValue),
     scriptSource: scriptBytes?.toString("utf8"),
     scriptSha256: scriptBytes === undefined ? undefined : sha256(scriptBytes),
+    sourceSha256: sourceBytes === undefined ? undefined : sha256(sourceBytes),
     metaSha256: metaBytes === undefined ? undefined : sha256(metaBytes),
   };
 };
@@ -297,6 +300,7 @@ export const assemble = (inputPath: string, root: string): AssembleResult => {
     const metaValidation = validateArchiveMeta(read.meta, {
       filesPresent: read.present,
       measuredScriptSha256: read.scriptSha256 ?? null,
+      measuredSourceSha256: read.sourceSha256 ?? null,
       measuredSandboxRuntimeHash: measureSandboxRuntimeHash(),
       loadedRulesetVersion: RULESET_VERSION,
     });
@@ -359,8 +363,8 @@ export type ExecutedRun =
       readonly lines: readonly string[];
       readonly result: ReplayResultLine;
       readonly tickCount: number;
-      /** 观测行,已按「每玩家每类首条」去重(D3:`observations.jsonl` 的内容)。 */
-      readonly observations: readonly ObservationLine[];
+      /** 软观测每座位每类首条；异常详情逐条保留，不去重。 */
+      readonly observations: readonly MatchObservationLine[];
     }
   | {
       /** 墙钟硬超时:整场作废(不写回放、不写观测),由命令映射到退出码 3。 */
@@ -414,7 +418,7 @@ export const executeMatch = async (run: LoadedRun): Promise<ExecutedRun> => {
   );
   try {
     const lines: string[] = [];
-    // 观测出口**接好**(缺席静默丢弃):墙钟软限/内存压力两类从这里出来。
+    // 观测出口同时收软观测与逐次安全异常详情，不影响回放与状态。
     // 去重与投影(引擎载荷 → 观测行)交给纯函数 `observationLinesOf`(见那个文件头注)。
     const observations: ObservationInput[] = [];
     const outcome = runMatch({

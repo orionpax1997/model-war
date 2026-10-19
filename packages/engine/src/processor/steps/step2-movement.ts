@@ -155,7 +155,13 @@ export const step2Movement: Step = (context) => {
       item.change === null ? [] : [{ seat: item.seat, change: item.change }],
     );
     for (const change of winnersOf(state.tick, candidates)) {
+      const unit = context.actionEffects === undefined ? undefined : unitById(state, change.unitId);
       state = apply(state, ruleset.raw, change);
+      if (unit !== undefined && (unit.x !== change.x || unit.y !== change.y)) {
+        context.actionEffects?.record(
+          Object.freeze({ seat: unit.owner, kind: "movedSteps", amount: 1 }),
+        );
+      }
     }
   }
 

@@ -11,7 +11,9 @@
  * 测试文件可以读盘与引 esbuild(依赖门禁只管运行时代码):wasm 与 runtime bundle 都在这里现造。
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
@@ -817,7 +819,7 @@ it("loop() 抛异常:意图作废、产一条异常轨 tripped、无故障位,VM
     expect(first.fault, "抛异常不是硬超时,不该置故障位").toBeUndefined();
     expect(first.intents).toEqual([]);
     expect(first.observations).toEqual([
-      { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+      { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1, errorName: "Error" },
     ]);
     // 同一 handle 下一 tick 照常工作:`n` 已从 1 走到 2(记忆保留),意图正常交回。
     runner.setSnapshot(snapshotOf(1));
@@ -835,14 +837,26 @@ it("越权异常与 loop() 抛异常同轨:引用已删桥 / 调未定义 action
   expect(deletedBridge.fault).toBeUndefined();
   expect(deletedBridge.intents).toEqual([]);
   expect(deletedBridge.observations).toEqual([
-    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+    {
+      kind: "tripped",
+      track: UNCAUGHT_EXCEPTION_TRACK,
+      value: 1,
+      limit: 1,
+      errorName: "ReferenceError",
+    },
   ]);
   // 「调未定义的 action」同样是普通 ReferenceError,与上一条同轨。
   const undefinedAction = await drainOneTick("function loop() { fly(0, 1, 0); }");
   expect(undefinedAction.fault).toBeUndefined();
   expect(undefinedAction.intents).toEqual([]);
   expect(undefinedAction.observations).toEqual([
-    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+    {
+      kind: "tripped",
+      track: UNCAUGHT_EXCEPTION_TRACK,
+      value: 1,
+      limit: 1,
+      errorName: "ReferenceError",
+    },
   ]);
   // 「访问未暴露字段」:引擎的世界快照不挂在脚本全局上(脚本只能经查询函数读),裸引用该字段仍是
   // 一次普通 ReferenceError,同轨计入。
@@ -850,7 +864,13 @@ it("越权异常与 loop() 抛异常同轨:引用已删桥 / 调未定义 action
   expect(unexposedField.fault).toBeUndefined();
   expect(unexposedField.intents).toEqual([]);
   expect(unexposedField.observations).toEqual([
-    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+    {
+      kind: "tripped",
+      track: UNCAUGHT_EXCEPTION_TRACK,
+      value: 1,
+      limit: 1,
+      errorName: "ReferenceError",
+    },
   ]);
 });
 
@@ -868,7 +888,7 @@ it("loop() 抛异常中止本 tick:不与内存 / API 轨叠加(同 tick 只计�
   const output = await drainOneTick(script, { memoryTickCeiling: 1, apiCallTickLimit: 1 });
   expect(output.intents).toEqual([]);
   expect(output.observations).toEqual([
-    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1 },
+    { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1, errorName: "Error" },
   ]);
 });
 
@@ -1106,6 +1126,379 @@ it("撑内存的座位经步 0 累加 exceptionTicks(观测 → 唯一写入口)
       write: () => {},
     });
     expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([1, 0, 0, 0]);
+  } finally {
+    dispose();
+  }
+});
+
+it("诊断持久化：真实 TypeError 的 tick/seat/类别与安全类型经 JSONL 写盘读回保留", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: 'function loop() { throw new TypeError("SECRET-not-for-replay"); }',
+    seat: 2,
+  });
+  const dir = mkdtempSync(join(tmpdir(), "model-war-diagnostic-"));
+  try {
+    const idle = stubRunner(() => []);
+    const lines: string[] = [];
+    const records: string[] = [];
+    const result = processTick(
+      { ...makeState(), tick: 7 },
+      [idle, idle, runner, idle],
+      loadRuleset(RULESET),
+      { write: (line) => lines.push(line) },
+      { record: (record) => records.push(JSON.stringify(record)) },
+    );
+    const path = join(dir, "observations.jsonl");
+    writeFileSync(path, `${records.join("\n")}\n`);
+    const restored = readFileSync(path, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(restored).toEqual([
+      {
+        kind: "exception",
+        tick: 7,
+        seat: 2,
+        diagnostic: { category: "uncaught-exception", errorName: "TypeError" },
+      },
+    ]);
+    expect(readFileSync(path, "utf8")).not.toContain("SECRET-not-for-replay");
+    expect(JSON.parse(lines[0] ?? "null").events).toEqual([]);
+    expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([0, 0, 1, 0]);
+    expect(result.state.players.every((player) => player.alive)).toBe(true);
+  } finally {
+    dispose();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("诊断持久化：真实宿主栈溢出保留 RangeError 类型，仍只计一次异常", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    seat: 0,
+    scriptCode: "function loop() { function recur() { recur(); } recur(); }",
+  });
+  try {
+    const records: string[] = [];
+    const idle = stubRunner(() => []);
+    const result = processTick(
+      makeState(),
+      [runner, idle, idle, idle],
+      loadRuleset(RULESET),
+      { write: () => {} },
+      { record: (record) => records.push(JSON.stringify(record)) },
+    );
+    expect(records.map((line) => JSON.parse(line))).toEqual([
+      {
+        kind: "exception",
+        tick: 0,
+        seat: 0,
+        diagnostic: { category: "uncaught-exception", errorName: "RangeError" },
+      },
+    ]);
+    expect(result.state.players[0]?.exceptionTicks).toBe(1);
+  } finally {
+    dispose();
+  }
+});
+
+it("诊断持久化：真实硬超时作废该 tick，不写诊断也不累加玩家异常", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    seat: 0,
+    wallClockHardTimeout: 1,
+    scriptCode: "function loop() { while (true) {} }",
+  });
+  try {
+    const records: string[] = [];
+    const lines: string[] = [];
+    const idle = stubRunner(() => []);
+    const result = processTick(
+      makeState(),
+      [runner, idle, idle, idle],
+      loadRuleset(RULESET),
+      { write: (line) => lines.push(line) },
+      { record: (record) => records.push(JSON.stringify(record)) },
+    );
+    expect(result.fault).toBe("uncertain-timeout");
+    expect(result.state.players.map((player) => player.exceptionTicks)).toEqual([0, 0, 0, 0]);
+    expect(records).toEqual([]);
+    expect(lines).toEqual([]);
+  } finally {
+    dispose();
+  }
+});
+
+// 正式行动事实：只经已固定的 openSandbox/createQuickJsRunner 载荷观察。
+const NO_ACTION_ERRORS = {
+  ERR_NOT_ENOUGH_RESOURCES: 0,
+  ERR_INVALID_UNIT: 0,
+  ERR_NOT_OWNER: 0,
+  ERR_OUT_OF_RANGE: 0,
+  ERR_INVALID_TARGET: 0,
+  ERR_INVALID_SITE: 0,
+  ERR_BAD_ARGS: 0,
+};
+
+const NO_ACTION_FACTS = {
+  calls: { move: 0, moveTo: 0, attack: 0, harvest: 0, transfer: 0, spawnUnit: 0 },
+  errors: {
+    move: NO_ACTION_ERRORS,
+    moveTo: NO_ACTION_ERRORS,
+    attack: NO_ACTION_ERRORS,
+    harvest: NO_ACTION_ERRORS,
+    transfer: NO_ACTION_ERRORS,
+    spawnUnit: NO_ACTION_ERRORS,
+  },
+};
+
+it("行动事实：忽略公开错误仍按动作计数，非法兵种早退也经原 drain 返回", async () => {
+  const session = await openSandbox({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: `function loop() {
+      move(999, 1, 0);
+      moveTo(999, 0, 0);
+      attack(999, 998);
+      harvest(999, 998);
+      transfer(999);
+      spawnUnit(999, "not-a-unit");
+      spawnUnit(999, "worker");
+    }`,
+    seat: 0,
+  });
+  try {
+    session.setSnapshot(snapshotOf(0));
+    session.runLoop();
+    expect(session.drainIntents()).toMatchObject({
+      apiCalls: 7,
+      actionFacts: {
+        calls: { move: 1, moveTo: 1, attack: 1, harvest: 1, transfer: 1, spawnUnit: 2 },
+        errors: {
+          move: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 },
+          moveTo: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 },
+          attack: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 },
+          harvest: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 },
+          transfer: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 },
+          spawnUnit: { ...NO_ACTION_ERRORS, ERR_BAD_ARGS: 1, ERR_INVALID_SITE: 1 },
+        },
+      },
+    });
+  } finally {
+    session.dispose();
+  }
+});
+
+it("行动事实：API 超限仍交回已采计数，但本 tick 意图作废", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: "function loop() { move(999, 1, 0); getTick(); }",
+    seat: 0,
+    apiCallTickLimit: 2,
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    expect(runner.drainIntents()).toEqual({
+      intents: [],
+      observations: [{ kind: "tripped", track: API_CALL_TRACK, value: 2, limit: 2 }],
+      actionFacts: {
+        calls: { ...NO_ACTION_FACTS.calls, move: 1 },
+        errors: { ...NO_ACTION_FACTS.errors, move: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 } },
+      },
+    });
+  } finally {
+    dispose();
+  }
+});
+
+it("行动事实：异步 job 属于本 tick，下一快照清零且旧载荷保持独立", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: `function loop() {
+      if (getTick() === 0) {
+        Promise.resolve().then(() => {
+          move(999, 1, 0);
+          return Promise.resolve().then(() => spawnUnit(999, "invalid"));
+        });
+      } else if (getTick() === 2) {
+        move(999, 1, 0);
+      }
+    }`,
+    seat: 0,
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    const first = runner.drainIntents();
+    runner.setSnapshot(snapshotOf(1));
+    expect(runner.drainIntents().actionFacts).toEqual(NO_ACTION_FACTS);
+    runner.setSnapshot(snapshotOf(2));
+    expect(runner.drainIntents().actionFacts).toEqual({
+      calls: { ...NO_ACTION_FACTS.calls, move: 1 },
+      errors: { ...NO_ACTION_FACTS.errors, move: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 } },
+    });
+    expect(first.actionFacts).toEqual({
+      calls: { ...NO_ACTION_FACTS.calls, move: 1, spawnUnit: 1 },
+      errors: {
+        ...NO_ACTION_FACTS.errors,
+        move: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 },
+        spawnUnit: { ...NO_ACTION_ERRORS, ERR_BAD_ARGS: 1 },
+      },
+    });
+  } finally {
+    dispose();
+  }
+});
+
+it.each([
+  { stop: 'throw new Error("uncaught");', track: UNCAUGHT_EXCEPTION_TRACK, limit: undefined },
+  { stop: "while (true) {}", track: EVENT_TRACK, limit: INTERRUPT_EVENT_GRANULARITY },
+])("行动事实：$track 截停缺失 facts，下一 tick 不残留部分计数", async ({ stop, track, limit }) => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    scriptCode: `function loop() { if (getTick() === 0) { move(999, 1, 0); ${stop} } }`,
+    seat: 0,
+    ...(limit === undefined ? {} : { eventTickLimit: limit }),
+  });
+  try {
+    runner.setSnapshot(snapshotOf(0));
+    const stopped = runner.drainIntents();
+    expect(stopped).not.toHaveProperty("actionFacts");
+    expect(stopped.intents).toEqual([]);
+    expect(stopped.observations).toEqual([
+      {
+        kind: "tripped",
+        track,
+        value: limit ?? 1,
+        limit: limit ?? 1,
+        ...(track === UNCAUGHT_EXCEPTION_TRACK ? { errorName: "Error" } : {}),
+      },
+    ]);
+    runner.setSnapshot(snapshotOf(1));
+    expect(runner.drainIntents().actionFacts).toEqual(NO_ACTION_FACTS);
+  } finally {
+    dispose();
+  }
+});
+
+const actionSnapshot = (): Snapshot => ({
+  tick: 0,
+  size: 8,
+  terrain: plain(8),
+  players: [{ index: 0, resources: 0, alive: true, exceptionTicks: 0 }],
+  units: [
+    { id: 1, owner: 0, type: "worker", x: 1, y: 1, hp: 2, carrying: 0 },
+    { id: 2, owner: 0, type: "melee", x: 2, y: 1, hp: 12, carrying: 0 },
+    { id: 3, owner: 1, type: "melee", x: 7, y: 7, hp: 12, carrying: 0 },
+  ],
+  sites: [
+    {
+      id: 900,
+      kind: "base",
+      owner: 0,
+      x: 0,
+      y: 0,
+      progressOwner: -1,
+      progress: 0,
+      producing: null,
+    },
+  ],
+});
+
+it("行动事实：真实非法参数与规则拒绝记录公开错误，不依赖脚本检查返回值", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    ruleset: RULESET,
+    scriptCode: `function loop() {
+      move(1, 2, 0);
+      move(3, 1, 0);
+      moveTo(1, -1, 0);
+      attack(2, 3);
+      attack(2, 900);
+      harvest(1, 900);
+      transfer(1);
+      spawnUnit(900, "worker");
+    }`,
+    seat: 0,
+  });
+  try {
+    runner.setSnapshot(actionSnapshot());
+    expect(runner.drainIntents().actionFacts).toEqual({
+      calls: { move: 2, moveTo: 1, attack: 2, harvest: 1, transfer: 1, spawnUnit: 1 },
+      errors: {
+        move: { ...NO_ACTION_ERRORS, ERR_BAD_ARGS: 1, ERR_NOT_OWNER: 1 },
+        moveTo: { ...NO_ACTION_ERRORS, ERR_INVALID_TARGET: 1 },
+        attack: { ...NO_ACTION_ERRORS, ERR_OUT_OF_RANGE: 1, ERR_INVALID_TARGET: 1 },
+        harvest: { ...NO_ACTION_ERRORS, ERR_INVALID_SITE: 1 },
+        transfer: { ...NO_ACTION_ERRORS, ERR_INVALID_TARGET: 1 },
+        spawnUnit: { ...NO_ACTION_ERRORS, ERR_NOT_ENOUGH_RESOURCES: 1 },
+      },
+    });
+  } finally {
+    dispose();
+  }
+});
+
+it("行动事实：正常与静默拒绝返回 undefined，只交回 calls/errors，不声称成功", async () => {
+  const { runner, dispose } = await createQuickJsRunner({
+    wasm: wasmModule,
+    runtimeCode,
+    ruleset: RULESET,
+    scriptCode: `function loop() {
+      const results = [move(1, 1, 0), moveTo(1, 2, 1), attack(2, 3),
+        harvest(1, 901), transfer(1), spawnUnit(900, "worker")];
+      if (results.some(r => r !== undefined)) throw new Error("expected undefined");
+    }`,
+    seat: 0,
+  });
+  try {
+    const initial = actionSnapshot();
+    runner.setSnapshot({
+      ...initial,
+      players: [{ index: 0, resources: 16, alive: true, exceptionTicks: 0 }],
+      units: [
+        { id: 1, owner: 0, type: "worker", x: 1, y: 1, hp: 2, carrying: 1 },
+        { id: 2, owner: 0, type: "melee", x: 2, y: 1, hp: 12, carrying: 0 },
+        { id: 3, owner: 1, type: "melee", x: 3, y: 1, hp: 12, carrying: 0 },
+      ],
+      sites: [
+        {
+          id: 900,
+          kind: "base",
+          owner: 0,
+          x: 0,
+          y: 0,
+          progressOwner: -1,
+          progress: 0,
+          producing: { type: "worker", remainingTicks: 1 },
+        },
+        {
+          id: 901,
+          kind: "resource",
+          owner: 0,
+          x: 0,
+          y: 1,
+          progressOwner: -1,
+          progress: 0,
+          producing: null,
+          remaining: 20,
+        },
+      ],
+    });
+    const output = runner.drainIntents();
+    expect(output.observations).toEqual([]);
+    expect(output.actionFacts).toEqual({
+      calls: { move: 1, moveTo: 1, attack: 1, harvest: 1, transfer: 1, spawnUnit: 1 },
+      errors: NO_ACTION_FACTS.errors,
+    });
   } finally {
     dispose();
   }

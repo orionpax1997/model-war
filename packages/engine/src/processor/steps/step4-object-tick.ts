@@ -99,6 +99,9 @@ export const step4ObjectTick: Step = (context) => {
     if (!isCapture(change)) {
       continue;
     }
+    context.actionEffects?.record(
+      Object.freeze({ seat: change.newOwner, kind: "captureEvents", amount: 1 }),
+    );
     collector.siteCaptured(site.id);
     // 接缝:原主从变更单上来的 `previousOwner` 读(显式,不靠「易主前的状态还能读到」)。
     // 订单从步首快照里那个点位对象读——`state` 已被本步 a) 换过,但那一次 apply 只改属主与进度,
@@ -120,6 +123,9 @@ export const step4ObjectTick: Step = (context) => {
     const change = harvestChangeOf(state, seat, ruleset, intent);
     if (change !== null) {
       state = apply(state, ruleset.raw, change);
+      context.actionEffects?.record(
+        Object.freeze({ seat, kind: "harvestedAmount", amount: change.amount }),
+      );
     }
   }
 
@@ -131,6 +137,9 @@ export const step4ObjectTick: Step = (context) => {
     const change = transferChangeOf(state, seat, ruleset, intent);
     if (change !== null) {
       state = apply(state, ruleset.raw, change);
+      context.actionEffects?.record(
+        Object.freeze({ seat, kind: "deliveredAmount", amount: change.amount }),
+      );
     }
   }
 
@@ -143,6 +152,9 @@ export const step4ObjectTick: Step = (context) => {
     const change = runSpawn(state, seat, ruleset, intent);
     if (change !== null) {
       state = apply(state, ruleset.raw, change);
+      context.actionEffects?.record(
+        Object.freeze({ seat, kind: "productionOrdersStarted", amount: 1 }),
+      );
     }
   }
   for (const site of state.sites) {

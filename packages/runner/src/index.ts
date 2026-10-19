@@ -20,3 +20,8 @@ export * from "./ranker.js";
 export * from "./reporter.js";
 export * from "./season-config.js";
 export * from "./scheduler.js";
+
+export * from "./archive-report.js";
+
+export * from "./selection.js";
+export * from "./archive-optimization.js";

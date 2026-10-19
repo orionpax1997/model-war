@@ -14,7 +14,8 @@
  *
  * 路径由本包**原样转发**给入口（真源在 `observations.ts`），入口照它把「无得分来源」
  * 读数落盘。这样本包不必解析 stderr 文本，而文本解析正是「换个文案就静默读不到数」
- * 的那种脆。观测数据**不进** `TrialResult`：它是旁证，不是结论，回喂与记账都用不着它。
+ * 的那种脆。观测数据**不进** `TrialResult`：它是旁证，不是预算结论；显式观测回喂
+ * 由 pipeline 读本次 invocation 的文件，预算回喂仍消费 stdout。
  *
  * ── 退出码是试跑入口的私有协议 ──
  *
@@ -41,7 +42,7 @@ export type TrialProbe = (options: {
   readonly root: string;
   readonly artifactPath: string;
   /**
-   * 观测文件路径（`observations.ts` 是真源）。入口照它整份重写；**本包不读那几行**。
+   * 本次 invocation 的观测文件路径（`observations.ts` 是路径真源）。入口照它整份重写。
    */
   readonly observationsPath: string;
 }) => TrialResult;

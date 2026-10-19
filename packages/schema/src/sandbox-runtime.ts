@@ -42,4 +42,4 @@ export const QUICKJS_WASI_WASM_PATH = "node_modules/quickjs-wasi/quickjs.wasm";
  * 改产物后跑 `pnpm run runtime:build` 重算并手写回这里,门禁负责证明两者一致。
  */
 export const SANDBOX_RUNTIME_HASH =
-  "46c93013071ebdc2ddd29e1d07604854a0a3e48fa2c6f1bf7f9e9cd811285f83";
+  "011cdc90975d2eb555b1a788c4810cc7a7bbeb974e0a3dd41689c8d948b82f30";

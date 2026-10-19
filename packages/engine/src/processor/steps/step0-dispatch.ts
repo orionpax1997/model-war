@@ -47,6 +47,8 @@
  * 于是合并在类型上无歧义、在实现上就是这一个值。
  */
 
+import type { ScriptExceptionDiagnostic } from "@model-war/replay";
+import type { Observation } from "../../runner/index.js";
 import { apply } from "../../driver/apply.js";
 import { buildSnapshot } from "../../snapshot/snapshot.js";
 import type { PlayerIndex } from "../../world/state.js";
@@ -65,6 +67,31 @@ const runnerOf = (context: TickContext, seat: PlayerIndex) => {
     );
   }
   return runner;
+};
+
+/** 只投影真执行器已知轨的有界读数；不重判预算、不转存自由文本轨名。 */
+const diagnosticOf = (observation: Observation): ScriptExceptionDiagnostic | undefined => {
+  if (observation.track === "uncaughtException") {
+    return { category: "uncaught-exception", errorName: observation.errorName ?? "unknown" };
+  }
+  const category =
+    observation.track === "eventTickLimit"
+      ? "event-budget"
+      : observation.track === "apiCallTickLimit"
+        ? "api-budget"
+        : observation.track === "memoryTickCeiling"
+          ? "memory-budget"
+          : undefined;
+  if (
+    category === undefined ||
+    !Number.isSafeInteger(observation.value) ||
+    observation.value < 0 ||
+    !Number.isSafeInteger(observation.limit) ||
+    observation.limit < 0
+  ) {
+    return undefined;
+  }
+  return { category, used: observation.value, limit: observation.limit };
 };
 
 export const step0Dispatch: Step = (context) => {
@@ -98,6 +125,20 @@ export const step0Dispatch: Step = (context) => {
           count: 1,
           track: observation.track,
         });
+        const diagnostic = diagnosticOf(observation);
+        if (diagnostic !== undefined) {
+          context.observations?.record({
+            kind: "exception",
+            tick: state.tick,
+            seat,
+            diagnostic,
+            ...(context.budget.exceptionTickLimit === undefined
+              ? {}
+              : {
+                  exceptionTickLimit: context.budget.exceptionTickLimit,
+                }),
+          });
+        }
       } else {
         context.observations?.record({
           // 与同 tick 的回放行同号:步 6 写行用的也是未自增的 `state.tick`(见 `step6-emit.ts`)。

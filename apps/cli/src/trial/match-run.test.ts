@@ -296,3 +296,354 @@ it("接线：他座位占下中立点位不算候选的得分来源 → 候选�
   });
   expect(outcome.scoreSource).toEqual({ delivered: 0, captures: 0, noScoreSource: true });
 });
+
+it("行动事实只聚合候选：正常/API 超限载荷计 observed，截停/异常无载荷计 missing，effects 独立", () => {
+  const errors = () => ({
+    ERR_NOT_ENOUGH_RESOURCES: 0,
+    ERR_INVALID_UNIT: 0,
+    ERR_NOT_OWNER: 0,
+    ERR_OUT_OF_RANGE: 0,
+    ERR_INVALID_TARGET: 0,
+    ERR_INVALID_SITE: 0,
+    ERR_BAD_ARGS: 0,
+  });
+  const facts = {
+    calls: { move: 2, moveTo: 0, attack: 0, harvest: 0, transfer: 0, spawnUnit: 0 },
+    errors: {
+      move: { ...errors(), ERR_BAD_ARGS: 1 },
+      moveTo: errors(),
+      attack: errors(),
+      harvest: errors(),
+      transfer: errors(),
+      spawnUnit: errors(),
+    },
+  };
+  const scripted = (seat: number) => {
+    let tick = 0;
+    let unitId = -1;
+    return {
+      setSnapshot: (snapshot: {
+        readonly tick: number;
+        readonly units: readonly { readonly id: number; readonly owner: number }[];
+      }) => {
+        tick = snapshot.tick;
+        unitId = snapshot.units.find((unit) => unit.owner === seat)?.id ?? -1;
+      },
+      drainIntents: () => ({
+        intents:
+          tick === 0 ? [{ kind: "move" as const, unitId, dx: -1 as const, dy: 0 as const }] : [],
+        observations:
+          tick === 1 || tick === 2 || tick === 3
+            ? [
+                {
+                  kind: "tripped" as const,
+                  track:
+                    tick === 1
+                      ? "apiCallTickLimit"
+                      : tick === 2
+                        ? "eventTickLimit"
+                        : "uncaughtException",
+                  value: 2,
+                  limit: 1,
+                },
+              ]
+            : [],
+        ...(tick === 2 || tick === 3 ? {} : { actionFacts: facts }),
+      }),
+    };
+  };
+  const outcome = runTrialMatch({
+    runners: [scripted(0), scripted(1), recordingStub({}), recordingStub({})],
+    players,
+    ruleset: { ...ruleset, tickLimit: 5 },
+    map: wiringMap,
+    seed: 101,
+    budget: {},
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  expect(outcome).toMatchObject({
+    actionFacts: {
+      complete: false,
+      observedTicks: 3,
+      missingTicks: 2,
+      calls: { move: 6, moveTo: 0, attack: 0, harvest: 0, transfer: 0, spawnUnit: 0 },
+      errors: { ...facts.errors, move: { ...errors(), ERR_BAD_ARGS: 3 } },
+      effects: {
+        movedSteps: 1,
+        harvestedAmount: 0,
+        deliveredAmount: 0,
+        captureEvents: 0,
+        productionOrdersStarted: 0,
+      },
+    },
+  });
+  expect(outcome.scoreSource).toEqual({ delivered: 0, captures: 0, noScoreSource: true });
+});
+
+it("末 tick 宿主效果独立于旧快照 tracker，交付/采集/订单/易主只归候选，缺 payload 不抹 effects", () => {
+  const world: MapDefinition = {
+    ...wiringMap,
+    sites: [
+      ...wiringMap.sites.map((site) => ({
+        ...site,
+        initialOwner: site.id === 4 ? 0 : site.id === 5 ? 1 : site.initialOwner,
+      })),
+      { id: 6, kind: "resource", x: 4, y: 1, initialOwner: null },
+    ],
+    spawnUnits: [
+      { owner: 0, type: "worker", offset: [1, 0] },
+      { owner: 0, type: "worker", offset: [3, 0] },
+      { owner: 1, type: "worker", offset: [-1, 0] },
+    ],
+  };
+  const economicRunner = (seat: number, siteId: number) => {
+    let tick = 0;
+    let unitId = -1;
+    return {
+      setSnapshot: (snapshot: {
+        readonly tick: number;
+        readonly units: readonly { readonly owner: number; readonly id: number }[];
+      }) => {
+        tick = snapshot.tick;
+        unitId = snapshot.units.find((unit) => unit.owner === seat)?.id ?? -1;
+      },
+      drainIntents: () => ({
+        intents:
+          tick === 0
+            ? [{ kind: "harvest" as const, unitId, siteId }]
+            : [
+                { kind: "transfer" as const, unitId },
+                { kind: "spawnUnit" as const, baseId: seat, unitType: "worker" as const },
+              ],
+        observations: [],
+      }),
+    };
+  };
+  const outcome = runTrialMatch({
+    runners: [economicRunner(0, 4), economicRunner(1, 5), recordingStub({}), recordingStub({})],
+    players,
+    ruleset: { ...ruleset, tickLimit: 2, captureTicks: 2, harvestRate: 3 },
+    map: world,
+    seed: 101,
+    matchIndex: 0,
+    budget: {},
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+  });
+  expect(outcome.scoreSource).toEqual({ delivered: 0, captures: 0, noScoreSource: true });
+  expect(outcome.actionFacts).toMatchObject({
+    complete: false,
+    observedTicks: 0,
+    missingTicks: 2,
+    effects: {
+      movedSteps: 0,
+      harvestedAmount: 3,
+      deliveredAmount: 3,
+      captureEvents: 1,
+      productionOrdersStarted: 1,
+    },
+  });
+});
+
+it("终局采用末 tick 真实控制权和四兵种存活造价，权重与造价来自当局 ruleset", () => {
+  const outcome = runTrialMatch({
+    runners: [capturingStub(0, 4), recordingStub({}), recordingStub({}), recordingStub({})],
+    players,
+    ruleset: {
+      ...ruleset,
+      tickLimit: 1,
+      captureTicks: 1,
+      baseScore: 10,
+      resourceScore: 3,
+      unitCostDivisor: 7,
+      worker: { ...ruleset.worker, cost: 6 },
+      melee: { ...ruleset.melee, cost: 10 },
+      ranged: { ...ruleset.ranged, cost: 14 },
+      cavalry: { ...ruleset.cavalry, cost: 18 },
+    },
+    map: {
+      ...wiringMap,
+      spawnUnits: [
+        { owner: 0, type: "worker", offset: [1, 0] },
+        { owner: 0, type: "melee", offset: [0, 1] },
+        { owner: 0, type: "ranged", offset: [1, 1] },
+        { owner: 0, type: "cavalry", offset: [0, 2] },
+        { owner: 1, type: "worker", offset: [-1, 0] },
+      ],
+    },
+    seed: 101,
+    matchIndex: 0,
+    budget: {},
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+  });
+  // 旧 tracker 没有下一帧，仍无占点读数；终局已在 tick0 结算易主。
+  expect(outcome.scoreSource.captures).toBe(0);
+  expect(outcome.terminalSummary).toMatchObject({
+    tick: 1,
+    reason: "timeout",
+    weights: { baseScore: 10, resourceScore: 3, unitCostDivisor: 7 },
+    unitCosts: { worker: 6, melee: 10, ranged: 14, cavalry: 18 },
+  });
+  expect(outcome.terminalSummary?.players[0]).toEqual({
+    seat: 0,
+    player: "candidate",
+    controlledBases: 1,
+    controlledResources: 1,
+    survivingUnits: { worker: 1, melee: 1, ranged: 1, cavalry: 1 },
+    survivingUnitCost: 48,
+    score: { bases: 10, resources: 3, units: 6 },
+    territoryScore: 19,
+    rank: 1,
+    rankPoints: 3,
+    alive: true,
+    eliminatedAtTick: null,
+  });
+});
+
+it("全部点位控制提前胜利：终局 tick 计已执行数，获胜与自然淘汰如实保存", () => {
+  const outcome = runTrialMatch({
+    runners: [recordingStub({}), recordingStub({}), recordingStub({}), recordingStub({})],
+    players,
+    ruleset,
+    map: {
+      ...wiringMap,
+      sites: wiringMap.sites.map((site) => ({ ...site, initialOwner: 0 })),
+      spawnUnits: [{ owner: 0, type: "worker", offset: [1, 0] }],
+    },
+    seed: 202,
+    matchIndex: 1,
+    budget: {},
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+  });
+  expect(outcome.terminalSummary).toMatchObject({ seed: 202, tick: 1, reason: "victory" });
+  expect(
+    outcome.terminalSummary?.players.map(({ rank, rankPoints, alive, eliminatedAtTick }) => ({
+      rank,
+      rankPoints,
+      alive,
+      eliminatedAtTick,
+    })),
+  ).toEqual([
+    { rank: 1, rankPoints: 3, alive: true, eliminatedAtTick: null },
+    { rank: 2, rankPoints: 1, alive: false, eliminatedAtTick: 0 },
+    { rank: 2, rankPoints: 1, alive: false, eliminatedAtTick: 0 },
+    { rank: 2, rankPoints: 1, alive: false, eliminatedAtTick: 0 },
+  ]);
+  expect(outcome.terminalSummary?.players[0].score).toEqual({ bases: 16, resources: 2, units: 0 });
+});
+
+it("异常淘汰后的捷径获胜：存活优先、后出局优先、并列占用名次并均分积分", () => {
+  const trip = (at: number) =>
+    recordingStub({ trips: [{ at, track: "uncaughtException", value: 1, limit: 0 }] });
+  const outcome = runTrialMatch({
+    runners: [trip(1), trip(2), trip(2), recordingStub({})],
+    players,
+    ruleset,
+    map: wiringMap,
+    seed: 303,
+    matchIndex: 2,
+    budget: { exceptionTickLimit: 1 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+  });
+  expect(outcome.terminalSummary).toMatchObject({ tick: 2, reason: "shortcut" });
+  expect(
+    outcome.terminalSummary?.players.map(
+      ({ territoryScore, rank, rankPoints, alive, eliminatedAtTick }) => ({
+        territoryScore,
+        rank,
+        rankPoints,
+        alive,
+        eliminatedAtTick,
+      }),
+    ),
+  ).toEqual([
+    { territoryScore: 0, rank: 4, rankPoints: 0, alive: false, eliminatedAtTick: 0 },
+    { territoryScore: 0, rank: 2, rankPoints: 1.5, alive: false, eliminatedAtTick: 1 },
+    { territoryScore: 0, rank: 2, rankPoints: 1.5, alive: false, eliminatedAtTick: 1 },
+    { territoryScore: 4, rank: 1, rankPoints: 3, alive: true, eliminatedAtTick: null },
+  ]);
+});
+
+it("四方同 tick 淘汰仍保存真实 all-eliminated 并列结果，墙钟作废没有终局摘要", () => {
+  const trip = () =>
+    recordingStub({ trips: [{ at: 3, track: "uncaughtException", value: 1, limit: 0 }] });
+  const options = {
+    players,
+    ruleset,
+    map: wiringMap,
+    seed: 101,
+    matchIndex: 0,
+    budget: { exceptionTickLimit: 1 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+  } satisfies Omit<Parameters<typeof runTrialMatch>[0], "runners">;
+  const completed = runTrialMatch({ ...options, runners: [trip(), trip(), trip(), trip()] });
+  expect(completed.terminalSummary).toMatchObject({ tick: 3, reason: "all-eliminated" });
+  for (const player of completed.terminalSummary?.players ?? []) {
+    expect(player).toMatchObject({
+      territoryScore: 0,
+      rank: 1,
+      rankPoints: 1.5,
+      alive: false,
+      eliminatedAtTick: 2,
+      // 异常淘汰清点位但保留场上单位；必须如实计造价，不以 alive=false 补零。
+      controlledBases: 0,
+      controlledResources: 0,
+      survivingUnitCost: 4,
+    });
+  }
+  const uncertain = runTrialMatch({
+    ...options,
+    runners: [
+      recordingStub({ faultAt: 2 }),
+      recordingStub({}),
+      recordingStub({}),
+      recordingStub({}),
+    ],
+  });
+  expect(uncertain.fault).toEqual({ tick: 1 });
+  expect(uncertain).not.toHaveProperty("terminalSummary");
+});
+
+it("timeout 存活优先于已淘汰高分方，异常留下的真实兵力和正领土分不补零", () => {
+  const outcome = runTrialMatch({
+    runners: [
+      recordingStub({ trips: [{ at: 1, track: "uncaughtException", value: 1, limit: 0 }] }),
+      recordingStub({}),
+      recordingStub({}),
+      recordingStub({}),
+    ],
+    players,
+    ruleset: { ...ruleset, tickLimit: 2 },
+    map: {
+      ...wiringMap,
+      spawnUnits: [
+        { owner: 0, type: "cavalry", offset: [1, 0] },
+        { owner: 0, type: "cavalry", offset: [0, 1] },
+      ],
+    },
+    seed: 101,
+    matchIndex: 0,
+    budget: { exceptionTickLimit: 1 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+  });
+  expect(outcome.terminalSummary).toMatchObject({ tick: 2, reason: "timeout" });
+  expect(outcome.terminalSummary?.players[0]).toMatchObject({
+    survivingUnits: { worker: 0, melee: 0, ranged: 0, cavalry: 2 },
+    survivingUnitCost: 32,
+    score: { bases: 0, resources: 0, units: 5 },
+    territoryScore: 5,
+    rank: 4,
+    rankPoints: 0,
+    alive: false,
+    eliminatedAtTick: 0,
+  });
+  expect(
+    outcome.terminalSummary?.players
+      .slice(1)
+      .map(({ territoryScore, rank, rankPoints }) => ({ territoryScore, rank, rankPoints })),
+  ).toEqual([
+    { territoryScore: 4, rank: 1, rankPoints: 2 },
+    { territoryScore: 4, rank: 1, rankPoints: 2 },
+    { territoryScore: 4, rank: 1, rankPoints: 2 },
+  ]);
+});

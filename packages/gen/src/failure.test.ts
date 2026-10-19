@@ -28,6 +28,7 @@ import { RULESET_VERSION } from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 import type { ModelConfig } from "./config.js";
 import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./model-client.js";
+import { buildFailureRecord } from "./failure.js";
 import { runGeneration } from "./run.js";
 import { fail, replies, reply, stubClient, type StubStep } from "./stub-client.js";
 
@@ -154,6 +155,62 @@ it("用尽轮数:写失败记录(逐轮 prompt 链 + 逐轮日志 + 最终诊断
   expect(name).toBe(`failed-${String(record.runId)}.json`);
   // 明确:没有一个以 runId 命名的存档目录。
   expect(existsSync(join(slugDir, String(record.runId)))).toBe(false);
+});
+
+it("buildFailureRecord 中途失败携带已有候选描述，无候选时不新增键", () => {
+  const identity = {
+    model: "alpha",
+    modelVersion: "provider/alpha",
+    generatedAt: "2026-01-01T00:00:00Z",
+    runId: "r1",
+  };
+  const failure = {
+    classification: "contract" as const,
+    prompts: ["p1"],
+    generationLog: ["g1"],
+    diagnostics: ["d1"],
+    message: "优化阶段 1 预算失败",
+  };
+  // 无候选：键序仍是 schema 的 11 键，旧记录字节兼容。
+  expect(Object.keys(buildFailureRecord({ ...identity, failure }))).toEqual([
+    "model",
+    "modelVersion",
+    "generatedAt",
+    "runId",
+    "ruleset",
+    "classification",
+    "protocolRounds",
+    "prompts",
+    "generationLog",
+    "diagnostics",
+    "message",
+  ]);
+  // 有候选：candidates 落 message 之后，供报告分别标识初次/中间候选。
+  const candidates = [
+    {
+      stage: 0 as const,
+      protocolRound: 1,
+      scriptFile: "observed-r1-round-1.jsonl.candidate.js",
+      observationsFile: "observed-r1-round-1.jsonl",
+      scriptSha256: "c".repeat(64),
+    },
+  ];
+  const record = buildFailureRecord({ ...identity, failure: { ...failure, candidates } });
+  expect(record.candidates).toEqual(candidates);
+  expect(Object.keys(record)).toEqual([
+    "model",
+    "modelVersion",
+    "generatedAt",
+    "runId",
+    "ruleset",
+    "classification",
+    "protocolRounds",
+    "prompts",
+    "generationLog",
+    "diagnostics",
+    "message",
+    "candidates",
+  ]);
 });
 
 it("一批两模型一败一成:失败记录与成功三件套并存,退出码非零(tsc 失败)", async () => {

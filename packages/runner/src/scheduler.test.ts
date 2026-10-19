@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -10,6 +12,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { scheduleSeason, type SeasonSchedulerDeps } from "./scheduler.js";
+import { buildSelectionPlan, buildArchiveSelection, selectionInputSha256 } from "./selection.js";
 
 /**
  * `scheduleSeason` 的可测核心直测:用可控 `deps.spawnMatch` 桩替掉真实子进程。
@@ -623,4 +626,294 @@ it("跨配置旧回放不混进新赛季:改配置后崩溃残留旧 result,同�
   expect(report.matches.find((match) => match.matchId === "c0-arena-s0")?.reason).toBe("victory");
   // A 的旧披露未泄漏进 B 的赛季:B 的成功局无观测,问题清单须为空。
   expect(report.matchIssues).toHaveLength(0);
+});
+
+const addOptimizationMeta = (root: string, model = "alpha"): void => {
+  const path = join(root, "archive", model, "r1/meta.json");
+  const meta = JSON.parse(readFileSync(path, "utf8"));
+  const scriptSha256 = createHash("sha256")
+    .update(readFileSync(join(dirname(path), "script.js")))
+    .digest("hex");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      ...meta,
+      protocolRounds: 3,
+      prompts: ["initial", "feedback1", "feedback2"],
+      scriptSha256,
+      optimization: {
+        version: 1,
+        feedbackRounds: 2,
+        trialSeeds: [101, 202, 303],
+        candidates: [0, 1, 2].map((stage) => ({
+          stage,
+          protocolRound: stage + 1,
+          scriptFile: `observed-r1-round-${String(stage + 1)}.jsonl.candidate.js`,
+          observationsFile: `observed-r1-round-${String(stage + 1)}.jsonl`,
+          scriptSha256,
+        })),
+      },
+    }),
+  );
+};
+
+it("混合新优化/旧档拒绝用户指定的重叠评测 seed，先于任何物化与子进程", async () => {
+  const { root, configPath } = buildFixture();
+  addOptimizationMeta(root);
+  appendFileSync(join(root, configPath), "evaluationSeeds:\n  - 101\n  - 404\n  - 505\n  - 606\n");
+  let spawned = 0;
+  const code = await scheduleSeason(
+    { root, configPath },
+    {
+      spawnMatch: async (inputPath) => {
+        spawned += 1;
+        writeFakeReplay(inputPath);
+        return { code: 0 };
+      },
+    },
+  );
+  expect(code).toBe(1);
+  expect(spawned).toBe(0);
+});
+
+it("归一化别名拒绝：评测 seed 取 101+2^31（同一随机源初态）同样拒跑，零 spawn", async () => {
+  const { root, configPath } = buildFixture();
+  addOptimizationMeta(root);
+  appendFileSync(
+    join(root, configPath),
+    "evaluationSeeds:\n  - 2147483749\n  - 404\n  - 505\n  - 606\n",
+  );
+  let spawned = 0;
+  const code = await scheduleSeason(
+    { root, configPath },
+    {
+      spawnMatch: async (inputPath) => {
+        spawned += 1;
+        writeFakeReplay(inputPath);
+        return { code: 0 };
+      },
+    },
+  );
+  expect(code).toBe(1);
+  expect(spawned).toBe(0);
+});
+
+it("独立显式 seed 对混合名册全部组合统一，比赛规模不变且只入最终存档", async () => {
+  const { root, configPath } = buildFixture();
+  addOptimizationMeta(root, "gamma");
+  const fifthDirectory = join(root, "archive/epsilon/r1");
+  mkdirSync(fifthDirectory, { recursive: true });
+  writeFileSync(join(fifthDirectory, "script.js"), "function loop(){}\n");
+  const fifthMeta = JSON.parse(readFileSync(join(root, "archive/beta/r1/meta.json"), "utf8"));
+  writeFileSync(
+    join(fifthDirectory, "meta.json"),
+    JSON.stringify({ ...fifthMeta, model: "epsilon" }),
+  );
+  appendFileSync(
+    join(root, configPath),
+    "  - archive/epsilon/r1\nevaluationSeeds:\n  - 404\n  - 505\n  - 606\n  - 707\n",
+  );
+  const inputs: { seed: number; archives: { archivePath: string; scriptSha256: string }[] }[] = [];
+  expect(
+    await scheduleSeason(
+      { root, configPath },
+      {
+        spawnMatch: async (inputPath) => {
+          inputs.push(JSON.parse(readFileSync(inputPath, "utf8")));
+          writeFakeReplay(inputPath);
+          return { code: 0 };
+        },
+      },
+    ),
+  ).toBe(0);
+  const report = readReport(root);
+  expect(report.matches).toHaveLength(20);
+  expect(report.standings).toHaveLength(5);
+  for (const standing of report.standings) {
+    expect(standing.countedMatches).toBe(16);
+    for (const seed of [404, 505, 606, 707]) {
+      expect(
+        inputs.filter(
+          (input) =>
+            input.seed === seed &&
+            input.archives.some((archive) => archive.archivePath === standing.player),
+        ),
+      ).toHaveLength(4);
+    }
+  }
+  expect(
+    inputs
+      .flatMap((input) => input.archives)
+      .every((archive) => /^archive\/[a-z]+\/r1$/.test(archive.archivePath)),
+  ).toBe(true);
+  const finalHash = createHash("sha256")
+    .update(readFileSync(join(root, "archive/gamma/r1/script.js")))
+    .digest("hex");
+  expect(
+    inputs
+      .flatMap((input) => input.archives)
+      .filter((archive) => archive.archivePath === "archive/gamma/r1")
+      .every((archive) => archive.scriptSha256 === finalHash),
+  ).toBe(true);
+});
+
+it("新优化档省略 evaluationSeeds 时沿用独立派生 seed 与既有规模", async () => {
+  const { root, configPath } = buildFixture();
+  addOptimizationMeta(root);
+  const stub = scriptedSpawn(() => 0);
+  expect(await scheduleSeason({ root, configPath }, { spawnMatch: stub.spawnMatch })).toBe(0);
+  const report = readReport(root);
+  expect(report.matches).toHaveLength(4);
+  expect(report.masterSeed).toBe("seed-1");
+  expect(report.matches.every((match) => ![101, 202, 303].includes(match.seed))).toBe(true);
+});
+
+it("旧档保留重叠 seed 可运行政策；resume 加入新优化档后须重新检查现有计划", async () => {
+  const { root, configPath } = buildFixture();
+  appendFileSync(join(root, configPath), "evaluationSeeds:\n  - 101\n  - 202\n  - 303\n  - 404\n");
+  const stub = scriptedSpawn(() => 0);
+  expect(
+    await scheduleSeason({ root, configPath, now: FIXED_NOW }, { spawnMatch: stub.spawnMatch }),
+  ).toBe(0);
+  expect(readReport(root).matches.map((match) => match.seed)).toEqual([101, 202, 303, 404]);
+  const originalReport = readFileSync(join(root, "runs/fixture/report.json"), "utf8");
+  addOptimizationMeta(root, "delta");
+  let spawned = 0;
+  expect(
+    await scheduleSeason(
+      { root, configPath, now: FIXED_NOW },
+      {
+        spawnMatch: async () => {
+          spawned += 1;
+          return { code: 1 };
+        },
+      },
+    ),
+  ).toBe(1);
+  expect(spawned).toBe(0);
+  expect(readFileSync(join(root, "runs/fixture/report.json"), "utf8")).toBe(originalReport);
+});
+
+const addSelectionMeta = (root: string): void => {
+  addOptimizationMeta(root);
+  const path = join(root, "archive/alpha/r1/meta.json");
+  const meta = JSON.parse(readFileSync(path, "utf8"));
+  const plan = buildSelectionPlan({
+    ruleset: meta.ruleset,
+    rulesetSha256: "9".repeat(64),
+    sandboxRuntimeHash: meta.sandboxRuntimeHash,
+    map: "arena",
+    mapSha256: "a".repeat(64),
+    baselines: [
+      { id: "idle", scriptSha256: "b".repeat(64) },
+      { id: "rush", scriptSha256: "c".repeat(64) },
+      { id: "gather", scriptSha256: "d".repeat(64) },
+    ],
+  });
+  meta.selection = buildArchiveSelection(
+    plan,
+    ([0, 1, 2] as const).map((stage) => ({
+      stage,
+      protocolRound: stage + 1,
+      scriptSha256: meta.scriptSha256,
+      sourceSha256: String(stage + 1).repeat(64),
+      matches: plan.matches.map((match) => ({
+        matchIndex: match.matchIndex,
+        inputSha256: selectionInputSha256(plan, meta.scriptSha256, match),
+        result: {
+          type: "result" as const,
+          rankings: [1, 1, 1, 1],
+          reason: "timeout" as const,
+          territoryScores: [0, 0, 0, 0],
+        },
+      })),
+    })),
+  );
+  writeFileSync(path, JSON.stringify(meta));
+};
+
+it.each([401, 402, 403, 2147484049, 2147484050, 2147484051])(
+  "选拔 seed %i 的直接值或模值碰撞拒绝整季，零 spawn、零 input 物化",
+  async (seed) => {
+    const { root, configPath } = buildFixture();
+    addSelectionMeta(root);
+    appendFileSync(
+      join(root, configPath),
+      `evaluationSeeds:\n  - ${seed}\n  - 404\n  - 505\n  - 606\n`,
+    );
+    let spawned = 0;
+    expect(
+      await scheduleSeason(
+        { root, configPath },
+        {
+          spawnMatch: async () => {
+            spawned += 1;
+            return { code: 0 };
+          },
+        },
+      ),
+    ).toBe(1);
+    expect(spawned).toBe(0);
+    expect(existsSync(join(root, "runs"))).toBe(false);
+  },
+);
+
+it("没有选拔记录的旧优化档不从目录或默认计划推测401参与过选拔", async () => {
+  const { root, configPath } = buildFixture();
+  addOptimizationMeta(root);
+  appendFileSync(join(root, configPath), "evaluationSeeds:\n  - 401\n  - 402\n  - 403\n  - 404\n");
+  let spawned = 0;
+  expect(
+    await scheduleSeason(
+      { root, configPath },
+      {
+        spawnMatch: async (inputPath) => {
+          spawned += 1;
+          writeFakeReplay(inputPath);
+          return { code: 0 };
+        },
+      },
+    ),
+  ).toBe(0);
+  expect(spawned).toBe(4);
+});
+
+it("新选拔档同分冻结第三阶段合法正式参赛，选拔元数据破坏在物化前拒绝", async () => {
+  const { root, configPath } = buildFixture();
+  addSelectionMeta(root);
+  appendFileSync(join(root, configPath), "evaluationSeeds:\n  - 404\n  - 505\n  - 606\n  - 707\n");
+  const path = join(root, "archive/alpha/r1/meta.json");
+  const meta = JSON.parse(readFileSync(path, "utf8"));
+  expect(meta.selection.selected.stage).toBe(2);
+  let spawned = 0;
+  expect(
+    await scheduleSeason(
+      { root, configPath },
+      {
+        spawnMatch: async (inputPath) => {
+          spawned += 1;
+          writeFakeReplay(inputPath);
+          return { code: 0 };
+        },
+      },
+    ),
+  ).toBe(0);
+  expect(spawned).toBe(4);
+  rmSync(join(root, "runs"), { recursive: true, force: true });
+  meta.selection.candidates[0].averagePoints = 3;
+  writeFileSync(path, JSON.stringify(meta));
+  spawned = 0;
+  await expect(
+    scheduleSeason(
+      { root, configPath },
+      {
+        spawnMatch: async () => {
+          spawned += 1;
+          return { code: 0 };
+        },
+      },
+    ),
+  ).rejects.toThrow(/计分/);
+  expect(spawned).toBe(0);
+  expect(existsSync(join(root, "runs"))).toBe(false);
 });

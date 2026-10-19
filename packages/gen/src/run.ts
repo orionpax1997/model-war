@@ -20,6 +20,7 @@ import { join, resolve } from "node:path";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs, type RuleDocs } from "./contract.js";
 import { writeFailureRecord } from "./failure.js";
+import type { SelectionProbe } from "./selection.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
 import type { ModelClient } from "./model-client.js";
@@ -37,7 +38,12 @@ export type GenerationRequest = {
   readonly template: string;
   readonly createClient: (config: ModelConfig) => ModelClient;
   readonly now: () => Date;
+  /** 未开启事实优化时的缺省响应上限替代；opt-in 使用批次统一政策。 */
   readonly maxRounds?: number;
+  /** 显式 opt-in：固定两次自身事实反馈、三个有效候选；每阶段独立诊断额度。 */
+  readonly scoreSourceFeedback?: boolean;
+  readonly selectBestCandidate?: boolean;
+  readonly selection?: SelectionProbe;
   /**
    * 冻结期试跑探针。缺席即走真子进程（`trial.ts`）；测试注入桩，保持单测毫秒级
    * （真试跑跑三场完整对局，约十秒，只属于 e2e 与手工冒烟）。
@@ -49,6 +55,10 @@ export type GenerationOptions = {
   readonly root: string;
   /** `--config` 的取值,相对 `root`(传绝对路径亦按 `resolve` 归一)。 */
   readonly configPath: string;
+  /** 对应 CLI --score-source-feedback；缺省不启用。 */
+  readonly scoreSourceFeedback?: boolean;
+  readonly selectBestCandidate?: boolean;
+  readonly selection?: SelectionProbe;
   /** `--model <slug>`:只跑一个模型。 */
   readonly modelFilter?: string;
   /** 测试注入桩;缺省用真实 HTTP 客户端(`http/client.ts`,唯一允许联网的代码)。 */
@@ -87,6 +97,8 @@ const sessionIdOf = (runId: string, slug: string): string => `modelwar-gen-${run
  * 模型之间**串行**(模型内并发固定 1):`for … await` 保证前一个模型的全部轮次结束后才开下一个。
  */
 export const runGeneration = async (options: GenerationOptions): Promise<number> => {
+  if (options.selectBestCandidate === true && options.scoreSourceFeedback !== true)
+    throw new Error("--select-best-candidate 要求 --score-source-feedback");
   const root = resolve(options.root);
   const config = loadModelsConfig(resolve(root, options.configPath));
   const docs = readRuleDocs(root);
@@ -120,7 +132,14 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     template,
     createClient,
     now,
+    ...(options.selectBestCandidate === undefined
+      ? {}
+      : { selectBestCandidate: options.selectBestCandidate }),
+    ...(options.selection === undefined ? {} : { selection: options.selection }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
+    ...(options.scoreSourceFeedback === undefined
+      ? {}
+      : { scoreSourceFeedback: options.scoreSourceFeedback }),
   };
 
   let failures = 0;
@@ -160,11 +179,13 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
   return failures === 0 ? EXIT_OK : EXIT_FAILED;
 };
 
-/** `gen` 的三个选项;`-h/--help` 已由 CLI 路由层拦截,不进处理器。 */
+/** `gen` 的选项;`-h/--help` 已由 CLI 路由层拦截,不进处理器。 */
 type GenArgs = {
   readonly root: string | undefined;
   readonly config: string | undefined;
   readonly model: string | undefined;
+  readonly scoreSourceFeedback: boolean;
+  readonly selectBestCandidate: boolean;
 };
 
 const parseGenArgs = (args: readonly string[]): GenArgs => {
@@ -172,11 +193,27 @@ const parseGenArgs = (args: readonly string[]): GenArgs => {
     root: string | undefined;
     config: string | undefined;
     model: string | undefined;
-  } = { root: undefined, config: undefined, model: undefined };
+    scoreSourceFeedback: boolean;
+    selectBestCandidate: boolean;
+  } = {
+    root: undefined,
+    config: undefined,
+    model: undefined,
+    scoreSourceFeedback: false,
+    selectBestCandidate: false,
+  };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined || !arg.startsWith("-")) {
       throw new Error(`gen 不接受位置参数:${String(arg)}`);
+    }
+    if (arg === "--select-best-candidate") {
+      parsed.selectBestCandidate = true;
+      continue;
+    }
+    if (arg === "--score-source-feedback") {
+      parsed.scoreSourceFeedback = true;
+      continue;
     }
     const value = args[index + 1];
     if (value === undefined) {
@@ -209,6 +246,8 @@ export const generateAndFreeze = async (args: readonly string[]): Promise<number
   } catch (cause) {
     return writeFailure(messageOf(cause));
   }
+  if (parsed.selectBestCandidate && !parsed.scoreSourceFeedback)
+    return writeFailure("--select-best-candidate 要求 --score-source-feedback");
   if (parsed.config === undefined) {
     return writeFailure("缺 --config <models.yaml>(用法:modelwar gen --config models.yaml)");
   }
@@ -229,6 +268,8 @@ export const generateAndFreeze = async (args: readonly string[]): Promise<number
     root,
     configPath: parsed.config,
     ...(parsed.model !== undefined ? { modelFilter: parsed.model } : {}),
+    ...(parsed.selectBestCandidate ? { selectBestCandidate: true } : {}),
+    ...(parsed.scoreSourceFeedback ? { scoreSourceFeedback: true } : {}),
   };
   try {
     return await runGeneration(options);

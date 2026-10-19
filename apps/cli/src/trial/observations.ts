@@ -25,17 +25,63 @@
  * （与「只观测、不拦」同一条纪律）。
  */
 
-import { writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { renameSync, rmSync, writeFileSync } from "node:fs";
 
-import type { ScoreSourceReading } from "./score-source.js";
+export type { TrialObservationLine } from "@model-war/schema";
+import type {
+  TrialObservationLine,
+  TrialTerminalSummary,
+  TrialTerminalPlayer,
+  TrialUnitTable,
+} from "@model-war/schema";
 
-/**
- * 观测文件的一行。`matchIndex` 与试跑的场次下标同口径（0 起），三栏读数原样来自
- * `ScoreSourceReading`——形状没有第二个家，将来报告侧要读时随那次裁决提到 `@model-war/schema`。
- */
-export type TrialObservationLine = {
-  readonly matchIndex: number;
-} & ScoreSourceReading;
+const unitTableOf = (table: TrialUnitTable): TrialUnitTable => ({
+  worker: table.worker,
+  melee: table.melee,
+  ranged: table.ranged,
+  cavalry: table.cavalry,
+});
+
+const terminalPlayerOf = (player: TrialTerminalPlayer): TrialTerminalPlayer => ({
+  seat: player.seat,
+  player: player.player,
+  controlledBases: player.controlledBases,
+  controlledResources: player.controlledResources,
+  survivingUnits: unitTableOf(player.survivingUnits),
+  survivingUnitCost: player.survivingUnitCost,
+  score: {
+    bases: player.score.bases,
+    resources: player.score.resources,
+    units: player.score.units,
+  },
+  territoryScore: player.territoryScore,
+  rank: player.rank,
+  rankPoints: player.rankPoints,
+  alive: player.alive,
+  eliminatedAtTick: player.eliminatedAtTick,
+});
+
+/** 白名单投影逐层关闭额外键，不把宿主内部状态作为观测发布。 */
+const terminalSummaryOf = (summary: TrialTerminalSummary): TrialTerminalSummary => ({
+  version: summary.version,
+  seed: summary.seed,
+  tick: summary.tick,
+  reason: summary.reason,
+  weights: {
+    baseScore: summary.weights.baseScore,
+    resourceScore: summary.weights.resourceScore,
+    unitCostDivisor: summary.weights.unitCostDivisor,
+  },
+  unitCosts: unitTableOf(summary.unitCosts),
+  rankPoints: [...summary.rankPoints],
+  players: [
+    terminalPlayerOf(summary.players[0]),
+    terminalPlayerOf(summary.players[1]),
+    terminalPlayerOf(summary.players[2]),
+    terminalPlayerOf(summary.players[3]),
+  ],
+});
 
 /**
  * 渲染每一场的读数成 JSONL 的行（不含换行符；末尾换行由写出侧补，与回放 JSONL 同款）。
@@ -51,6 +97,10 @@ export const trialObservationLines = (
       delivered: reading.delivered,
       captures: reading.captures,
       noScoreSource: reading.noScoreSource,
+      ...(reading.actionFacts === undefined ? {} : { actionFacts: reading.actionFacts }),
+      ...(reading.terminalSummary === undefined
+        ? {}
+        : { terminalSummary: terminalSummaryOf(reading.terminalSummary) }),
     }),
   );
 
@@ -59,8 +109,9 @@ export type WriteObservationsResult =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * 把那几行落盘：**整份重写**（协议轮里每次试跑都写同一个路径，留盘上的恒是最后一次）。
+ * 把那几行落盘：**整份重写**（路径由 trial invocation 给出；显式回喂时每协议轮独立）。
  *
+ * 同目录唯一临时旁挂写完整后才 rename：失败时旧完整文件保留，首次写出不留半截目标。
  * 没有读数时一个字节都不写，也不创建文件——空壳会被读档的人当成「跑了但没读数」。
  * 异常收成 `{ ok: false }`，不抛（见头注「为什么写盘失败不抛」）。
  */
@@ -71,10 +122,17 @@ export const writeTrialObservations = (
   if (lines.length === 0) {
     return { ok: true };
   }
+  const temporary = `${path}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(path, `${lines.join("\n")}\n`, "utf8");
+    writeFileSync(temporary, `${lines.join("\n")}\n`, { encoding: "utf8", flag: "wx" });
+    renameSync(temporary, path);
     return { ok: true };
   } catch (cause) {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+      // 清理失败也不抛，保留原始写盘原因，由调用点留警告。
+    }
     return { ok: false, reason: cause instanceof Error ? cause.message : String(cause) };
   }
 };

@@ -24,6 +24,7 @@ import type { BudgetConfig } from "../budget.js";
 import type { DrainedIntents, IssuedIntent } from "./intents.js";
 import type { EventCollector } from "./events.js";
 import type { GameState } from "../world/state.js";
+import type { ActionEffectSink } from "./action-effects.js";
 
 /** 一个 tick 的输入与中间量。`state` 走完八步之后就是下一 tick 的输入。 */
 export type TickContext = {
@@ -39,6 +40,7 @@ export type TickContext = {
    * 局部量里,与收集器同理——「谁收到观测」整条管线只有一处。
    */
   readonly observations: ObservationSink | undefined;
+  readonly actionEffects: ActionEffectSink | undefined;
   /**
    * 事件收集器,整条管线共用一个。
    */
@@ -88,11 +90,13 @@ export const initialContext = (
   observations?: ObservationSink,
   /** 预算配置;缺席即不启用任何预算轨(与「组装层传了一个空对象」等价)。 */
   budget: BudgetConfig = {},
+  actionEffects?: ActionEffectSink,
 ): TickContext => ({
   ruleset,
   runners,
   sink,
   observations,
+  actionEffects,
   budget,
   collector,
   fault: null,

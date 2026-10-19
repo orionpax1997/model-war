@@ -47,6 +47,8 @@ export type SeasonConfig = {
   readonly ruleset: RulesetVersion;
   /** 种子数 K,须满足 `M × K ≡ 0 (mod 4)`。 */
   readonly seeds: number;
+  /** 显式评测 seed 清单；长度须等于 seeds。省略时保持 masterSeed 派生。 */
+  readonly evaluationSeeds?: readonly number[];
   /** 参赛存档引用(`archive/<slug>/<runId>`),**下标即 playerIndex**,至少 4 条。 */
   readonly participants: readonly string[];
   /** 并发上限;缺省由调用方取 `min(cpus, 8)`。 */
@@ -105,6 +107,7 @@ const seasonSchema = z
     masterSeed: z.string().min(1),
     ruleset: z.string(),
     seeds: z.number().int().min(1),
+    evaluationSeeds: z.array(z.number().int().min(0).max(0xffffffff)).optional(),
     participants: z.array(z.string().min(1)).min(MIN_PARTICIPANTS),
     concurrency: z.number().int().min(1).optional(),
     rankPoints: z.array(z.number()).optional(),
@@ -112,6 +115,13 @@ const seasonSchema = z
     outputDir: z.string().min(1).optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.evaluationSeeds !== undefined && value.evaluationSeeds.length !== value.seeds) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evaluationSeeds"],
+        message: "evaluationSeeds 长度须等于 seeds，不改变比赛规模",
+      });
+    }
     // ruleset 必须与当前版本一致(写错版本在此拦下,不静默降级)。
     if (value.ruleset !== RULESET_VERSION) {
       ctx.addIssue({
@@ -170,6 +180,10 @@ const issueMessageOf = (issue: z.core.$ZodIssue, data: Record<string, unknown>):
     }
     case "seeds":
       return '必填字段 "seeds" 必须是 ≥1 的整数(K,种子数)';
+    case "evaluationSeeds":
+      return typeof child === "number"
+        ? `evaluationSeeds[${child}] 必须是 uint32 整数（0..4294967295），不接受需回绕的值（如 2^32+k、负数、小数）；与优化种子的随机流隔离另由 run 前置检查按 seed % 2^31 判定`
+        : '可选字段 "evaluationSeeds" 必须是整数数组';
     case "concurrency":
       return '可选字段 "concurrency" 必须是 ≥1 的整数';
     case "outputDir":
@@ -223,6 +237,7 @@ export const loadSeasonConfig = (filePath: string): SeasonConfig => {
     masterSeed: config.masterSeed,
     ruleset: config.ruleset as RulesetVersion,
     seeds: config.seeds,
+    ...(config.evaluationSeeds === undefined ? {} : { evaluationSeeds: config.evaluationSeeds }),
     participants: config.participants,
     ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
     ...(config.rankPoints !== undefined

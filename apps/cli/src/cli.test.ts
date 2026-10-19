@@ -6,7 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import type { MapDefinition } from "@model-war/schema";
+import type { MapDefinition, MatchObservationLine, Ruleset } from "@model-war/schema";
+import { validateObservationLine } from "./validator.js";
 import {
   QUICKJS_WASI_WASM_PATH,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
@@ -155,7 +156,13 @@ it("`gen` 不再是「未实现」:帮助里列出 --config / --root / --model",
   // 用户故事 24。`commandHelpText` 不展开处理器私有选项,故三个串只能来自登记的 `usage`。
   const help = run(["gen", "--help"]);
   expect(help.status).toBe(0);
-  for (const option of ["--config", "--root", "--model"]) {
+  for (const option of [
+    "--config",
+    "--root",
+    "--model",
+    "--score-source-feedback",
+    "--select-best-candidate",
+  ]) {
     expect(help.stdout, `gen --help 应含 ${option}`).toContain(option);
   }
 });
@@ -424,6 +431,127 @@ it(
   },
 );
 
+it(
+  "异常详情落盘：正式 match 保留每次异常且拒绝 guest 自由文本进入 JSONL",
+  { timeout: 30_000 },
+  () => {
+    const inputPath = writeMatchInput({
+      script: `function loop() {
+    const secret = "SECRET-DO-NOT-PERSIST-" + "x".repeat(100000) + "<script>\\n";
+    switch (getMyIndex()) {
+      case 0: throw new TypeError(secret);
+      case 1: missingDiagnosticFunction(); break;
+      case 2: throw { name: "TypeError", message: secret, stack: secret };
+      default: const e = new Error(secret); e.name = secret; e.stack = secret; throw e;
+    }
+  }`,
+    });
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const matched = run(["match", inputPath, "--root", root]);
+    expect(matched.status, matched.stderr).toBe(0);
+    const path = join(dirname(inputPath), "observations.jsonl");
+    const text = readFileSync(path, "utf8");
+    const lines = text
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as MatchObservationLine);
+    expect(lines.every((line) => validateObservationLine(line).ok)).toBe(true);
+    expect(lines).toEqual(
+      [0, 1, 2].flatMap((tick) =>
+        ["TypeError", "ReferenceError", "unknown", "unknown"].map((errorName, seat) => ({
+          type: "exception",
+          tick,
+          seat,
+          exceptionTickLimit: 3,
+          diagnostic: { category: "uncaught-exception", errorName },
+        })),
+      ),
+    );
+    expect(text.length).toBeLessThan(2000);
+    expect(text).not.toContain("SECRET");
+    expect(text).not.toContain("<script>");
+    const replayPath = join(dirname(inputPath), "replay.jsonl");
+    const originalReplay = readFileSync(replayPath, "utf8");
+    const verified = run(["verify", replayPath, "--root", root]);
+    expect(verified.status, verified.stderr).toBe(0);
+    expect(run(["match", inputPath, "--root", root]).status).toBe(0);
+    expect(readFileSync(replayPath, "utf8")).toBe(originalReplay);
+  },
+);
+
+it.each([
+  {
+    script: "function loop() { while (true) {} }",
+    patch: {},
+    categories: ["event-budget"],
+    counts: 3,
+  },
+  {
+    script: "function loop() { getTick(); getTick(); }",
+    patch: { apiCallTickLimit: 2 },
+    categories: ["api-budget"],
+    counts: 3,
+  },
+  {
+    script: "function loop() {}",
+    patch: { memoryTickCeiling: 1 },
+    categories: ["memory-budget"],
+    counts: 3,
+  },
+  {
+    script: "function loop() { getTick(); getTick(); }",
+    patch: { apiCallTickLimit: 2, memoryTickCeiling: 1 },
+    categories: ["memory-budget", "api-budget"],
+    counts: 4,
+  },
+])(
+  "异常详情落盘：真实预算 $categories 保留 used/limit，双轨不去重",
+  { timeout: 30_000 },
+  ({ script, patch, categories, counts }) => {
+    const inputPath = writeMatchInput({ script });
+    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+    const rulesetPath = join(root, "rulesets", "v2.json");
+    const ruleset = { ...JSON.parse(readFileSync(rulesetPath, "utf8")), ...patch } as Ruleset;
+    writeFileSync(rulesetPath, JSON.stringify(ruleset));
+    const matched = run(["match", inputPath, "--root", root]);
+    expect(matched.status, matched.stderr).toBe(0);
+    const records = readFileSync(join(dirname(inputPath), "observations.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as MatchObservationLine);
+    const exceptions = records.filter((line) => line.type === "exception");
+    expect(exceptions).toHaveLength(4 * counts);
+    expect(exceptions.every((line) => validateObservationLine(line).ok)).toBe(true);
+    expect(
+      exceptions
+        .filter((line) => line.tick === 0 && line.seat === 2)
+        .map((line) => line.diagnostic.category),
+    ).toEqual(categories);
+    for (const line of exceptions) {
+      expect(line.exceptionTickLimit).toBe(3);
+      const diagnostic = line.diagnostic;
+      if (diagnostic.category === "uncaught-exception") throw new Error("预期预算诊断");
+      const limit =
+        diagnostic.category === "event-budget"
+          ? ruleset.eventTickLimit
+          : diagnostic.category === "api-budget"
+            ? ruleset.apiCallTickLimit
+            : ruleset.memoryTickCeiling;
+      expect(diagnostic.limit).toBe(limit);
+      expect(diagnostic.used).toBeGreaterThanOrEqual(limit);
+      if (diagnostic.category === "api-budget") expect(diagnostic.used).toBe(2);
+    }
+    const ticks = readFileSync(join(dirname(inputPath), "replay.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((line) => line.type === "tick");
+    expect(
+      ticks.at(-1).players.map((player: { exceptionTicks: number }) => player.exceptionTicks),
+    ).toEqual([counts, counts, counts, counts]);
+  },
+);
+
 /**
  * `--root` 写在位置参数**前面**也要能跑。
  *
@@ -439,24 +567,26 @@ it("`match` 的 `--root` 写在 <input.json> 前面也能跑,退出 0", { timeou
   expect(readFileSync(join(inputPath, "..", "replay.jsonl"), "utf8")).not.toBe("");
 });
 
-it("`match` 装载期拒跑一律退 1:缺档 / 哈希不符 / 规则集版本不一致,一条都不静默 0", () => {
-  for (const tamper of [
-    "dropArchive",
-    "scriptSha",
-    "metaSha",
-    "mapSha",
-    "ruleset",
-    // 存档 meta 记的沙箱 runtime hash 与本仓入库产物不符:拒跑,不静默换。
-    "sandboxHash",
-  ] as const) {
-    const inputPath = writeMatchInput({ tamper });
-    const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
-    const result = run(["match", inputPath, "--root", root]);
-    expect(result.status, `${tamper} 应当按装载期拒跑退 1,stderr:\n${result.stderr}`).toBe(1);
-  }
-  // 缺参也退 1(不是 0,也不是别的)。
+it.each([
+  "dropArchive",
+  "scriptSha",
+  "metaSha",
+  "mapSha",
+  "ruleset",
+  // 存档 meta 记的沙箱 runtime hash 与本仓入库产物不符:拒跑,不静默换。
+  "sandboxHash",
+] as const)("`match` 装载期拒跑 %s 退 1,不静默 0", (tamper) => {
+  const inputPath = writeMatchInput({ tamper });
+  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
+  const result = run(["match", inputPath, "--root", root]);
+  expect(result.status, `${tamper} 应当按装载期拒跑退 1,stderr:\n${result.stderr}`).toBe(1);
+});
+
+it("`match` 缺参退 1", () => {
   expect(run(["match"]).status).toBe(1);
-  // 读不到输入文件也退 1。
+});
+
+it("`match` 读不到输入文件退 1", () => {
   expect(run(["match", join(scratch, "no-such-input.json")]).status).toBe(1);
 });
 
@@ -477,9 +607,9 @@ it("`match` 不再走「未实现」那条路径:处理器住在 CLI 的 match �
  * `ruleset` 传非 v2 时改掉 alpha 的 `meta.ruleset`,用来钉住「前置拒绝」那条路径。
  */
 const writeSeasonRoot = (
-  options: { readonly ruleset?: string } = {},
+  options: { readonly ruleset?: string; readonly script?: string } = {},
 ): { readonly root: string; readonly configPath: string } => {
-  const inputPath = writeMatchInput();
+  const inputPath = writeMatchInput(options.script === undefined ? {} : { script: options.script });
   const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
   if (options.ruleset !== undefined) {
     const metaPath = join(root, "archive", "alpha", "r1", "meta.json");
@@ -537,6 +667,40 @@ it(
     }
   },
 );
+
+it("异常详情落盘：正式赛季每局旁挂完整诊断，保持合法结果与名次", { timeout: 30_000 }, () => {
+  const { root } = writeSeasonRoot({
+    script: 'function loop() { throw new TypeError("SECRET"); }',
+  });
+  const result = run(["run", "--config", "season.yaml", "--root", root]);
+  expect(result.status, result.stderr).toBe(0);
+  const report = JSON.parse(readFileSync(join(root, "runs/season/report.json"), "utf8"));
+  expect(report.matches).toHaveLength(4);
+  for (const match of report.matches) {
+    expect(match.rankings).toEqual([1, 1, 1, 1]);
+    expect(match.reason).toBe("all-eliminated");
+    const sidecar = readFileSync(
+      join(dirname(join(root, match.inputPath)), "observations.jsonl"),
+      "utf8",
+    );
+    const lines = sidecar
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(lines).toEqual(
+      [0, 1, 2].flatMap((tick) =>
+        [0, 1, 2, 3].map((seat) => ({
+          type: "exception",
+          tick,
+          seat,
+          exceptionTickLimit: 3,
+          diagnostic: { category: "uncaught-exception", errorName: "TypeError" },
+        })),
+      ),
+    );
+    expect(sidecar).not.toContain("SECRET");
+  }
+});
 
 it("`run` 规则版本不一致(存档 meta.ruleset ≠ 赛季 ruleset)→ 退 1,不物化任何对局", () => {
   const { root } = writeSeasonRoot({ ruleset: "v1" });
@@ -759,4 +923,40 @@ it("`match` 遇到引擎故障(真沙箱宿主 RangeError)退 2,不静默 0", { 
   const result = run(["match", inputPath, "--root", root]);
   expect(result.status, result.stderr).toBe(2);
   expect(result.stderr).toContain("引擎故障");
+});
+
+it("report 只读归档，不触发对局，--model/--json 从唯一 CLI 输出生成报告", () => {
+  const root = mkdtempSync(join(scratch, "report-root-"));
+  const slugDir = join(root, "archive", "alpha");
+  mkdirSync(join(slugDir, "r1"), { recursive: true });
+  writeFileSync(
+    join(slugDir, "r1", "meta.json"),
+    JSON.stringify({
+      model: "alpha",
+      protocolRounds: 1,
+      generationLog: [
+        JSON.stringify({ round: 1, sendMs: 15, usage: { prompt_tokens: 7, completion_tokens: 3 } }),
+      ],
+    }),
+  );
+  writeFileSync(
+    join(slugDir, "observed-r1.jsonl"),
+    `${JSON.stringify({ matchIndex: 0, delivered: 0, captures: 0, noScoreSource: true })}\n`,
+  );
+  const before = readFileSync(join(slugDir, "r1", "meta.json"), "utf8");
+  const result = run(["report", "--root", root, "--model", "alpha", "--json"]);
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject([
+    {
+      model: "alpha",
+      protocolRounds: 1,
+      totals: { sendMs: { value: 15 }, input: { value: 7 }, output: { value: 3 } },
+      observations: { observedMatches: 1, noScoreSource: 1 },
+    },
+  ]);
+  expect(readFileSync(join(slugDir, "r1", "meta.json"), "utf8")).toBe(before);
+  expect(existsSync(join(root, "runs"))).toBe(false);
+  const help = run(["report", "--help"]);
+  expect(help.status).toBe(0);
+  for (const option of ["--root", "--model", "--json"]) expect(help.stdout).toContain(option);
 });

@@ -16,6 +16,11 @@
 import { readFileSync } from "node:fs";
 import type { ModelParams } from "./model-client.js";
 import { isRecord } from "./record.js";
+import {
+  generationParams,
+  parseGenerationPolicy,
+  type GenerationPolicy,
+} from "./generation-policy.js";
 import { parseYamlSubset } from "./yaml-lite.js";
 
 /** 三条端点族:本期已开通模型全落在它们里(hld §2.2.6)。新增一族才需要动适配层。 */
@@ -36,12 +41,13 @@ export type ModelConfig = {
   readonly credentialEnvVar: string;
   /** 契约 + prompt 的 token 预算核对用;缺省即不核对。 */
   readonly contextLength?: number;
-  /** 模型调用总轮数,**含初次生成**(默认 5,gen 内部默认;hld §2.2.6)。 */
+  /** 未开启事实优化时的总响应上限（默认5）；opt-in统一每阶段五次响应，不读此逐模型值。 */
   readonly protocolRounds?: number;
   /** 策略取向一行文;缺省即模板里的 `{{strategy}}` 整段不注入。 */
   readonly strategy?: string;
-  /** 透传给端点族的参数(temperature 等);缺省即空。 */
+  /** 旧配置的端点参数；规范配置使用 generationPolicy，禁止混用。 */
   readonly params?: ModelParams;
+  readonly generationPolicy?: GenerationPolicy;
 };
 
 export type ModelsConfig = {
@@ -155,6 +161,22 @@ const parseEntry = (entry: unknown, index: number, issues: string[]): ModelConfi
     issues.push(`${label}:可选字段 "strategy" 必须是字符串`);
   }
   const params = parseParams(entry, label, issues);
+  const generationPolicy =
+    entry.generationPolicy === undefined || endpointFamily === undefined
+      ? undefined
+      : parseGenerationPolicy(
+          entry.generationPolicy,
+          endpointFamily,
+          `${label}.generationPolicy`,
+          issues,
+        );
+  if (
+    entry.generationPolicy !== undefined &&
+    params !== undefined &&
+    Object.keys(params).length > 0
+  ) {
+    issues.push(`${label}:generationPolicy 不可与 params 混用（包括采样偏置及原生参数）`);
+  }
 
   if (
     slug === undefined ||
@@ -178,6 +200,7 @@ const parseEntry = (entry: unknown, index: number, issues: string[]): ModelConfi
     ...(protocolRounds !== undefined ? { protocolRounds } : {}),
     ...(strategy !== undefined ? { strategy } : {}),
     ...(params !== undefined ? { params } : {}),
+    ...(generationPolicy !== undefined ? { generationPolicy } : {}),
   };
 };
 
@@ -228,5 +251,6 @@ export const loadModelsConfig = (filePath: string): ModelsConfig => {
     throw configError(filePath, issues);
   }
   assertUniqueSlugs(models, filePath);
+  for (const model of models) generationParams(model);
   return { models };
 };

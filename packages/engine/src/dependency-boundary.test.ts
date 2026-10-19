@@ -54,7 +54,8 @@ const runDepcruise = (): { status: number; output: string } => {
   return { status: result.status ?? -1, output: `${result.stdout}${result.stderr}` };
 };
 
-it("engine 的运行时代码只 import node:crypto 一个内置模块", () => {
+// 全套与 gen 的全图巡航、真实沙箱集成并行；时限只覆盖子进程等待，不放宽依赖断言。
+it("engine 的运行时代码只 import node:crypto 一个内置模块", { timeout: 30_000 }, () => {
   // depcruise 巡航的是 tsc -b 的产物(它在本仓库没有可用的 TS 编译器,见 .dependency-cruiser.js 顶部),
   // 所以 dist 必须先在。门禁脚本自己带 tsc -b,这里只在裸跑 vitest 时兜一次底。
   if (!existsSync(engineDist)) {

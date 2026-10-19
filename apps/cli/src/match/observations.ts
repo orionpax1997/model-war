@@ -1,5 +1,5 @@
 /**
- * 观测记录 → 观测行(`observations.jsonl` 的内容),含「每玩家每类首条」去重。
+ * 观测记录 → `observations.jsonl`：软观测每玩家每类只记首条，异常详情逐条保留。
  *
  * ── 为什么去重在这一层，而不是在执行器或引擎里 ──
  *
@@ -13,28 +13,53 @@
  * 之后,「同一玩家第二类仍记、同一类第二条丢弃」这类断言不必拉起真沙箱就能钉住。
  */
 
-import type { ObservationLine, ReplaySeat } from "@model-war/schema";
+import type {
+  MatchObservationLine,
+  ObservationLine,
+  ReplaySeat,
+  ScriptExceptionDiagnostic,
+} from "@model-war/schema";
 
 /** 投一条观测行所需的五栏(引擎载荷里多出来的 `track` 在这一步丢掉:`kind` 已唯一对应一条轨)。 */
-export type ObservationInput = {
-  readonly tick: number;
-  readonly seat: ReplaySeat;
-  readonly kind: ObservationLine["kind"];
-  readonly value: number;
-  readonly limit: number;
-};
+export type ObservationInput =
+  | {
+      readonly tick: number;
+      readonly seat: ReplaySeat;
+      readonly kind: ObservationLine["kind"];
+      readonly value: number;
+      readonly limit: number;
+    }
+  | {
+      readonly tick: number;
+      readonly seat: ReplaySeat;
+      readonly kind: "exception";
+      readonly exceptionTickLimit?: number;
+      readonly diagnostic: ScriptExceptionDiagnostic;
+    };
 
 /**
- * 把按时间序到来的观测记录投影成观测行,**每玩家每类只保留首条**。
+ * 把按时间序到来的记录投影成 sidecar 行，软观测每玩家每类只保留首条，异常不去重。
  *
  * 判据是 `seat` + `kind` 两栏:同一个座位同一类第二次触发即丢弃,不同座位、不同类互不影响。
  */
 export const observationLinesOf = (
   records: readonly ObservationInput[],
-): readonly ObservationLine[] => {
+): readonly MatchObservationLine[] => {
   const seen = new Set<string>();
-  const lines: ObservationLine[] = [];
+  const lines: MatchObservationLine[] = [];
   for (const record of records) {
+    if (record.kind === "exception") {
+      lines.push({
+        type: "exception",
+        tick: record.tick,
+        seat: record.seat,
+        diagnostic: record.diagnostic,
+        ...(record.exceptionTickLimit === undefined
+          ? {}
+          : { exceptionTickLimit: record.exceptionTickLimit }),
+      });
+      continue;
+    }
     const key = `${String(record.seat)}/${record.kind}`;
     if (seen.has(key)) {
       continue;

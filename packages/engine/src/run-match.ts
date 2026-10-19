@@ -36,6 +36,7 @@
 import type { MapDefinition, ReplayPlayerRef, ReplayResultLine, Ruleset } from "@model-war/replay";
 
 import type { BudgetConfig } from "./budget.js";
+import type { ActionEffectSink } from "./processor/action-effects.js";
 import { processTick } from "./processor/index.js";
 import { createRandom, fillVariantWalls } from "./driver/random.js";
 import type { ObservationSink, SeatRunner } from "./runner/index.js";
@@ -71,6 +72,8 @@ export type RunMatchParams = {
   readonly sink: TickSink;
   /** 可选观测出口。缺席时墙钟软限与内存压力两类观测静默丢弃。 */
   readonly observations?: ObservationSink;
+  /** 实际施加成功的结算效果；只读窄出口，不影响状态、回放或预算。 */
+  readonly actionEffects?: ActionEffectSink;
 };
 
 /**
@@ -141,7 +144,8 @@ const resultLineOf = (state: GameState): ReplayResultLine => {
  * 「tick 的结算」这条规则因此**只有一处实现**,本函数不可能与它分叉。
  */
 export const runMatch = (params: RunMatchParams): RunMatchResult => {
-  const { ruleset, map, seed, head, players, runners, sink, observations, budget } = params;
+  const { ruleset, map, seed, head, players, runners, sink, observations, budget, actionEffects } =
+    params;
   // `budget` 透传进 `processTick` → `TickContext`:步 5 的淘汰判定读 `exceptionTickLimit`。
   // 事件/API 两轨的判定在执行器侧(它构造时就拿到阈值),不在管线里。
   const view: RulesetView = loadRuleset(ruleset);
@@ -159,7 +163,7 @@ export const runMatch = (params: RunMatchParams): RunMatchResult => {
   let tickCount = 0;
   // `state.outcome !== null` 就是收官:写它的那一 tick 是最后结算的一 tick。
   while (state.outcome === null) {
-    const ticked = processTick(state, runners, view, sink, observations, budget);
+    const ticked = processTick(state, runners, view, sink, observations, budget, actionEffects);
     if (ticked.fault !== null) {
       // 墙钟硬超时:作废而非判罚。本 tick 没写回放行(processTick 在步 0 后短路)、也不写末行
       // `result`——它不是一个「合法的负/胜/超时」,而是「这一局的结果不可信」。

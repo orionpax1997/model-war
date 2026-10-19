@@ -8,6 +8,7 @@ import type { ModelConfig } from "./config.js";
 import type { ModelClient } from "./model-client.js";
 import { generateAndFreeze, runGeneration } from "./run.js";
 import { fail, reply, stubClient, type StubClient } from "./stub-client.js";
+import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-run-`);
@@ -180,4 +181,74 @@ it("`generateAndFreeze` 解析出 root 后加载 `<root>/.env`(存在才加载)"
   } finally {
     delete process.env[key];
   }
+});
+
+it("runGeneration 显式选项贯通：两次事实优化后第三个有效候选冻结", async () => {
+  const root = writeRoot(configOf(entry("alpha", ["    protocolRounds: 3"])));
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  const code = await runGeneration({
+    root,
+    configPath: "models.yaml",
+    createClient: () => stub,
+    scoreSourceFeedback: true,
+    trial: ({ observationsPath }) => {
+      writeFileSync(
+        observationsPath,
+        [101, 202, 303]
+          .map((seed, matchIndex) =>
+            JSON.stringify({
+              matchIndex,
+              delivered: 0,
+              captures: 0,
+              noScoreSource: true,
+              terminalSummary: terminalSummaryFixture(seed),
+            }),
+          )
+          .join("\n") + "\n",
+      );
+      return { passed: true, stdout: "" };
+    },
+  });
+  expect(code).toBe(0);
+  expect(stub.calls).toHaveLength(3);
+});
+
+it.each([{ flags: [] }, { flags: ["--select-best-candidate"] }])(
+  "gen CLI 接受事实反馈与选拔无值开关 %j 并继续读取配置",
+  async ({ flags }) => {
+    const root = mkdtempSync(`${scratch}/cli-opt-in-`);
+    const messages: string[] = [];
+    const original = process.stderr.write;
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      messages.push(String(chunk));
+      return true;
+    };
+    try {
+      expect(
+        await generateAndFreeze([
+          "--score-source-feedback",
+          ...flags,
+          "--root",
+          root,
+          "--config",
+          "missing.yaml",
+        ]),
+      ).toBe(1);
+      expect(messages.join("")).toContain("missing.yaml");
+      expect(messages.join("")).not.toContain("未知参数");
+    } finally {
+      process.stderr.write = original;
+    }
+  },
+);
+
+it("CLI 选拔开关要求事实反馈，在读配置与首次请求前报错", async () => {
+  const code = await generateAndFreeze([
+    "--config",
+    "absent.yaml",
+    "--root",
+    scratch,
+    "--select-best-candidate",
+  ]);
+  expect(code).toBe(1);
 });

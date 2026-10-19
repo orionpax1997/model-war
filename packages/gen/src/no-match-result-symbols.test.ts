@@ -1,10 +1,10 @@
 /**
- * AC1 的源码级那一半:gen 运行时代码里不得出现对局结果符号
- * (srs FR-5 AC1;hld §3.2、§6.2「`gen` 代码中不存在对战结果回传路径」)。
+ * AC1 的源码级那一半：gen 不直接执行引擎或读取正式对局产物。
+ * ADR-0019 允许经 CLI/schema 接收试跑行动与终局纯数据摘要；这不开放引擎结果类型、产物路径或跨包边。
  *
  * 与 `dependency-boundary.test.ts` 的那一半互不可替代:depcruise 看的是**编译产物里的 import 边**,
  * 而 `"runs/…/result.json"` 这样的字符串、或从别处抄来的一个 `RunMatchResult` 类型名,
- * 可以完全没有跨包边——它恰好就是 AC1 要禁的那条通路。这一半不看构建产物,裸读源码即可红。
+ * 可以完全没有跨包边——它会绕过既有 CLI/schema 摘要接缝。这一半不看构建产物,裸读源码即可红。
  *
  * ── 为什么禁的是这几个符号(每条都得能回答「它为什么出现在 gen 里就是违规」) ──
  * `runs/`           对局产物的根目录名(hld §8.3:`runs/<runId>/` 里是回放 JSONL、对局结果与报告、
@@ -12,7 +12,7 @@
  * `.result.json`    单场对局结果的文件名。gen 手里有它就等于拿到了对局反馈。
  * `MatchResult`     engine 的对局结果类型族(现实例:`RunMatchResult`,packages/engine/src/run-match.ts)。
  * `RunMatchParams`  跑一局所需的对局入参类型;gen 手上有这个类型说明它打算自己跑对局。
- * `runMatch`        engine 的对局入口函数。AC1 禁的不是「读结果」这一种动作,而是**任何**把结果带回生成环节的路。
+ * `runMatch`        engine 的对局入口函数。gen 不得直接执行引擎，试跑事实须由 CLI/schema 接缝接收。
  * `MatchOutcome`    对局判定结果类型的通用名(名次/胜负);与 `MatchResult` 同一族的不同拼法。
  * `@model-war/{engine,runner,replay}`  跨包边。这三条与 depcruise 重复,但 depcruise 需要 `dist`
  *                   先 build、且只看得见 import 语句;这里连 import 之外的写法一起拦,零构建。

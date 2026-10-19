@@ -15,7 +15,7 @@ import { expect, it } from "vitest";
 import { INTENT_ERR_CODES } from "./intent-verdicts.js";
 
 it("引擎侧的 ERR_* 投影与真源包符号表的 error-code 项逐字相同", () => {
-  const fromTable = SANDBOX_INJECTED_API_SYMBOLS.filter((name) => name.startsWith("ERR_")).sort();
-  expect([...INTENT_ERR_CODES].sort()).toEqual(fromTable);
+  const fromTable = SANDBOX_INJECTED_API_SYMBOLS.filter((name) => name.startsWith("ERR_"));
+  expect(INTENT_ERR_CODES).toEqual(fromTable);
   expect(fromTable.length, "符号表里一个错误码都没有,这条断言就成了空断言").toBeGreaterThan(0);
 });

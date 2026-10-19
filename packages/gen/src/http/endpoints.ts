@@ -10,9 +10,10 @@
  *
  * ── 统一形状(端口 `ModelResponse`)──
  *
- * `text` / `finishReason` / `usage`。**截断一律归一成 `"length"`**:OpenAI 本就是 `"length"`,
- * Anthropic 的 `"max_tokens"` 与 Responses 的 `status: "incomplete"` 都由这里映射过来——
- * 票 06 只认这一个值来决定「重发同一轮」。
+ * `text` / `finishReason` / `usage` / `stopDetails`。预算截断归一成 `"length"`:
+ * Chat 的 `"length"`、Messages 的 `"max_tokens"` 与 Responses 的
+ * `incomplete_details.reason: "max_output_tokens"`。其他 incomplete 不冒充预算截断，
+ * 缺停止字段保持 `"unknown"`；原状态和原因单独保留。重试层只认 `"length"` 重发同一轮。
  *
  * 解析全程用 `unknown` 收窄(`no-explicit-any` 是 error):端点返回的永远是外部输入,
  * 遇到缺字段就退到安全缺省,而不是抛"取属性时 undefined"的下游崩溃。
@@ -41,6 +42,8 @@ export type StreamAccumulator = {
   readonly push: (frame: unknown) => void;
   /** 收流(`[DONE]`)后的统一形状;缺省语义与非流式 `parseResponse` 保持一致。 */
   readonly result: () => ModelResponse;
+  /** 可选的端点原生收尾:Anthropic 系以 `message_stop` 事件收尾,没有 `[DONE]`。缺省即只认 `[DONE]`。 */
+  readonly done?: () => boolean;
 };
 
 /**
@@ -136,7 +139,12 @@ const createChatCompletionsAccumulator = (): StreamAccumulator => {
         usage = root.usage;
       }
     },
-    result: () => ({ text, finishReason: finishReason ?? "stop", usage }),
+    result: () => ({
+      text,
+      finishReason: finishReason ?? "unknown",
+      usage,
+      stopDetails: finishReason === undefined ? {} : { reason: finishReason },
+    }),
   };
 };
 
@@ -144,10 +152,12 @@ const parseChatCompletions: EndpointSpec["parseResponse"] = (json) => {
   const root = asRecord(json);
   const choice = asRecord(asArray(root.choices)[0]);
   const message = asRecord(choice.message);
+  const rawStop = stringField(choice, "finish_reason");
   return {
     text: stringField(message, "content") ?? "",
-    finishReason: stringField(choice, "finish_reason") ?? "stop",
+    finishReason: rawStop ?? "unknown",
     usage: root.usage,
+    stopDetails: rawStop === undefined ? {} : { reason: rawStop },
   };
 };
 
@@ -184,6 +194,64 @@ const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
   return body;
 };
 
+/**
+ * 流式请求体 = 非流式请求体叠加 `stream: true`。
+ *
+ * 实测新中转在非流式下长时间不回响应头(网关等上游全量生成完才回),300s 空闲超时先到;
+ * 同一请求开流式后首帧 6s 即到——「这条请求走流式」是端点族的传输决定,params 压不过本层。
+ */
+const messagesStreamBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
+  ...messagesBody(config, messages, params),
+  stream: true,
+});
+
+/**
+ * 逐帧累积 Anthropic SSE:正文只拼 `text_delta`,推理 `thinking_delta` / 签名等绝不进 `text`;
+ * 停止原因取 `message_delta` 的 `stop_reason`(与非流式同一归一表);usage 把起止两处合并。
+ *
+ * 收尾认 `message_stop` 事件(Anthropic 流没有 `[DONE]`),由 `done()` 告诉读流循环提前结束。
+ */
+const createMessagesAccumulator = (): StreamAccumulator => {
+  let text = "";
+  let rawStop: string | undefined;
+  let usage: unknown;
+  let stopped = false;
+  return {
+    push: (frame) => {
+      const root = asRecord(frame);
+      const type = stringField(root, "type");
+      if (type === "content_block_delta") {
+        const delta = asRecord(root.delta);
+        if (stringField(delta, "type") === "text_delta") {
+          text += stringField(delta, "text") ?? "";
+        }
+      } else if (type === "message_delta") {
+        const stop = stringField(asRecord(root.delta), "stop_reason");
+        if (stop !== undefined) {
+          rawStop = stop;
+        }
+        if (root.usage !== undefined && root.usage !== null) {
+          usage = { ...asRecord(usage), ...asRecord(root.usage) };
+        }
+      } else if (type === "message_start") {
+        const messageUsage = asRecord(root.message).usage;
+        if (messageUsage !== undefined && messageUsage !== null) {
+          usage = messageUsage;
+        }
+      } else if (type === "message_stop") {
+        stopped = true;
+      }
+    },
+    result: () => ({
+      text,
+      finishReason: rawStop === undefined ? "unknown" : (MESSAGES_STOP_REASONS[rawStop] ?? rawStop),
+      usage,
+      stopDetails: rawStop === undefined ? {} : { reason: rawStop },
+    }),
+    done: () => stopped,
+  };
+};
+
 const parseMessages: EndpointSpec["parseResponse"] = (json) => {
   const root = asRecord(json);
   let text = "";
@@ -193,8 +261,14 @@ const parseMessages: EndpointSpec["parseResponse"] = (json) => {
     }
   }
   const rawStop = stringField(root, "stop_reason");
-  const finishReason = rawStop === undefined ? "stop" : (MESSAGES_STOP_REASONS[rawStop] ?? rawStop);
-  return { text, finishReason, usage: root.usage };
+  const finishReason =
+    rawStop === undefined ? "unknown" : (MESSAGES_STOP_REASONS[rawStop] ?? rawStop);
+  return {
+    text,
+    finishReason,
+    usage: root.usage,
+    stopDetails: rawStop === undefined ? {} : { reason: rawStop },
+  };
 };
 
 // ── responses(OpenAI Responses API)──────────────────────────────────────────
@@ -221,15 +295,24 @@ const parseResponses: EndpointSpec["parseResponse"] = (json) => {
 
   const status = stringField(root, "status");
   let finishReason: string;
+  const incompleteReason = stringField(asRecord(root.incomplete_details), "reason");
   if (status === "incomplete" || isRecord(root.incomplete_details)) {
-    // `incomplete` / `incomplete_details` 都表示被预算截断 → 归一成 `"length"`(票 06 重发同一轮)。
-    finishReason = "length";
-  } else if (status === "completed" || status === undefined) {
+    // 只有输出预算截断可重试；内容过滤等 incomplete 不伪装成预算耗尽。
+    finishReason = incompleteReason === "max_output_tokens" ? "length" : "incomplete";
+  } else if (status === "completed") {
     finishReason = "stop";
   } else {
-    finishReason = status;
+    finishReason = status ?? "unknown";
   }
-  return { text, finishReason, usage: root.usage };
+  return {
+    text,
+    finishReason,
+    usage: root.usage,
+    stopDetails: {
+      ...(status === undefined ? {} : { status }),
+      ...(incompleteReason === undefined ? {} : { reason: incompleteReason }),
+    },
+  };
 };
 
 /** 取一条端点族的翻译规则。新增一族才需要在这里动分支。 */
@@ -246,7 +329,15 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         },
       };
     case "messages":
-      return { path: "/messages", buildBody: messagesBody, parseResponse: parseMessages };
+      return {
+        path: "/messages",
+        buildBody: messagesBody,
+        parseResponse: parseMessages,
+        streaming: {
+          buildBody: messagesStreamBody,
+          createAccumulator: createMessagesAccumulator,
+        },
+      };
     case "responses":
       return { path: "/responses", buildBody: responsesBody, parseResponse: parseResponses };
   }

@@ -26,6 +26,7 @@ import type { RulesetView } from "../ruleset-loader/index.js";
 import type { ObservationSink, RunnerFault, SeatRunner } from "../runner/index.js";
 import type { BudgetConfig } from "../budget.js";
 import type { GameState } from "../world/state.js";
+import type { ActionEffectSink } from "./action-effects.js";
 import { step0Dispatch } from "./steps/step0-dispatch.js";
 import { step1Validate } from "./steps/step1-validate.js";
 import { step2Movement } from "./steps/step2-movement.js";
@@ -78,6 +79,7 @@ export type TickResult = {
  * `runners` 按 `playerIndex 0..3` 对齐(下标即座位),`sink` 收步 6 写出的那一行。
  * `observations` 是可选的观测出口:缺席时那两类观测静默丢弃(引擎单测不必关心它)。
  * `budget` 是可选的预算配置:缺席即不启用任何预算轨(步 5 的淘汰判定因此不生效)。
+ * `actionEffects` 只接收成功施加变更后的只读增量，不参与状态、回放或预算。
  * 返回值是**新状态**:调用方拿着旧状态继续读不算错,但下一 tick 必须用返回值(hld §4.1)。
  *
  * **故障短路**:步 0 置上 `fault` 后(墙钟硬超时),reduce 不再往下走——本 tick 不写回放行、
@@ -90,10 +92,20 @@ export const processTick = (
   sink: TickSink,
   observations?: ObservationSink,
   budget: BudgetConfig = {},
+  actionEffects?: ActionEffectSink,
 ): TickResult => {
   const context = STEPS.reduce<TickContext>(
     (now, step) => (now.fault === null ? step(now) : now),
-    initialContext(ruleset, runners, sink, createEventCollector(), state, observations, budget),
+    initialContext(
+      ruleset,
+      runners,
+      sink,
+      createEventCollector(),
+      state,
+      observations,
+      budget,
+      actionEffects,
+    ),
   );
   return {
     state: context.state,

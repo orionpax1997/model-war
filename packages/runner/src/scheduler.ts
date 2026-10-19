@@ -66,11 +66,13 @@ import { cpus } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { parseReplay, readLinesOf } from "@model-war/replay";
 import {
+  TRIAL_SEEDS,
   type JsonValue,
   type MatchInput,
   type MatchInputArchive,
   type MatchInputArchives,
 } from "@model-war/schema";
+import { optimizationMetaOf } from "./archive-optimization.js";
 import { enumerateMatchUps, slugOf, type MatchUp } from "./enumerate.js";
 import { DEFAULT_RANK_POINTS, perMatchScores, rankSeason, type MatchStanding } from "./ranker.js";
 import type { MatchIssue, MatchIssueReason, SeasonMatchReport, SeasonReport } from "./reporter.js";
@@ -101,6 +103,9 @@ const INPUT_KEYS = ["archives", "map", "mapSha256", "seed", "ruleset"] as const;
 /** 存档拓扑里的两个文件名(真源在 `packages/gen/src/archive.ts`,runner 不得 import gen,故写字面量)。 */
 const SCRIPT_PRODUCT_NAME = "script.js";
 const META_NAME = "meta.json";
+
+/** 随机源初态归一化模数:与引擎 `driver/random.ts` 的 LCG 初态 `seed % 0x80000000` 同值;engine 不导出,故本地定字面量。 */
+const SEED_STREAM_MODULUS = 0x80000000;
 
 /** `report.json` 的形状(`SeasonReport` / `SeasonMatchReport` / `MatchIssue`)住在 `./reporter.js`。 */
 
@@ -490,7 +495,32 @@ export const scheduleSeason = async (
     maps,
     seeds: season.seeds,
     masterSeed: season.masterSeed,
+    ...(season.evaluationSeeds === undefined ? {} : { evaluationSeeds: season.evaluationSeeds }),
   });
+
+  // 完整计划在任何物化、spawn 或 resume 之前检查；不替换用户选择的种子。
+  // 比较按 `seed % 2^31` 归一化（`101 + 2^31` 与 `101` 同一随机源初态，原始值直比会漏检）。
+  // 无 `optimization` 字段的纯旧档名册沿用旧行为（test-plan legacy 行：不改旧种子行为）；
+  // 名册一旦含有 opt-in 归档，即按「固定默认 ∪ 该档记录」集合检查（schema 现把记录值固定为 TRIAL_SEEDS，union 是防未来放宽不断 gate）。
+  for (const archivePath of season.participants) {
+    const meta = optimizationMetaOf(JSON.parse(readText(join(root, archivePath, META_NAME))));
+    const trialSeeds = meta?.optimization?.trialSeeds;
+    if (trialSeeds === undefined) continue;
+    const forbidden = new Set(
+      [...TRIAL_SEEDS, ...trialSeeds, ...(meta?.selection?.plan.seeds ?? [])].map(
+        (seed) => seed % SEED_STREAM_MODULUS,
+      ),
+    );
+    const conflicts = matchUps.filter((match) => forbidden.has(match.seed % SEED_STREAM_MODULUS));
+    if (conflicts.length > 0) {
+      const names = [...new Set(conflicts.map((match) => matchDirName(match)))];
+      const seeds = [...new Set(conflicts.map((match) => match.seed))];
+      process.stderr.write(
+        `modelwar run: 正式评测 seed 与 ${archivePath} 的优化/选拔 seeds 重叠（按 seed % 2^31 归一化）：对局 ${names.join(", ")}（seed ${seeds.join(", ")}）；赛季拒跑，请更换 masterSeed 或 evaluationSeeds 后重跑，不静默替换种子\n`,
+      );
+      return EXIT_FAILED;
+    }
+  }
 
   const now = options.now ?? (() => new Date());
   const runId = runIdOf(now());

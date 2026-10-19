@@ -43,9 +43,11 @@
  * ── API 计数(票 07 的「双计数」之一)──
  *
  * 每个注入函数都 `apiCalls += 1`(一个**宿主 authored 的普通整数**,不是 guest 可改的全局)。计数经
- * **同一次 `__drainIntents()` 返回载荷**带回宿主(返回结构 `{ intents, apiCalls }`)——不新增桥调用、
+ * **同一次 `__drainIntents()` 返回载荷**带回宿主(返回结构 `{ intents, apiCalls, actionFacts }`)——不新增桥调用、
  * 不做每次 API 调用的跨边界计数。**阈值判定不在 guest**:宿主拿到 `apiCalls` 后与 `apiCallTickLimit`
  * 比较,超限则作废该座位本 tick 的全部意图。计数每 tick 由 `__setSnapshot` 归零。
+ * 六类动作的 calls 与完整七种公开错误码的 errors 同样在闭包内固定计数、随原 drain 返回。
+ * 只计真实返回的错误码，不把 undefined 或静默丢弃称作成功。
  *
  * ── 座位自认为什么由本文件定义 ──
  *
@@ -56,6 +58,7 @@
  */
 
 import type { Ruleset } from "@model-war/replay";
+import type { ActionTickFacts } from "../runner/index.js";
 
 import { findPath as findPathInTerrain, type Point } from "../pathfinding/find-path.js";
 import {
@@ -91,10 +94,11 @@ declare const HOST_BRIDGE_DRAIN_INTENTS: string;
 /** 一个动作没生效时交回的值。判它只能走 `isError` / `errCode`(契约面 `ErrResult`)。 */
 type ErrResult = { readonly code: IntentErrCode };
 
-/** `__drainIntents()` 的返回形状:意图 + 本 tick 的 API 调用计数(票 07)。 */
+/** `__drainIntents()` 的返回形状:意图、API 总调用数与本 tick 的行动事实。 */
 type DrainResult = {
   readonly intents: readonly Intent[];
   readonly apiCalls: number;
+  readonly actionFacts: ActionTickFacts;
 };
 
 /** 宿主建 VM 时放在 `__setSnapshot` 位置上的一次性数据。`ruleset` 缺席 = 判据降级。 */
@@ -131,6 +135,72 @@ let pending: Intent[] = [];
  */
 let apiCalls = 0;
 
+/** 固定键计数，随快照清零；只经原 drain 返回，不增加 guest 调用。 */
+let actionCalls: ActionTickFacts["calls"] = {
+  move: 0,
+  moveTo: 0,
+  attack: 0,
+  harvest: 0,
+  transfer: 0,
+  spawnUnit: 0,
+};
+let actionErrors: ActionTickFacts["errors"] = {
+  move: {
+    ERR_NOT_ENOUGH_RESOURCES: 0,
+    ERR_INVALID_UNIT: 0,
+    ERR_NOT_OWNER: 0,
+    ERR_OUT_OF_RANGE: 0,
+    ERR_INVALID_TARGET: 0,
+    ERR_INVALID_SITE: 0,
+    ERR_BAD_ARGS: 0,
+  },
+  moveTo: {
+    ERR_NOT_ENOUGH_RESOURCES: 0,
+    ERR_INVALID_UNIT: 0,
+    ERR_NOT_OWNER: 0,
+    ERR_OUT_OF_RANGE: 0,
+    ERR_INVALID_TARGET: 0,
+    ERR_INVALID_SITE: 0,
+    ERR_BAD_ARGS: 0,
+  },
+  attack: {
+    ERR_NOT_ENOUGH_RESOURCES: 0,
+    ERR_INVALID_UNIT: 0,
+    ERR_NOT_OWNER: 0,
+    ERR_OUT_OF_RANGE: 0,
+    ERR_INVALID_TARGET: 0,
+    ERR_INVALID_SITE: 0,
+    ERR_BAD_ARGS: 0,
+  },
+  harvest: {
+    ERR_NOT_ENOUGH_RESOURCES: 0,
+    ERR_INVALID_UNIT: 0,
+    ERR_NOT_OWNER: 0,
+    ERR_OUT_OF_RANGE: 0,
+    ERR_INVALID_TARGET: 0,
+    ERR_INVALID_SITE: 0,
+    ERR_BAD_ARGS: 0,
+  },
+  transfer: {
+    ERR_NOT_ENOUGH_RESOURCES: 0,
+    ERR_INVALID_UNIT: 0,
+    ERR_NOT_OWNER: 0,
+    ERR_OUT_OF_RANGE: 0,
+    ERR_INVALID_TARGET: 0,
+    ERR_INVALID_SITE: 0,
+    ERR_BAD_ARGS: 0,
+  },
+  spawnUnit: {
+    ERR_NOT_ENOUGH_RESOURCES: 0,
+    ERR_INVALID_UNIT: 0,
+    ERR_NOT_OWNER: 0,
+    ERR_OUT_OF_RANGE: 0,
+    ERR_INVALID_TARGET: 0,
+    ERR_INVALID_SITE: 0,
+    ERR_BAD_ARGS: 0,
+  },
+};
+
 /** 还没有快照时的空世界:判据跑在它上面会如实报「单位不存在」,不是抛异常。 */
 const EMPTY: Snapshot = { tick: -1, size: 0, terrain: [], players: [], units: [], sites: [] };
 
@@ -146,12 +216,69 @@ guest[HOST_BRIDGE_SET_SNAPSHOT] = (next: Snapshot): void => {
   snapshot = next;
   pending = [];
   apiCalls = 0;
+  actionCalls = { move: 0, moveTo: 0, attack: 0, harvest: 0, transfer: 0, spawnUnit: 0 };
+  actionErrors = {
+    move: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0,
+    },
+    moveTo: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0,
+    },
+    attack: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0,
+    },
+    harvest: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0,
+    },
+    transfer: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0,
+    },
+    spawnUnit: {
+      ERR_NOT_ENOUGH_RESOURCES: 0,
+      ERR_INVALID_UNIT: 0,
+      ERR_NOT_OWNER: 0,
+      ERR_OUT_OF_RANGE: 0,
+      ERR_INVALID_TARGET: 0,
+      ERR_INVALID_SITE: 0,
+      ERR_BAD_ARGS: 0,
+    },
+  };
 };
 
 guest[HOST_BRIDGE_DRAIN_INTENTS] = (): DrainResult => {
   const drained = pending;
   pending = [];
-  return { intents: drained, apiCalls };
+  return { intents: drained, apiCalls, actionFacts: { calls: actionCalls, errors: actionErrors } };
 };
 
 // ── 查询函数:只读本 tick 的快照副本,不改引擎状态 ────────────────────────────
@@ -238,43 +365,51 @@ const settle = (verdict: Verdict, intent: Intent): ErrResult | undefined => {
   if (verdict.ok || verdict.code === null) {
     return undefined;
   }
+  actionErrors[intent.kind][verdict.code] += 1;
   return { code: verdict.code };
 };
 
 guest.move = (unitId: number, dx: -1 | 0 | 1, dy: -1 | 0 | 1): void | ErrResult => {
   apiCalls += 1;
+  actionCalls.move += 1;
   const intent: MoveIntent = { kind: "move", unitId, dx, dy };
   return settle(moveVerdict(world(), seat, intent), intent);
 };
 
 guest.moveTo = (unitId: number, x: number, y: number): void | ErrResult => {
   apiCalls += 1;
+  actionCalls.moveTo += 1;
   const intent: MoveIntent = { kind: "moveTo", unitId, x, y };
   return settle(moveVerdict(world(), seat, intent), intent);
 };
 
 guest.attack = (unitId: number, targetId: number): void | ErrResult => {
   apiCalls += 1;
+  actionCalls.attack += 1;
   const intent: AttackIntent = { kind: "attack", unitId, targetId };
   return settle(attackVerdict(world(), seat, rules, intent), intent);
 };
 
 guest.harvest = (unitId: number, siteId: number): void | ErrResult => {
   apiCalls += 1;
+  actionCalls.harvest += 1;
   const intent: HarvestIntent = { kind: "harvest", unitId, siteId };
   return settle(harvestVerdict(world(), seat, rules, intent), intent);
 };
 
 guest.transfer = (unitId: number): void | ErrResult => {
   apiCalls += 1;
+  actionCalls.transfer += 1;
   const intent: TransferIntent = { kind: "transfer", unitId };
   return settle(transferVerdict(world(), seat, rules, intent), intent);
 };
 
 guest.spawnUnit = (baseId: number, unitType: string): void | ErrResult => {
   apiCalls += 1;
+  actionCalls.spawnUnit += 1;
   // 兵种名是字符串字面量联合;运行时(真沙箱交出的是 JSON)可能收到别的值,故在缝上再判一次。
   if (!isUnitType(unitType)) {
+    actionErrors.spawnUnit.ERR_BAD_ARGS += 1;
     return { code: "ERR_BAD_ARGS" };
   }
   const intent: SpawnIntent = { kind: "spawnUnit", baseId, unitType };

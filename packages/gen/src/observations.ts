@@ -1,57 +1,170 @@
 /**
- * 冻结期试跑的**观测文件**路径:`archive/<modelSlug>/observed-<runId>.jsonl`(hld §7.4)。
- *
- * 它记的是试跑那三场里候选座位的「无得分来源」读数(每场一行)。那套观测本身归
- * `apps/cli/src/trial/score-source.ts`;本文件只管**这份数据落在哪、叫什么**——
- * 写它的是试跑入口(子进程),本包只把路径交给子进程,不解析那几行。
- *
- * ── 为什么落在这一层，而不是三件套里或 `meta.json` 里 ──
- *
- * **不进 `meta.json`**:那十一键是一次定死的形状(`packages/schema/src/archive-meta.ts`
- * 头注:改字段像改一个错误码名那样,波及已冻结在 `archive/` 里的每一份)。观测是诊断数据,
- * 不是「这份脚本怎么来的」,硬塞进 `generationLog` 只会让日志的逐轮行形状多出第二种。
- * **不进 `<runId>/` 目录**:三件套的不变量是「目录存在 ⇔ 三件套完整」(hld §7.4),
- * 装载期按那三件判完整性;往里加第四个文件要么改那条不变量的含义,要么让读档的人
- * 以为观测也是身份的一部分。
- * **与 `failed-<runId>.json` 并列**:它已经确立了「旁挂文件与存档目录同层」的先例——
- * 旁挂文件不进存档,报告侧按 `failed-` 前缀 + `.json` 后缀挑记录,别的前缀天然被过滤掉。
- *
- * ── 两侧的契约 ──
- *
- * - 入口按本路径**整份重写**(`writeFileSync`,不是追加):一个模型的协议轮里可以有多次
- *   试跑调用,落盘的内容恒等于**最后一次跑完**的调用(定结论的那一次)的读数;早停时行数
- *   少于场数。某一次调用中途 infra(两场作废、装载失败)时它一个字都不写,**上一次跑完的
- *   读数留在盘上**——删掉上一次的数据比留旧数据更坏,后者至少仍是真的。
- * - 写盘失败只在 stderr 留一行警告,**不改退出码、不改 verdict**——观测是旁证,
- *   它拿不到不该让候选的账上多一条失败(与「只观测、不拦」同一条纪律)。
- * - 没有 `--observations` 时入口一个字都不写:手工冒烟与真入口 e2e 仍按原样跑。
- *
- * ── 形状为什么还不在 `packages/schema` ──
- *
- * 目前**没有跨进程读者**:只有试跑入口写、gen 侧测试读它断言路径。形状家随第一个
- * 真读者落地(报告侧要汇总命中率时),与 `FailureRecord` 那次裁决同款做法——那时再提到
- * 真源包,并在这里留一个指针。现在就复制一份形状到 schema,等于给一份没人读的数据
- * 定死格式。
- *
- * ── 前缀为什么住在这里,而不是像 `FAILURE_RECORD_PREFIX` 那样住真源包 ──
- *
- * 失败记录的前缀住在 schema,是因为报告侧（跑对局并出报告的那个包）要按它挑文件——**跨包读者
- * 逼出了形状家**。观测前缀眼下只有本包用(写路径的是自己,读路径的也只有自己的测试),
- * 提到 schema 等于让真源包替一个包内约定占地。报告侧第一次读它时,前缀与行形状一起搬。
+ * 试跑逐场观测：旧四栏保持兼容，行动与终局事实经闭合字段和候选身份校验后回喂。
+ * opt-in 每个协议 round 独立保存，最终候选才发布到无 round 的兼容路径。
  */
-
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  ACTION_API_NAMES,
+  ACTION_ERROR_CODES,
+  OBSERVATIONS_FILE_PREFIX,
+  TRIAL_CANDIDATE_SEAT,
+  TRIAL_OBSERVATION_JSON_SCHEMA,
+  TRIAL_SEEDS,
+  type TrialActionFacts,
+  type TrialObservationLine,
+} from "@model-war/schema";
 
-/**
- * 观测文件名前缀（与 `FAILURE_RECORD_PREFIX` 同为「按前缀认出这是什么文件」的那一格，
- * 但刻意取不同值：报告侧挑失败记录时不会把它捞进去）。
- *
- * **只在包内用**，不进 `index.ts` 的导出面——理由见头注「前缀为什么住在这里」。
- */
-export const OBSERVATIONS_FILE_PREFIX = "observed-";
+import { compileProtocolSchema } from "./protocol-schema.js";
+import { parseTrialTerminalSummary } from "./terminal-summary.js";
 
-/**
- * 观测文件的绝对路径。它是纯计算:不建目录、不落盘——落盘由入口在跑完那几场之后做。
- */
-export const observationsPathOf = (root: string, slug: string, runId: string): string =>
-  join(root, "archive", slug, `${OBSERVATIONS_FILE_PREFIX}${runId}.jsonl`);
+const matchesTrialObservation = compileProtocolSchema(TRIAL_OBSERVATION_JSON_SCHEMA);
+
+export { OBSERVATIONS_FILE_PREFIX } from "@model-war/schema";
+
+/** round 是协议轮号，不是传输尝试或试跑调用数。 */
+export const observationsPathOf = (
+  root: string,
+  slug: string,
+  runId: string,
+  round?: number,
+): string =>
+  join(
+    root,
+    "archive",
+    slug,
+    `${OBSERVATIONS_FILE_PREFIX}${runId}${round === undefined ? "" : `-round-${String(round)}`}.jsonl`,
+  );
+
+/** 字段形状已由共享 JSON Schema 验证；这里只校验当前候选与跨字段关系。 */
+const validateActionIdentity = (
+  facts: TrialActionFacts,
+  matchIndex: number,
+  scriptSha256: string,
+): void => {
+  if (
+    facts.scriptSha256 !== scriptSha256 ||
+    facts.seed !== TRIAL_SEEDS[matchIndex] ||
+    facts.seat !== TRIAL_CANDIDATE_SEAT ||
+    ACTION_API_NAMES.some((name) => {
+      const totalErrors = ACTION_ERROR_CODES.reduce(
+        (sum, code) => sum + facts.errors[name][code],
+        0,
+      );
+      return (
+        !Number.isSafeInteger(totalErrors) ||
+        totalErrors > facts.calls[name] ||
+        (facts.observedTicks === 0 && facts.calls[name] > 0)
+      );
+    })
+  ) {
+    throw new Error("行动事实协议或候选归属违约");
+  }
+};
+
+/** 缺文件非致命；损坏、非法载荷、候选错配大声失败，不能变成策略反馈。 */
+export const readTrialObservations = (
+  path: string,
+  scriptSha256: string,
+): readonly TrialObservationLine[] | undefined => {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+    throw cause;
+  }
+  const matchIndexes = new Set<number>();
+  return text
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => {
+      const parsed: unknown = JSON.parse(line);
+      if (!matchesTrialObservation(parsed)) {
+        throw new Error(`试跑观测协议违约（行动事实协议）：${path}`);
+      }
+      // 共享 Schema 校验后恢复类型；跨行与业务关系仍在这里检查。
+      const reading = parsed as TrialObservationLine;
+      const { matchIndex, delivered, captures, noScoreSource, actionFacts } = reading;
+      const terminalSummary =
+        reading.terminalSummary === undefined
+          ? undefined
+          : parseTrialTerminalSummary(reading.terminalSummary, matchIndex);
+      if (
+        terminalSummary === null ||
+        (terminalSummary !== undefined &&
+          actionFacts !== undefined &&
+          terminalSummary.seed !== actionFacts.seed)
+      ) {
+        throw new Error(`试跑观测协议违约（终局事实协议）：${path}`);
+      }
+      if (
+        !Number.isSafeInteger(matchIndex) ||
+        matchIndexes.has(matchIndex) ||
+        !Number.isSafeInteger(delivered) ||
+        !Number.isSafeInteger(captures) ||
+        noScoreSource !== (delivered === 0 && captures === 0)
+      ) {
+        throw new Error(`试跑观测协议违约：${path}`);
+      }
+      matchIndexes.add(matchIndex);
+      if (actionFacts !== undefined) validateActionIdentity(actionFacts, matchIndex, scriptSha256);
+      return {
+        matchIndex,
+        delivered,
+        captures,
+        noScoreSource,
+        ...(actionFacts === undefined ? {} : { actionFacts }),
+        ...(terminalSummary === undefined ? {} : { terminalSummary }),
+      };
+    });
+};
+
+const renderActions = (reading: TrialObservationLine): string => {
+  const facts = reading.actionFacts;
+  if (facts === undefined) return "  行动事实缺失，未将缺失解释为零。";
+  if (!facts.complete) {
+    return `  行动事实不完整（已观测 tick=${String(facts.observedTicks)}，缺失 tick=${String(facts.missingTicks)}），不报告行动计数。`;
+  }
+  return (
+    `  行动事实：seed=${String(facts.seed)}，候选座位=${String(facts.seat)}，已观测 tick=${String(facts.observedTicks)}。\n` +
+    ACTION_API_NAMES.map((name) => {
+      const errors = ACTION_ERROR_CODES.filter((code) => facts.errors[name][code] > 0)
+        .map((code) => `${code}=${String(facts.errors[name][code])}`)
+        .join("，");
+      return `  ${name}：调用=${String(facts.calls[name])}；即时错误返回：${errors || "无"}。`;
+    }).join("\n") +
+    `\n  独立结算事实：movedSteps=${String(facts.effects.movedSteps)}，harvestedAmount=${String(facts.effects.harvestedAmount)}，deliveredAmount=${String(facts.effects.deliveredAmount)}，captureEvents=${String(facts.effects.captureEvents)}，productionOrdersStarted=${String(facts.effects.productionOrdersStarted)}。`
+  );
+};
+
+const renderTerminal = (reading: TrialObservationLine): string => {
+  const summary = parseTrialTerminalSummary(reading.terminalSummary, reading.matchIndex);
+  if (
+    summary === null ||
+    (reading.actionFacts !== undefined && summary.seed !== reading.actionFacts.seed)
+  ) {
+    return "  终局成绩未知（缺少有效终局事实），未将缺失解释为零。";
+  }
+  return (
+    `  终局事实：seed=${String(summary.seed)}，已执行 tick=${String(summary.tick)}，结束原因=${summary.reason}。\n` +
+    `  计分权重：基地=${String(summary.weights.baseScore)}，资源点=${String(summary.weights.resourceScore)}，单位造价除数=${String(summary.weights.unitCostDivisor)}；单位造价：worker=${String(summary.unitCosts.worker)}，melee=${String(summary.unitCosts.melee)}，ranged=${String(summary.unitCosts.ranged)}，cavalry=${String(summary.unitCosts.cavalry)}；名次积分表=${summary.rankPoints.map(String).join(" / ")}。\n` +
+    summary.players
+      .map(
+        (player) =>
+          `  座位=${String(player.seat)}，身份=${player.player}，控制基地=${String(player.controlledBases)}，控制资源点=${String(player.controlledResources)}，存活单位：worker=${String(player.survivingUnits.worker)}，melee=${String(player.survivingUnits.melee)}，ranged=${String(player.survivingUnits.ranged)}，cavalry=${String(player.survivingUnits.cavalry)}；存活单位总造价=${String(player.survivingUnitCost)}，基地分=${String(player.score.bases)}，资源点分=${String(player.score.resources)}，单位分=${String(player.score.units)}，领土分=${String(player.territoryScore)}，名次=${String(player.rank)}，名次积分=${String(player.rankPoints)}，存活=${String(player.alive)}，淘汰 tick=${player.eliminatedAtTick === null ? "无" : String(player.eliminatedAtTick)}。`,
+      )
+      .join("\n")
+  );
+};
+
+/** 只陈述本候选的白名单事实；不从读数推断原因或给策略建议。 */
+export const renderScoreSourceFeedback = (readings: readonly TrialObservationLine[]): string =>
+  `试跑观测：本候选实际完成的 ${String(readings.length)} 个对局。\n` +
+  readings
+    .map(
+      (reading) =>
+        `- 第 ${String(reading.matchIndex + 1)} 个对局：快照 delivered=${String(reading.delivered)}，captures=${String(reading.captures)}，noScoreSource=${String(reading.noScoreSource)}。\n${renderActions(reading)}\n${renderTerminal(reading)}`,
+    )
+    .join("\n") +
+  "\n调用、即时错误返回与结算事实分别计量；undefined 返回不代表行动生效。movedSteps 是实际格移动次数，captureEvents 是占点事件次数，productionOrdersStarted 是开始订单数。快照读数不覆盖全部结算变化。终局 tick 是已执行 tick 数；淘汰 tick 为从零开始的编号。名次积分按并列占用名次区间均分；timeout 的第一名不代表胜利。这些观测不说明原因；依据既有契约返回完整脚本。";

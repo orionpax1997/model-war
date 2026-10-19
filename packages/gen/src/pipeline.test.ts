@@ -27,12 +27,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { RULESET_VERSION, SANDBOX_RUNTIME_HASH, type ArchiveMeta } from "@model-war/schema";
+import {
+  RULESET_VERSION,
+  SANDBOX_RUNTIME_HASH,
+  type ArchiveMeta,
+  type TrialObservationLine,
+} from "@model-war/schema";
 import { afterAll, expect, it, vi } from "vitest";
 
 import { sha256Hex } from "./archive.js";
 import { compileScript } from "./compile.js";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
+import { generationParams } from "./generation-policy.js";
+import { policyFixture } from "./generation-policy.fixture.js";
 import { readRuleDocs } from "./contract.js";
 import { generateOneModel, type ModelOutcome } from "./pipeline.js";
 import { loadBaseTemplate } from "./prompt.js";
@@ -41,6 +48,7 @@ import { runGeneration, type GenerationRequest } from "./run.js";
 import { fail, replies, reply, stubClient, type StubCall, type StubClient } from "./stub-client.js";
 import { TransportError } from "./transport-error.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
+import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-gen-pipeline-`);
@@ -813,4 +821,1439 @@ it("剥围栏接线:围栏包裹的合法脚本首轮直接冻结,落盘字节�
   }
   expect(outcome.meta.protocolRounds).toBe(1);
   expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(VALID_SCRIPT);
+});
+
+const terminalReadings = (delivered = 0, captures = 0): TrialObservationLine[] =>
+  [101, 202, 303].map((seed, matchIndex) => ({
+    matchIndex,
+    delivered,
+    captures,
+    noScoreSource: delivered === 0 && captures === 0,
+    terminalSummary: terminalSummaryFixture(seed),
+  }));
+
+const observationJsonl = (readings: readonly unknown[]): string =>
+  readings.map((reading) => JSON.stringify(reading)).join("\n") + "\n";
+
+it("所有有效候选固定两次事实回喂，编译修复不占优化轮，三候选可追溯", async () => {
+  const root = mkRoot();
+  const runId = "production-action-facts";
+  const revised = "function loop() { return 9; }\n";
+  const final = "function loop() { return 10; }\n";
+  const stub = stubClient([
+    reply(VALID_SCRIPT),
+    reply(TSC_FAIL_SCRIPT),
+    reply(revised),
+    reply(final),
+  ]);
+  const candidateBytes: Buffer[] = [];
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, runId, ({ artifactPath, observationsPath }) => {
+        const bytes = readFileSync(artifactPath);
+        candidateBytes.push(bytes);
+        writeFileSync(
+          observationsPath,
+          observationJsonl(
+            [101, 202, 303].map((seed, matchIndex) => ({
+              matchIndex,
+              terminalSummary: terminalSummaryFixture(seed),
+              delivered: candidateBytes.length === 1 ? 0 : 7,
+              captures: candidateBytes.length === 1 ? 0 : 1,
+              noScoreSource: candidateBytes.length === 1,
+              actionFacts: {
+                version: 1,
+                scriptSha256: sha256Hex(bytes),
+                seed,
+                seat: 0,
+                complete: true,
+                observedTicks: 12,
+                missingTicks: 0,
+                calls: {
+                  move: 0,
+                  moveTo: 6,
+                  attack: 0,
+                  harvest: candidateBytes.length === 1 ? 2 : 8,
+                  transfer: 0,
+                  spawnUnit: 5,
+                },
+                errors: Object.fromEntries(
+                  ["move", "moveTo", "attack", "harvest", "transfer", "spawnUnit"].map((name) => [
+                    name,
+                    {
+                      ERR_NOT_OWNER: 0,
+                      ERR_INVALID_UNIT: 0,
+                      ERR_OUT_OF_RANGE: 0,
+                      ERR_NOT_ENOUGH_RESOURCES: name === "spawnUnit" ? 4 : 0,
+                      ERR_INVALID_TARGET: 0,
+                      ERR_INVALID_SITE: 0,
+                      ERR_BAD_ARGS: 0,
+                    },
+                  ]),
+                ),
+                effects: {
+                  movedSteps: 3,
+                  harvestedAmount: 2,
+                  deliveredAmount: 0,
+                  captureEvents: 0,
+                  productionOrdersStarted: 1,
+                },
+              },
+            })),
+          ),
+        );
+        return { passed: true, stdout: "" };
+      }),
+      scoreSourceFeedback: true,
+    },
+    {
+      ...firstModelConfig(root),
+      protocolRounds: 5,
+      generationPolicy: policyFixture("chat-completions"),
+    },
+  );
+  expect(outcome.kind).toBe("frozen");
+  expect(stub.calls).toHaveLength(4);
+  for (const call of stub.calls) {
+    expect(call.params).toEqual({ reasoning_effort: "high", max_completion_tokens: 8192 });
+  }
+  if (outcome.kind === "frozen") {
+    for (const log of parsedLog(outcome.meta)) {
+      expect(log.params).toEqual(stub.calls[0]?.params);
+      expect(log.requestEvidence).toMatchObject({
+        configId: "alpha",
+        backendIdentity: "unverified",
+      });
+    }
+  }
+  const feedback = callAt(stub, 1).messages[2]?.content ?? "";
+  expect(feedback).toContain("seed=101");
+  expect(feedback).toContain("harvest：调用=2");
+  expect(feedback).toContain("spawnUnit：调用=5");
+  expect(feedback).toContain("ERR_NOT_ENOUGH_RESOURCES=4");
+  expect(feedback).toContain("harvestedAmount=2");
+  expect(feedback).toContain("productionOrdersStarted=1");
+  expect(feedback).not.toContain(sha256Hex(candidateBytes[0] ?? Buffer.alloc(0)));
+  expect(feedback).not.toMatch(/请检查|阈值|坐标|目标切换|成功次数/);
+  expect(callAt(stub, 2).messages[4]?.content).toContain("TS2304");
+  expect(
+    readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`)),
+  ).toEqual(candidateBytes[0]);
+  expect(
+    readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl.candidate.js`)),
+  ).toEqual(candidateBytes[1]);
+  expect(
+    existsSync(join(root, "archive", "alpha", `observed-${runId}-round-2.jsonl.candidate.js`)),
+  ).toBe(false);
+  if (outcome.kind === "frozen") {
+    expect(callAt(stub, 3).messages[6]?.content).toContain("harvest：调用=8");
+    expect(callAt(stub, 3).messages[6]?.content).toContain("delivered=7，captures=1");
+    expect(callAt(stub, 3).messages[6]?.content).not.toContain("均为零");
+    expect(outcome.meta.protocolRounds).toBe(4);
+    expect(outcome.meta).toHaveProperty("optimization", {
+      version: 1,
+      feedbackRounds: 2,
+      trialSeeds: [101, 202, 303],
+      candidates: [1, 3, 4].map((protocolRound, stage) => ({
+        stage,
+        protocolRound,
+        scriptFile: `observed-${runId}-round-${String(protocolRound)}.jsonl.candidate.js`,
+        observationsFile: `observed-${runId}-round-${String(protocolRound)}.jsonl`,
+        scriptSha256: sha256Hex(candidateBytes[stage] ?? Buffer.alloc(0)),
+      })),
+    });
+    expect(candidateBytes).toHaveLength(3);
+    expect(outcome.meta.scriptSha256).toBe(sha256Hex(candidateBytes[2] ?? Buffer.alloc(0)));
+    expect(readFileSync(join(outcome.dir, "script.js"))).toEqual(candidateBytes[2]);
+    expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(final);
+    expect(
+      readFileSync(
+        join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.ts`),
+        "utf8",
+      ),
+    ).toBe(VALID_SCRIPT);
+    expect(
+      readFileSync(
+        join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl.candidate.ts`),
+        "utf8",
+      ),
+    ).toBe(revised);
+    expect(
+      readFileSync(
+        join(root, "archive", "alpha", `observed-${runId}-round-4.jsonl.candidate.ts`),
+        "utf8",
+      ),
+    ).toBe(final);
+  }
+});
+
+it("初次候选缺少一场终局时停止，不请求第一次优化并保留本轮证据", async () => {
+  const root = mkRoot();
+  const runId = "terminal-initial-missing";
+  const observed = [101, 202].map((seed, matchIndex) => ({
+    matchIndex,
+    delivered: 0,
+    captures: 0,
+    noScoreSource: true,
+    terminalSummary: terminalSummaryFixture(seed),
+  }));
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          writeFileSync(
+            observationsPath,
+            observed.map((row) => JSON.stringify(row)).join("\n") + "\n",
+          );
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      firstModelConfig(root),
+    ),
+  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2）");
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  expect(
+    readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`), "utf8"),
+  ).toBe(observed.map((row) => JSON.stringify(row)).join("\n") + "\n");
+});
+
+it("中间候选三行中缺终局摘要时停止，不请求第二次优化", async () => {
+  const root = mkRoot();
+  const runId = "terminal-middle-partial";
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  let invocation = 0;
+  const observedPaths: string[] = [];
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          invocation += 1;
+          observedPaths.push(observationsPath);
+          const readings = terminalReadings();
+          if (invocation === 2) Reflect.deleteProperty(readings[1]!, "terminalSummary");
+          writeFileSync(observationsPath, observationJsonl(readings));
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      firstModelConfig(root),
+    ),
+  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 1 未完成");
+  expect(stub.calls).toHaveLength(2);
+  expect(callAt(stub, 1).messages[2]?.content).toContain("终局事实：seed=303");
+  expect(observedPaths).toHaveLength(2);
+  for (const path of observedPaths) {
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(`${path}.candidate.js`)).toBe(true);
+  }
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+});
+
+it("最终候选仅保存两场终局时拒绝冻结，不追加请求或执行选拔", { timeout: 30_000 }, async () => {
+  const root = selectionRoot();
+  const runId = "terminal-final-partial";
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  let invocation = 0;
+  const selection = vi.fn();
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          invocation += 1;
+          const readings = terminalReadings();
+          if (invocation === 3) readings.pop();
+          writeFileSync(observationsPath, observationJsonl(readings));
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+        selectBestCandidate: true,
+        selection,
+      },
+      firstModelConfig(root),
+    ),
+  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 2 未完成");
+  expect(stub.calls).toHaveLength(3);
+  expect(invocation).toBe(3);
+  expect(selection).not.toHaveBeenCalled();
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  for (const round of [1, 2, 3]) {
+    const path = join(root, "archive", "alpha", `observed-${runId}-round-${round}.jsonl`);
+    expect(existsSync(`${path}.candidate.js`)).toBe(true);
+    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(round === 3 ? 2 : 3);
+  }
+});
+
+it.each([undefined, "", " \n\n"])(
+  "opt-in 缺失或零行观测 %j 必须 infra 失败，保留本轮候选而不冻结",
+  async (observed) => {
+    const root = mkRoot();
+    const runId = "feedback-missing";
+    const stub = stubClient([reply(VALID_SCRIPT)]);
+    await expect(
+      generateOneModel(
+        {
+          ...requestWith(root, stub, runId, ({ observationsPath }) => {
+            if (observed !== undefined) writeFileSync(observationsPath, observed);
+            return { passed: true, stdout: "" };
+          }),
+          scoreSourceFeedback: true,
+        },
+        { ...firstModelConfig(root), protocolRounds: 1 },
+      ),
+    ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2）");
+    expect(stub.calls).toHaveLength(1);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+    expect(
+      existsSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`)),
+    ).toBe(true);
+  },
+);
+
+it.each([
+  { stage: 0, source: TSC_FAIL_SCRIPT, classification: "tsc", configuredRounds: 1 },
+  { stage: 1, source: BLOCKING_SCRIPT, classification: "contract", configuredRounds: 2 },
+  { stage: 2, source: VALID_SCRIPT, classification: "contract", configuredRounds: 9 },
+])(
+  "优化阶段 $stage 不受逐模型上限 $configuredRounds 影响，统一用尽五次响应即失败",
+  { timeout: 15_000 },
+  async ({ stage, source, classification, configuredRounds }) => {
+    const root = mkRoot();
+    const runId = `repair-exhausted-${String(stage)}`;
+    const stub = stubClient([
+      ...Array.from({ length: stage }, () => reply(VALID_SCRIPT)),
+      ...Array.from({ length: 5 }, () => reply(source)),
+    ]);
+    let trialCount = 0;
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          trialCount += 1;
+          writeFileSync(observationsPath, observationJsonl(terminalReadings(1, 0)));
+          return { passed: stage !== 2 || trialCount <= 2, stdout: "预算诊断\n" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: configuredRounds },
+    );
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") return;
+    expect(stub.calls).toHaveLength(stage + 5);
+    expect(outcome.failure.classification).toBe(classification);
+    expect(outcome.failure.prompts).toHaveLength(stage + 5);
+    expect(outcome.failure.generationLog).toHaveLength(stage + 5);
+    expect(outcome.failure.message).toContain(`优化阶段 ${String(stage)}`);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+    for (let round = 1; round <= stage; round += 1) {
+      expect(
+        existsSync(
+          join(
+            root,
+            "archive",
+            "alpha",
+            `observed-${runId}-round-${String(round)}.jsonl.candidate.js`,
+          ),
+        ),
+      ).toBe(true);
+    }
+    if (stage === 2) expect(callAt(stub, 3).messages[6]?.content).toBe("预算诊断\n");
+  },
+);
+
+it.each(["当前", "前阶段"])(
+  "试跑更换%s独占旁挂JS时 infra 失败，不能冻结错配历史",
+  async (target) => {
+    const root = mkRoot();
+    const runId = "feedback-sidecar-mutation";
+    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+    let invocation = 0;
+    await expect(
+      generateOneModel(
+        {
+          ...requestWith(root, stub, runId, ({ observationsPath }) => {
+            invocation += 1;
+            writeFileSync(observationsPath, observationJsonl(terminalReadings(2, 0)));
+            if (target === "当前" || invocation === 2) {
+              const saved =
+                target === "当前"
+                  ? `${observationsPath}.candidate.js`
+                  : join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`);
+              writeFileSync(saved, "function loop() { return 123; }\n");
+            }
+            return { passed: true, stdout: "" };
+          }),
+          scoreSourceFeedback: true,
+        },
+        { ...firstModelConfig(root), protocolRounds: 1 },
+      ),
+    ).rejects.toThrow("旁挂候选 JS 字节改变");
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+    expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  },
+);
+
+it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或协议日志", async () => {
+  const root = mkRoot();
+  const runId = "optimization-transport";
+  const stub = stubClient([
+    reply(VALID_SCRIPT),
+    ...Array.from({ length: RETRY.maxRetries + 1 }, () =>
+      fail(new TransportError("服务不可用", { retryable: true, status: 503 })),
+    ),
+  ]);
+  vi.useFakeTimers();
+  try {
+    const pending = generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          writeFileSync(observationsPath, observationJsonl(terminalReadings(1, 0)));
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 1 },
+    );
+    await vi.runAllTimersAsync();
+    const outcome = await pending;
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") return;
+    expect(stub.calls).toHaveLength(RETRY.maxRetries + 2);
+    expect(outcome.failure.classification).toBe("transport");
+    expect(outcome.failure.message).toContain("优化阶段 1");
+    expect(outcome.failure.prompts).toHaveLength(1);
+    expect(outcome.failure.generationLog).toHaveLength(1);
+    for (let index = 2; index < stub.calls.length; index += 1) {
+      expect(callAt(stub, index).messages).toEqual(callAt(stub, 1).messages);
+    }
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+    expect(
+      existsSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`)),
+    ).toBe(true);
+    expect(
+      existsSync(join(root, "archive", "alpha", `observed-${runId}-round-2.jsonl.candidate.js`)),
+    ).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each(["候选JS", "观测JSONL"])("本轮%s已有证据时拒绝复用或覆盖，保留原证据", async (kind) => {
+  const root = mkRoot();
+  const runId = "feedback-evidence-collision";
+  const path = join(
+    root,
+    "archive",
+    "alpha",
+    `observed-${runId}-round-1.jsonl${kind === "候选JS" ? ".candidate.js" : ""}`,
+  );
+  mkdirSync(join(root, "archive", "alpha"), { recursive: true });
+  writeFileSync(path, "previous-evidence");
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  let trialInvoked = false;
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, () => {
+          trialInvoked = true;
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 3 },
+    ),
+  ).rejects.toThrow();
+  expect(readFileSync(path, "utf8")).toBe("previous-evidence");
+  expect(trialInvoked).toBe(false);
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+});
+
+it("试跑期间编译产物被更换时不能回喂错配事实或冻结", async () => {
+  const root = mkRoot();
+  const runId = "feedback-candidate-mutation";
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ artifactPath }) => {
+          writeFileSync(artifactPath, "function loop() { return 99; }\n");
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 3 },
+    ),
+  ).rejects.toThrow("编译 JS 字节改变");
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+});
+
+it("旧四栏观测在新优化流程失败安全，不回喂或冻结，原始证据保留", async () => {
+  const root = mkRoot();
+  const runId = "feedback-legacy-safe";
+  const observed = observationJsonl(
+    [0, 1, 2].map((matchIndex) => ({
+      matchIndex,
+      delivered: 0,
+      captures: 0,
+      noScoreSource: true,
+    })),
+  );
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          writeFileSync(observationsPath, observed);
+          return { passed: true, stdout: "试跑通过" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      firstModelConfig(root),
+    ),
+  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 0 未完成");
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  const candidatePath = join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`);
+  expect(readFileSync(candidatePath, "utf8")).toBe(observed);
+  expect(existsSync(`${candidatePath}.candidate.js`)).toBe(true);
+});
+
+it.each([
+  {
+    name: "默认关闭",
+    enabled: undefined,
+    observed: '{"matchIndex":0,"delivered":0,"captures":0,"noScoreSource":true}\n',
+  },
+  {
+    name: "显式 false",
+    enabled: false,
+    observed: '{"matchIndex":0,"delivered":0,"captures":0,"noScoreSource":true}\n',
+  },
+])("观测回喂边界 $name：正常首轮冻结，不追加反馈", async ({ enabled, observed }) => {
+  const root = mkRoot();
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  const request = {
+    ...requestWith(root, stub, "feedback-gating", ({ observationsPath }) => {
+      if (observed !== undefined) writeFileSync(observationsPath, observed);
+      return { passed: true, stdout: "" };
+    }),
+    ...(enabled === undefined ? {} : { scoreSourceFeedback: enabled }),
+  };
+  const outcome = await generateOneModel(request, { ...firstModelConfig(root), protocolRounds: 3 });
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") return;
+  expect(outcome.meta.protocolRounds).toBe(1);
+  expect(stub.calls).toHaveLength(1);
+});
+
+it(
+  "每阶段独立两次总尝试，诊断修复不侵占有效候选，协议轮号全局递增",
+  { timeout: 15_000 },
+  async () => {
+    const root = mkRoot();
+    const sources = [
+      TSC_FAIL_SCRIPT,
+      VALID_SCRIPT,
+      BLOCKING_SCRIPT,
+      "function loop() { return 4; }\n",
+      "function loop() { return 5; }\n",
+      "function loop() { return 6; }\n",
+    ];
+    const stub = stubClient(sources.map((source) => reply(source)));
+    const runId = "feedback-cap";
+    let trialCount = 0;
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          trialCount += 1;
+          writeFileSync(observationsPath, observationJsonl(terminalReadings(3, 0)));
+          return { passed: trialCount !== 3, stdout: "预算诊断\n" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 2 },
+    );
+    expect(outcome.kind).toBe("frozen");
+    if (outcome.kind !== "frozen") return;
+    expect(stub.calls).toHaveLength(6);
+    expect(trialCount).toBe(4);
+    expect(outcome.meta.protocolRounds).toBe(6);
+    expect(
+      outcome.meta.optimization?.candidates.map(({ stage, protocolRound }) => [
+        stage,
+        protocolRound,
+      ]),
+    ).toEqual([
+      [0, 2],
+      [1, 4],
+      [2, 6],
+    ]);
+    expect(callAt(stub, 5).messages[10]?.content).toBe("预算诊断\n");
+    expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(sources[5]);
+  },
+);
+
+it("预算和编译修复不消费优化机会，三个全零有效候选后正常收口", async () => {
+  const root = mkRoot();
+  const runId = "feedback-budget-history";
+  const budgetFeedback = "试跑未通过：候选脚本 API 预算超限。\n";
+  const sources = [
+    TSC_FAIL_SCRIPT,
+    VALID_SCRIPT,
+    "function loop() { return 3; }\n",
+    "function loop() { return 4; }\n",
+    "function loop() { return 5; }\n",
+  ];
+  const stub = stubClient(sources.map((source) => reply(source)));
+  let trialInvocation = 0;
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        trialInvocation += 1;
+        writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        return trialInvocation === 1
+          ? { passed: false, stdout: budgetFeedback }
+          : { passed: true, stdout: "" };
+      }),
+      scoreSourceFeedback: true,
+    },
+    { ...firstModelConfig(root), protocolRounds: 5 },
+  );
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") return;
+  expect(outcome.meta.protocolRounds).toBe(5);
+  expect(callAt(stub, 2).messages[4]?.content).toBe(budgetFeedback);
+  expect(callAt(stub, 3).messages.slice(0, 5)).toEqual(callAt(stub, 2).messages);
+  expect(callAt(stub, 3).messages[5]).toEqual({ role: "assistant", content: sources[2] });
+  expect(callAt(stub, 3).messages[6]?.content).toContain("delivered=0，captures=0");
+  expect(outcome.meta.prompts).toHaveLength(5);
+  expect(outcome.meta.generationLog).toHaveLength(5);
+});
+
+it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代预算反馈", async () => {
+  const root = mkRoot();
+  const runId = "feedback-budget-after";
+  const stub = stubClient(Array.from({ length: 6 }, () => reply(VALID_SCRIPT)));
+  const feedback = "试跑未通过：预算超限。\n";
+  let invocation = 0;
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        invocation += 1;
+        writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        return { passed: invocation === 1, stdout: invocation === 1 ? "" : feedback };
+      }),
+      scoreSourceFeedback: true,
+    },
+    { ...firstModelConfig(root), protocolRounds: 3 },
+  );
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  expect(stub.calls).toHaveLength(6);
+  expect(outcome.failure.classification).toBe("contract");
+  expect(outcome.failure.diagnostics).toEqual([feedback.trim()]);
+  expect(callAt(stub, 2).messages[4]?.content).toBe(feedback);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  // 中途失败携带已验证候选描述（报告 FR-8 AC5 的已有候选披露）。
+  const candidateJs = readFileSync(
+    join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`),
+  );
+  expect(outcome.failure.candidates).toEqual([
+    {
+      stage: 0,
+      protocolRound: 1,
+      scriptFile: `observed-${runId}-round-1.jsonl.candidate.js`,
+      observationsFile: `observed-${runId}-round-1.jsonl`,
+      scriptSha256: sha256Hex(candidateJs),
+    },
+  ]);
+});
+
+it.each(["trial 抛错", "观测 JSON 损坏", "读盘失败"])(
+  "基础设施异常 %s 大声抛出，不作为观测反馈",
+  async (kind) => {
+    const root = mkRoot();
+    const runId = "feedback-infra";
+    const stub = stubClient([reply(VALID_SCRIPT)]);
+    const request = {
+      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        if (kind === "trial 抛错") throw new Error("试跑基础设施不可用");
+        if (kind === "观测 JSON 损坏") writeFileSync(observationsPath, "not-json\n");
+        else mkdirSync(observationsPath);
+        return { passed: true, stdout: "" };
+      }),
+      scoreSourceFeedback: true,
+    };
+    await expect(
+      generateOneModel(request, { ...firstModelConfig(root), protocolRounds: 3 }),
+    ).rejects.toThrow();
+    expect(stub.calls).toHaveLength(1);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  },
+);
+
+it("观测协议拒绝重复 matchIndex：抛出异常，不回喂、不冻结候选", async () => {
+  const root = mkRoot();
+  const runId = "feedback-duplicate-index";
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  const request = {
+    ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      writeFileSync(
+        observationsPath,
+        '{"matchIndex":0,"delivered":0,"captures":0,"noScoreSource":true}\n' +
+          '{"matchIndex":0,"delivered":2,"captures":0,"noScoreSource":false}\n',
+      );
+      return { passed: true, stdout: "" };
+    }),
+    scoreSourceFeedback: true,
+  };
+  await expect(
+    generateOneModel(request, { ...firstModelConfig(root), protocolRounds: 3 }),
+  ).rejects.toThrow("试跑观测协议违约");
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  expect(readdirSync(join(root, "archive", "alpha"))).toEqual([
+    `observed-${runId}-round-1.jsonl`,
+    `observed-${runId}-round-1.jsonl.candidate.js`,
+    `observed-${runId}-round-1.jsonl.candidate.ts`,
+  ]);
+});
+
+it("观测协议拒绝额外键：抛出异常，不回喂、不冻结候选", async () => {
+  const root = mkRoot();
+  const runId = "feedback-extra-key";
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  const request = {
+    ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      writeFileSync(
+        observationsPath,
+        '{"matchIndex":0,"delivered":2,"captures":0,"noScoreSource":false,"verdict":"passed"}\n',
+      );
+      return { passed: true, stdout: "" };
+    }),
+    scoreSourceFeedback: true,
+  };
+  await expect(
+    generateOneModel(request, { ...firstModelConfig(root), protocolRounds: 3 }),
+  ).rejects.toThrow("试跑观测协议违约");
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  expect(readdirSync(join(root, "archive", "alpha"))).toEqual([
+    `observed-${runId}-round-1.jsonl`,
+    `observed-${runId}-round-1.jsonl.candidate.js`,
+    `observed-${runId}-round-1.jsonl.candidate.ts`,
+  ]);
+});
+
+it("最终观测旁挂复制失败只警告，已通过候选仍返回 frozen 并保留三件套", async () => {
+  const root = mkRoot();
+  const runId = "feedback-copy-failure";
+  const finalPath = join(root, "archive", "alpha", `observed-${runId}.jsonl`);
+  mkdirSync(finalPath, { recursive: true });
+  const observed = observationJsonl(terminalReadings(2, 0));
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  try {
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          writeFileSync(observationsPath, observed);
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 3 },
+    );
+    expect(outcome.kind).toBe("frozen");
+    if (outcome.kind !== "frozen") return;
+    expect(outcome.meta.validation.passed).toBe(true);
+    expect(outcome.meta.protocolRounds).toBe(3);
+    expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(VALID_SCRIPT);
+    expect(readFileSync(join(outcome.dir, "script.js"), "utf8").length).toBeGreaterThan(0);
+    expect(JSON.parse(readFileSync(join(outcome.dir, "meta.json"), "utf8"))).toEqual(outcome.meta);
+    expect(
+      readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`), "utf8"),
+    ).toBe(observed);
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr.mock.calls[0]?.[0]).toContain("警告");
+    expect(stderr.mock.calls[0]?.[0]).toContain(finalPath);
+  } finally {
+    stderr.mockRestore();
+  }
+});
+
+it("opt-in 存档拒绝撞名时不发布最终观测，既有最终候选旁证不被覆盖", async () => {
+  const root = mkRoot();
+  const runId = "feedback-collision";
+  const finalPath = join(root, "archive", "alpha", `observed-${runId}.jsonl`);
+  mkdirSync(join(root, "archive", "alpha", runId), { recursive: true });
+  const previous = '{"matchIndex":0,"delivered":9,"captures":0,"noScoreSource":false}\n';
+  writeFileSync(finalPath, previous);
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(
+        root,
+        stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]),
+        runId,
+        ({ observationsPath }) => {
+          writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+          return { passed: true, stdout: "" };
+        },
+      ),
+      scoreSourceFeedback: true,
+    },
+    { ...firstModelConfig(root), protocolRounds: 1 },
+  );
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind === "failed") {
+    expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1]);
+  }
+  expect(readFileSync(finalPath, "utf8")).toBe(previous);
+});
+
+it.each(["chat-completions", "messages", "responses"] as const)(
+  "规范参数从配置到生成调用及归档保持一致，默认无额外探测：%s",
+  async (family) => {
+    const root = mkRoot();
+    const policy = policyFixture(family, "unverified");
+    const model: ModelConfig = {
+      ...firstModelConfig(root),
+      endpointFamily: family,
+      generationPolicy: {
+        ...policy,
+        output:
+          family === "messages"
+            ? { ...policy.output, maxTokens: 32768 }
+            : {
+                field: "server-default",
+                includesReasoning: "unknown",
+                official: policy.output.official,
+                channel: policy.output.channel,
+              },
+      },
+    };
+    const stub = stubClient([
+      reply(VALID_SCRIPT, { usage: { input_tokens: 12, provider_error: "PRIVATE" } }),
+    ]);
+    const outcome = await generateOneModel(requestWith(root, stub, "canonical-policy"), model);
+    expect(stub.calls).toHaveLength(1);
+    expect(callAt(stub, 0).params).toEqual(family === "messages" ? { max_tokens: 32768 } : {});
+    expect(callAt(stub, 0).messages[0]?.content).toContain(CONTRACT_RULES.trim());
+    expect(callAt(stub, 0).messages[0]?.content).toContain(CONTRACT_API.trim());
+    expect(outcome.kind).toBe("frozen");
+    if (outcome.kind !== "frozen") throw new Error("规范 fixture 未冻结");
+    expect(parsedLog(outcome.meta)[0]).toMatchObject({
+      params: callAt(stub, 0).params,
+      usage: { input_tokens: 12 },
+      responseConverged: true,
+      requestEvidence: {
+        configId: model.slug,
+        endpointFamily: model.endpointFamily,
+        backendIdentity: "unverified",
+        policy: { reasoning: { intent: "high", control: "unverified" } },
+        diagnostics: expect.arrayContaining(["high 未发送：渠道推理控制未验证"]),
+      },
+      attemptEvidence: [{ attempt: 1, outcome: "response", usage: { input_tokens: 12 } }],
+    });
+    expect(outcome.meta.generationLog.join()).not.toContain("PRIVATE");
+  },
+);
+
+it.each(["chat-completions", "messages", "responses"] as const)(
+  "规范参数在截断、传输重试和编译修复中保持不变，用量分开记录：%s",
+  async (family) => {
+    const root = mkRoot();
+    const model = {
+      ...firstModelConfig(root),
+      endpointFamily: family,
+      generationPolicy: policyFixture(family),
+    };
+    const stub = stubClient([
+      reply("PRIVATE truncated response", {
+        finishReason: "length",
+        usage: { output_tokens: 8192, total_tokens: 8200, provider_error: "PRIVATE" },
+      }),
+      fail(new TransportError("PRIVATE provider error body", { retryable: true, status: 503 })),
+      reply(TSC_FAIL_SCRIPT, { usage: { input_tokens: 10, output_tokens: 4 } }),
+      reply(VALID_SCRIPT),
+    ]);
+    vi.useFakeTimers();
+    try {
+      const pending = generateOneModel(requestWith(root, stub, "retry-policy"), model);
+      await vi.runAllTimersAsync();
+      const outcome = await pending;
+      expect(outcome.kind).toBe("frozen");
+      if (outcome.kind !== "frozen") throw new Error("重试 fixture 未冻结");
+      expect(stub.calls).toHaveLength(4);
+      for (const call of stub.calls) expect(call.params).toEqual(generationParams(model));
+      expect(callAt(stub, 1).messages).toEqual(callAt(stub, 0).messages);
+      expect(callAt(stub, 2).messages).toEqual(callAt(stub, 0).messages);
+      expect(callAt(stub, 3).messages[2]?.content).toContain("TS2304");
+      expect(outcome.meta.protocolRounds).toBe(2);
+      const logs = parsedLog(outcome.meta);
+      expect(logs[0]?.usage).toEqual({ input_tokens: 10, output_tokens: 4 });
+      expect(logs[0]?.attemptEvidence).toEqual([
+        {
+          attempt: 1,
+          outcome: "response",
+          finishReason: "length",
+          usage: { output_tokens: 8192, total_tokens: 8200 },
+        },
+        { attempt: 2, outcome: "transport-error" },
+        {
+          attempt: 3,
+          outcome: "response",
+          finishReason: "stop",
+          usage: { input_tokens: 10, output_tokens: 4 },
+        },
+      ]);
+      expect(logs[1]).not.toHaveProperty("usage");
+      expect(outcome.meta.generationLog.join()).not.toContain("PRIVATE");
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("规范传输耗尽保留全部尝试的白名单证据，不增加已收敛轮数或伪造零用量", async () => {
+  const root = mkRoot();
+  const model = { ...firstModelConfig(root), generationPolicy: policyFixture("chat-completions") };
+  const stub = stubClient(
+    Array.from({ length: RETRY.maxRetries + 1 }, () =>
+      reply("PRIVATE", {
+        finishReason: "length",
+        usage: { output_tokens: 8192, provider_error: "PRIVATE" },
+      }),
+    ),
+  );
+  vi.useFakeTimers();
+  try {
+    const pending = generateOneModel(requestWith(root, stub, "failed-policy"), model);
+    await vi.runAllTimersAsync();
+    const outcome = await pending;
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") throw new Error("耗尽 fixture 不应冻结");
+    expect(outcome.failure.prompts).toEqual([]);
+    expect(outcome.failure.classification).toBe("transport");
+    expect(outcome.failure.generationLog).toHaveLength(1);
+    const [log] = parsedLog(outcome.failure);
+    expect(log).toMatchObject({
+      round: 1,
+      kind: "transport",
+      responseConverged: false,
+      params: generationParams(model),
+      requestEvidence: { configId: model.slug },
+      attemptEvidence: Array.from({ length: RETRY.maxRetries + 1 }, (_, index) => ({
+        attempt: index + 1,
+        outcome: "response",
+        finishReason: "length",
+        usage: { output_tokens: 8192 },
+      })),
+    });
+    expect(log).not.toHaveProperty("usage");
+    expect(outcome.failure.generationLog.join()).not.toContain("PRIVATE");
+    expect(existsSync(join(root, "archive", model.slug, "failed-policy"))).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("直接编排非法政策在建客户端及产物前拒绝", async () => {
+  const root = mkRoot();
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  const createClient = vi.fn(() => stub);
+  await expect(
+    generateOneModel(
+      { ...requestWith(root, stub, "invalid-policy"), createClient },
+      {
+        ...firstModelConfig(root),
+        params: { temperature: 0 },
+        generationPolicy: policyFixture("chat-completions"),
+      },
+    ),
+  ).rejects.toThrow("不可与 params 混用");
+  expect(createClient).not.toHaveBeenCalled();
+  expect(existsSync(join(root, "archive"))).toBe(false);
+});
+
+/** 注入只提供外部 JSON；生产 CLI 对完整证据重算，不信任这里给的分数。 */
+const canonicalSelectionFixture = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalSelectionFixture).join(",")}]`;
+  if (value !== null && typeof value === "object")
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalSelectionFixture(Reflect.get(value, key))}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
+};
+const selectedFixture = (
+  options: Parameters<import("./selection.js").SelectionProbe>[0],
+  winner = 1,
+) => {
+  const candidates = options.candidates.map(
+    ({ stage, protocolRound, scriptSha256, sourceSha256 }) => {
+      const prior = options.candidates.find((entry) => entry.scriptSha256 === scriptSha256)!;
+      const points = prior.stage === winner ? 3 : 0;
+      const matches = options.expectedPlan.matches.map((match) => {
+        const rankings = [1, 2, 3];
+        rankings.splice(match.candidateSeat, 0, points === 3 ? 1 : 4);
+        if (points === 3)
+          for (let seat = 0; seat < 4; seat += 1)
+            if (seat !== match.candidateSeat) rankings[seat] = (rankings[seat] ?? 0) + 1;
+        return {
+          matchIndex: match.matchIndex,
+          inputSha256: sha256Hex(
+            canonicalSelectionFixture({
+              planSha256: options.expectedPlan.planSha256,
+              scriptSha256,
+              match,
+            }),
+          ),
+          result: { type: "result", rankings, reason: "timeout", territoryScores: [0, 0, 0, 0] },
+          candidatePoints: points,
+        };
+      });
+      return {
+        stage,
+        protocolRound,
+        scriptSha256,
+        sourceSha256,
+        matches,
+        totalPoints: points * 12,
+        averagePoints: points,
+        countedMatches: 12,
+        ...(prior.stage < stage ? { reusedFromStage: prior.stage } : {}),
+      };
+    },
+  );
+  const ranked = [...candidates].sort(
+    (a, b) => b.averagePoints - a.averagePoints || b.stage - a.stage,
+  );
+  const chosen = ranked[0]!;
+  const { stage, protocolRound, scriptSha256, sourceSha256 } = chosen;
+  return {
+    version: 1,
+    plan: options.expectedPlan,
+    candidates,
+    selected: { stage, protocolRound, scriptSha256, sourceSha256 },
+    reason:
+      chosen.averagePoints !== ranked[1]!.averagePoints ? "highest-average-points" : "later-stage",
+  };
+};
+const selectionRoot = (): string => {
+  const root = mkRoot();
+  for (const name of ["apps", "maps", "benchmarks"])
+    symlinkSync(join(repoRoot, name), join(root, name), "dir");
+  return root;
+};
+const selectionTrial: NonNullable<GenerationRequest["trial"]> = ({ observationsPath }) => {
+  writeFileSync(observationsPath, observationJsonl(terminalReadings()));
+  return { passed: true, stdout: "" };
+};
+
+it.each([false, true])(
+  "两次实际请求各接收上一阶段三场四方终局，最终保存且选拔开关%s不回喂",
+  async (selectBestCandidate) => {
+    const root = selectionRoot();
+    const runId = "terminal-two-feedback";
+    const stub = stubClient([
+      reply(VALID_SCRIPT),
+      reply("function loop() { return 9; }\n"),
+      reply("function loop() { return 10; }\n"),
+    ]);
+    let stage = 0;
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          const readings = [101, 202, 303].map((seed, matchIndex) => {
+            const terminalSummary = terminalSummaryFixture(seed);
+            for (const player of terminalSummary.players) {
+              player.controlledResources += stage;
+              player.score.resources += stage;
+              player.territoryScore += stage;
+            }
+            return { matchIndex, delivered: 0, captures: 0, noScoreSource: true, terminalSummary };
+          });
+          writeFileSync(
+            observationsPath,
+            readings.map((reading) => JSON.stringify(reading)).join("\n") + "\n",
+          );
+          stage += 1;
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+        selectBestCandidate,
+        selection: (options) => {
+          expect(stub.calls).toHaveLength(3);
+          expect(options.expectedPlan.matches).toHaveLength(12);
+          expect([...new Set(options.expectedPlan.matches.map((match) => match.seed))]).toEqual([
+            401, 402, 403,
+          ]);
+          expect(
+            [...new Set(options.expectedPlan.matches.map((match) => match.candidateSeat))].sort(),
+          ).toEqual([0, 1, 2, 3]);
+          const selection = selectedFixture(options, 1);
+          for (const candidate of selection.candidates)
+            for (const match of candidate.matches) match.result.territoryScores = [987654, 0, 0, 0];
+          return selection;
+        },
+      },
+      firstModelConfig(root),
+    );
+    expect(outcome.kind).toBe("frozen");
+    expect(stub.calls).toHaveLength(3);
+    expect(stage).toBe(3);
+    const first = callAt(stub, 1).messages[2]?.content ?? "";
+    const second = callAt(stub, 2).messages[4]?.content ?? "";
+    for (const feedback of [first, second]) {
+      for (const seed of [101, 202, 303]) expect(feedback).toContain(`终局事实：seed=${seed}`);
+      expect(feedback.match(/结束原因=timeout/g)).toHaveLength(3);
+      for (const player of [
+        "candidate",
+        "cell-a-melee-pressure",
+        "cell-b-expansion-economy",
+        "cell-c-claim-no-harvest",
+      ])
+        expect(feedback.match(new RegExp(`身份=${player}，`, "g"))).toHaveLength(3);
+      expect(feedback).toContain("名次=1，名次积分=1.5");
+      expect(feedback).not.toMatch(
+        /请检查|建议|应该|坐标|987654|401|402|403|highest-average-points|candidatePoints/,
+      );
+    }
+    expect(first.match(/领土分=6，/g)).toHaveLength(12);
+    expect(first).not.toContain("领土分=7，");
+    expect(second.match(/领土分=7，/g)).toHaveLength(12);
+    expect(second).not.toContain("领土分=6，");
+    expect(
+      stub.calls
+        .flatMap((call) => call.messages)
+        .map((message) => message.content)
+        .join("\n"),
+    ).not.toContain("领土分=8，");
+    const finalPath = join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl`);
+    const finalReadings = readFileSync(finalPath, "utf8")
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            terminalSummary: { seed: number; players: { territoryScore: number }[] };
+          },
+      );
+    expect(finalReadings.map((reading) => reading.terminalSummary.seed)).toEqual([101, 202, 303]);
+    for (const reading of finalReadings)
+      expect(reading.terminalSummary.players.map((player) => player.territoryScore)).toEqual([
+        8, 8, 8, 8,
+      ]);
+    if (outcome.kind !== "frozen") throw new Error("终局反馈未完成定版");
+    expect(outcome.meta.optimization?.feedbackRounds).toBe(2);
+    expect(outcome.meta.optimization?.candidates).toHaveLength(3);
+    expect(outcome.meta.selection?.selected.stage).toBe(selectBestCandidate ? 1 : undefined);
+  },
+);
+
+it.each([0, 1, 2])(
+  "独立选拔 stage %i 胜者：主编排冻结其原始 TS/JS 字节，模型仍为三次",
+  async (winner) => {
+    const root = selectionRoot();
+    const sources = [
+      VALID_SCRIPT,
+      "// 中间源码原字节\nfunction loop() { return 9; }\n",
+      "function loop() { return 10; }\n",
+    ];
+    const stub = stubClient(sources.map((source) => reply(source)));
+    const runId = `select-stage-${winner}`;
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, selectionTrial),
+        scoreSourceFeedback: true,
+        selectBestCandidate: true,
+        selection: (options) => {
+          expect(stub.calls).toHaveLength(3);
+          return selectedFixture(options, winner);
+        },
+      },
+      firstModelConfig(root),
+    );
+    expect(outcome.kind).toBe("frozen");
+    expect(stub.calls).toHaveLength(3);
+    if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
+    expect(outcome.meta.selection?.selected.stage).toBe(winner);
+    expect(outcome.meta.optimization?.candidates[2]?.stage).toBe(2);
+    expect(readFileSync(join(outcome.dir, "script.ts"))).toEqual(Buffer.from(sources[winner]!));
+    for (const ext of ["ts", "js"])
+      expect(readFileSync(join(outcome.dir, `script.${ext}`))).toEqual(
+        readFileSync(
+          join(
+            root,
+            "archive",
+            "alpha",
+            `observed-${runId}-round-${winner + 1}.jsonl.candidate.${ext}`,
+          ),
+        ),
+      );
+    expect(
+      stub.calls
+        .flatMap((call) => call.messages)
+        .map((message) => message.content)
+        .join("\n"),
+    ).not.toMatch(/highest-average-points|candidatePoints|rankings/);
+  },
+);
+
+it.each([
+  "missing-match",
+  "missing-terminal",
+  "forged-score",
+  "wrong-candidate",
+  "wrong-environment",
+  "throw",
+  "legacy-stage-rule",
+  "mutate-plan",
+  "mutate-ts",
+])("选拔 %s 整次失败：安全分类、三阶段留证、零追加请求、零发布", async (failure) => {
+  const root = selectionRoot();
+  const stub = stubClient([
+    reply(VALID_SCRIPT),
+    reply("function loop() { return 9; }\n"),
+    reply("function loop() { return 10; }\n"),
+  ]);
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, "select-failed", selectionTrial),
+      scoreSourceFeedback: true,
+      selectBestCandidate: true,
+      selection: (options) => {
+        const selection = selectedFixture(options, failure === "legacy-stage-rule" ? -1 : 1);
+        if (failure === "legacy-stage-rule") {
+          const { stage, protocolRound, scriptSha256, sourceSha256 } = selection.candidates[0]!;
+          selection.selected = { stage, protocolRound, scriptSha256, sourceSha256 };
+          selection.reason = "earlier-stage";
+        }
+        if (failure === "throw") throw new Error("credential provider-body PROMPT-SECRET");
+        if (failure === "missing-match") selection.candidates[0]!.matches.pop();
+        if (failure === "missing-terminal")
+          Reflect.deleteProperty(selection.candidates[0]!.matches[0]!, "result");
+        if (failure === "forged-score") selection.candidates[0]!.averagePoints = 3;
+        if (failure === "wrong-candidate") selection.candidates[0]!.sourceSha256 = "a".repeat(64);
+        if (failure === "wrong-environment") {
+          const body = {
+            ...selection.plan,
+            mapSha256: "a".repeat(64),
+          };
+          Reflect.deleteProperty(body, "planSha256");
+          selection.plan = { ...body, planSha256: sha256Hex(canonicalSelectionFixture(body)) };
+          for (const candidate of selection.candidates)
+            for (const match of candidate.matches)
+              match.inputSha256 = sha256Hex(
+                canonicalSelectionFixture({
+                  planSha256: selection.plan.planSha256,
+                  scriptSha256: candidate.scriptSha256,
+                  match: selection.plan.matches[match.matchIndex],
+                }),
+              );
+        }
+        if (failure === "mutate-plan")
+          Reflect.set(options.expectedPlan, "mapSha256", "a".repeat(64));
+        if (failure === "mutate-ts") writeFileSync(options.candidates[1]!.sourcePath, "tampered");
+        return selection;
+      },
+    },
+    firstModelConfig(root),
+  );
+  expect(outcome.kind).toBe("failed");
+  expect(stub.calls).toHaveLength(3);
+  expect(existsSync(join(root, "archive", "alpha", "select-failed"))).toBe(false);
+  if (outcome.kind !== "failed") throw new Error("意外发布");
+  expect(outcome.failure.classification).toBe("selection");
+  expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+  expect(outcome.failure.selectionFailure?.candidates).toHaveLength(3);
+  expect(JSON.stringify([outcome.failure.message, outcome.failure.diagnostics])).not.toMatch(
+    /credential|provider-body|PROMPT-SECRET/,
+  );
+  expect(
+    readdirSync(join(root, "archive", "alpha")).filter((name) => name.endsWith(".candidate.js")),
+  ).toHaveLength(3);
+});
+
+it("重复 JS 不合并三个 TS/阶段身份，同分冻结最终阶段的确切源码", async () => {
+  const root = selectionRoot();
+  const sources = [
+    "type First = number;\nfunction loop() {}\n",
+    "type Middle = number;\nfunction loop() {}\n",
+    "type Final = number;\nfunction loop() {}\n",
+  ];
+  const stub = stubClient(sources.map((source) => reply(source)));
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, "select-duplicate", selectionTrial),
+      scoreSourceFeedback: true,
+      selectBestCandidate: true,
+      selection: (options) => selectedFixture(options, 2),
+    },
+    firstModelConfig(root),
+  );
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
+  expect(outcome.meta.selection?.selected.stage).toBe(2);
+  expect(outcome.meta.selection?.reason).toBe("later-stage");
+  expect(
+    new Set(outcome.meta.selection?.candidates.map((candidate) => candidate.scriptSha256)).size,
+  ).toBe(1);
+  expect(
+    new Set(outcome.meta.selection?.candidates.map((candidate) => candidate.sourceSha256)).size,
+  ).toBe(3);
+  expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(sources[2]);
+});
+
+it("非法选拔开关组合在任何客户端请求前拒绝", async () => {
+  const root = mkRoot();
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  await expect(
+    generateOneModel(
+      { ...requestWith(root, stub, "invalid-selection"), selectBestCandidate: true },
+      firstModelConfig(root),
+    ),
+  ).rejects.toThrow("要求 --score-source-feedback");
+  await expect(
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      selectBestCandidate: true,
+      createClient: () => stub,
+    }),
+  ).rejects.toThrow("要求 --score-source-feedback");
+  expect(stub.calls).toHaveLength(0);
+});
+
+it("批次编排把选拔失败安全落盘，三个阶段与 TS 身份均保留", async () => {
+  const root = selectionRoot();
+  const stub = stubClient([
+    reply(VALID_SCRIPT),
+    reply("function loop() { return 9; }\n"),
+    reply("function loop() { return 10; }\n"),
+  ]);
+  const code = await runGeneration({
+    root,
+    configPath: "models.yaml",
+    createClient: () => stub,
+    trial: selectionTrial,
+    scoreSourceFeedback: true,
+    selectBestCandidate: true,
+    selection: () => {
+      throw new Error("SECRET-provider");
+    },
+  });
+  expect(code).toBe(1);
+  expect(stub.calls).toHaveLength(3);
+  const files = readdirSync(join(root, "archive", "alpha"));
+  const failed = files.find((file) => file.startsWith("failed-"));
+  expect(failed).toBeDefined();
+  const record: import("@model-war/schema").FailureRecord = JSON.parse(
+    readFileSync(join(root, "archive", "alpha", failed!), "utf8"),
+  );
+  expect(record.classification).toBe("selection");
+  expect(record.protocolRounds).toBe(3);
+  expect(record.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+  expect(
+    record.selectionFailure?.candidates.map((candidate) => candidate.sourceSha256),
+  ).toHaveLength(3);
+  expect(record.selectionFailure?.plan.matches).toHaveLength(12);
+  expect(JSON.stringify(record)).not.toContain("SECRET-provider");
+  expect(files.every((file) => !file.startsWith(".tmp-"))).toBe(true);
+});
+
+it("最高生成入口默认真实选拔子进程完成四座终局计分与冻结身份链", { timeout: 30000 }, async () => {
+  const root = mkRoot();
+  for (const name of ["apps", "maps"]) symlinkSync(join(repoRoot, name), join(root, name), "dir");
+  for (const name of [
+    "cell-a-melee-pressure",
+    "cell-b-expansion-economy",
+    "cell-c-claim-no-harvest",
+  ]) {
+    mkdirSync(join(root, "benchmarks", name), { recursive: true });
+    writeFileSync(join(root, "benchmarks", name, "script.js"), "function loop() {}\n");
+  }
+  const rules = JSON.parse(readFileSync(join(root, "rulesets", `${RULESET_VERSION}.json`), "utf8"));
+  writeFileSync(
+    join(root, "rulesets", `${RULESET_VERSION}.json`),
+    JSON.stringify({ ...rules, tickLimit: 4 }),
+  );
+  const sources = [
+    "type First = number;\nfunction loop() {}\n",
+    "type Middle = number;\nfunction loop() {}\n",
+    "type Final = number;\nfunction loop() {}\n",
+  ];
+  const stub = stubClient(sources.map((source) => reply(source)));
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, "real-selection", selectionTrial),
+      scoreSourceFeedback: true,
+      selectBestCandidate: true,
+    },
+    firstModelConfig(root),
+  );
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
+  expect(stub.calls).toHaveLength(3);
+  expect(
+    outcome.meta.selection?.candidates.map((candidate) => [
+      candidate.countedMatches,
+      candidate.averagePoints,
+    ]),
+  ).toEqual([
+    [12, 1.5],
+    [12, 1.5],
+    [12, 1.5],
+  ]);
+  expect(outcome.meta.selection?.selected.stage).toBe(2);
+  expect(outcome.meta.selection?.reason).toBe("later-stage");
+  expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(sources[2]);
+  expect(sha256Hex(readFileSync(join(outcome.dir, "script.js")))).toBe(
+    outcome.meta.selection?.selected.scriptSha256,
+  );
+});
+
+it("未完成第三阶段的传输失败不调用选拔救回旧候选，保留 01 未收敛末行", async () => {
+  const root = selectionRoot();
+  const stub = stubClient([
+    reply(VALID_SCRIPT),
+    reply("function loop() { return 9; }\n"),
+    fail(new TransportError("local-rejected", { retryable: false, status: 400 })),
+  ]);
+  const probe = vi.fn(() => {
+    throw new Error("不应调用选拔");
+  });
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, "select-incomplete", selectionTrial),
+      scoreSourceFeedback: true,
+      selectBestCandidate: true,
+      selection: probe,
+    },
+    { ...firstModelConfig(root), generationPolicy: policyFixture("chat-completions") },
+  );
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") throw new Error("意外冻结");
+  expect(probe).not.toHaveBeenCalled();
+  expect(stub.calls).toHaveLength(3);
+  expect(outcome.failure.classification).toBe("transport");
+  expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1]);
+  expect(outcome.failure.prompts).toHaveLength(2);
+  expect(outcome.failure.generationLog).toHaveLength(3);
+  expect(JSON.parse(outcome.failure.generationLog[2]!)).toMatchObject({
+    round: 3,
+    kind: "transport",
+    responseConverged: false,
+  });
+  expect(existsSync(join(root, "archive", "alpha", "select-incomplete"))).toBe(false);
 });

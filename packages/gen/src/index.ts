@@ -18,6 +18,16 @@ export {
   type ModelsConfig,
 } from "./config.js";
 export {
+  generationParams,
+  generationRequestEvidence,
+  type GenerationPolicy,
+  type ReasoningControl,
+  type OutputField,
+  type SupportEvidence,
+  type SupportStatus,
+} from "./generation-policy.js";
+export { type AttemptEvidence } from "./generation-evidence.js";
+export {
   type ChatMessage,
   type ChatRole,
   type ModelClient,
@@ -68,6 +78,7 @@ export {
   generateOneModel,
   type FailureClassification,
   type GenerationLogEntry,
+  type GenerationTransportLogEntry,
   type ModelFailure,
   type ModelOutcome,
 } from "./pipeline.js";
@@ -88,3 +99,5 @@ export {
 } from "./failure.js";
 // 失败记录的形状家已下沉到真源包(§2.2.5):对外名字一个不少,只换来源。
 export { FAILURE_RECORD_PREFIX, type FailureIdentity, type FailureRecord } from "@model-war/schema";
+
+export { runSelection, type SelectionProbe, type SelectionArtifact } from "./selection.js";

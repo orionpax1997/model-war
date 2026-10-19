@@ -22,8 +22,14 @@
  * 这个判别联合跟着**谁跑**这件事走,所以它的家在执行器这一格,不在写出侧。
  */
 
-import { HOST_BRIDGE_PREFIX, type ObservationLineKind } from "@model-war/replay";
+import {
+  HOST_BRIDGE_PREFIX,
+  type ObservationLineKind,
+  type ScriptErrorName,
+  type ScriptExceptionDiagnostic,
+} from "@model-war/replay";
 import type { Intent } from "../processor/intents.js";
+import type { IntentErrCode } from "../processor/intent-verdicts.js";
 import type { PlayerIndex, Snapshot } from "../world/state.js";
 
 /** 进的那次桥:`__setSnapshot(snapshot)`。名字由前缀常量拼,不手写字面量。 */
@@ -47,7 +53,7 @@ export type RunnerKind = "stub" | "quickjs";
  * - `memory-pressure`:内存压力观测,只披露不判罚——转发给观测出口。
  *
  * 只披露的那两类取值域由真源包 `ObservationLineKind` 定死(观测行的 `kind` 枚举同源),这样
- * 「引擎上报什么」与「观测文件收什么」不可能各写一份。`tripped` 是第三类,它不进观测文件。
+ * 「引擎上报什么」与「观测文件收什么」不可能各写一份。`tripped` 的计数进状态，安全详情走 sidecar。
  */
 export type ObservationKind = "tripped" | ObservationLineKind;
 
@@ -64,6 +70,14 @@ export type Observation = {
   readonly track: string;
   readonly value: number;
   readonly limit: number;
+  /** 仅未捕获异常有；固定枚举，不携带 guest message 或 stack。 */
+  readonly errorName?: ScriptErrorName;
+};
+
+/** 已返回 drain 载荷的 tick 行动事实；缺席不表示零。 */
+export type ActionTickFacts = {
+  readonly calls: Record<Intent["kind"], number>;
+  readonly errors: Record<Intent["kind"], Record<IntentErrCode, number>>;
 };
 
 /**
@@ -81,6 +95,8 @@ export type Observation = {
 export type RunnerOutput = {
   readonly intents: readonly Intent[];
   readonly observations: readonly Observation[];
+  /** 已采到的行动事实；截停或未吞异常时缺席，不补零。 */
+  readonly actionFacts?: ActionTickFacts;
   /** 故障位。缺席即本 tick 正常;`uncertain-timeout` 即墙钟硬超时,整场作废(不判罚)。 */
   readonly fault?: RunnerFault;
 };
@@ -99,19 +115,27 @@ export type RunnerFault = "uncertain-timeout";
  * `Observation` 本身只回答「哪一类、读到多少、上限多少」;tick 与座位归**调用点**(步 0),
  * 因为只有那里同时看得见状态与座位。缝上不为此新增方法(ADR-0005)。
  */
-export type ObservationRecord = {
-  /** 发生这条观测的那一 tick(与同 tick 回放行的 `tick` 栏同号,不早也不晚)。 */
-  readonly tick: number;
-  readonly seat: PlayerIndex;
-  readonly kind: ObservationLineKind;
-  /** 轨名(执行器的原生词,如 `wallClockSoftLimit`)。观测行不写它(kind 已唯一对应一条轨)。 */
-  readonly track: string;
-  readonly value: number;
-  readonly limit: number;
-};
+export type ObservationRecord =
+  | {
+      /** 发生这条观测的那一 tick(与同 tick 回放行的 `tick` 栏同号,不早也不晚)。 */
+      readonly tick: number;
+      readonly seat: PlayerIndex;
+      readonly kind: ObservationLineKind;
+      /** 轨名(执行器的原生词,如 `wallClockSoftLimit`)。观测行不写它(kind 已唯一对应一条轨)。 */
+      readonly track: string;
+      readonly value: number;
+      readonly limit: number;
+    }
+  | {
+      readonly tick: number;
+      readonly seat: PlayerIndex;
+      readonly kind: "exception";
+      readonly exceptionTickLimit?: number;
+      readonly diagnostic: ScriptExceptionDiagnostic;
+    };
 
 /**
- * 观测出口。**可选**:缺席时另外两类观测静默丢弃,这样引擎单测不必关心它。
+ * 观测出口。**可选**：缺席时软观测与安全异常详情静默丢弃；正式 match 负责接线和持久化。
  *
  * 与回放 sink 平行但独立:观测永远不进回放、更不进 `stateHash`(hld《观测通道》)。
  * 收到的每条已带 tick 与座位(调用点补齐,不增缝上的方法)。
