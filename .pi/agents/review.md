@@ -1,5 +1,5 @@
 ---
-name: review
+name: Review
 display_name: Review
 color: cyan
 description: Read-only reviewer for one axis of the code-review skill (Standards or Spec)
