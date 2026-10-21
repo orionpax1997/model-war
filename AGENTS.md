@@ -19,6 +19,44 @@ Local markdown: issues live as `.scratch/<feature>/spec.md` and `.scratch/<featu
 - 探索子代理的产出是结论 + 关键文件：行号引用，不是文件转储；不要让它整段贴源码回来。
 - implement-spec 采用快反馈：各 ticket 实现与修复期间运行 `pnpm run check:quick` 和该 ticket 的相关测试；所有 ticket 合并并完成最终 review 修复后，由主线程对整份 spec 运行一次 `pnpm run verify:fast`，再标记 PR ready。`verify:fast` 是 `check:quick`（格式、lint、轻量门禁）加默认快速 `test`（unit + property）的唯一收口命令；Vitest 会为工作区依赖做增量构建。`check` 全量门禁、`test:gates`、`test:slow`、`check:selfproof`、变异测试等专项质量检查不属于默认流程，仅当 spec 验收明确要求或改动直接影响其覆盖范围时才运行，并说明原因。
 
+### implement-spec 工作流覆盖
+
+`.pi/skills/implement-spec/SKILL.md` 保持原样；本节覆盖其中分支、提交、合并、清理四步。验证循环沿用上文 Subagents 的快反馈，本节不增加检查步骤。
+
+**分支**
+
+| 分支 | 切自 | 生命期 |
+|---|---|---|
+| `main` | — | 恒绿；只接 hotfix 与收尾提交 |
+| `spec/<slug>` | `main` | 一个 spec 一条；可 push 作 draft PR 基点；合回即删 |
+| `wt/<slug>-<NN>` | `spec/<slug>` 当前 HEAD | 一个 ticket 一条；只存在于本地；合回即删 |
+| `exp/<slug>` | `main` | 长期对照实验（换规则版本、换运行时），不混进 `spec/` |
+
+hotfix 落到 `main` 后，立刻把各活跃 `spec/` 分支 rebase 一遍。
+
+**提交：格式**
+
+首行 `type(scope): 中文描述`；`type` 取 `feat fix docs refactor test perf build ci chore`；`scope` 取包目录名（`engine`、`runner`、`gen`、`cli`、`schema`、`replay`、`tools`）或子系统名（`dag`、`season`、`budget`、`sandbox`、`rules`、`git`），跨包用逗号并列。首行与正文之间空一行，正文用自然段或 `- ` 分点；需要指针时用 `Refs:` footer，指向长期存在的 `docs/adr/` 与 `docs/*`。
+
+**提交：正文**
+
+正文要让人读完就知道这次做了什么、波及到哪里、为什么这么做；这些在 diff 里读不全，得由写的人补上。测试是验证的家，正文只放判断。
+
+怎么组织自己定，不设固定栏目。
+
+**提交：粒度**
+
+粒度按概念计，不按 ticket 计：条数等于概念数，与票数无关。小 spec 且单一概念，留一个提交；同一机制被拆成两半的票，合成一个，避免「绿但半成品」的中间提交；机械改动（生成物重跑、格式化、批量改名）单独成提交，不混进逻辑改动。检验「一个概念」的办法是单独 revert 它：动作有意义，且 revert 后仍绿。想拆提交而拆不动，是 spec 混了多个概念——先拆 spec。
+
+**合并与清理**
+
+- 合回 `main` 用 rebase 或 `--no-ff`；GitHub 的 squash 按钮会绕开上面的 message 判据。
+- merger 合入每个 ticket 后就跑该 ticket 范围的测试，随即删除其 worktree 与 `wt/` 分支，不等全部完成统一清理。
+- 冲突超过三个文件或属非机械冲突，退回 implementer 重做；merger 只搬运，不改代码。
+- `.scratch/` 的清理方式与文档策略另行决定，工作流不依赖它。
+
+以上是提示词层约束，不配脚本、不加 gate：反馈循环的速度优先于机器强制。
+
 ### Triage labels
 
 Five canonical triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
