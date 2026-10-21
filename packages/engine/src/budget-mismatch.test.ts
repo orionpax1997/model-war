@@ -497,9 +497,10 @@ it("反向用例:抬高上限放探针过去、压低上限截停基准脚本(�
 // ── 墙钟两键(票 07):硬超时作废而非判罚,软限只披露 ─────────────────────────
 
 /**
- * 一段**有界但慢**的脚本:迭代约 200 万次后才交回一笔 move。它产生足够多的循环回边,
- * 使墙钟能被抽到样(每 `WALL_CLOCK_SAMPLE_INTERVAL` 次回调读一次钟),而自己会终止——
- * 于是越了软限就产一条披露观测,不必靠硬超时截停。
+ * 一段**有界但慢**的脚本:迭代约 200 万次后才交回一笔 move。它的用处只是产生足够多的
+ * 循环回边,使墙钟被抽到样(每 `WALL_CLOCK_SAMPLE_INTERVAL` 次回调读一次钟),而自己会
+ * 终止——于是越了软限就产一条披露观测,不必靠硬超时截停。它**不负责**跑得比软限久:那取决于
+ * 机器快慢,用真实取值 50 会让本用例在快机器上随机红。
  */
 const SLOW_TICK_SCRIPT = [
   "function burn(n) { var acc = 0; for (var i = 0; i < n; i += 1) { acc = (acc + 1) % 7; } return acc; }",
@@ -507,7 +508,11 @@ const SLOW_TICK_SCRIPT = [
 ].join("\n");
 
 it("墙钟软限只披露不判罚:慢脚本产出一条 wall-clock-soft 观测、不累加异常、不判负", async () => {
-  const soft = required(BUDGET.wallClockSoftLimit, "wallClockSoftLimit");
+  // 软限取 0 而不是规则集里的 50:本用例证的是「抽样到就必越 → 一条披露观测、不判罚」这条
+  // 分支,与阈值高低无关。用 50 时断言「脚本跑满 50ms」,而 200 万次循环在快机器上不到 50ms
+  // ——抽样一次都没越线,用例随机红(CI 上就是这么红的)。0 让第一份抽样必然越线,于是与机器
+  // 快慢无关。50 这个取值本身由规则集断言与标定复算门禁守,不靠这条用例。
+  const soft = 0;
   const { runner, dispose } = await createQuickJsRunner({
     wasm: wasmModule,
     runtimeCode,
