@@ -58,7 +58,7 @@ export type TrialMatchOutcome = {
  * 步 0 不再给它的 runner 发快照（`step0-dispatch.ts`），而常规淘汰的那一刻它已无单位也无基地
  * （`step5-evaluate.ts` 的淘汰条件即此），之后不可能再有交付或占点——观测到淘汰为止等于观测了
  * 整局。例外是异常轨淘汰（`exceptionTickLimit` 打满）：那时单位还留着，只是收不到 intent 而
- * 采不了；本票不追那条边。
+ * 采不了；这里不追那条边。
  */
 const wrapWithRecorder = (
   runner: TrialRunner,

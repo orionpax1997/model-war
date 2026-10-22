@@ -2,15 +2,17 @@
  * 规则文档正文的一道收窄门禁:**生成区块之外,不许出现「参数键名 + 数字」的赋值形态。**
  *
  * ── 它补的是哪一个洞 ──
- * `docs/rules-v1/` 两份契约文档各自的数值表都是生成物(§10 / §5),漂移检查逐字节比它们;
+ * `docs/rules-v2/`(与历史快照 `docs/rules-v1/`)两份契约文档各自的数值表都是生成物(§10 / §5),
+ * 漂移检查逐字节比它们;
  * **区块外的散文按设计不比**(逐字节锁死整份文档等于让人不敢改文档)。于是手抄一份取值进散文
  * 是一个**当前无人看守**的动作:`carryLimit(=20)`、`resourcePerSite=125` 抄进去,真源改了文档
  * 不跟着改,模型照着一张过期的表写脚本,而且没有任何东西会变红。本模块是那个洞上的一道窄缝。
  *
- * **它扫哪几份**:**两份面向模型的契约文档**(模型只读那两份,两份都挂了生成区块)加上四份设计
- * 文档与 `CONTEXT.md`。**它不扫 gdd**——gdd 是规则侧的家,那里出现的参数取值绝大多数是
+ * **它扫哪几份**:**四份面向模型的契约文档**(当前 active 的 `docs/rules-v2/` 与历史快照
+ * `docs/rules-v1/`,四份都挂了生成区块)加上设计文档与 `CONTEXT.md`。**它不扫 gdd**——gdd 是规则侧的
+ * 家,那里出现的参数取值绝大多数是
  * **标定环那一轮的证据口径**(「这一批 1336 场跑在 `resourcePerSite=200` 上」),删掉它们会毁掉
- * 记录的可比性纪律,而它们也不是真源的第二份(gdd 自己的表头写着取值真源在 `rulesets/v1.json`)。
+ * 记录的可比性纪律,而它们也不是真源的第二份(gdd 自己的表头写着取值真源在 `rulesets/*.json`)。
  *
  * ── 为什么判据是「赋值形态」而不是「正文里不许出现数字」──
  * 后者会当场误伤本该有的数字:时间轴的分段边界、移动示例的格点坐标、约束描述里的 tick 跨度与
@@ -137,9 +139,10 @@ export const handCopiedValuesIn = (file: string): readonly HandCopiedValue[] => 
 export const PROSE_SCANNED_DOCS = [
   { label: "docs/rules-v1/rules.md", href: "../../../docs/rules-v1/rules.md" },
   { label: "docs/rules-v1/api.md", href: "../../../docs/rules-v1/api.md" },
+  { label: "docs/rules-v2/rules.md", href: "../../../docs/rules-v2/rules.md" },
+  { label: "docs/rules-v2/api.md", href: "../../../docs/rules-v2/api.md" },
   { label: "docs/hld.md", href: "../../../docs/hld.md" },
-  { label: "docs/srs.md", href: "../../../docs/srs.md" },
-  { label: "docs/fsr.md", href: "../../../docs/fsr.md" },
+  { label: "docs/vision.md", href: "../../../docs/vision.md" },
   { label: "CONTEXT.md", href: "../../../CONTEXT.md" },
 ] as const;
 

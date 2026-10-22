@@ -1,5 +1,5 @@
 /**
- * 真引擎上的**薄跑批 harness**:`runMatch` 一个对局是引擎唯一的粒度,而票 11 的三条桩结论要的
+ * 真引擎上的**薄跑批 harness**:`runMatch` 一个对局是引擎唯一的粒度,而三条桩结论要的
  * 是「一批对局的分布」。这一层只做三件事——把一个对局包起来、把回放行解析出来、把一批组织起来。
  *
  * ── 为什么它不做磁盘 I/O ──
@@ -17,7 +17,7 @@
  * ── 读回放 vs 读返回值 ──
  *
  * 本层同时交回 **`lines`(已落盘回放的字面读法)** 与 **`finalState`(引擎返回的终局)**。
- * 两者是同一局的两条读法;哪一条是某个探针的口径,由那个探针自己选并写清(票 11 §2.3)。
+ * 两者是同一局的两条读法;哪一条是某个探针的口径,由那个探针自己选并写清。
  */
 
 import type {
@@ -41,7 +41,7 @@ const FIXTURE_MAP_HASH = "f".repeat(64);
 
 /**
  * 夹具里的参赛者引用。名字带 `proxy-` 前缀,就是为了让任何从回放里读到的读数一眼看出
- * 「这不是那 12 个真脚本,是票 11 的代理策略」(口径可比性的前提)。
+ * 「这不是那 12 个真脚本,是代理策略」(口径可比性的前提)。
  */
 export const proxyPlayers = (): readonly ReplayPlayerRef[] =>
   SEATS.map((seat) => ({
@@ -124,7 +124,7 @@ export const runBatch = (input: BatchInput): readonly FixtureMatch[] =>
     }),
   );
 
-/** 一套种子。种子只经开局前的变体填墙进对局(hld《确定性》,记录 #12),所以取连续值即可。 */
+/** 一套种子。种子只经开局前的变体填墙进对局(hld §4.6,gdd §8 记录 #12),所以取连续值即可。 */
 export const seedsFrom = (count: number, start = 11): readonly number[] =>
   Array.from({ length: count }, (_unused, index) => start + index);
 
@@ -133,7 +133,7 @@ export const tickLinesOf = (parsed: readonly ReplayLine[]): readonly ReplayTickL
   parsed.filter((line): line is ReplayTickLine => line.type === "tick");
 
 /**
- * 每 tick 的 `stateHash` 列(FR-2 AC1 的读数就是「十列彼此相等」)。
+ * 每 tick 的 `stateHash` 列(读数就是「十列彼此相等」)。
  * 按 tick 升序,且校验行号连续——少一格就不是同一条时间轴了。
  */
 export const stateHashesOf = (parsed: readonly ReplayLine[]): readonly string[] =>

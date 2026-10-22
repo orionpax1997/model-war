@@ -60,7 +60,7 @@ const BENCHMARK_CELLS = [
 const MAP_NAME = "open-clash";
 const RULESET_VERSION = "v2";
 const DEFAULT_SEED = 20260101;
-/** 算例赛季规模(srs NFR-3 的 N=5/M=3/K=5 → 75 局)。 */
+/** 算例赛季规模(N=5/M=3/K=5 → 75 局)。 */
 const DEFAULT_SEASON_MATCHES = 75;
 /** #6 的停止条件:拷贝税占单局墙钟 < 10%。 */
 const COPY_SHARE_LIMIT_PERCENT = 10;

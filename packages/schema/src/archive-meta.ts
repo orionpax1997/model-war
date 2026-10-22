@@ -3,7 +3,7 @@
  * 纪律与 `map.ts` 一致:TypeScript 是真源、JSON Schema 手工对齐(ADR-0003),
  * 漂移由 `apps/cli` 校验器那条缝的双过 fixture 与「必填键集合 === 键联合」的类型级断言兜住。
  *
- * ── 十一项逐项来自 hld §7.4(`docs/hld.md:714-715`),不是本文件的取舍 ────────────
+ * ── 十一项逐项来自 hld §7.4(`docs/hld.md` 的冻结脚本存档一节),不是本文件的取舍 ────────────
  *
  * | hld 的措辞 | 字段 | 为什么是这个形状 |
  * |---|---|---|
@@ -17,7 +17,7 @@
  * | 校验结果 | `validation` | 静态校验器(hld §6.2)那次的结论,连同失败条目一起留档 |
  * | tsc 版本 | `tscVersion` | `script.js` 由哪一版 tsc 编译出来,复算要能对上 |
  * | `script.js` 的 sha256 | `scriptSha256` | 复算认的是**编译产物**,不是定版源码 |
- * | sandbox-runtime hash | `sandboxRuntimeHash` | 同一个脚本换一副沙箱跑,结果不保证一致(FR-3) |
+ * | sandbox-runtime hash | `sandboxRuntimeHash` | 同一个脚本换一副沙箱跑,结果不保证一致 |
  *
  * ── 形状一次定死:生成管线落地时只填值,不改形状 ───────────────────────────────
  *
@@ -30,7 +30,7 @@
  *
  * ── 本模块不含运行时代码 ──────────────────────────────────────────────────────
  * 交付的是类型与 JSON Schema 数据。ajv 校验器不在这儿:真源包不依赖任何包,也不能依赖 ajv
- * (hld §3.2、spec《校验器:落在 CLI 应用》)。跨字段判据(版本三处一致、哈希与实测是否相等、
+ * (hld §3.2)。跨字段判据(版本三处一致、哈希与实测是否相等、
  * 轮数与 prompt 条数是否相等)归 `apps/cli` 的装载期断言。
  */
 
@@ -250,7 +250,7 @@ export const ARCHIVE_META_JSON_SCHEMA = {
     sandboxRuntimeHash: {
       ...SHA256,
       description:
-        "沙箱 runtime 的 hash(hld §5)。同一个脚本换一副沙箱跑,结果不保证一致(FR-3),故它与产物哈希同样是必检项。",
+        "沙箱 runtime 的 hash(hld §5)。同一个脚本换一副沙箱跑,结果不保证一致,故它与产物哈希同样是必检项。",
     },
   },
 } as const;

@@ -1,11 +1,12 @@
 /**
- * 校验失败记录的组装与写盘(票 05;契约 §2 / §3;CONTEXT.md《校验失败记录》)。
+ * 校验失败记录的组装与写盘(契约 §2 / §3;CONTEXT.md《校验失败记录》)。
  *
  * ── 它是**旁证**,不是存档 ──
  *
  * 一个模型跑满协议轮数仍未过静态校验、或传输重试耗尽时,`pipeline.ts` 收口出一个
  * `ModelFailure`(逐轮 prompt 链 + 生成日志 + 最终诊断 + 分类)。本文件把这份结论落成
- * `archive/<modelSlug>/failed-<runId>.json`,供报告侧(节点 I)只靠文件就渲染出「校验失败名单」。
+ * `archive/<modelSlug>/failed-<runId>.json`,供报告侧(`packages/runner/src/reporter.ts` 的
+ * `readFailureRecords`)只靠文件就渲染出「校验失败名单」。
  *
  * 它**不带编译产物**、**不建** `archive/<modelSlug>/<runId>/`、**不被任何对局装载**(装载段只收
  * 通过校验的三件套)。`archive/` 下的这条 `failed-*.json` 与 `<runId>/` 目录并列,一眼可分辨。

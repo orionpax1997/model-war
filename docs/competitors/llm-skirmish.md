@@ -5,7 +5,7 @@
 - 最新版本:`@llmskirmish/skirmish` v0.1.2(2026-01 前后)
 - 仓库星数:~45,主仓库单一主分支,2 名核心贡献者
 - 文档版本:v1.0(独立竞品分析:只描述 LLM Skirmish 自身实现,不随 model-war 文档版本走)
-- 状态:活跃维护;本仓库对应 [fsr.md §2.1](../fsr.md) 中提到的"直接先例"
+- 状态:活跃维护;本仓库对应 [vision.md §3](../vision.md) 中提到的"直接先例"
 
 > 本文档不复制 model-war 的决策结论,只描述 LLM Skirmish 自身的实现。对比分析放在最后一节。
 
@@ -294,21 +294,21 @@ skirmish view [id]   # 在浏览器打开本地或云端回放(启动静态 serv
 | 沙箱 | vm(本地)+ isolated-vm(托管) | 计划 quickjs-wasi(见 hld §5) |
 | 模型接入 | OpenCode + Docker + 编排器,完整 pipeline | v0 仅离线"读规则 → 调模型 → 冻结",**引擎不接模型** |
 | 交付 | 网站 + 排名 + 静态回放可视化 | CLI + JSONL 回放(v0);视频内容生产在 v0 外 |
-| 确定性 | SeededRandom + IdGenerator + 同输入必同 tick 流 | 全整数运算 + 同上要求(见 hld《确定性保障》) |
-| 评分 | 标准 ELO(K=32,init 1500) | 名次积分制为主(srs FR-8;计分细则见 hld《排名》) |
+| 确定性 | SeededRandom + IdGenerator + 同输入必同 tick 流 | 全整数运算 + 同上要求(见 [hld §4.6](../hld.md)) |
+| 评分 | 标准 ELO(K=32,init 1500) | 名次积分制为主(计分细则见 [hld §8.2](../hld.md)) |
 | 取分机制 | spawn-only 与 spawn-and-creeps 可切换 | 领土/资源/经济复合,四方对称 |
 | 脚本语言 | JavaScript(LLM 写的 `loop()`) | **TypeScript 子集**(引擎同构,沙箱成熟) |
-| 提示可见性 | OBJECTIVE.md 全文公开 | 私有 + 版本号 + diff;规则改动要回写 fsr/srs/gdd/hld |
+| 提示可见性 | OBJECTIVE.md 全文公开 | 私有 + 版本号 + diff;规则改动要回写 vision/gdd/hld |
 
-> 关键启示:LLM Skirmish 已验证"LLM 写陌生 RTS API 代码 + 自动跑出有差异胜率"在工程上是**可落地**的(见 fsr §2.1)。但它的评测协议偏向"模型迭代能力",与 model-war 要测的"一次写出好策略"不是同一能力——两者并存,各自证明不同的模型擅长面。
+> 关键启示:LLM Skirmish 已验证"LLM 写陌生 RTS API 代码 + 自动跑出有差异胜率"在工程上是**可落地**的(见 [vision §3](../vision.md))。但它的评测协议偏向"模型迭代能力",与 model-war 要测的"一次写出好策略"不是同一能力——两者并存,各自证明不同的模型擅长面。
 
 ## 8. 我们能学 / 不能学的东西
 
 ### 8.1 可以借鉴
 
-- **runner 三层抽象**(BaseRunner → MatchRunner/IsolatedRunner):把"沙箱机制"与"host 逻辑"解耦。model-war 采用同类缝但限定用途:只为可测性(`StubRunner`),不为"将来换 VM"(见 hld《沙箱》)
+- **runner 三层抽象**(BaseRunner → MatchRunner/IsolatedRunner):把"沙箱机制"与"host 逻辑"解耦。model-war 采用同类缝但限定用途:只为可测性(`StubRunner`),不为"将来换 VM"(见 [hld §5](../hld.md))
 - **沙箱 API 与 host 通信只暴露 intent 注入**:LLM 脚本看不到 Mongo、Redis、文件系统,任何状态改变必须经 `_addIntent`,引擎独占 `BulkOperation`——本项目也建议如此,杜绝脚本绕过引擎直接改真值
-- **JSONL 回放 + LLM 友好文本日志双格式**:机器用 JSONL,人/下一轮 LLM 用带 run-length 压缩的文本。model-war 的回放要求(可渲染 + 事件流可叙事)见 gdd《娱乐产出设计》,可以参考这种文本日志风格
+- **JSONL 回放 + LLM 友好文本日志双格式**:机器用 JSONL,人/下一轮 LLM 用带 run-length 压缩的文本。model-war 的回放要求(可渲染 + 事件流可叙事)见 [gdd §9](../gdd.md),可以参考这种文本日志风格
 - **`prompts/` 与 `engine/` 解耦**:提示词不进引擎包,改动提示词不需重发引擎二进制。我们应把 OBJECTIVE 拆到独立目录
 - **ELO 与赛事编排解耦**:`rating/` 是纯函数,可被 CLI、网站、CI 共用。我们即使积分规则待定,也建议先把这个口子留出来
 - **bundled sandbox runtime**:`scripts/bundle-sandbox.ts` 把沙箱代码打成单一 IIFE,主进程拿字符串直接 `vm.Script()`——避免 spawn 子进程加载 ESM 的复杂依赖关系,适合 quickjs-wasi 的字符串执行模型
@@ -317,7 +317,7 @@ skirmish view [id]   # 在浏览器打开本地或云端回放(启动静态 serv
 
 - **支持多轮迭代会改变评测语义**:Round 2-5 看 log 改策略是在测"调试 + 提示工程",**不是** model-war 想测的"按文档一次写出好策略"。如果未来想做"难度阶梯",建议作为独立产品线,**不混入主赛季**
 - **OpenCode + Docker 编排**:这是把 LLM 当对手时的工程基建,与本项目 v0 的"离线脚本生成"形态冲突。本项目**故意**让引擎不接模型,只要"脚本 + 模型名"即可重放
-- **公开题目**:LLM Skirmish 的最大缺陷就是题目可被抓走做专项训练。我们一定要坚持**题目私有 + 版本化 + 可演化**(fsr §1 差异化卖点)
+- **公开题目**:LLM Skirmish 的最大缺陷就是题目可被抓走做专项训练。我们一定要坚持**题目私有 + 版本化 + 可演化**([vision §3](../vision.md) 差异化卖点)
 - **网站 + 排名驱动**:model-war v0 是内容生产工具,不是排名平台——网站/视频生产是远期规划,不在 v0 范围
 
 ## 9. 风险与未决项(对 LLM Skirmish 自身的客观记录)

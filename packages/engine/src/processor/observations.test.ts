@@ -1,11 +1,11 @@
 /**
- * 观测 → 变更这条路径(票 02 的预置件):执行器的返回载荷带观测,步 0 在它上面**不做裁决**——
+ * 观测 → 变更这条路径:执行器的返回载荷带观测,步 0 在它上面**不做裁决**——
  * 种类为 `tripped` 的观测落成一条 `count-exception-tick` 变更(累加 `exceptionTicks`)，
  * 同时将安全异常详情旁路转发；另外两类(`wall-clock-soft` / `memory-pressure`)原样转发。
  * 观测出口缺席时只丢弃披露，不影响计数。
  *
  * 本文件用一个**假执行器**(只实现缝的 `setSnapshot` / `drainIntents` 两条方法)证明这条路径通了。
- * 阈值判定与淘汰不在本票;桩路径的零回归(桩不产出观测 → `exceptionTicks` 恒 0)由
+ * 阈值判定与淘汰不在本模块;桩路径的零回归(桩不产出观测 → `exceptionTicks` 恒 0)由
  * `movement.test.ts` / `combat.test.ts` 两条既有断言钉住,这里再补一条。
  */
 

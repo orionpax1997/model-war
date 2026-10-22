@@ -22,9 +22,9 @@ import {
 import { scheduleSeason, type SeasonSchedulerDeps } from "./scheduler.js";
 
 /**
- * `report.json` 的形状与「从写出的文件独立重算排名」(NFR-2)。
+ * `report.json` 的形状与「从写出的文件独立重算排名」(hld §8.2、§8.3)。
  *
- * 断言对象是**落盘后的文件**与它的内容,不是内部函数调用。NFR-2 那条尤其只从磁盘读
+ * 断言对象是**落盘后的文件**与它的内容,不是内部函数调用。「独立重算排名」那条尤其只从磁盘读
  * `report.json`,只用它的 `matches[].rankings` + `seats` + 顶层 `rankPoints` 重跑
  * `rankSeason`,与报告里的 `standings` 逐字段相等——证明报告端到端可复算。
  */
@@ -174,14 +174,14 @@ it("writeReportJson 落盘到磁盘:读回的文件与渲染文本逐字节相�
   expect(readFileSync(path, "utf8")).toBe(renderReportJson(report));
 });
 
-it("NFR-2:只凭写出的 report.json 的 matches + rankPoints 重算,与 standings 逐字段相等", async () => {
+it("只凭写出的 report.json 的 matches + rankPoints 重算,与 standings 逐字段相等", async () => {
   const report = await runAndReadReport();
   expect(report.matches).toHaveLength(4);
   expect(report.standings).toHaveLength(MODELS.length);
   expect(recomputeStandings(report)).toEqual(report.standings);
 });
 
-it("NFR-2:被剔除的失败局不进 matches、不计入分母,重算仍与 standings 一致", async () => {
+it("被剔除的失败局不进 matches、不计入分母,重算仍与 standings 一致", async () => {
   // 首发即退 2、重跑仍退 2 → 该局剔除;其余 3 局照常。
   const report = await runAndReadReport((name) => (name === "c0-arena-s0" ? 2 : 0));
   expect(report.matches).toHaveLength(3);
@@ -203,7 +203,7 @@ const emptyReport = (): SeasonReport => ({
   matchIssues: [],
 });
 
-// ── 票 09:叙事 narrative/<对局>.md ──────────────────────────────────────────
+// ── 叙事 narrative/<对局>.md ────────────────────────────────────────────────
 
 const ROSTER = ["alpha", "beta", "gamma", "delta"] as const;
 
@@ -291,7 +291,7 @@ it("summarizeNarrative 取前三条时间线并标注总数", () => {
   expect(summary).toContain("共 4 条事件");
 });
 
-// ── 票 09:report.md ───────────────────────────────────────────────────────────
+// ── report.md ────────────────────────────────────────────────────────────────
 
 const matchReport = (
   matchId: string,
@@ -407,11 +407,11 @@ it("renderReportMarkdown 是纯函数:同输入恒同输出", () => {
   expect(renderReportMarkdown(input)).toBe(renderReportMarkdown(input));
 });
 
-// ── 票 09:落盘端到端(每局叙事 + report.md + 校验失败名单读盘) ──────────────
+// ── 落盘端到端(每局叙事 + report.md + 校验失败名单读盘) ────────────────────
 
 it("落盘端到端:每局都有 narrative/<对局>.md,report.md 引用它们并含两份名单", async () => {
   const { root, configPath } = buildSeasonRoot();
-  // alpha 是本季参赛模型:它遗留的陈旧失败记录**不该**进名单(票 12 口径收窄)。
+  // alpha 是本季参赛模型:它遗留的陈旧失败记录**不该**进名单(hld §8.3 口径)。
   writeFileSync(
     join(root, "archive", "alpha", "failed-gen-run-1.json"),
     `${JSON.stringify(failureRecordFixture(), null, 2)}\n`,

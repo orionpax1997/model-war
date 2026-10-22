@@ -37,7 +37,7 @@ export const PROBE_OUTPUT_DIR = "reports/sandbox-probes";
 /**
  * `interruptHandler` 每多少次控制流事件触发一次(循环回边 / 调用 / 返回)。
  *
- * 对应 `docs/hld.md:565`。这是**实测值**,不是文档字面承诺的「approximately once per bytecode
+ * 对应 `docs/hld.md` §5.0 的沙箱行为表。这是**实测值**,不是文档字面承诺的「approximately once per bytecode
  * instruction」;探针用「多跑 50000 次回边恰好多 10 次回调」的差分把它测出来,与相位无关。
  */
 export const INTERRUPT_EVERY_EVENTS = 5000;
@@ -51,7 +51,7 @@ export const INTERRUPT_GRANULARITY_LOOP_ITERATIONS = 1_000_000;
 /** 计时类判据的区间:纯计数回调相对无回调的总拖慢绝对值上限(百分比)。 */
 export const INTERRUPT_SLOWDOWN_BAND_PERCENT = 10;
 
-/** 空 VM 的基线堆读数:判据口径 `mallocSize`(与 `memoryLimit` 同记账口径)。对应 `docs/hld.md:566`。 */
+/** 空 VM 的基线堆读数:判据口径 `mallocSize`(与 `memoryLimit` 同记账口径)。对应 `docs/hld.md` §5.0 的沙箱行为表。 */
 export const EMPTY_VM_MALLOC_SIZE = 75_128;
 
 /** 空 VM 的基线 `memoryUsedSize`(更低且不含空闲池,不作判据,只作对照)。 */

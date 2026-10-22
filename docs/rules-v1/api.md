@@ -404,7 +404,7 @@ if (isError(result)) {
 | 键 | 值 | 量纲 | 说明 |
 | --- | --- | --- | --- |
 | `tickLimit` | 600 | tick | 对局上限(总 tick 数)。超时走终局名次结算,不由超时判负。 |
-| `captureTicks` | 10 | tick | 占领一个点位所需的累积 tick。基地与资源点**统一单值**,不分类型(gdd《地图与点位》)。 |
+| `captureTicks` | 10 | tick | 占领一个点位所需的累积 tick。基地与资源点**统一单值**,不分类型(gdd §4)。 |
 | `initialResources` | 16 | resources | 开局资金。保证 tick 0 就能在「补经济」与「补兵」之间作选择;下界取 0(开局一无所有是自洽的)。 |
 | `harvestRate` | 1 | resources/tick | 单个农民在一个有效采集 tick 里获得的资源量。 |
 | `carryLimit` | 20 | resources | 单个农民可携带的资源上限;满载一次需 `⌈carryLimit ÷ harvestRate⌉` 个有效采集 tick。 |
@@ -413,7 +413,7 @@ if (isError(result)) {
 | `resourceScore` | 1 | score | 每控制一个资源点的终局分。 |
 | `unitCostDivisor` | 6 | divisor | 存活单位总造价分的除数:该项加分为 `⌊Σ 存活单位造价 ÷ unitCostDivisor⌋`(分)。 |
 | `exceptionTickLimit` | 3 | exceptions | 累计异常判负阈值(次/整局)。达它则该方判负出局,点位回归中立。 |
-| `eventTickLimit` | 10000 | events/tick | 单 tick 的控制流事件计数上限(次/tick):以循环回边 / 函数调用 / 函数返回为一格累计。达顶则本 tick 该方 intents 全部丢弃并计一次异常。**有效分辨率是一整格**(宿主中断粒度,见 hld《计算预算》):判定只在中断点上发生,小于一格的取值彼此等价。 |
+| `eventTickLimit` | 10000 | events/tick | 单 tick 的控制流事件计数上限(次/tick):以循环回边 / 函数调用 / 函数返回为一格累计。达顶则本 tick 该方 intents 全部丢弃并计一次异常。**有效分辨率是一整格**(宿主中断粒度,见 hld §5.3):判定只在中断点上发生,小于一格的取值彼此等价。 |
 | `apiCallTickLimit` | 300 | calls/tick | 单 tick 的 API 调用计数上限(次/tick)。与控制流事件计数互为盲区:前者抓纯计算死循环,后者抓 API 轰炸。 |
 | `memoryLimit` | 4194304 | bytes | VM 线性内存的分配上限(bytes)。上限本身不可突破,超限转成可捕获的 JS 异常。 |
 | `memoryTickCeiling` | 524288 | bytes | 内存判据的判罚线(bytes):每 tick 末 `runGC()` 后的存活堆读数达它即视同一次异常。软阈是它的 `MEMORY_SOFT_THRESHOLD_RATIO` 倍,是**纯展示项**、不入键清单。 |

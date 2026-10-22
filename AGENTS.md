@@ -46,19 +46,23 @@ hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 
 ## Design docs
 
-阅读顺序：docs/fsr.md(why)→ docs/srs.md(what)→ docs/gdd.md（规则）→ docs/hld.md(how)。
+阅读顺序：docs/vision.md(why)→ docs/gdd.md(玩法意图与约束)→ docs/hld.md(how)。精确规则与参数不在设计文档里，读 `docs/rules-v2/`(面向模型的契约)与 `rulesets/*.json`。
 
 每个事实只有一个家。写或改文档时，先看它归谁：
 
 | 文档 | 唯一拥有 | 不写（留指针） |
 |---|---|---|
-| fsr | 定位、竞品、可行性结论、成本与时间估算、项目级风险 | 需求条目、规则机制与数值、工程方案 |
-| srs | 范围与交付时点、FR/NFR 与验收条款、验收口径 | 规则机制与数值、工程方案、可行性论证 |
-| gdd | 规则机制、设计约束、参数的含义与意图、规则侧开放项 | 参数取值、需求条目、工程实现、交付时点 |
-| hld | 架构与包拓扑、进程模型、确定性手段、沙箱与预算机制、数据格式、CLI、CI、工程侧开放项 | 规则机制与取值、需求定义、可行性论证 |
+| CONTEXT.md | 领域词汇与容易误用的概念 | 规则、架构、决策 |
+| docs/vision.md | 定位、服务对象、核心差异、非目标与产品取舍、长期风险 | 规则机制、工程方案、验收条款 |
+| docs/gdd.md | 玩法设计意图、不可从代码推导的约束、规则侧决策记录 | 精确规则与结算顺序、参数取值、工程实现 |
+| docs/hld.md | 架构与包拓扑、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 | 玩法规则、参数取值、需求条目 |
+| docs/adr/ | 决策记录：问题 / 方案 / 被否方案 / 长期约束 / 重评条件 | 当前实现、当前取值（会过期） |
+| docs/rules-v2/ | 面向模型的契约（生成物） | 私有实现细节 |
 
-- 参数取值真源是 `rulesets/*.json`;`docs/rules-vN` 与 hld 的生成物表由它生成，文档里不复制取值。
-- 两份文档冲突时采信顺序：`hld > gdd > srs > fsr`。发现冲突就修矛盾的一方（删除或改指针）,不要两边各留一份。
+- 参数取值真源是 `rulesets/*.json`;`docs/rules-vN` 的数值表由它生成，文档里不复制取值。
+- **代码是真源，但契约不可删**：`docs/rules-vN/` 是模型唯一能读到的规则输入（相当于公开 API 文档），由代码、schema 与 `rulesets/` 生成，由漂移门禁保证不漂移。
+- **验收不由需求编号承担**：验收条款写在能被跑出来的东西上（命令、测试、门禁）；`docs/hld.md` §11 是那张落点表。
+- 文档之间冲突时：先看真源（代码 / `rulesets/` / 生成物），再看 ADR 的裁决；发现冲突就修矛盾的一方（删除或改指针），不要两边各留一份。
 - 变更历史由 git 承载，文档头部不写逐版本变更记录。
 
 ## Domain docs
@@ -66,6 +70,7 @@ hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 When exploring a domain area, read the relevant `CONTEXT.md` and ADRs first. See [docs/agents/domain.md](docs/agents/domain.md) for the lookup rules.
 
 <!-- CODEGRAPH_START -->
+
 ## CodeGraph
 
 In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:

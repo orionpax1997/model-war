@@ -5,9 +5,9 @@
  *
  * ── 这一格为什么现在能定死 ────────────────────────────────────────────────────
  *
- * `pending.ts` 原来挂着 `replay-line`,理由是「字段随那一票的实现才确定」。而那三项栏已经被
+ * `pending.ts` 原来挂着 `replay-line`,理由是「字段随那次实现才确定」。而那三项栏已经被
  * hld §7.5 **逐项列全**,写出侧也已经在写它了(引擎的 `buildMetaLine` / `buildTickLine`),
- * 于是「字段还可能变」这件事已经不成立了——它已经变完了,只是没落库。故本票(02b)销账。
+ * 于是「字段还可能变」这件事已经不成立了——它已经变完了,只是没落库。故已销账。
  *
  * ── 行的形状归本包,编解码归 `replay` 包(hld §7.5 末段)─────────────────────────
  *
@@ -33,8 +33,8 @@
  * ── 末行 `result` 的 `reason` 是一个封闭的判别联合 ─────────────────────────────
  *
  * `rankings` / `reason` / `territoryScores` 三栏是 hld §7.5 逐字列出的,故本文件把它们定死;
- * 而**终局原因的取值域**原来挂在 `match-result`(pending 那一条),留待 09 票定稿——本票(09)
- * 把它销掉:四个取值(`ReplayOutcomeReason`)在这里定死,与 gdd《胜利与淘汰》一一对应。
+ * 而**终局原因的取值域**原来挂在 `match-result`(pending 那一条),留待定稿——现已销掉:
+ * 四个取值(`ReplayOutcomeReason`)在这里定死,与 docs/rules-v2/rules.md §7 一一对应。
  * engine 侧的 `OutcomeReason` 是**本类型的别名**(不重列第二份取值表,理由见 `replay/index.ts`
  * 的 `TickPayload = ReplayTickPayload` 那条先例),于是「原因取值域」只有一个家。
  */
@@ -176,7 +176,7 @@ export type ReplayTickLine = ReplayTickPayload & {
 };
 
 /**
- * 终局原因。四个取值,gdd《胜利与淘汰》逐条对应:
+ * 终局原因。四个取值,docs/rules-v2/rules.md §7 逐条对应:
  *
  * - `victory`:单一玩家控制地图上全部点位(含敌方主基地)的瞬间获胜;
  * - `shortcut`:其余三方全部被淘汰时,仅剩玩家立即获胜;
@@ -192,7 +192,7 @@ export type ReplayOutcomeReason = "victory" | "shortcut" | "timeout" | "all-elim
  * 末行 `result`。三栏逐字来自 hld §7.5。
  *
  * `reason` 的取值域由 `ReplayOutcomeReason` 定死(09 票销掉 `match-result` 那条 pending);
- * `rankings[i]` 是玩家 i 的名次(1 起、可并列),由 gdd《胜利与淘汰》的名次四条产生;
+ * `rankings[i]` 是玩家 i 的名次(1 起、可并列),由 docs/rules-v2/rules.md §7 的名次四条产生;
  * `territoryScores[i]` 是玩家 i 的领土分,已淘汰者恒为 0(是那条公式的推论)。
  */
 export type ReplayResultLine = {
@@ -383,7 +383,7 @@ export const REPLAY_META_LINE_JSON_SCHEMA = {
   required: META_REQUIRED_KEYS,
   properties: {
     type: { enum: ["meta"] },
-    schemaVersion: { type: "integer", minimum: 1, description: "回放文件格式版本(FR-9 AC2)。" },
+    schemaVersion: { type: "integer", minimum: 1, description: "回放文件格式版本(hld §7.5)。" },
     ruleset: {
       type: "string",
       pattern: "^v[0-9]+$",
@@ -501,7 +501,7 @@ export const REPLAY_RESULT_LINE_JSON_SCHEMA = {
   title: "model-war 回放 result 行",
   description:
     "回放 JSONL 的末行(hld §7.5):名次、终局原因、领土分。reason 是四值判别联合" +
-    "(victory/shortcut/timeout/all-eliminated),名次按 gdd《胜利与淘汰》的四条产生。",
+    "(victory/shortcut/timeout/all-eliminated),名次按 docs/rules-v2/rules.md §7 的四条产生。",
   type: "object",
   additionalProperties: false,
   required: RESULT_REQUIRED_KEYS,
@@ -511,7 +511,7 @@ export const REPLAY_RESULT_LINE_JSON_SCHEMA = {
       type: "array",
       minItems: 4,
       maxItems: 4,
-      description: "名次,下标即座位号,取值 1 起、可并列(gdd《胜利与淘汰》)。",
+      description: "名次,下标即座位号,取值 1 起、可并列(docs/rules-v2/rules.md §7)。",
       items: { type: "integer", minimum: 1 },
     },
     reason: {
@@ -522,7 +522,7 @@ export const REPLAY_RESULT_LINE_JSON_SCHEMA = {
       type: "array",
       minItems: 4,
       maxItems: 4,
-      description: "领土分,下标即座位号(gdd《胜利与淘汰》的那条公式);已淘汰者恒为 0。",
+      description: "领土分,下标即座位号(docs/rules-v2/rules.md §7 的那条公式);已淘汰者恒为 0。",
       items: { type: "integer", minimum: 0 },
     },
   },

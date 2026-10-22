@@ -8,7 +8,7 @@
  * ── 为什么不改 `cli.test.ts` ──
  *
  * 契约 §6 给 05 留的缝是「补一条 CLI 子进程冒烟」;`cli.test.ts` 的既有断言(帮助文本、未实现路径、
- * match/verify/map-lint e2e)不在本票范围。这里新开一个文件,既不把那条 27KB 的用例集撑得更大,
+ * match/verify/map-lint e2e)不在本文件范围。这里新开一个文件,既不把那条 27KB 的用例集撑得更大,
  * 也让这条冒烟的可观察面(真打一次 HTTP、真编一次 tsc)单独成篇。
  *
  * ── 为什么用异步 `spawn` 而不是 `spawnSync` ──

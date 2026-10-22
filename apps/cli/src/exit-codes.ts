@@ -27,7 +27,7 @@ export const EXIT_USAGE_OR_VALIDATION = 1;
 /** 引擎崩溃(未捕获异常、确定性断言失败、WASM trap)。 */
 export const EXIT_ENGINE_FAULT = 2;
 
-/** 不确定超时(墙钟硬超时;票 07/09 的机制,本票只把码位定下来)。 */
+/** 不确定超时(墙钟硬超时的机制见 hld §5.3,这里只把码位定下来)。 */
 export const EXIT_NONDETERMINISTIC_TIMEOUT = 3;
 
 /** 其它内部错(如产物写盘失败)。 */

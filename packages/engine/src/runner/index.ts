@@ -6,7 +6,7 @@
  * ADR-0005 把那三个方案逐条裁掉了,理由它们各自成立:缝收「一个纯参数一个纯返回值」会与
  * hld §4.5 的两次桥调用构成**两套平行的表示**;缝收一个持有 VM 生命周期的 session 对象会逼
  * `StubRunner` 造一个每个方法都「什么都不做」的空壳 VM。本模块的对外面积就是下面那两个方法,
- * 后来的沙箱执行器(票 G)要做的只是**提供这两个方法**,不是**继承**一个什么。
+ * 后来的沙箱执行器(`quickjs.ts`)要做的只是**提供这两个方法**,不是**继承**一个什么。
  *
  * ── 为什么桥名要由 `HOST_BRIDGE_PREFIX` 拼出来,而不是写在类型里 ──
  *
@@ -38,7 +38,7 @@ export const HOST_BRIDGE_SET_SNAPSHOT = `${HOST_BRIDGE_PREFIX}setSnapshot`;
 /** 出的那次桥:`__drainIntents()`。同上。 */
 export const HOST_BRIDGE_DRAIN_INTENTS = `${HOST_BRIDGE_PREFIX}drainIntents`;
 
-/** 哪一个执行器跑的。meta 行第 12 栏的取值域,`quickjs` 那一值随票 G 落地。 */
+/** 哪一个执行器跑的。meta 行第 12 栏的取值域,`quickjs` 那一值由 `quickjs.ts` 的沙箱执行器落地。 */
 export type RunnerKind = "stub" | "quickjs";
 
 /**
@@ -47,7 +47,7 @@ export type RunnerKind = "stub" | "quickjs";
  * 由种类分成三条去向:
  *
  * - `tripped`:某条轨已触限——由步 0 落成状态变更(累加 `exceptionTicks`)。判据由执行器算好,
- *   引擎**不做裁决**。阈值判定与淘汰不在本票。轨名通常是预算键名;`loop()` 抛异常那条轨没有
+ *   引擎**不做裁决**。阈值判定与淘汰不在引擎这一侧。轨名通常是预算键名;`loop()` 抛异常那条轨没有
  *   预算键(轨名常量见 `quickjs.ts` 的 `UNCAUGHT_EXCEPTION_TRACK`)。
  * - `wall-clock-soft`:墙钟软限观测,只披露不判罚——转发给观测出口。
  * - `memory-pressure`:内存压力观测,只披露不判罚——转发给观测出口。
@@ -89,7 +89,7 @@ export type ActionTickFacts = {
  * ── `fault` 为什么是一个故障位而不是第三条观测 ──
  *
  * 墙钟硬超时不是「一条读数」,而是「这一局作废」:它使整场走**作废而非判罚**那条轨
- * (spec《双重计数与墙钟》)。用观测承载它会让读者以为它也可以被「只记录」。故它是一个明确的
+ * (hld §5.3)。用观测承载它会让读者以为它也可以被「只记录」。故它是一个明确的
  * 故障位,由座的执行器在结束本 tick 时置上,`runMatch` 见它即停、标记 `不确定超时`。
  */
 export type RunnerOutput = {
@@ -137,7 +137,7 @@ export type ObservationRecord =
 /**
  * 观测出口。**可选**：缺席时软观测与安全异常详情静默丢弃；正式 match 负责接线和持久化。
  *
- * 与回放 sink 平行但独立:观测永远不进回放、更不进 `stateHash`(hld《观测通道》)。
+ * 与回放 sink 平行但独立:观测永远不进回放、更不进 `stateHash`(hld §7.5)。
  * 收到的每条已带 tick 与座位(调用点补齐,不增缝上的方法)。
  */
 export type ObservationSink = {

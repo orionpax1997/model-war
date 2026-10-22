@@ -1,5 +1,5 @@
 /**
- * 只读隔离(hld §4.5,FR-3 AC1):快照是**深拷贝**且**深 freeze**,引擎真状态**永不 freeze**。
+ * 只读隔离(hld §4.5):快照是**深拷贝**且**深 freeze**,引擎真状态**永不 freeze**。
  *
  * 每条验收都配了一条**能被弄红的反例**,反例写在各用例的注释里:
  * - 「深 freeze 改成浅 freeze」→ 「深冻到底」与「当场抛 TypeError」一起红;
@@ -116,13 +116,13 @@ it("引擎真状态永不 freeze:它要被 apply() 写,冻住它等于冻住唯�
 it("structuredClone 不共享引用:改拷贝里的嵌套字段不影响原状态", () => {
   const state = makeState();
   const snapshot = buildSnapshot(state);
-  // 「传真状态」的反例:三行引用相等全红,而且它正是 FR-3 AC1 失效的那条路。
+  // 「传真状态」的反例:三行引用相等全红,而且它正是只读隔离失效的那条路。
   expect(snapshot.units).not.toBe(state.units);
   expect(snapshot.units[0]).not.toBe(state.units[0]);
   expect(snapshot.sites[0]).not.toBe(state.sites[0]);
 });
 
-it("一个策略在 loop() 里试着改快照:引擎状态在下一 tick 不受影响(FR-3 AC1)", () => {
+it("一个策略在 loop() 里试着改快照:引擎状态在下一 tick 不受影响", () => {
   const state = makeState();
   const seen: Snapshot[] = [];
   const vandal = stubRunner((snapshot) => {
@@ -141,7 +141,7 @@ it("一个策略在 loop() 里试着改快照:引擎状态在下一 tick 不受�
     write: () => {},
   });
 
-  // 「快照传真状态」的反例:这三条全红,而且第三红说明 FR-3 AC1 已经不可证伪了。
+  // 「快照传真状态」的反例:这三条全红,而且第三红说明只读隔离已经不可证伪了。
   expect(result.state.units[0]?.hp).toBe(2);
   expect(result.state.sites[0]?.owner).toBe(0);
   expect(seen[0]?.units[0]).not.toBe(state.units[0]);

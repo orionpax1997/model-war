@@ -1,5 +1,5 @@
 /**
- * gen 包的依赖边界测试(FR-5 AC1;hld §3.2、§6.2、§2.2.10)。
+ * gen 包的依赖边界测试(hld §3.2、§6.2、§2.2.10)。
  *
  * 当前反馈政策允许 CLI 采集的 schema 行动/终局纯数据摘要（ADR-0019）；
  * gen 仍不得读取正式对局产物或依赖 engine / runner / replay。
@@ -84,7 +84,7 @@ it("gen 的运行时代码不 import engine / runner / replay", { timeout: 30_00
   }
 
   // 反证 a1:gen 自己必须在巡航图里。缺了它,下面的退出码 0 只说明「别的包没违规」,
-  // 与本票要断言的 gen 规则无关——`dist` 没 build 时正是这种假绿(而 globalSetup 刚 build 过)。
+  // 与本文件要断言的 gen 规则无关——`dist` 没 build 时正是这种假绿(而 globalSetup 刚 build 过)。
   expect(cruiseEntries(), "gen 的 dist 不在巡航入口里,gen 那条规则等于没跑").toContain(
     "packages/gen/dist",
   );

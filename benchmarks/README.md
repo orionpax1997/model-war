@@ -96,10 +96,10 @@ pnpm run bench:build        # 把三份产物按 tsconfig.scripts.json 重编译
 pnpm run check:bench        # 门禁:重编译结果必须与入库产物逐字节一致(挂在全量门禁 check 末尾)
 ```
 
-产物用的是仓库根那份 `tsconfig.scripts.json`(票 06),由它派生一份**只覆盖 `files` 与 `outDir`**
+产物用的是仓库根那份 `tsconfig.scripts.json`,由它派生一份**只覆盖 `files` 与 `outDir`**
 的运行配置;编译在系统临时目录里做,所以「模块解析面被清空」在产物这件事上是真的。
 
-**类型面已回填**(`packages/schema/script-api/index.d.ts`,归 F),所以「API 名字拼错」这类错误在
+**类型面已回填**(`packages/schema/script-api/index.d.ts`),所以「API 名字拼错」这类错误在
 编译期就红——三份的「名字未声明」诊断已**全部归零**。`tsconfig.scripts.json` 刻意不设
 `noEmitOnError`,`tsc` 在还有诊断的情形下照常 emit,那份产物就是门禁与生成管线将来真正加载的东西。
 本轮 `pnpm run bench:build` 的退出码与诊断读数:

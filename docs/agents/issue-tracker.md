@@ -1,30 +1,21 @@
-# Issue tracker: Local Markdown
+# Issue tracker: 本仓库的记录位置
 
-Issues and specs for this repo live as markdown files in `.scratch/`.
+本仓库**不设本地 Markdown issue 追踪器**。需求、决策与进度不再由临时任务记录承担。
 
-## Conventions
+| 一类东西 | 落在哪 |
+|---|---|
+| 长期事实(约束、口径、裁决) | 代码、配置、[docs/adr/](../adr/)、[docs/gdd.md](../gdd.md)、[docs/hld.md](../hld.md) |
+| 参数取值 | [`rulesets/*.json`](../../rulesets/) |
+| 面向模型的契约 | [docs/rules-v2/](../rules-v2/) |
+| 过程与临时任务 | git 分支与提交;不落库 |
 
-- One feature per directory: `.scratch/<feature-slug>/`
-- The spec is `.scratch/<feature-slug>/spec.md`
-- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading
+## 约定
 
-## When a skill says "publish to the issue tracker"
+- 一次变更流一个分支:`feature/<slug>`(从 `main` 切),合回即删;长期对照实验走 `exp/<slug>`。
+- 过程记录不写成文件:需要留下依据时,写进对应事实的家(代码注释、ADR、设计文档)。
+- 标签词汇见 [triage-labels.md](./triage-labels.md);外部 PR 是否进入 triage 由维护者定。
 
-Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
+## 与 skill 的对接
 
-## When a skill says "fetch the relevant ticket"
-
-Read the file at the referenced path. The user will normally pass the path or the issue number directly.
-
-## Wayfinding operations
-
-Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
-
-- **Map**: `.scratch/<effort>/map.md` (the Notes / Decisions-so-far / Fog body).
-- **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `claimed`/`resolved`.
-- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every file it lists is `resolved`.
-- **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
-- **Claim**: set `Status: claimed` and save before any work.
-- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+- 技能提到「发布到 issue tracker」时:若本仓库没有对应追踪器,不要凭空造一个 `.scratch/` 目录——把结论写进该事实的家。
+- 技能提到「取回某个 ticket」时:本仓库的 ticket 已不再以文件形式存在,按 git 历史(`git log --grep`)找。

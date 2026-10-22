@@ -1,5 +1,5 @@
 /**
- * 读入端校验器:本仓库**唯一**一份 ajv 校验(spec《校验器:落在 CLI 应用》)。
+ * 读入端校验器:本仓库**唯一**一份 ajv 校验。
  *
  * 为什么落在这儿而不落回真源包:真源包交付 JSON Schema **数据**,不交付校验器——
  * 它受包依赖规则约束,不能依赖 ajv(hld §3.2)。而 ajv 只需要一个宿主:CLI 是唯一用户面,
@@ -8,7 +8,7 @@
  * 三条纪律,改代码前先读:
  *
  * 1. **纯函数**。签名是「一段 JSON 值 → 接受 / 带诊断拒绝」,不碰文件系统、不碰 CLI 退出码。
- *    接受 / 拒绝的断言落在本文件导出的函数上(spec《Testing Decisions》副缝);
+ *    接受 / 拒绝的断言落在本文件导出的函数上(副缝);
  *    `map-lint` 的地图校验断言也落在这里,不去测子命令的退出码。
  * 2. **不新增任何 CLI 子命令**(hld §9 的六条不动)。真正的风险不是校验点少,而是日后有人
  *    为了让别的包也能校验而手写一份形状 if —— 那才是第二真源。
@@ -97,7 +97,7 @@ export const SHA256_MISMATCH_KEYWORD = "sha256-mismatch";
 
 /**
  * 存档缺档(hld §7.4 的三件套 `script.ts` / `script.js` / `meta.json` 不全,或某个座位
- * 根本没有那份存档)。**不跳过、不补默认值**(FR-6 AC2),故它与「哈希不符」分开报:
+ * 根本没有那份存档)。**不跳过、不补默认值**,故它与「哈希不符」分开报:
  * 缺的是东西,不对的是东西,给模型的建议不同。
  */
 export const ARCHIVE_FILES_INCOMPLETE_KEYWORD = "archive-files-incomplete";
@@ -323,7 +323,7 @@ export const validateMap = (value: JsonValue): MapValidation => {
 export type RulesetProvenance = {
   /** 取值文件名,例如 `v1.json`。 */
   readonly rulesetFileName: string;
-  /** 规则文档目录名,例如 `rules-v1`。 */
+  /** 规则文档目录名,例如 `rules-v2`。 */
   readonly rulesDocDirName: string;
 };
 
@@ -435,7 +435,7 @@ export const validateRuleset = (
  * 存档目录那一侧的事实。**纯函数不读盘**,所以「三件套在不在」「文件内容哈希是多少」
  * 是装载方的活,判它们与记录值是否一致是本函数的活——分界与 `RulesetProvenance` 同一条。
  *
- * 为什么三件套的「在不在」也要交进来:FR-6 AC2 明写「缺档报错退出,不跳过」,而
+ * 为什么三件套的「在不在」也要交进来:hld §7.4 明写「缺档报错退出,不跳过」,而
  * 「缺档」压根不在 `meta.json` 的内容里(内容齐了,目录里少一个文件一样是缺档)。
  * 把它做成必填参数而不是可选开关,是与版本判据同一个理由:可选等于留一个
  * 「跳过检查」的静默后门。
@@ -600,13 +600,13 @@ export type MeasuredArchive = {
  * 对局输入那一侧的事实。`measuredArchives` 与 `input.json` 里的 `archives` **同序**,
  * 元素为 `null` 表示那个座位的存档缺档(读不到 `script.js` / `meta.json`)。
  *
- * 为什么实测哈希是必填而不是可选:「哈希不符即拒」是复算链的地基(NFR-2),
+ * 为什么实测哈希是必填而不是可选:「哈希不符即拒」是复算链的地基,
  * 留一个「没传就跳过」的后门,这条地基就只剩一半。
  */
 export type MatchInputProvenance = {
   /** 取值文件名,例如 `v1.json`。与 `input.json` 里声明的 `ruleset` 一起构成三处一致的另两处。 */
   readonly rulesetFileName: string;
-  /** 规则文档目录名,例如 `rules-v1`。 */
+  /** 规则文档目录名,例如 `rules-v2`。 */
   readonly rulesDocDirName: string;
   /** 四个座位各自的实测文件哈希,下标即座位号。 */
   readonly measuredArchives: readonly (MeasuredArchive | null)[];
@@ -675,7 +675,7 @@ const matchInputDiagnostics = (
  * 校验一份对局输入 `input.json`。**纯函数**,与前三个校验器同一条缝。
  *
  * **它不认赛季配置**:赛季配置归 hld §8,那份文件由 runner 在物化时读,不进这一份。
- * 理由写在 `packages/schema/src/match-input.ts` 的头注里(一句话版:FR-7 AC3 要的是
+ * 理由写在 `packages/schema/src/match-input.ts` 的头注里(一句话版:要的是
  * 「每个对局可凭它复算」,而复算一件对局不需要参赛名单与并发度)。
  */
 export const validateMatchInput = (

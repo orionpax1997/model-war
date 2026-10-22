@@ -2,7 +2,7 @@
  * 单模型的生成轮:发一次 → 编译 → 静态校验 → 冻结期试跑 → 原子冻结,失败则**只回喂校验/试跑文本**再试
  * (hld §2.2.6 / §7.4;契约 §2.2 / §4)。
  *
- * ── 票 04 的边界:≤N 轮只回喂校验文本;试跑票追加试跑文本 ──
+ * ── 边界:≤N 轮只回喂校验文本;试跑轮次追加试跑文本 ──
  *
  * 一轮的全部动作(发 → 编译 → 迭代期校验 → 冻结期校验 → 冻结期试跑)收在 `sendOneRound` 里,吃**这一轮
  * 完整发出的 messages**,吐这一轮的结论(`RoundResult`)。`generateOneModel` 把它包进
@@ -24,7 +24,7 @@
  * `meta.prompts[r]` = 第 r 轮那整份 transcript 的 `messages.map((m) => m.content).join("\n\n")`,
  * 长度 === 已收敛协议轮数(`buildArchiveMeta` 由它推 `protocolRounds`,两者相等是装载期不变量)。
  * `generationLog` 逐收敛轮一行；规范配置传输失败另有未收敛的末行证据。轮数用尽仍失败时,**不建** `archive/<slug>/<runId>/`,只返回
- * `{ kind: "failed", failure }`——失败记录写盘是票 05 的活。
+ * `{ kind: "failed", failure }`——失败记录写盘是 `packages/gen/src/failure.ts` 的活。
  *
  * ── 传输层错误的边界 ──
  *
@@ -32,9 +32,9 @@
  * `TransportError`)与截断(`finishReason === "length"`)退避重发**同一轮**,不追加 messages、
  * 不占用 `protocolRounds`。规范配置在轮日志的 attemptEvidence 保留各次尝试；旧配置日志
  * 语义不变。重试耗尽或遇到不可重试的错误(400 / 缺凭证)→ 轮循环
- * 停在该轮,返回 `transport` 分类的 `failed`(写盘归票 05)。
+ * 停在该轮,返回 `transport` 分类的 `failed`(写盘归 `packages/gen/src/failure.ts`)。
  *
- * ── `kind` 与 `errorCodes` 的取值(票 07 定稿) ──
+ * ── `kind` 与 `errorCodes` 的取值 ──
  *
  * `kind` 取「驱动本轮结论的那一栏」:编译没过 → `tsc`;编译过了 → `contract`(校验与试跑阶段,
  * 过或不过都算它驱动,所以**成功轮的 kind 也是 `contract`**)。试跑拦下的轮与静态校验拦下的轮
@@ -141,7 +141,7 @@ export type GenerationLogEntry = {
    * 动作,计进来会把对局时长灌进「模型耗时」。规范配置传输耗尽的耗时另记在传输末行。
    */
   readonly sendMs: number;
-  /** 编译失败时是诊断里的 `TS####`;合约轮为空(来源与理由见文件头注,票 07 定稿)。 */
+  /** 编译失败时是诊断里的 `TS####`;合约轮为空(来源与理由见文件头注)。 */
   readonly errorCodes: readonly string[];
 };
 
@@ -237,7 +237,7 @@ type RoundResult =
       /**
        * 失败发生在哪一段：`static` = 试跑之前的任一栏（编译/tsc 与静态校验），
        * `trial` = 冻结期试跑。只决定人类可读的 `message`（见 `messageOfFailure`），
-       * 不进 `generationLog`（那一栏的取值仍是票 07 定稿的两档）。
+       * 不进 `generationLog`（那一栏的取值是两档）。
        */
       readonly stage: "static" | "trial";
       readonly log: GenerationLogEntry;
@@ -472,7 +472,8 @@ const messageOfFailure = (slug: string, result: RoundResult & { kind: "failed" }
  *
  * 失败时**不建** `archive/<slug>/<runId>/`:临时组装目录被清理,只返回 `failed` 结果(携全部
  * 已收敛轮次的 prompts / generationLog，规范配置额外保存传输失败末行证据)。传输层失败
- * (退避重试耗尽 / 不可重试)同样只返回 transport 分类的 failed，不建存档(失败写盘归票 05)。
+ * (退避重试耗尽 / 不可重试)同样只返回 transport 分类的 failed，不建存档(失败写盘归
+ * `packages/gen/src/failure.ts`)。
  */
 export const generateOneModel = async (
   request: GenerationRequest,

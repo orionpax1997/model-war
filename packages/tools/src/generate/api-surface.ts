@@ -54,8 +54,14 @@ import {
   type ScriptApiDeclarations,
 } from "../script-api/declarations.ts";
 
-/** 契约文档 API 面那一份的相对路径。落点与两行定界标记都按它拼。 */
-const API_DOC = "docs/rules-v1/api.md";
+/**
+ * 契约文档 API 面那一份的相对路径。落点与两行定界标记都按它拼。
+ *
+ * **两个版本各生成一次**:API 面(注入符号表 + 后果对照表)与规则集取值无关,所以 v1 与 v2
+ * 的这段逐字节相同;但两份都得挂在生成物漂移检查上——模型读到的是当前 active 的那一份,
+ * 而「只有旧版本被守护」等于让 active 契约的正文回到手抄状态。
+ */
+const API_DOCS = ["docs/rules-v2/api.md", "docs/rules-v1/api.md"] as const;
 
 /** 真源路径串。进生成头注释,改了它等于改了入库文档的正文,漂移检查会照出来。 */
 const SYMBOL_TRUTH = "packages/schema/src/script-surface.ts";
@@ -337,21 +343,25 @@ const outcomeTableContent = (): string =>
     "",
   ].join("\n") + "\n";
 
-const sectionOf = (id: string, content: () => string): SectionArtifact => ({
+const sectionOf = (id: string, path: string, content: () => string): SectionArtifact => ({
   id,
   form: "section",
-  path: API_DOC,
+  path,
   produce: (): Section => ({ marker: sectionMarker(id), content: content() }),
 });
 
-/** API 表 / 错误码表 / 常量表(错误码)。落点是 `docs/rules-v1/api.md` 的 API 面一节。 */
-export const apiSurfaceTables: GeneratedArtifact = sectionOf(
-  "api-v1-api-surface",
-  apiSurfaceContent,
+/** 版本标签 → 那两份文档。v2 是当前 active 契约,v1 是历史快照,两份都挂漂移检查。 */
+const DOC_VERSIONS = [
+  { tag: "v2", path: API_DOCS[0] },
+  { tag: "v1", path: API_DOCS[1] },
+] as const;
+
+/** API 表 / 错误码表 / 常量表(错误码)的 API 面一节。两个版本各一件。 */
+export const apiSurfaceTables: readonly GeneratedArtifact[] = DOC_VERSIONS.map(({ tag, path }) =>
+  sectionOf(`api-${tag}-api-surface`, path, apiSurfaceContent),
 );
 
-/** 「丢弃 vs 异常」对照表。同一个落点,另一个真源。 */
-export const apiOutcomeTable: GeneratedArtifact = sectionOf(
-  "api-v1-outcome-table",
-  outcomeTableContent,
+/** 「丢弃 vs 异常」对照表。同一个落点,另一个真源;同样两个版本各一件。 */
+export const apiOutcomeTable: readonly GeneratedArtifact[] = DOC_VERSIONS.map(({ tag, path }) =>
+  sectionOf(`api-${tag}-outcome-table`, path, outcomeTableContent),
 );

@@ -1,5 +1,5 @@
 /**
- * 脚本 API 面铺全(票 06):注入面与真源包符号表逐字对齐、反向名单缺席、判据与引擎同源、
+ * 脚本 API 面铺全:注入面与真源包符号表逐字对齐、反向名单缺席、判据与引擎同源、
  * 基准脚本能跑完整场。
  *
  * ── 断言的对象是外部行为 ──
@@ -209,7 +209,7 @@ it("反向:符号表之外的名字在 guest 里不存在,调用得到普通 Ref
 
   // `FORBIDDEN_GLOBAL_NAMES` 是**注名单**:注入面一个都不许收它们。至于它们是否是语言内建
   // (`Date` / `performance` 在 QuickJS 里本来就在场,由三件套钉住、静态期 `__*`/禁名单兜底),
-  // 那是另一件事——「不动 `intrinsics`」的裁决见 spec《Further Notes》。
+  // 那是另一件事——「不动 `intrinsics`」是 `docs/adr/0001-sandbox-quickjs-wasi.md` 的裁决。
   const injected = new Set(INJECTED);
   for (const forbidden of FORBIDDEN_GLOBAL_NAMES) {
     expect(injected.has(forbidden), `注入面不该收禁列名 \`${forbidden}\``).toBe(false);

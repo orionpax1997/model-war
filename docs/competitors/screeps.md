@@ -435,8 +435,8 @@ spawn.spawnCreep(...)  ─────►     intents['spawnCreep'][spawn.id] = 
 | 规则面 | 大而全(几十种结构 + market + power) | **最小**(hld §1,4 兵种 + 规则数据文件) |
 | modding | ✅(`mods.json` + config EventEmitter) | ❌ v0 不计划 |
 | 客户端 | Steam 内嵌 Chrome + PixiJS | **CLI ASCII 回放**(v0);视频内容生产在 v0 外 |
-| 确定性 | 不需要(MMO 持久化,接受 drift) | **必须可复算**(srs NFR-1;手段见 hld《确定性保障》) |
-| 评分 | leaderboard / GCL | **名次积分制为主**(srs FR-8;细则见 hld《排名》) |
+| 确定性 | 不需要(MMO 持久化,接受 drift) | **必须可复算**(手段见 [hld §4.6](../hld.md)) |
+| 评分 | leaderboard / GCL | **名次积分制为主**(细则见 [hld §8.2](../hld.md)) |
 | 取分机制 | 玩家自治(没机制) | **领土/资源/经济复合**,四方对称 |
 
 > 关键启示:Screeps 证明了 **"JavaScript + intent 模式 + sandbox + 持久化世界"** 在工程上能撑住一个 9 年仍在运营的商业产品。但 Screeps 的工程重心在"**规模化分布式**"(40 台 dedicated server、Mongo sharding、cross-shard portal),这与 model-war v0 的"**离线评测工具**"形态完全不同。
@@ -455,7 +455,7 @@ spawn.spawnCreep(...)  ─────►     intents['spawnCreep'][spawn.id] = 
 
 ### 8.2 不应照搬
 
-- **持久化 + Mongo 集群**:model-war 明确不做多存储后端与持久化层(见 hld《明确不做》),理由:benchmark 不需要持久化,JSONL 回放就是归档;Mongo sharding 这套分布式基础设施对 v0 完全过设计。
+- **持久化 + Mongo 集群**:model-war 明确不做多存储后端与持久化层(见 [hld §2.2.11](../hld.md)),理由:benchmark 不需要持久化,JSONL 回放就是归档;Mongo sharding 这套分布式基础设施对 v0 完全过设计。
 - **多进程 + Redis List 队列**:hld §2.3 已简化为"进程内 4 VM 串行"。LLM 评测不是 MMO,不需要 stage 1 / stage 2 分开,也不需要按房间横扩 worker。
 - **stage 1 / stage 2 / stage 3 三阶段**:model-war 单 tick 串行做完整结算,hld 不需要跨进程同步。
 - **不强制 vm**:Screeps 2016 选 vm 是因为没 isolated-vm;model-war 2026 选 quickjs-wasi(见 hld §5),是更现代的隔离方案。

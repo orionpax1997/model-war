@@ -4,7 +4,7 @@
  *
  * ── 为什么桩要记「收到的消息」而不是只回文本 ──
  *
- * FR-5 的核心判据是"回喂的内容**只有**静态校验错误"以及"一次调用发出的 messages 含完整契约"。
+ * 生成协议的核心判据是"回喂的内容**只有**静态校验错误"以及"一次调用发出的 messages 含完整契约"。
  * 这两条只有站在**端口这一侧**才可观察:管线内部怎么拼、怎么拼错的,轮不到桩去读私有字段。
  * 所以桩把 `messages` 与 `params` 原样记下,测试从桩这一侧断言"发出去的到底是什么"。
  *
@@ -19,7 +19,7 @@ import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./mod
 /** 一步回放:回一段文本(可带截断/用量),或抛一个错误(传输失败)。 */
 export type StubReply = {
   readonly text: string;
-  /** 缺省 `"stop"`;截断场景填 `"length"`(票 06 的重试判据)。 */
+  /** 缺省 `"stop"`;截断场景填 `"length"`(重试判据见 `packages/gen/src/retry.ts`)。 */
   readonly finishReason?: string;
   /** 缺省 `{}`;逐轮落进生成日志的用量读数。 */
   readonly usage?: unknown;

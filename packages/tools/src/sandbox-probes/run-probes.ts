@@ -11,9 +11,8 @@
  * `quickjs-wasi` 的 VM,引擎内部重构不会让它红;它红了就说明运行时行为真的变了(见 `lib.ts`)。
  *
  * ── 五条与 hld 的对应 ──
- * ① 脚本入口契约(`docs/hld.md:563`);② 深递归失败形态(`:564`);
- * ③ `interruptHandler` 粒度与不可捕获性(`:565`);④ 内存读数口径与封顶(`:566`);
- * ⑤ 删桥后的不可见性(`:567`)。**每条判不过的报错信息都带上它对应的 hld 行号**。
+ * ① 脚本入口契约;② 深递归失败形态;③ `interruptHandler` 粒度与不可捕获性;
+ * ④ 内存读数口径与封顶;⑤ 删桥后的不可见性。**每条判不过的报错信息都带上它对应的 hld 章节**。
  *
  * ── 判据的两种信任来源 ──
  * **数值类是 `constants.ts` 里已冻结的常量**(粒度 5000、空 VM 基线 75128/64098、分配上限);
@@ -90,12 +89,12 @@ const makeRecorder = (
   return { record, outcomes };
 };
 
-// ── ① 脚本入口契约(docs/hld.md:563) ────────────────────────────────────────
+// ── ① 脚本入口契约(docs/hld.md §5.0) ────────────────────────────────────────
 
 const probeEntryContract: Probe = {
   id: "01",
   slug: "script-entry-contract",
-  hldLine: "docs/hld.md:563",
+  hldLine: "docs/hld.md §5.0",
   run: async (wasm, record) => {
     const vm = await QuickJS.create({ wasm });
     try {
@@ -129,12 +128,12 @@ const probeEntryContract: Probe = {
   },
 };
 
-// ── ② 深递归的失败形态(docs/hld.md:564) ────────────────────────────────────
+// ── ② 深递归的失败形态(docs/hld.md §5.0) ────────────────────────────────────
 
 const probeDeepRecursion: Probe = {
   id: "02",
   slug: "deep-recursion",
-  hldLine: "docs/hld.md:564",
+  hldLine: "docs/hld.md §5.0",
   run: async (wasm, record) => {
     record.section("深递归溢出是 host 侧 RangeError，不是 JSException，且 VM 可续用");
     const vm = await QuickJS.create({ wasm });
@@ -173,12 +172,12 @@ const probeDeepRecursion: Probe = {
   },
 };
 
-// ── ③ interruptHandler 的粒度与不可捕获性(docs/hld.md:565) ──────────────────
+// ── ③ interruptHandler 的粒度与不可捕获性(docs/hld.md §5.0) ──────────────────
 
 const probeInterrupt: Probe = {
   id: "03",
   slug: "interrupt-granularity",
-  hldLine: "docs/hld.md:565",
+  hldLine: "docs/hld.md §5.0",
   run: async (wasm, record) => {
     record.section("粒度：每 5000 次控制流事件一次回调（差分测量，与相位无关）");
     const counter = { callbacks: 0 };
@@ -311,12 +310,12 @@ const probeInterrupt: Probe = {
   },
 };
 
-// ── ④ 内存读数口径与封顶(docs/hld.md:566) ──────────────────────────────────
+// ── ④ 内存读数口径与封顶(docs/hld.md §5.0) ──────────────────────────────────
 
 const probeMemory: Probe = {
   id: "04",
   slug: "memory-reading",
-  hldLine: "docs/hld.md:566",
+  hldLine: "docs/hld.md §5.0",
   run: async (wasm, record) => {
     record.section("读数口径：getMemoryUsage() 的字段与空 VM 基线");
     const vm = await QuickJS.create({ wasm });
@@ -381,12 +380,12 @@ const probeMemory: Probe = {
   },
 };
 
-// ── ⑤ 宿主桥函数删除后的不可见性(docs/hld.md:567) ──────────────────────────
+// ── ⑤ 宿主桥函数删除后的不可见性(docs/hld.md §5.0) ──────────────────────────
 
 const probeBridgeDeletion: Probe = {
   id: "05",
   slug: "bridge-deletion",
-  hldLine: "docs/hld.md:567",
+  hldLine: "docs/hld.md §5.0",
   run: async (wasm, record) => {
     record.section("删桥后：枚举不到、捞不回来，闭包通道仍可用");
     const vm = await QuickJS.create({ wasm });

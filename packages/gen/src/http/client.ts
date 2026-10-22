@@ -24,7 +24,7 @@
  * ── 失败分类(契约 §2.1)──
  *
  * 429 / 5xx / 网络失败 / **空闲超时** / 流在 `[DONE]` 前断掉 / 帧里带 `error` →
- * `TransportError.retryable = true`(票 06 重发同一轮);其余 4xx → `retryable = false`。
+ * `TransportError.retryable = true`(`packages/gen/src/retry.ts` 重发同一轮);其余 4xx → `retryable = false`。
  * 截断(`finishReason === "length"`)不走这里,见 `endpoints.ts`。
  */
 

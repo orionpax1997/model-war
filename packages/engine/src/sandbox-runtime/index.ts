@@ -4,7 +4,7 @@
  * ── 它是什么、不是什么 ──
  *
  * 本文件是**跑在 guest 里**的代码,不是引擎的运行时依赖:它被 esbuild 打成单文件 IIFE
- * (票 04 固化成入库产物),经 `evalCode(runtimeCode)` 铺进 VM。所以它**不碰 `node:*`、不读盘**;
+ * (固化成入库产物),经 `evalCode(runtimeCode)` 铺进 VM。所以它**不碰 `node:*`、不读盘**;
  * 它 import 的只有引擎里 guest 安全的那几件——同一份 A*(寻路)、同一份判据(`intent-verdicts.ts`)
  * 与兵种名清单(`world/state.ts` 的 `isUnitType`),这三样 esbuild 会原样打进产物。
  *
@@ -40,7 +40,7 @@
  * 宿主没灌规则集时 `rules` 为 `null`,要读规则集的那两条判据**降级为跳过**——那两件事交回引擎终裁,
  * 而不是用一份臆造的属性把它误判成错。
  *
- * ── API 计数(票 07 的「双计数」之一)──
+ * ── API 计数(hld §5.3 双计数的其中之一)──
  *
  * 每个注入函数都 `apiCalls += 1`(一个**宿主 authored 的普通整数**,不是 guest 可改的全局)。计数经
  * **同一次 `__drainIntents()` 返回载荷**带回宿主(返回结构 `{ intents, apiCalls, actionFacts }`)——不新增桥调用、

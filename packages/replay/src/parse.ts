@@ -5,7 +5,7 @@
  *
  * 「读一份回放」就是三步:读盘 → 逐行 `JSON.parse` → 按判别式 `type` 收窄成 `ReplayLine`。
  * 这三步曾在渲染器与 `apps/cli/src/verify/index.ts` 各写了一份——同一件事两个家。本模块是它的
- * **唯一家**:渲染器(`modelwar replay`)与复算链(`modelwar verify`,NFR-2)都从这里取行。
+ * **唯一家**:渲染器(`modelwar replay`)与复算链(`modelwar verify`)都从这里取行。
  *
  * ── 为什么行类型取自真源包,不在这里声明 ──
  *

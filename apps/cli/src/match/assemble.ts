@@ -160,7 +160,7 @@ const BUDGET_FIELDS = [
  * 从规则集与键清单解析**已启用**的预算轨。字段缺席即该轨不启用(不是「值 0 即不启用」)。
  *
  * 判据是键清单里那一个两态字段 `calibration.state`:未定值(`undetermined`)就不传这个字段——
- * 引擎不认识「未定值」这个概念(spec《未定值与预算配置》)。票 07 之后八键全部定稿,七项运行时字段
+ * 引擎不认识「未定值」这个概念。八键全部定稿,七项运行时字段
  * 都进预算;判据仍读 `state` 而不是「值是不是 0」,失效后回未定值时会自动把对应轨摘下。
  *
  * 试跑(`trial/`)跑在现行上限下,复用同一份解析,不另读一份阈值——上限的家只有这一处。
@@ -272,7 +272,7 @@ export const assemble = (inputPath: string, root: string): AssembleResult => {
   }
   const map: MapDefinition = mapValidation.map;
 
-  // 规则集:读 + 校验 + 版本三处一致(FR-10 AC2 的错配拒跑就在这一步)。
+  // 规则集:读 + 校验 + 版本三处一致(错配拒跑就在这一步)。
   let rulesetBytes: Buffer;
   try {
     rulesetBytes = readFileSync(join(root, "rulesets", `${RULESET_VERSION}.json`));

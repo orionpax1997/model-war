@@ -14,7 +14,7 @@
  *
  * `tick` / `seat` / `kind` / `value` / `limit` 各自回答一句话:「什么时候、谁的、哪一类、
  * 读到多少、当时那条轨的上限是多少」。「每玩家每类只记首条」由写出侧去重(文件因此有界),
- * 而不是由形状承担——将来要计数是**加栏**,不是改形(spec《观测通道》)。
+ * 而不是由形状承担——将来要计数是**加栏**,不是改形。
  *
  * `track`(轨名)刻意**不进**这一行:两个 `kind` 各自唯一对应一条轨
  * (`wall-clock-soft` → `wallClockSoftLimit`、`memory-pressure` → `memoryTickCeiling`),

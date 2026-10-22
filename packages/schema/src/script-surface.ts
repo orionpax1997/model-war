@@ -359,7 +359,7 @@ export const SANDBOX_INJECTED_API_SYMBOL_CATALOG: readonly InjectedApiSymbolEntr
  * 注入面的裸名字清单,**由上面的目录投影而来**,不另存一份。
  *
  * 投影而不是再抄一份字面量:名字只有一处可改(`…_CATALOG`),而「名字 + 类别 + 为什么收」
- * 三样一起是可枚举的数据,面向模型的契约文档按它逐行渲染(票 05)。
+ * 三样一起是可枚举的数据,面向模型的契约文档按它逐行渲染(`packages/tools/src/generate/`)。
  */
 export const SANDBOX_INJECTED_API_SYMBOLS: readonly string[] =
   SANDBOX_INJECTED_API_SYMBOL_CATALOG.map((entry) => entry.symbol);

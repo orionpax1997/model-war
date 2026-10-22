@@ -3,7 +3,7 @@
  *
  * ── 为什么断言的对象是「落库的那份文档」而不是「生产函数的输出」 ──────────────────
  * 生产函数的输出按定义与真源一致,对着它断言等于什么都不查。这里读的是**工作树里那份
- * `docs/rules-v1/api.md`**:它才是模型读到的东西,而它可以因为三种原因与符号表分叉——
+ * `docs/rules-v2/api.md`**(当前 active 契约)**:它才是模型读到的东西,而它可以因为三种原因与符号表分叉——
  * 改了真源没重跑生成器、区块正文被手改、以及**有人在文档里多写了一个名字**。
  * 最后一种任何「生成器输出 vs 真源」的检查都看不见:多出来的名字不在真源里,生成器不会去覆盖它,
  * 而模型会照着它写脚本。
@@ -40,7 +40,13 @@ import { readSection, sectionMarker } from "./generate/section.ts";
 import { SCRIPT_API_DECLARATION, readScriptApiDeclarations } from "./script-api/declarations.ts";
 
 /** 契约文档里 API 面那一份。仓库根起的相对路径,与生成物落点同一记法。 */
-const API_DOC = resolve(import.meta.dirname, "../../../docs/rules-v1/api.md");
+/**
+ * 被守护的那一份契约的版本标签。**当前 active 是 v2**(v1 是历史快照,不再维护):
+ * 断言的对象必须是模型真正读到的那一份,守着一份没人读的快照等于没守。
+ * 生成物注册表为每个版本各注册一件,所以换版本时这里与注册表一起改。
+ */
+const CONTRACT_TAG = "api-v2";
+const API_DOC = resolve(import.meta.dirname, `../../../docs/rules-v2/api.md`);
 const TYPE_FACE = resolve(import.meta.dirname, "../../../", SCRIPT_API_DECLARATION);
 
 /** 符号表里的 22 个名字,以及那一档的错误码。**投影**而来,与生成器取的是同一份数据。 */
@@ -82,7 +88,7 @@ const nameCells = (content: string): readonly string[] =>
  * 反例:在 API 表里加一行 `| \`getResources\` | \`getResources(): number\` | 手写的一行。 |`,本条红。
  */
 it("API 文档里的每个 API 名字都在注入面符号表里", () => {
-  const documented = nameCells(sectionContent("api-v1-api-surface"));
+  const documented = nameCells(sectionContent(`${CONTRACT_TAG}-api-surface`));
   expect(documented.length, "API 表与错误码表一行都没有,断言会在空集上绿").toBeGreaterThan(0);
   for (const name of documented) {
     expect(
@@ -101,7 +107,7 @@ it("API 文档里的每个 API 名字都在注入面符号表里", () => {
  * 反例:从 API 表里删掉 `| \`getTick\` | … |` 那一行,本条红。
  */
 it("注入面符号表里的每个名字都在 API 文档里披露", () => {
-  const documented = nameCells(sectionContent("api-v1-api-surface"));
+  const documented = nameCells(sectionContent(`${CONTRACT_TAG}-api-surface`));
   for (const name of SYMBOLS) {
     expect(
       documented,
@@ -121,7 +127,7 @@ it("注入面符号表里的每个名字都在 API 文档里披露", () => {
  * 判据为什么落在「未声明的名字」上、后来又为什么换掉:类型面回填之前,脚本调用的每一个
  * API 名字对 `tsc` 都是未声明的,而脚本自己声明的名字(变量、辅助函数)不会落进那批诊断——
  * 于是那批诊断**恰好**就是「脚本用到的注入面名字」这一份可机械取出的名单。
- * **类型面回填之后(票 03)这批诊断归零**,那条取名单的路随之失效:零个未声明名字既可能是
+ * **类型面回填之后这批诊断归零**,那条取名单的路随之失效:零个未声明名字既可能是
  * 「脚本用满了注入面」,也可能是「脚本压根没用」,两者在空集上无法区分。
  *
  * 换掉之后判据落在两个仍然可机械取出的事实上:
@@ -162,7 +168,7 @@ it("反例:基准脚本里插一个注入面之外的名字 → 编译期红,且
 });
 
 it("基准脚本里用到的每个 API 名字都在符号表里、且都在契约文档的表里披露", () => {
-  const documented = nameCells(sectionContent("api-v1-api-surface"));
+  const documented = nameCells(sectionContent(`${CONTRACT_TAG}-api-surface`));
   const declared = new Set(
     readScriptApiDeclarations(SCRIPT_API_DECLARATION, readFileSync(TYPE_FACE, "utf8")).valueNames,
   );
@@ -191,7 +197,7 @@ it("基准脚本里用到的每个 API 名字都在符号表里、且都在契�
  * 反例:从真源里删掉 `ERR_BAD_ARGS` 那一行(只删文档不改真源),本条红。
  */
 it("错误码集合在文档与符号表之间逐字相同,且每码都带一句触发条件", () => {
-  const content = sectionContent("api-v1-api-surface");
+  const content = sectionContent(`${CONTRACT_TAG}-api-surface`);
   const rows = content
     .split("\n")
     .filter((line) => line.startsWith(`| \`ERR_`))
@@ -282,7 +288,7 @@ it("文档里每一次数错误码,数出来的都与符号表一致", () => {
  * 反例:从对照表某一行里删掉 `\`ERR_BAD_ARGS\``,本条红。
  */
 it("丢弃 vs 异常对照表里被点名的错误码与符号表一致", () => {
-  const content = sectionContent("api-v1-outcome-table");
+  const content = sectionContent(`${CONTRACT_TAG}-outcome-table`);
   const named = [...content.matchAll(/`(ERR_[A-Z_]+)`/g)].map((matched) => matched[1] ?? "");
   expect(named.length, "对照表一个错误码都没点名").toBeGreaterThan(0);
   expect(sorted([...new Set(named)]), "对照表点名的错误码与符号表不一致").toEqual(

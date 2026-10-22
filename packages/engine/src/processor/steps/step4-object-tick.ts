@@ -9,8 +9,8 @@
  * 反过来会让同一份脚本在两种遍历序下得到不同结果,而回放要求逐项可复算。
  *
  * ── 四段各自的家 ──
- * a) 占领与 a→d 之间的接缝(易主 → 取消队列 + 退款)由票 05/06 落地(家:`processor/capture.ts`
- * 与 `processor/production.ts`);b) 采集、c) 交付与经济死亡由票 07 落地(家:`processor/economy.ts`)。
+ * a) 占领与 a→d 之间的接缝(易主 → 取消队列 + 退款)在 `processor/capture.ts`
+ * 与 `processor/production.ts`;b) 采集、c) 交付与经济死亡在 `processor/economy.ts`。
  * 槽位与定序规则在这里,机制在各自的模块里。
  *
  * ── 易主发生在 a) 段,而它引发的「队列取消 + 退款」也必须在 a) 那一刻完成 ──
@@ -58,7 +58,7 @@
  * 「按对象数值 id 升序」由这里遍历升序的 `state.sites` 保证;同一 tick 多个点位易主时,
  * 同一主体在事件全序里由点位 id 定序(定序规则见 `events.ts` 头注)。
  *
- * `economy-dead` 也是步 4 的事件,**判据归票 07(即本票)**:形式判据在
+ * `economy-dead` 也是步 4 的事件,**判据在这里**:形式判据在
  * `processor/economy.ts` 的 `isEconomyDead`,在 b/c/d 全部落定之后按座位 0..3 升序判,
  * 每席**每局至多一条**——闩是 `state.economyDeadAtTick`(与首触的 `firstContactTick` 同性质),
  * 重复成立不再发。生产本身(下单 / 推进 / 出兵 / 退款)与采集/交付**都不发事件**——

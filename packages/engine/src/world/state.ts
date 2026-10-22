@@ -53,7 +53,7 @@ export const isUnitType = (value: string): value is UnitType =>
 
 export type Player = {
   readonly index: PlayerIndex;
-  /** 全局共享资源池,无上限、不按基地分池。全整数(FR-2 AC3)。 */
+  /** 全局共享资源池,无上限、不按基地分池。全整数(hld §4.6)。 */
   readonly resources: number;
   readonly alive: boolean;
   /**
@@ -112,7 +112,7 @@ export type Site = {
 export type OutcomeReason = ReplayOutcomeReason;
 
 export type Outcome = {
-  /** rankings[i] = 玩家 i 的名次(1 起,可并列),由 gdd《胜利与淘汰》的排序规则产生。 */
+  /** rankings[i] = 玩家 i 的名次(1 起,可并列),由 docs/rules-v2/rules.md §7 的排序规则产生。 */
   readonly rankings: readonly number[];
   readonly reason: OutcomeReason;
   /** 已淘汰玩家的领土分恒为 0(点位已回归中立、存活单位造价为 0)。 */
@@ -176,7 +176,7 @@ export type GameState = {
    *
    * ── 它为什么不是「经济死亡状态字段」 ──
    *
-   * 票面明令「状态模型里没有经济死亡字段」。理由是:经济死亡的形式定义是「无任何农民单位且
+   * 状态模型里刻意没有「经济死亡」字段。理由是:经济死亡的形式定义是「无任何农民单位且
    * `resources` < 农民造价」——两个谓词的与,任何人拿 `players[].resources` 与 `units` 一眼能算
    * (与 `alive` 不同:后者的判定链要重跑整条 evaluate 步,所以配得上字段)。
    * 本栏记的**不是**那个可算事实,而是「`economy-dead` 这条**事件**在哪一 tick 发过」——

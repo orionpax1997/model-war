@@ -252,8 +252,8 @@ it("冻结期体积超限:不建目标目录、无半截三件套、退出码非
   const slugDir = join(root, "archive", "alpha");
   expect(existsSync(slugDir)).toBe(true);
   // 「目录存在 ⇔ 三件套完整」:失败后连一个 runId 目录、一个 .tmp-* 残留都不该有。
-  // 票 05 起,编排层还会在这里落一条 `failed-<runId>.json` 失败记录(旁证),所以
-  // 只断言「除失败记录外再无他物」,而不是空目录。
+  // 编排层还会在这里落一条 `failed-<runId>.json` 失败记录(旁证,写盘见
+  // `packages/gen/src/failure.ts`),所以只断言「除失败记录外再无他物」,而不是空目录。
   expect(readdirSync(slugDir)).toEqual([expect.stringMatching(/^failed-.*\.json$/)]);
 });
 
@@ -457,7 +457,7 @@ it("protocolRounds 缺省 = 5:每轮失败 → 桩恰好被调 5 次,失败链�
   expect(outcome.failure.generationLog).toHaveLength(5);
 });
 
-// ───────────────────────── 票 06:传输韧性(退避重试不消耗协议轮数) ─────────────────────────
+// ───────────────────────── 传输韧性(退避重试不消耗协议轮数) ─────────────────────────
 //
 // 传输失败(429 / 5xx / 超时)与截断(`finishReason=length`)都退避重发**同一轮**:桩多被调几次,
 // 但 `protocolRounds` / `prompts` / `generationLog` 只数**已收敛的轮次**。退避用假定时器推进,不真等。
@@ -530,7 +530,7 @@ it("传输韧性:5xx 直到耗尽——重试 maxRetries 次后 transport 失败
     expect(outcome.failure.generationLog).toEqual([]);
     expect(outcome.failure.diagnostics.join("\n")).toContain("503");
     expect(outcome.failure.message).toContain("传输失败");
-    // 失败只返回结构,不建存档(写盘归票 05),也不留半截 / 临时目录。
+    // 失败只返回结构,不建存档(写盘归 `packages/gen/src/failure.ts`),也不留半截 / 临时目录。
     expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
     expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
   } finally {
@@ -1461,7 +1461,7 @@ it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代�
   expect(outcome.failure.diagnostics).toEqual([feedback.trim()]);
   expect(callAt(stub, 2).messages[4]?.content).toBe(feedback);
   expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
-  // 中途失败携带已验证候选描述（报告 FR-8 AC5 的已有候选披露）。
+  // 中途失败携带已验证候选描述（报告的已有候选披露）。
   const candidateJs = readFileSync(
     join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`),
   );

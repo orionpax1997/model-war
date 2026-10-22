@@ -1,5 +1,6 @@
 /**
- * 引擎侧的错误码投影(票 06):`INTENT_ERR_CODES` 必须与真源包符号表里的 `error-code` 项逐字相同。
+ * 引擎侧的错误码投影(注入面在 `packages/engine/src/sandbox-runtime/index.ts`):
+ * `INTENT_ERR_CODES` 必须与真源包符号表里的 `error-code` 项逐字相同。
  *
  * runtime bundle 不能 import 真源包(`@model-war/schema` 整个被打进来不划算,且 engine 的 manifest
  * 上只有 `@model-war/replay` 这一条依赖),所以 guest 铺的七个 `ERR_*` 名字只能落在一份**投影**上。

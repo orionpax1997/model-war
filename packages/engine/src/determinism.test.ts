@@ -1,16 +1,15 @@
 /**
- * 确定性验收(FR-2 AC1)与回放可复算的数据面(票 11 的第一、第二条)。
+ * 确定性验收与回放可复算的数据面。
  *
  * ── 它为什么跑在 `unit` project 里 ──
  *
- * 票面第 1 条 AC 写「这条要挂在门禁里,不只是一次性跑通」。本仓的门禁链 `check`
+ * 这条要挂在门禁里,不只是一次性跑通。本仓的门禁链 `check`
  * (`package.json:32`)显式跑 `vitest run --project unit --project property`,而 `test`
  * (`package.json:12`)也跑 `unit`。所以放在这里 = **check 链上每次必执行**,不可能静默回退。
  *
- * 为什么**不**新建一个 `check:determinism` 门禁脚本:`docs/diagrams/v0-milestone-dag.md:173`(节点 L)把
- * 「集成门禁(端到端 + `verify` + 重跑 10 次
- * hash)」整格划给 L,而其中 `verify` 归节点 G、本票不实现。本票交的是**check 链上的可执行
- * 验收**;把它接进 L 的 CI 集成门禁(L 那一格)是后续接线,这里留指针,不抢它的定义。
+ * 为什么**不**新建一个 `check:determinism` 门禁脚本:CI 的集成门禁(端到端 + `verify` + 重跑 10 次
+ * hash)是更高一层的接线(见 `docs/diagrams/v0-milestone-dag.md`)。这里交的是**check 链上的可执行
+ * 验收**;把它接进 CI 集成门禁是后续接线,这里不抢它的定义。
  *
  * ── 三条用例的关系 ──
  *
@@ -72,7 +71,7 @@ const runOnce = (strategies: readonly StubStrategy[]): readonly ReplayLine[] => 
 const movingStrategies = (): readonly StubStrategy[] =>
   [0, 1, 2, 3].map((seat) => marchToNearestEnemy(seat as 0 | 1 | 2 | 3));
 
-it("FR-2 AC1:同配置重跑 10 次,每 tick 的 stateHash 十列全等", () => {
+it("同配置重跑 10 次,每 tick 的 stateHash 十列全等", () => {
   const columns: (readonly string[])[] = [];
   for (let run = 0; run < 10; run++) {
     const parsed = runOnce(movingStrategies());
@@ -88,7 +87,7 @@ it("FR-2 AC1:同配置重跑 10 次,每 tick 的 stateHash 十列全等", () => 
   }
 }, 120_000);
 
-it("FR-2 AC1 的材质是有内容的:那十列不是一片常量", () => {
+it("材质是有内容的:那十列不是一片常量", () => {
   // 「十列全等」若发生在「每 tick 哈希都一样」的退化回放上,它证明不了什么。
   const column = stateHashesOf(runOnce(movingStrategies()));
   expect(new Set(column).size).toBeGreaterThan(1);
@@ -113,7 +112,7 @@ it("回放可复算:从已落盘回放读出的哈希列,与重新执行得到�
 
 it("反向自证:换一个真不确定源,同一条十列断言会红(它不是空断言)", () => {
   // 真正的例外:策略的输出依赖「这是第几次跑」。同一个配置因此得到不同回放——
-  // 这正是 FR-2 AC1 要挡的那类不确定源(按进程内计数器)。
+  // 这正是确定性(hld §4.6)要挡的那类不确定源(按进程内计数器)。
   let run = 0;
   const drifting = (): StubStrategy => {
     const index = run;

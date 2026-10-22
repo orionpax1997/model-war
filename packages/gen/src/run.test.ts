@@ -16,7 +16,7 @@ afterAll(() => rmSync(scratch, { force: true, recursive: true }));
 
 const CONTRACT_RULES = "# rules\n\n机制正文:这里是规则契约。\n";
 const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
-/** 一份能过编译与静态校验的最简参赛脚本(票 02 起,回文本要真的能进存档)。 */
+/** 一份能过编译与静态校验的最简参赛脚本(回文本要真的能进存档)。 */
 const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
 
 /**
@@ -174,7 +174,8 @@ it("`generateAndFreeze` 解析出 root 后加载 `<root>/.env`(存在才加载)"
   const key = `MW_GEN_TEST_ENV_${String(Date.now())}`;
   writeFileSync(join(root, ".env"), `${key}=loaded\n`);
   try {
-    // 默认客户端未实现(票 08)→ 每个模型失败 → 非零;但 `.env` 已在跑管线之前加载。
+    // 默认客户端是真实 HTTP 客户端(`packages/gen/src/http/client.ts`,此处未接假端点)
+    // → 每个模型失败 → 非零;但 `.env` 已在跑管线之前加载。
     const code = await generateAndFreeze(["--root", root, "--config", "models.yaml"]);
     expect(code).toBe(1);
     expect(process.env[key]).toBe("loaded");

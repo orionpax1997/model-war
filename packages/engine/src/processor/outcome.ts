@@ -1,5 +1,5 @@
 /**
- * 终局结果的构造:领土分、名次与胜者(gdd《胜利与淘汰》)。**这一节就是那份算法的家**。
+ * 终局结果的构造:领土分、名次与胜者(规范见 `docs/rules-v2/rules.md` §7)。**本模块就是那份算法的实现**。
  *
  * ── 名次四条(逐字照 gdd) ──
  *
@@ -36,7 +36,7 @@ import type { GameState, Outcome, OutcomeReason, PlayerIndex, UnitType } from ".
 /** 四个座位,下标即座位号(hld §2.3)。名次数组与领土分数组都按它排。 */
 const SEATS: readonly PlayerIndex[] = [0, 1, 2, 3];
 
-/** 一个座位的领土分(gdd《胜利与淘汰》的那条公式)。中立点位(`owner === -1`)不计入任何人。 */
+/** 一个座位的领土分(docs/rules-v2/rules.md §7 的那条公式)。中立点位(`owner === -1`)不计入任何人。 */
 export const territoryScoreOf = (
   state: GameState,
   ruleset: RulesetView,

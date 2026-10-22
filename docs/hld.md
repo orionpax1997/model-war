@@ -1,25 +1,22 @@
-# HLD:model-war v0 概要设计文档
+# HLD:model-war 架构与工程约束
 
 | 项 | 值 |
 |---|---|
-| 版本 | v2.3 |
-| 状态 | 待评审 |
-| 上游文档 | [fsr.md](./fsr.md)(定位与风险)、[srs.md](./srs.md)(需求,FR/NFR 编号来源)、[gdd.md](./gdd.md)(规则机制与设计约束) |
-| 覆盖范围 | srs §1.1 的五个 v0 交付物 |
-| 本文件拥有 | 架构与包拓扑、进程模型、确定性手段、沙箱与预算机制、数据结构、数据格式、CLI、CI 与工具链、工程侧开放项 |
-| 本文件不写 | 规则机制与参数含义(→ gdd)、参数取值(→ `rulesets/*.json`)、需求定义(→ srs)、可行性论证(→ fsr) |
+| 状态 | 有效 |
+| 本文拥有 | 架构与包拓扑、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 |
+| 本文不写 | 玩法规则与设计意图(→ [gdd.md](./gdd.md))、参数取值(→ `rulesets/*.json`)、面向模型的契约(→ [docs/rules-v2/](./rules-v2/))、定位与取舍(→ [vision.md](./vision.md)) |
 
-本文档是概要设计(HLD):系统分解、模块职责与接口、关键数据结构、进程模型、确定性保障方案。函数级实现细节由代码与 ADR 承接。
+**本文只保留「读源码读不出来、且不能被改坏」的东西**:包之间的边界、进程隔离、确定性手段、沙箱威胁模型、以及那几条一票否决式的工程约束。逐模块实现说明、数据字段清单、命令清单、耗时读数以代码与 `package.json` 为准。
 
 ## 1. 设计支柱(工程含义)
 
 | 支柱 | 工程含义 |
 |---|---|
-| 确定性可复算 | 一切结算顺序显式定义;引擎禁浮点;任何"方便但不确定"的实现自动否决 |
+| 确定性可复算 | 一切结算顺序显式定义;引擎禁浮点;任何「方便但不确定」的实现自动否决 |
 | 对称公平 | 地图由 map-lint 断言四重旋转对称(§7.2);初始条件由地图 + ruleset 推导,引擎不硬编码;座位在赛季内轮换(§8.1) |
 | 规则面最小 | 全部规则数值进 `rulesets/*.json`;引擎只实现 gdd 定义的通用机制 |
-| 戏剧性优先 | 回放 JSONL 与事件流自第一天按"可渲染、可叙事"设计 |
-| 排名降级 | 报告双轨:`report.md`(人类可读)+ `report.json`(机器可复算),二者同级输出。叙事战报是第三样东西,只给人看,不作判定依据(CONTEXT.md 三者分立) |
+| 戏剧性优先 | 回放 JSONL 与事件流自第一天按「可渲染、可叙事」设计 |
+| 排名降级 | 报告双轨:`report.md`(人类可读)+ `report.json`(机器可复算)。叙事战报是第三样东西,只给人看,不作判定依据 |
 
 ## 2. 总体架构
 
@@ -27,18 +24,17 @@
 
 ```
 ┌─ 离线:脚本生成管线(gen)─────────────────────────────────────────┐
-│  docs/rules-vN + docs/rules-vN/api.md + models.yaml + prompts/    │
+│  docs/rules-v2/{rules.md,api.md} + models.yaml + prompts/        │
 │        ↓ prompt 组装 → 模型 API(各厂商)→ 脚本 + 模型名           │
-│  静态校验(tsc 编译 + API 误用 lint)                              │
-│        │ 默认:诊断修复至配置上限;opt-in 循环见 §6.2             │
+│  编译 + 静态校验(编译器的名字解析 + 静态校验器)                    │
 │        ↓ 通过                                                     │
 │  冻结脚本:archive/<model>/<runId>/{script.ts, script.js, meta.json}│
 └───────────────────────────────────────────────────────────────────┘
-                          │ 只通过文件交换(srs NFR-4 AC2)
+                          │ 只通过文件交换
                           ↓
 ┌─ 在线:对战与排名(runner)────────────────────────────────────────┐
 │  modelwar run --config season.yaml                                │
-│    ↓ 对局调度:C(4,N) 组合 × M 地图 × K 种子 + 座位轮换(srs FR-7)│
+│    ↓ 对局调度:组合 × 地图 × 种子 + 座位轮换(§8.1)                 │
 │    ↓ 每场对局 = 独立子进程(崩溃隔离)                             │
 │  ┌─ 对局进程(engine)───────────────────────────────────┐         │
 │  │  输入物化:4 × 存档引用 + 地图 + 种子 + ruleset vN     │         │
@@ -47,7 +43,7 @@
 │  │  输出:replay.jsonl(meta + 每 tick 状态/事件/hash + 末行 result)│  │
 │  └───────────────────────────────────────────────────────┘         │
 │    ↓ 聚合                                                          │
-│  名次积分 + 叙事战报 + Markdown/JSON 报告(srs FR-8)               │
+│  名次积分 + 叙事战报 + Markdown/JSON 报告                          │
 └───────────────────────────────────────────────────────────────────┘
                           ↓
   独立工具(不依赖引擎运行时):CLI ASCII 回放查看器、重放一致性校验器
@@ -55,323 +51,127 @@
 
 ### 2.2 技术选型与工具链
 
+> 本节只登记**不可破坏的约束**。命令清单以根 `package.json` 为真源,本文不复制。
+
 #### 2.2.1 语言与运行时
 
-| 项 | 选择 | 依据 |
-|---|---|---|
-| 语言 | TypeScript 严格模式(`strict: true`,禁 `any` 隐式逃逸) | 与脚本语言同构、与 web 远期规划同构 |
-| 运行时 | Node.js ≥ 22.18(锁 `package.json#engines`) | **下限来自我们自己的代码特征,不是沙箱库的前置要求**:ESM、资源管理与稳定版解析 API,以及工具包以源码形态执行(靠 Node 的类型擦除跑 `.ts`,该能力自 22.18 起默认开启)。`quickjs-wasi@3.6.2` 既不声明 `engines` 字段也不要求任何运行标志(实测其 `package.json` 无 `engines`),此前把下限归因于它是错的。引擎除沙箱外零运行时依赖 |
-| 模块体系 | ESM(`"type": "module"`) | 避免 CJS/ESM 双轨 |
+- **TypeScript 严格模式**(`strict: true`),ESM(`"type": "module"`);引擎除沙箱外零运行时依赖。
+- **Node.js ≥ 22.18**(锁 `package.json#engines`)。下限来自**我们自己的代码特征**,不是沙箱库的前置要求:ESM、稳定版解析 API,以及工具包以源码形态执行(靠 Node 的类型擦除跑 `.ts`,该能力自 22.18 起默认开启)。
 
 #### 2.2.2 工程结构与构建
 
-| 项 | 选择 | 依据 |
-|---|---|---|
-| Monorepo | pnpm workspace(锁 lockfile,CI 用 `--frozen-lockfile`) | 多包单仓,包间边界清晰(§3.2) |
-| 拓扑 | `apps/cli` + `packages/{schema,replay,engine,runner,gen,tools}`(拓扑图与新增 `tools` 的理由见 §3.1) | CLI 是 app 不是库;回放格式独立成包;仓库自用工具独立成包 |
-| 包间类型引用 | workspace `exports` 的 `types` 条件 + TypeScript project references(`tsc -b`);**既不用 `paths`,也禁用 `baseUrl`** | 编译期强制依赖方向;`baseUrl` 已被 TypeScript 7 移除(TS5102,连写都写不进去) |
-| 共享编译基座 | 根 `tsconfig.base.json` | 各包继承,不另设配置包;参赛脚本那份刻意不继承它,理由见 §6.2 |
-| 构建(库包) | 纯 `tsc -b` 产物;两个例外:`tools` 只产 `.d.ts`(`emitDeclarationOnly`,运行面是源码,§3.1)、VM 内 runtime bundle(打包方式属实现期选择,形态见 §4.5) | 库 + 子进程入口,无需打包器 |
-| 构建(CLI) | `apps/cli` 用 esbuild 打成单文件 | 唯一 bin;子命令 `await import()` 动态加载便于分包 |
-| 脚本预编译 | 冻结脚本由 gen 包用 `tsc` 编译为 script-mode JS;编译器版本锁定并写入存档 meta | 判据是"语义可预测 + 冻结后不再变",不是快 |
-| CLI 入口 | 唯一 bin 在 `apps/cli`;`node:util` `parseArgs` 解析子命令,零第三方依赖 | §9 的六个子命令 |
-
-**包间类型引用为什么不用 `paths`(实测;完整矩阵在 `docs/adr/0002-toolchain.md`)**:把 `paths` 直指各包源码、且没有对应的 project reference 时,TypeScript 7 会把对方源码并进引用方的 program,两条错误同时报——`TS6059`(`rootDir` 越界)与 `TS6307`(文件不在引用方 tsconfig 的文件列表内);产物还会被发到错误的位置。退一步只跑 `tsc -p packages/engine`(依赖包未构建)则是 `TS2307`:TypeScript 7 不对裸包名做“产物缺失就回退到源码”的兜底。有了 project reference,`paths` 虽然不报错,但它与 `exports` 同时解析同一模块,剩下的作用只是“给同一个模块多一条解析路径”——而那正是 pnpm 软链布局下类型声明不可移植(TS2883 一类)的成因。故 `paths` 全仓库一处不写。**`tsc -b`(从仓库根)是唯一的类型闸门命令**,`tsc -b --noEmit` 不行:被引用项目不得禁用 emit(TS6310),且构建树已是最新时它会静默返回 0,别据此以为它能用。「禁用 `baseUrl`」的原结论不变,理由更硬了:TypeScript 7 已将其移除(TS5102)。
-
-**脚本入口契约(定稿)**:参赛脚本是**单文件 script-mode TS**,顶层声明一个 `loop()` 入口,**不写 `export` / `import`**(validator 对二者直接报错回喂,§6.2)。**入口的签名形态归契约面**——`docs/rules-v1/api.md` §1.1 是它的家(返回类型可省略);本节只留它对工程侧有约束的那一面:单文件、无模块语法、入口名固定为 `loop`。理由:VM 内以 `evalCode` 载入脚本模式 JS、`moduleLoader` 不配置,带 `export` / `import` 的产物在载入期直接取 `SyntaxError`,连执行都进不去。是否 `export` 是编译期即可判定的事实,不进入运行时容错。**实测(quickjs-wasi 3.6.2 / Node v24.15.0 / Linux x64 / 2026-09-24 主测 + 2026-10-01 复核,探针不落库)**:无 `export` 的 script-mode 产物经 `evalCode` 载入不报错,`loop` 的 `typeof` 是 `function`,`callFunction` 调得动且副作用可观察(tick 计数 +1);同一 VM 里 `export const a = 1` 取 `SyntaxError: unsupported keyword: export`,静态 `import x from "std"` 取 `SyntaxError`,且语法错误后 VM 仍可续用。三种形态的判别全部发生在载入期,不需要运行时容错。
+- pnpm workspace(锁 lockfile);拓扑 = `apps/cli` + `packages/{schema,replay,engine,runner,gen,tools}`。
+- **包间类型引用一律走 workspace `exports` 的 `types` 条件 + TypeScript project references(`tsc -b`);全仓库一处不写 `paths` 与 `baseUrl`。** `paths` 会把对方源码并进引用方的 program,`baseUrl` 已被 TypeScript 7 移除。**`tsc -b`(从仓库根)是唯一的类型闸门命令**——`tsc -b --noEmit` 不行(被引用项目不得禁用 emit)。
+- 库包纯 `tsc -b` 产物;两个例外:`tools` 只产 `.d.ts`(运行面是源码,§3.1);VM 内 runtime bundle(入库产物,§4.5)。CLI 用 esbuild 打成单文件。
+- **参赛脚本是单文件 script-mode TS,顶层声明一个 `loop()` 入口,不写 `export` / `import`**(validator 对二者直接报错)。入口签名的形态归契约面 `docs/rules-v2/api.md`;工程侧只留三条约束:单文件、无模块语法、入口名固定为 `loop`。理由:VM 以 `evalCode` 载入脚本模式 JS,带模块语法的产物在**载入期**就取 `SyntaxError`,连执行都进不去。
 
 #### 2.2.3 代码质量:oxc 统一工具链
 
-格式化与静态检查统一采用 [oxc](https://oxc.rs/),不引入 ESLint/Prettier:
-
-| 项 | 工具 | 说明 |
-|---|---|---|
-| 格式化 | **oxfmt** | 全仓库统一配置,`oxfmt --check` 进 CI |
-| Lint(语法+结构) | **oxlint** | 替代 ESLint 成为主 linter |
-| Lint(类型感知) | **oxlint-tsgolint**(`--type-aware`) | 底层是 `tsgolint`。**已 stable,是真检查**:oxlint 1.86.0 的 `--help` 对它的描述就是“Enable rules that require type information”,不带 experimental 标记;它进 `check:types`,不再并行试跑(§12 #5 已按子项收口) |
-| 类型检查 | **`tsc -b` 为唯一类型闸门** | `oxlint --type-check`(连带 TS 编译器诊断)在 1.86.0 的 `--help` 里仍标 *experimental*,不设为闸门;上一版把 `--type-aware` 也归为“仅并行试跑”,已失效 |
-| 确定性 Lint | **自建校验器 `packages/tools/src/rules/no-float.ts`**,建立在 `oxc-parser` 之上:engine 包运行时源码禁浮点字面量(指数形式即便求值为整数也判违规),`Math` 成员只认白名单 | FR-2 AC3 / NFR-1 的机械化保障。**刻意不建在 oxlint 的 JS 插件通道上**:该通道上游标为 alpha、不在 semver 承诺内,而这是一票否决级的约束(ADR-0002)。作用域是“目录薄壳”决定的,纯函数层不碰文件系统 |
-| 沙箱 API 白名单 | **分两层,两侧都不交给 oxlint**:`__*` 前缀与确定性污染源等**名字级别的禁令**由 `packages/tools` 的静态校验器承担;**「白名单反转」由编译器的名字解析承担**(脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types`、只额外引入脚本 API 类型声明的环境里编译,「找不到这个名字」即反转)。`oxlint` 的 `no-restricted-globals` 两条都表达不了 | 该规则只接受精确名字列表(实测 oxlint 1.86.0 的 `configuration_schema.json`:`globals` 项的形状是 `string` 或 `{ name, message }`,没有任何模式字段),既表达不了 `__*` 前缀禁令,也没有「白名单反转」的对应物(承载方式见 §6.2)。**反转之所以不建在 `oxc-parser` 的自建检查上**——实测该解析器不暴露任何作用域信息(§6.2 实测表,带版本组合),而白名单反转的本质是自由变量判定;自建分析器的失败模式是漏掉任何一处声明位置、也就是误伤一份合规脚本,而误报在五轮迭代预算里不对称地致命(同一条谨慎此前已为「不建在 oxlint 的 alpha 插件通道上」付过一次,ADR-0002)。白名单符号表由 `schema` 生成;运行时 QuickJS 内默认无定时器,静态禁令为纵深防御 |
-| 复杂度 | oxlint `complexity`(warn,不进 gate);热点扫描 `scc --by-file --cognitive --hotspots`(手动) | 复杂度是诊断信号,耦合是硬约束,不放同一层 |
+格式化与静态检查统一用 [oxc](https://oxc.rs/):`oxfmt`(格式)、`oxlint`(lint)、`oxlint-tsgolint --type-aware`(类型感知 lint,已 stable,进 `check:types`)。
 
 **三条必须记住的约束**:
 
-1. **类型感知 lint 需要已解析的类型信息**:monorepo 必须先 `tsc -b` 生成 `.d.ts`,`--type-aware` 才有正确输入。CI 静态阶段顺序固定为 `tsc -b` → `oxlint --type-aware`。
-2. **`oxlint-tsgolint` 的版本号就是它所配套的 TypeScript 版本**:形状是 `7.0.<tsPatch><golintPatch>`,**末三位是 tsgolint 自己的 patch,前面剩下的整个 patch 段是 TypeScript 的 patch**——`oxlint-tsgolint@7.0.2003` ⇄ `typescript@7.0.2`。TypeScript 的 patch 一变,前面那段跟着变,末三位归零。**这条耦合没有任何工具会替你检查**:oxlint 的 peer 依赖只保证 tsgolint 的下界,不比对 TypeScript 版本,错位是静默的(类型感知 lint 不会报错、不会警告,只是不再基于正确的类型信息运行)。因此由仓库自己的断言脚本 `packages/tools/src/toolchain-coupling.ts` 承担(根脚本 `coupling`,在 `check:quick` 内),逐项断言:两项都精确锁版、版本号能解出配套版本、配套版本等于 manifest 里写的 TypeScript、`node_modules` 里实际装着的与 manifest 一致。配套为 0,错位为 1;反例不靠改 `package.json`,直接传两个假版本号。
-3. **包间类型引用一律走 workspace `exports` + project references**;`paths` 与 `baseUrl` 一处不写(依据与实测错误码见 §2.2.2)。
+1. **类型感知 lint 需要已解析的类型信息**:CI 静态阶段顺序固定为 `tsc -b` → `oxlint --type-aware`。
+2. **`oxlint-tsgolint` 的版本号就是它所配套的 TypeScript 版本**(`7.0.<tsPatch><golintPatch>`)。**这条耦合没有任何工具会替你检查**,错位是静默的(类型感知 lint 不报错,只是不再基于正确的类型信息运行)。由仓库自己的断言脚本 `packages/tools/src/toolchain-coupling.ts` 承担,根脚本 `coupling`,在 `check:quick` 内。
+3. **确定性 lint 是自建的**(`packages/tools/src/rules/no-float.ts`,基于 `oxc-parser`):engine 包运行时源码禁浮点字面量。**刻意不建在 oxlint 的插件通道上**——那条通道上游标为 alpha,不在 semver 承诺内,而这是一票否决级的约束。
+4. **沙箱 API 白名单分两层,两侧都不交给 oxlint**:名字级别的禁令(`__*` 前缀、确定性污染源)由静态校验器承担;**「白名单反转」由编译器的名字解析承担**(脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types` 的环境里编译,「找不到这个名字」即反转)。
 
-**复杂度与耦合的分层原则**:dependency-cruiser 规则(§3.2)= error 硬门禁;复杂度阈值 = warn 不进 gate。理由:复杂度门禁会诱导 agent 抽函数——复杂度没有消失,只是从 A 搬到 B,还多出为拆而拆的小模块。真正该看的是 hotspot = 复杂度 × 改动频率,`scc --hotspots` 是平价近似。
+**复杂度与耦合分层**:dependency-cruiser 规则 = error 硬门禁;复杂度阈值 = warn 不进 gate。理由:复杂度门禁会诱导 agent 抽函数,而复杂度没有消失,只是搬家。
 
 #### 2.2.4 测试
 
-| 项 | 选择 | 覆盖内容 |
-|---|---|---|
-| 测试框架 | Vitest(沙箱测试用真实 quickjs-wasi VM 或 `StubRunner` 替身) | 引擎结算单元测试、沙箱异常/超限裁决测试(FR-4) |
-| 属性测试 | **fast-check** | 把 srs 的 AC 写成可执行命题,见下表 |
-| 确定性回放 | 固定种子 + 固定脚本 → 逐 tick `stateHash` 断言;`modelwar verify` 重算比对 | FR-2 AC1、NFR-1 AC |
-| 地图校验 | `modelwar map-lint <maps/>` 对地图池跑单图与池两层断言(清单见 §7.2) | FR-1 AC2 |
-| 规则文档验收 | `benchmarks/` 下模型生成 ≥2 个基准脚本,仅凭 `docs/rules-v1` 编写 | FR-10 AC1、srs §4 第 2 条(模型 dry-run 流程,测试仅保证可运行) |
-| 变异测试 | StrykerJS(度量测试有效性);**已装**:devDependency 精确锁版 10.0.0,配置 `stryker.config.mjs` 落库,范围限定 `engine` 结算管线,脚本 `mutate` 挂夜间——**只落盘、不设红线**(ADR-0002 的「不装 Stryker」条款已 supersede) | 夜跑体检 |
-
-属性测试(收益最高的一层),把 AC 直接写成命题:
-
-| 条款 | 属性 |
-|---|---|
-| FR-2 AC1 确定性 | `hashOf(run(s,p)) === hashOf(run(s,p))` |
-| FR-2 AC2 序列化往返 | `deepEqual(parse(serialize(st)), st)` |
-| FR-1 AC2 四方对等 | `deepEqual(rotate90(m).seats[i], m.seats[(i+1)%4])` |
-| FR-3 AC1 不可变性 | `step` 后原 `state` 深比较不变 |
-| NFR-1 整数闭包 | `step` 输出全为整数(动态补静态类型之漏) |
-| FR-7 AC1 种子与座位派生 | 同名输入必同输出、组合间无碰撞;各 seat 的对局数精确相等(要求 M×K ≡ 0 (mod 4)) |
-| FR-8 AC1 排名 | 名次分守恒、参赛者置换不变(纯函数,§8.2) |
-
-**已知陷阱**:`JSON.stringify(-0) === "0"`,往返丢符号。全整数 + JSONL 的组合正好踩在这上面——属性测试会逮到,手写例子测试不会。
-
-**禁止项**:
-
-| 禁止 | 理由 |
-|---|---|
-| `vitest -u` 快照测试 | 测试红了 agent 会去更新快照而非查 bug。回放一律用显式 `stateHash` |
-| 覆盖率门禁 | agent 极擅长刷覆盖率;要看测试是否钉住行为,用 Stryker 变异分数 |
-| pre-commit 跑全量测试 | 慢钩子会被绕过。只跑 changed-files 的 format + typecheck |
-
-**变异测试定位**:属"事后体检"而非合并前门禁,只夜跑,范围优先 engine 结算管线——变异得分是"确定性测试没有退化成摆设断言"的量化证据。得分显著下降开 issue 跟进,不堵合并。
+- Vitest(沙箱测试用真实 quickjs-wasi VM 或 `StubRunner` 替身)+ fast-check 属性测试。
+- **禁止项**:`vitest -u` 快照测试(测试红了 agent 会去更新快照而非查 bug)、覆盖率门禁(agent 极擅长刷覆盖率)、pre-commit 跑全量测试(慢钩子会被绕过)。要看测试是否钉住行为,用 Stryker 变异分数。
+- **已知陷阱**:`JSON.stringify(-0) === "0"`,全整数 + JSONL 的组合正好踩在这上面——属性测试会逮到,手写例子测试不会。
 
 #### 2.2.5 数据与 schema(唯一真源)
 
-| 项 | 选择 | 依据 |
-|---|---|---|
-| 真源 | **`schema` 包 = 六类数据形状(规则集 / 地图 / 存档 meta / result / 回放行 / 失败记录)的 TS 类型与 JSON Schema(失败记录只交 TS 类型与文件名前缀常量——它不走读入端校验,不配半截 schema,见 §7.4)+ 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值** | 消除"规则文档与数值文件双真源 + 人工同步"的漂移。每类形状的**家只有这一个**,别的包不再重复声明(§3.1、§7.5) |
-| JSON Schema 的形态 | **导出的数据对象(`.ts` 里 `export const X_JSON_SCHEMA`),不是独立 `.json` 文件** | ajv 接受 JS 对象,不需要文件;`description` 是写给模型看的说明,写在源码里自然,顺带避开 `resolveJsonModule` 与本仓库编译配置的组合风险(ADR-0003) |
-| 文档生成 | **数值表**由 `rulesets/v1.json` + `schema` 的参数键清单(键序、量纲、标定状态、说明)共同生成,且在 `rules.md` 与 `api.md` **两份文档里各挂一份、逐字节相同**——两个落点出自同一个生产函数,不是两处各自维护;**API 表 / 常量表**由 `schema` 的注入面符号表生成,落在 `api.md`。**散文部分人工编写**,两者是同一份文件里的两种所有权,所以生成物取**区块形态**(两行定界标记之间是生成物,标记之外不比) | 生成物进版本库,漂移检查(`check:drift`,§2.2.7)逐件判定「重生成后无差异 + 生成物在版本库里」,未重新生成或未提交即报错(FR-10 AC1:文档里的数值表与 API 表必须真的是当前规则集的) |
-| 数据格式校验 | JSON Schema 归真源包(交付**数据**),**对局装载的 ajv 实例只在 `apps/cli` 一处**。私有试跑旁证的 gen/报告读入端可从同一 JSON Schema 派生验证器并检查短跨字段/候选身份关系,不得手写第二份形状(ADR-0003、ADR-0016) | 真源包受 §3.2 的包依赖规则约束、不能依赖 ajv 或交付运行时验证器;CLI 统一承载对局装载校验(§2.2.8)。诊断分两层:机器层透出 ajv 原始条目,面向模型层渲染成短句并**对同类错误合并成一行** |
-| hash | `node:crypto` SHA-256(标准库) | stateHash、地图 hash、存档完整性校验,零第三方依赖 |
-| 随机数与 ID | **归 `driver` 所有**:整数 LCG + `IdGen`;RNG 消费顺序写入 rules-vN | 确定性原语不散落;消费顺序是回放断裂的经典成因(§4.6) |
-
-**「读入端强制校验」的覆盖面现在是六类,其中四类由对局内核这一格新接线;它仍然不完整,但「为什么不完整」的理由与上一版不同**。本仓有 JSON Schema 且**家都在真源包**(见上表第一行)的六类数据是:**规则集、地图、存档元数据(`archive-meta`)、对局输入(`input.json`)、回放行(`meta` / `tick`)、终局结果(`result` 行)**——六类全部落库(规则集与地图早于此;存档元数据 / 对局输入 / 回放行 / 终局结果由本 feature 的 01、02b、09 三票落库)。**逐类说清接线在哪一层**:① **规则集**与② **地图**走唯一一份 ajv 校验器(`apps/cli/src/validator.ts` 的 `validateRuleset` / `validateMap`,后者另有 `modelwar map-lint` 那条通路);本 feature 把规则集那一侧的调用点接进了 `modelwar match` 的装载段,`rulesets/v1.json` 的版本号三处(文件名 / 目录名 / 版本常量)对不上即拒跑(FR-10 AC2 的错配拒跑)。③ **存档元数据**与④ **对局输入**也在本 feature 接进 `modelwar match`:`validateMatchInput` 判版本三处一致、四个座位存档在不在、各文件哈希与实测是否相等;`validateArchiveMeta` 逐座位判缺档与元数据完整性。⑤ **回放行**(`meta` / `tick` 两行的形状与 JSON Schema 都在真源包)**尚未接进任何生产路径**,读盘渲染器(住 `@model-war/replay`)只 `JSON.parse` 后防御式读栏,不做 schema 校验;⑥ **终局结果**在正式回放读取路径仍按原策略处理;新选拔证据中的全部 result 由 runner 从共享 JSON Schema 派生验证器检查并复算（§6.3）,不另建结果形状。
-
-**为什么仍然不完整,与上一版的理由不同**:上一版缺的是「字段未回填」,本 feature 之后字段全已落库,缺的只剩两处接线与一处的**值**。⑤⑥ 两类的形状与 JSON Schema 都已生成,缺的只是**读入端调用点**——那要在回放的**读入端**才落地,而读盘渲染器住 `@model-war/replay`(依赖方向 `schema ← replay`),不能反向依赖持有唯一 ajv 实例的 `apps/cli`(§3.2),接线归「回放读入端校验归哪一层」那次有意的裁定,等**赛季调度(`I`)**那一格(它才是回放的正式消费者与报告路径)。③ 存档元数据那一路虽然形状与读入端校验都已到位,但它记的**字段值**由**生成管线(`H`)**写出:H 落地前读入端只能校验到形状与实测哈希一致,H 落地后才第一次校验到真实存档产物。**写在这里是为了不让后来者以为六类都已兑现**,也为了说明为什么不写半截 schema:放行额外属性的空 schema 等于不校验,却会让人以为「存档 meta 已校验」,比不写更坏。
-
-**漂移检查的实现是三段判定,不是裸的 `git diff --exit-code`**:① 内容一致性——真源现在会产出的东西与工作树里那个文件是不是同一份,**按形态分两种口径**(抓「改了真源没重跑」与「生成物被手改 / 被删」);② 对 `HEAD` 的差异检查,**限定在生成物路径上**(`git diff --quiet HEAD -- <生成物路径>`,抓「生成了但没提交」)——限定是为了不把开发者工作树里别的未提交内容报出来,把报错指向错误的地方;③ 按生成物路径的状态检查(`git ls-files`,未被索引跟踪即失败,抓「新增生成物没进版本库」)。后两刀是分开的:裸 `git diff` 看不见未跟踪文件,而新增生成物恰恰是漂移检查最该抓住的情形。路径清单从生成物注册表本身取,不另存一份(§3.1)。
-
-**生成物有两种形态,① 的口径随之分两种**(§3.1 的 `tools:generate` 行是注册表那一份):**整文件形态**整份逐字节比;**区块形态**(目标文件是散文文档、只有两行定界标记之间那一段是生成物,散文人工写)按定界标记抽出那一段逐字节比,**区块外的散文不比**——逐字节锁死散文等于让人不敢改文档,规则文档正是这一类混合文件。抽与填是同一份机械,所以「检查比的那段」与「生成器填的那段」不可能是两个口径。区块形态多出一条**标记即新的绕过面**:标记被手改、整段被删、只删了一端,三条都落在「抽不出区块」这一支上,而那一条**按漂移报红,不按「无事可做」跳过**——否则「把标记删掉让检查没东西可查」就是一条绕过检查的路,整套同源保证在那儿破一个洞。标记是**稳定的串**(只由生成物的 `id` 决定,不随内容、行号、摘要变化),它一变,被比的那一段就换了地方,而检查还是绿的。② 与 ③ 对两种形态一视同仁:它们只看产出路径。
+- **`schema` 包 = 六类数据形状的 TS 类型与 JSON Schema**(规则集 / 地图 / 存档 meta / 对局输入 / 回放行 / 终局结果)+ 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值。每类形状的**家只有这一个**。
+- JSON Schema 以**导出的数据对象**形态存在(`.ts` 里 `export const X_JSON_SCHEMA`),不是独立 `.json` 文件。
+- **文档生成**:规则文档的**数值表**由 `rulesets/*.json` + `schema` 的键清单共同生成,在 `rules.md` 与 `api.md` 两份契约文档里各挂一份、逐字节相同(同一个生产函数);**API 表 / 常量表**由 `schema` 的注入面符号表生成。**散文部分人工编写**,两者是同一份文件里的两种所有权,所以生成物取**区块形态**(定界标记之间是生成物,标记之外不比)。
+- **漂移检查(`check:drift`)是三段判定**:① 内容一致性(按形态分「整文件逐字节比」与「区块形态抽段逐字节比」;**区块抽不出即报红**,不按「无事可做」跳过——否则「删掉标记让检查没东西可查」就是绕过路);② 对 `HEAD` 的差异检查,**限定在生成物路径上**(抓「生成了但没提交」);③ 按生成物路径的状态检查(`git ls-files`,抓「新增生成物没进版本库」)。
+- **读入端校验的覆盖面**:规则集、地图、存档元数据、对局输入、回放行、终局结果六类形状都在真源包;ajv 实例只在 `apps/cli` 一处(真源包不得依赖交付运行时校验器)。回放行与终局结果的读入端调用点仍待接线,不要以为六类都已兑现。
 
 #### 2.2.6 gen 管线专属依赖(唯一允许联网的包)
 
-| 项 | 选择 | 依据 |
-|---|---|---|
-| prompt 模板 | `prompts/base.md` 单模板数据文件(不进 gen 代码):占位符 `{{contract}}`(= 契约读入那两份文档拼接)与可选 `{{strategy}}`,外加一份只写「见 `rules.md` §X / `api.md` §Y」的指针清单——判据文本不复制,真源仍是 `docs/rules-vN` | 改提示词不必改代码;与 `docs/rules-v1` 同为 gen 的输入 |
-| 契约读入 | 每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘(`RULESET_VERSION` 取自 `@model-war/schema` 常量),不嵌入副本;目录名 / 文件缺失或不符即报错退出 | 契约更新自动生效,且与 §7.4 的 `meta.ruleset` 三处一致判据同源 |
-| 模型 API 客户端 | gen 内定义 `ModelClient` 接口(`send(messages, params) → { text, finishReason, usage }`),真实实现 = OpenAI-compatible HTTP 客户端 + **三个端点族分支**(`chat-completions` / `messages` / `responses`),**不引厂商 SDK**——本期全部已开通模型都落在这三族,按厂商再包一层只是让依赖面随节点扩张;测试实现 = 可编程 stub | 新模型接入只改配置(FR-5 AC3);凭证一律走环境变量;CI 无凭证(§CI),自动化测试必须离线可跑 |
-| 模型配置 | `models.yaml`(本地配置,不入库,凭证仅引用环境变量名)只登记本季参赛集:`{ slug, endpointFamily, baseUrl, modelId, credentialEnvVar, 可选 contextLength / protocolRounds / strategy / generationPolicy（旧配置仍可读取 params） }`;配置 `protocolRounds` 只限制未开启事实优化时的总调用轮数;opt-in 按批次统一阶段上限(§6.2),不读取逐模型此值。类型与加载校验是 **gen 包私有**,不进 `schema` 的五类数据形状 | FR-5 AC3;那五类是跨进程交换的数据形状,配置不经进程边界。参数及支持描述真源仅为 `models.yaml` 的 `generationPolicy`，不在 ruleset 或文档复制各模型取值；配置加载、参数映射与 HTTP 发送前共用离线校验 |
-| 重试与限流 | 指数退避 + 每模型并发 1;退避参数(初始间隔 / 倍数 / 上限 / 最大重试)是 **gen 内部常量**,不进 `rulesets/*.json`——它是与厂商 API 打交道的工程参数,与对局规则无关 | 生成阶段无性能压力 |
-| 生成日志 | 每条一行序列化 JSON 字符串,填进 `meta.generationLog`(不新增 meta 字段,守十一键冻结);收敛轮记 `round/kind/model/params/usage/finishReason/errorCodes/sendMs`，规范配置另记 `requestEvidence/stopDetails/attemptEvidence/responseConverged`；`sendMs` 为调用段墙钟（含退避重试，不含编译/校验/试跑）。规范 transport 耗尽可追加 `kind=transport,responseConverged=false,round=protocolRounds+1` 末行，仅存尝试证据，不伪造顶层 usage/停止状态。`protocolRounds/prompts` 只计收敛响应；全部 HTTP 尝试消费与顶层响应有重叠，不累加作账单 | FR-6 AC1 |
+- prompt 模板是数据文件(`prompts/base.md`),判据文本**不复制**,真源仍是 `docs/rules-v2`。
+- 契约读入:每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘,不嵌入副本;目录名 / 文件缺失即报错退出。
+- 模型 API 客户端:gen 内定义 `ModelClient` 接口,真实实现 = OpenAI-compatible HTTP 客户端 + **三个端点族分支**(`chat-completions` / `messages` / `responses`),**不引厂商 SDK**。
+- 模型配置(`models.yaml`)只登记本季参赛集;凭证一律走环境变量。**新模型接入只改配置,不改代码**。
+- 重试与限流参数是 gen 内部常量,**不进 `rulesets/*.json`**——那是与厂商 API 打交道的工程参数,与对局规则无关。
 
 #### 2.2.7 脚本分层与 CI 质量门禁
 
-门禁以**命名脚本**为唯一执行入口(本地手工触发);ADR-0002 的「不建 CI/CD 流水线」条款已由 ADR-0010 重开,两层流水线已建成——主链 `.github/workflows/fast.yml`(PR 与主干 push 触发,成员 = `check:quick` + `test`)与夜间全量链 `.github/workflows/nightly.yml`(定时触发慢门禁与 `mutate`/`scan` 观测项);CI 只复核不新断言,失败等价于命名脚本失败。下表**只登记归属层**——哪道门禁归哪一层、它管什么;**命令清单永远以 `package.json` 为真源,本文不复制**(复制过一次就漂:本表曾把 `check:quick` 写成 5 项,实际是 **6 步**):
+门禁以**命名脚本**为唯一执行入口;CI 只复核不新断言,失败等价于命名脚本失败。
 
-| 归属层 | 入口(命令真源永远是 `package.json`) | 用途与归属说明 |
+| 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick`(**6 步**) | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁;**零构建**,所以贴得住每轮编辑循环。链上的 `check:no-float` / `check:budget` 同样可单独敲(`check:budget` 只读规则集取值、键清单源码与文档文本,读到零个预算键 / 零个已定稿键按失败处理) |
-| 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);AI 实现与 spec 收口的唯一默认入口 |
-| 提交前全量 | `check` | `check:types` + 默认 `test` + `check:deps`(巡航 `dist` 而非 `src`,§2.2.10)+ `check:declared-deps`(读源码清单,与 `check:deps` 互补)+ **末尾复核组**;末尾复核组 = `check:drift` / `check:bench` / `check:runtime`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`);`check:runtime` 判 runtime bundle **三段**——入库产物与重新构建逐字节一致、sha256 与冻结常量相符、不含模块语法 |
-| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁自测与契约自证;`check:selfproof` 拿终稿契约把 `benchmarks/` 三份产物过静态校验器 → 跑标定环那个桩的矩阵,只回答四问(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同),改契约、改 `rulesets/`、改自证桩时手工敲;`check:cross-process` 走 CLI 主接缝(`match` → `verify`)抽正式对局样本重跑并逐 tick 比对 `stateHash`(跨进程那一层);`check:limits` 用真引擎单进程跑入库基准脚本,判 NFR-3 的 X 与开放项 #6/#7 的两条停止断言(见 §10.1);`check:budget-recheck` 重跑预算探针与三份基准脚本、判终值仍自洽(触发事件与处置见 §5.3);`test:gates` 是门禁自测的快一半,`test:slow` 是慢的一半(契约自证四问 + 三个反例 + 会 spawn `check` 的那一条);它们**都不进 `check`、也不进默认 `test`**,按需手工跑,归属夜间流水线 |
-| 按需 → 夜间 | `mutate` / `scan` | **只观测、不设红线**(spec §7;三夜基线之前不谈红线)。`mutate` = Stryker 变异,范围限定 `engine` 结算管线(mutate glob 只认 `packages/engine/src/processor/`,配置 `stryker.config.mjs`),产物落 `reports/mutation/`;`scan` = `scc` 行数/复杂度观测(`scc` 是手动装的外部工具,`command -v scc` 失败写一份带 `skipped` 字段的 `reports/scan/meta.json` 并退 0),产物落 `reports/scan/`。两者都**不进 `check:quick`、也不进 `check`** |
+| 编辑循环(每轮) | `check:quick` | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁;**零构建**,贴得住每轮编辑循环 |
+| 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
+| 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
+| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑 |
+| 按需 → 夜间 | `mutate` / `scan` | **只观测、不设红线** |
 
-> `check:drift` / `check:bench` 刻意**不进 `check:quick`**:前者要一次 `tsc -b`(生产函数 import 真源包),后者要 spawn 一次 `tsc`。`check:declared-deps` 零构建,但要在每轮编辑循环里多付一次全源码树遍历加读 manifest,所以也留在 `check`。命名脚本里另有 `test`(默认功能测试:`unit` + `property`,不含类型检查、门禁自测或慢测试)、`generate`(提交前动作:重跑生成器产出全部生成物并入库,要一次构建,不是门禁)与 `test:props`(只跑 property,长时属性测试单独跑)。
-
-**参赛脚本静态校验器(§6.2 那个工具)不是本仓库的门禁**:`package.json` 里没有它的 `check:*` 脚本,它也不巡航本仓库源码——它服务于生成管线,调用方式是 gen 管线以子进程 spawn 它的入口(§6.2)。**要说清的是「不进 `check`」这句限定只到「它不是一道仓库门禁」为止,不是说它的测试不跑**:`check` 含 `vitest run --project unit`,而该工具的规则与入口自测落在 `unit` 的拾取范围(`packages/*/src/**/*.test.ts`)内,所以每次 `check` 都会跑到它们。真把它们抽出去只能像 `gates` 那样单开一个 project,而那会让这些反例失去常态覆盖。
-
-> 快反馈优先:AI 实现与 spec 收口统一走 `verify:fast`(格式、lint、轻量门禁 + unit/property);`check`、`test:gates`、`test:slow` 与变异测试按需运行。类型感知 lint 超过 ~10s,agent 就会"写完一起跑",反馈回路断掉。
-
-> **上表 `check` 那一行的 5.65s 是自证门禁摘出去之前的数**。摘出之后同机单次实测 **8.95s**——**它反而变慢了**,因为多了 `vitest run --project unit --project property` 的 5.2s(早先那张表的 17 个测试文件只覆盖到一部分)。不重取 5 次是因为**基线换了**:拿旧口径的中位数与新口径的单次数字相比没有意义,重测请连同下面「契约自证门禁按需跑」那一节一起当作新基线。
-
-**门禁耗时(实测;观测项,不是承诺)**。测量方法:在合并后的仓库树上先跑一次 `pnpm run build`,随后**连续 5 次**取该门禁的墙钟(`/usr/bin/time` 墙钟),**报中位数**(不报单次最好成绩);环境 Node v24.15.0 / Linux x64。
-
-| 门禁 | 2026-10-01 中位 | 2026-10-03 复测 5 次取样(s,基线 `a7f41f6`) | 2026-10-03 中位 | 本轮 2026-10-09 中位(基线 `ea23863`) |
-|---|---|---|---|---|
-| `check:quick` | 1.04s | 1.05 / 1.03 / 1.05 / 1.05 / 1.08 | **1.05s** | **1.68s** |
-| `check:types` | 1.75s | 1.83 / 1.79 / 1.82 / 1.86 / 1.88 | **1.83s** | **3.00s** |
-| `check`(全量) | 4.52s | 5.49 / 5.65 / 5.81 / 5.65 / 5.78 | **5.65s** | **94.04s** |
-| `test:gates` | — | — | — | **68.97s** |
-| `test:slow` | — | — | — | **396.16s** |
-| `check:selfproof` | — | — | — | **120s** |
-
-> 本轮(2026-10-09,基线 `ea23863`)六道门禁的逐次样本、机器与方法是一次性观测产物,不随图入库;本文只登记中位数,不复制逐次样本。`test:gates` / `test:slow` / `check:selfproof` 本轮才首次单列。
-
-**先说清楚这些数字的适用边界**:两次取数之间,`oxfmt --check` 的目标清单从 49 个文件长到 **77 个**(apps/ 与 packages/ 下 68 个 + 根 9 个配置文件),`check` 里的测试从空壳变成 17 个测试文件、152 条用例(含门禁自测的反例),于是全量门禁的中位数从 4.52s 涨到 5.65s——**这就是同一方法重测一次能拿到的信息:增长是可测的,不需要靠猜**。快门禁几乎没动(1.04s → 1.05s),因为新增的代码与测试都不在它的巡航面上;生成物漂移检查与「声明即依赖」门禁都刻意**不进快门禁**——前者要一次 `tsc -b`(ADR-0003 给这一条记了实测数字),后者要在每轮编辑循环里多付一次全源码树遍历加读 manifest;快门禁那几项本身在两次取数之间没有变过,这是分层取舍,不是遗漏。
-
-即便如此,它**仍然只在这个规模上成立**。本轮的 `check` 已经跑到 F/G/H/I 落地后的真实覆盖面:引擎内核与结算管线(`packages/engine`)、沙箱执行器与预算裁决、生成管线(`packages/gen`)、赛季调度与排名报告(`packages/runner` + `apps/cli` 六子命令)都在,`check` 里的 vitest(`unit` + `property`)覆盖 **92 个测试文件 / 987 条用例**,`oxfmt --check` 巡航 **284 个文件**,dependency-cruiser 巡航 **182 个模块 / 506 条依赖边**,「声明即依赖」门禁检查 51 个文件——**这早已不是 77 文件时代的那几个校验器与门禁测试**。但它仍不是终局:规则侧开放项与地图池扩展会继续把源码量与依赖图往上推,门禁耗时随规模增长,重测一次能拿到的是**增长量**,不是承诺。
-
-> 上一版这里写的是「`check:quick` 目标 < 5s」,那是一个没有实测支撑的许愿。现在有数字了,但**它不能变成承诺**:`< 5s` 若写成硬约束,后来者为了凑数字能改门禁的覆盖面(少查几个包、把类型感知挪出快门),而那比慢 5s 坏得多。**正确用法是把它当基线**:仓库长大后用同一方法(同机、5 次取样、报中位数)重测一次;只有重测出来的中位数显著上升,才谈是否再加一层分层。先前那条未经验证的许愿到此作废。
-
-**契约自证门禁按需跑(决策记录,不是承诺)**。它曾挂在 `check` 末尾,单次实测墙钟 95s、其中它自己 82s
-(64 场对局、标定环那个桩、6 路并行;8 核机上并发上限是 `min(6, cpus-2)`,提到 8 最多省 20s,
-**并发这条路没有肉**)。同机实测 `check` 各步:selfproof 80.6s / vitest unit+property 5.2s /
-`check:types` 1.9s / 其余四道 1.9s——**它占全量门禁的 89%**。于是它被摘出 `check`,摘出当时 `check` 回到约 9s(F/G/H/I 落地后本轮的读数见上面的耗时表,`check` 已到 94s)。
-
-**理由不是「它慢」,是「命令名与它的时间代价对不上」**:`check` 的名义是「提交前跑一遍」,挂着它之后
-八成时间花在一道与提交内容无关的重测算上,于是人开始跳过它或者每次都无脑等它——**两种都等价于没有
-这道门禁**,而且比没有更坏:没挂的时候至少知道自己没跑。诚实的位置就是按需。
-
-**代价要说清楚**:它从「每次 `check` 都拦」退化成「想跑才拦」,而它是那条机器防线的唯一执行者。
-**这个退化是自觉换来的**,换回来的是一道跑得起的门禁。两条断言(`gates.test.ts` 的
-`契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`)同时盯着两半——「不在 `check` 里」与
-「有独立脚本 + `test:slow` 里的三个反例」,少任何一半,这个决定就没有代价交换。
-
-**快门禁与末尾复核不受影响**:`check:quick` 那几项一项没动;`check` 末尾的提交内容复核是
-`check:drift` + `check:bench` + `check:runtime`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`)。哪一道该进哪一层由它的
-耗时与覆盖面决定,不由它在表里的位置决定。
-
-**`test:gates` 也有量(观测项,不是承诺)**:它是**门禁自测**,每道门禁的真跑加反向用例。它比 `check`
-长得多,因为它把末尾那几道要 spawn 真实命令的门禁(含契约自证)反复跑成反例。**它按墙钟拆成了两个
-project**:`gates-slow.test.ts`(`slow` project,`pnpm run test:slow`)装契约自证的四问与三个反例、
-以及会 spawn 全量 `check` 的那一条;`gates.test.ts`(`gates` project,`pnpm run test:gates`)装剩下
-那些秒级的。拆的根据是实测(2026-10-05,基线提交 `99b7372`):慢的一半约 **350s**(其中 `--same-script`
-那一条自己就 220s——它要证「三份同源后三对都掉到 0/9」,一个关于指标的论断,不能用缩矩阵判,于是它连同
-还原那一次跑两遍全矩阵),快的一半约 **43s**,8:1。**不拆的代价不是「慢一点」,是那个 43s 的东西没人跑**:捆在一起之后,
-想跑快的那一半要付慢的那一半的价钱,于是两个后果二选一——要么整个门禁自测没人跑,要么它每天都跑,
-于是没人看结果。拆开的代价只是「想跑全的要敲两条命令」。
-两个文件共用的那一层观察手段(`script` / `withProbeFile` / 末尾复核清单)在 `gates-harness.ts`:
-清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。（早于这次拆分,
-它已经从 894s 降到 517s 再到拆开合计的 393s,先改的是**反例的矩阵规模**:反例要证的是「改这一项会红」,不是四问的取值,
-于是反例改用缩矩阵,判不出红时断言当场红;唯一一条关于指标的论断保留全矩阵。**这三个数字不构成
-承诺,只说明一件事**:门禁自测贵的原因是它在跑真命令,不是判据写得糙。）
-
-**慢的一半为什么连默认 `test` 也不进**:`test` 显式列举 `--project unit --project property` 两个 project,所以 `slow` 不在其中。门禁自测 `gates` 也由 `test:gates` 单独运行,不混进默认功能测试。理由与位置纪律分开算:套娃的理由由 unit 的 `exclude` 承担
-(那条与 `GATES_TEST` 同源,同一个文件被 `check` 里的 vitest 收进去就会 `check → slow → check`);
-**不进 `test` 是耗时理由**——它要 ~6 分钟,而 `test` 是「跑一遍测试」的日常入口。**这不是说它可以不跑**:
-它由 `test:slow` 落成可手工调用的入口,`gates.test.ts` 里有两条不变量盯着它(不被 unit/property/gates
-任何一个常跑 project 拾取、默认 `test` 只包含 unit/property 且不含 slow),另有 `afterAll` 兜底清理探针。
-改动直接影响自证门禁覆盖范围时,再按需分别运行 `pnpm run check:selfproof` 与 `pnpm run test:slow`;两者均不属于默认快速验证。
-
-**主流水线**(每次 PR 与主干 push,全部通过才可合并;**已建成**,ADR-0010):成员 = `check:quick` + `test` 两条命名脚本,真源 `.github/workflows/fast.yml`。下表五阶段是 ADR-0010 之前的形态草案、仅留档,阶段 2 的 `check:drift` 与阶段 5 的基准对打都不进主链,归夜间全量链(§2.2.7 归属层表「按需 → 夜间」与 `check` 末尾复核组):
-
-| 阶段 | 内容 | 对应需求 |
-|---|---|---|
-| 1. 编译 | `tsc -b`(必须先于类型感知 lint) | — |
-| 2. 静态 | `oxfmt --check`、`oxlint --type-aware`、禁浮点门禁、工具版本耦合断言、dependency-cruiser、生成物漂移检查 `check:drift`(末尾一道,§2.2.7) | FR-2 AC3、FR-10 AC2、NFR-4 AC2 |
-| 3. 单测+属性 | Vitest 全量(结算、属性、沙箱裁决、地图校验) | FR-1/3/4 |
-| 4. 集成 | 样例对局端到端 + `modelwar verify` 重放一致性 + 重跑 10 次 hash 断言 | FR-2、NFR-1 |
-| 5. 基准 | `benchmarks/` 双模型基准脚本对打一个对局,断言正常终局(不判策略胜负) | srs §4 第 2 条的回归防线 |
-
-**夜间流水线**(定时或手动,不阻塞 PR;**已建成**,ADR-0010):StrykerJS 变异测试(engine 优先)与慢门禁全量;对 CI 可取到的对局样本批量 `modelwar verify`,守护"历史结果永远可复算"(NFR-2)。
-
-CI 环境无网络、无模型 API、无凭证——保证 CI 上跑的永远是无头引擎与固定脚本,与生产对局同构。
+> **快反馈优先**:类型感知 lint 超过 ~10s,agent 就会「写完一起跑」,反馈回路断掉。门禁耗时是**基线不是承诺**——把它写成硬约束,后来者会为了凑数字改门禁覆盖面,那比慢几秒坏得多。
 
 #### 2.2.8 依赖策略
 
 | 包 | 运行时第三方依赖 | 理由 |
 |---|---|---|
-| engine | 仅 `quickjs-wasi` + `node:crypto` | 除 stateHash 外**禁一切 `node:*`**,由 dependency-cruiser 强制——等于用 lint 证明"纯函数"。engine 不做磁盘 I/O:wasm 字节由 `apps/cli`/runner 读盘后传入,回放写向注入的输出 sink(§3.1),`engine` 包内不出现 `fs` |
-| runner / apps/cli | 受控少量(`ajv` 校验器**只在 `apps/cli`**;CLI 参数解析用 `node:util` 的 `parseArgs`,不引命令行库) | 只做调度与读文件,不参与结算。校验器不落回真源包,理由与覆盖面见 §2.2.5 |
-| gen | 允许(HTTP 客户端) | 唯一联网包,永不进对局进程(NFR-4 AC2) |
-| tools | 第三方依赖面由 `check:declared-deps` 管(声明即依赖);包图方向只由 tsc 兜,**两者的取舍见 §3.2,此处不复述** | 静态校验器以源码形态由 Node 的类型擦除执行(`node packages/tools/src/…`,§3.1);这是 Node 下限取 22.18 的成因之一(§2.2.1) |
-| devDependencies | 全仓库共享(oxlint、oxfmt、Vitest、dependency-cruiser、`oxc-parser`、tsc) | 不进入任何运行时 |
+| engine | 仅 `quickjs-wasi` + `node:crypto` | 除 stateHash 外**禁一切 `node:*`**,由 dependency-cruiser 强制;engine 不做磁盘 I/O(wasm 字节由上层读盘传入,回放写向注入的输出 sink) |
+| runner / apps/cli | 受控少量(ajv 校验器**只在 `apps/cli`**;CLI 参数解析用 `node:util` 的 `parseArgs`) | 只做调度与读文件,不参与结算 |
+| gen | 允许(HTTP 客户端) | 唯一联网包,永不进对局进程 |
+| tools | 第三方依赖面由 `check:declared-deps` 管;包图方向只由 tsc 兜 | 工具包以源码形态执行(靠 Node 的类型擦除),**快门禁必须零构建** |
 
 #### 2.2.9 观测与调试
 
-| 项 | 选择 | 依据 |
-|---|---|---|
-| 引擎日志 | 对局级结构化 JSON 落盘(`runs/<runId>/logs/`),默认静默 | 排障可追溯;不打断 JSONL 回放的纯数据性 |
-| 对局内调试 | **不建专用工具**:`modelwar match` 重跑一个对局 + JSONL diff 即等价物 | 确定性引擎下"调试 = 重放" |
-| 叙事战报 | runner 内置生成器,只消费回放 events 流(§7.5) | 主输出要求 |
+对局级结构化 JSON 落盘(`runs/<runId>/logs/`),默认静默。**不建专用调试工具**:确定性引擎下「调试 = 重放」,`modelwar match` 重跑 + JSONL diff 即等价物。
 
 #### 2.2.10 依赖治理(dependency-cruiser)
 
-| 能力 | 用法 |
-|---|---|
-| 可视化 | `depcruise --output-type dot` 生成模块依赖图,产物入 `docs/diagrams/` |
-| 规则强制 | 根目录 `.dependency-cruiser.js` 把 §3.2 全部规则写成可执行断言,违规非零退出,挂在全量门禁 `check` 上(经 `check:deps`) |
-| 基线卫生三则 | 除 §3.2 的架构规则外,配置里另有 `no-circular` / `not-to-unresolvable` / `not-to-deprecated` 三条**基线**。它们不是额外的架构主张,是让那批方向规则**真的会触发**的前提:图里有环、有解析不了的 import 时,「谁不得 import 谁」的断言会静默失去意义 |
-| 价值 | 包边界(尤其"gen 永不进对局进程"与"engine 纯函数")从口头约定变为机器门禁 |
-
-> 依赖规则与 TS project references 双保险:前者管运行时 import,后者管编译期类型引用。
-
-**四条实测出来的操作事实**(细节与原始输出在 `.dependency-cruiser.js` 的头注里,那里是它们的第一现场):
-
-1. **规则只作用于运行时代码,测试代码豁免**。依据是 §3.2 已有的那条:门禁约束的是运行时行为,而测试代码不进对局进程;测试与属性测试文件必然要读盘、spawn 进程、依赖 vitest。
-2. **巡航入口是 `tsc -b` 的产物 `dist`,不是 `src`**。dependency-cruiser 18.4.0 把可用的 TypeScript 编译器硬编码为 `>=2.0.0 <7.0.0`,而本仓库的 TypeScript 7.0.2 **不再有 JS 编程 API**(`transpileModule` 不存在)。直接巡航 `src` 会得到「`x typescript >=2.0.0 <7.0.0` / `x .ts`(不可扫描)」,然后报告「0 modules, 0 dependencies cruised」并**退出 0**——一条永远全绿的假门禁。故 `check:deps` 自带 `tsc -b`,巡航 `packages/*/dist` 与 `apps/*/dist`(acorn 能解析,import 说明符原样保留),**依赖门禁必须排在 `tsc -b` 之后**。门禁自测里有一条用例专门断言巡航规模不为零,防这条假门禁复发。
-3. **`packages/tools` 有意落在本图的巡航范围之外**:它以源码形态执行、`emitDeclarationOnly`,`dist` 里没有 `.js`,depcruise 看不见它(实测巡航出的模块里一个 `tools` 的都没有)。这是取舍不是疏漏——让该包产 `.js` 就要让快门禁付一次构建,而快门禁必须零构建(§2.2.1 的 Node 下限成因之一)。缺掉的覆盖面怎么补、还剩哪半开着,见 §3.2。
-4. **`to.path` 匹配 specifier 还是 resolved realpath 是互斥的两态**:dist 未 build 时是 `@model-war/replay`,build 之后是 `packages/replay/dist/index.js`。每条架构规则都用 `(?:specifier|resolved)` 交替式,两种状态都成立;另外 depcruise 会**剥掉 `node:` 前缀**,故内建模块一律用 `dependencyTypes: ["core"]` + `pathNot` 表达。
+- 根目录 `.dependency-cruiser.js` 把 §3.2 全部规则写成可执行断言,违规非零退出,挂在全量门禁上。
+- **三条实测出来的事实**:① 规则只作用于运行时代码,测试代码豁免;② 巡航入口是 `tsc -b` 的产物 `dist`,**不是 `src`**(TypeScript 7 不再暴露 JS 编程 API,巡航 `src` 会得到「0 modules, 0 dependencies cruised」并**退出 0**——一条永远全绿的假门禁),故依赖门禁必须排在 `tsc -b` 之后;③ `packages/tools` 有意落在巡航范围之外(它只产 `.d.ts`),缺掉的第三方依赖面由 `check:declared-deps` 兜住,包图方向只由 tsc 兜。
 
 #### 2.2.11 明确不做
 
 | 项 | 原因 |
 |---|---|
-| Rust(引擎 / SDK / 工具链) | NFR-3 算力预算下瓶颈不在 CPU;多语言仓库对 agent 是净负担。沙箱留 adapter 位即可 |
-| 自研类型检查器 | oxc 官方已放弃,转而集成 tsgolint |
-| `typescript-eslint` | 慢一个数量级,对 agent 编辑循环是致命的 |
-| `isolated-vm` / node-gyp 类原生模块 | agent 环境装不上(需 Python + build-tools),CI 不稳 |
+| Rust(引擎 / SDK / 工具链) | 算力预算下瓶颈不在 CPU;多语言仓库对 agent 是净负担。沙箱留 adapter 位即可 |
+| 自研类型检查器 / `typescript-eslint` | oxc 官方已放弃;慢一个数量级,对 agent 编辑循环是致命的 |
+| `isolated-vm` / node-gyp 类原生模块 | agent 环境装不上,CI 不稳 |
 | Turborepo 等任务编排层 | 多一层配置 = agent 多一份上下文负载 |
-| 覆盖率门禁 / 快照测试 | 会被 agent 刷,见 §2.2.4 |
+| 覆盖率门禁 / 快照测试 | 会被 agent 刷(§2.2.4) |
 | 复杂度做成 error 门禁 | 见 §2.2.3 分层原则 |
-| mod 系统 / 多存储后端 / 多进程(竞品 Screeps 形态) | v0 单机离线,扩展面由 `rulesets/` + `maps/` 承担(见 `docs/competitors/screeps.md` §8.2) |
+| mod 系统 / 多存储后端 / 多进程 | v0 单机离线,扩展面由 `rulesets/` + `maps/` 承担 |
 | Docker(主路径) | gen 只是调 API,不需要容器隔离 |
 
 ### 2.3 进程与执行模型
 
-| 层 | 单位 | 生命周期 | 隔离目的 |
-|---|---|---|---|
-| runner | 主进程 | 整轮赛季 | 调度、聚合;不执行任何参赛代码 |
-| engine | **每个对局一个子进程** | 一个对局 | 一个对局崩溃不污染其余对局(FR-7 AC2);内存上限可在进程级施加 |
-| sandbox | 对局进程内,每方一个 QuickJS VM(同进程、串行执行,§5) | 与对局同生命周期 | 脚本无网络/FS/宿主访问(FR-4 AC1);一方崩溃不影响他方(AC3) |
+| 层 | 单位 | 隔离目的 |
+|---|---|---|
+| runner | 主进程 | 调度、聚合;不执行任何参赛代码 |
+| engine | **每个对局一个子进程** | 一个对局崩溃不污染其余对局;内存上限可在进程级施加 |
+| sandbox | 对局进程内,每方一个 QuickJS VM(同进程、串行执行) | 脚本无网络 / FS / 宿主访问;一方崩溃不影响他方 |
 
-执行模型:引擎每 tick 按 playerIndex 0..3 顺序串行执行四方 `loop()`——快照构建 → VM#i 执行并收集 intents → 下一方。**无并发、无到达顺序问题**:确定性天然成立,无需归位逻辑。
-
-runner 通过子进程调用 `modelwar match`(§9)执行一个对局;两者之间只交换 `input.json` 与产物文件。
+引擎每 tick 按 playerIndex 0..3 顺序串行执行四方 `loop()`——快照构建 → VM#i 执行并收集 intents → 下一方。**无并发、无到达顺序问题**:确定性天然成立,无需归位逻辑。runner 通过子进程调用 `modelwar match` 执行一个对局,两者之间只交换 `input.json` 与产物文件。
 
 ## 3. 系统分解
 
-### 3.1 包结构与职责矩阵
+### 3.1 包结构与职责
 
-```
-model-war/
-├─ apps/
-│  └─ cli/                    # 唯一用户面与唯一 bin(modelwar)
-│     └─ src/{index.ts, commands.ts}   # commands.ts = 六个子命令的登记表(命令名、承载包、待导出符号)
-├─ packages/
-│  ├─ schema/                 # 唯一真源:五类数据形状的类型与 JSON Schema + 常量表 + 参数 key 清单(无运行时代码)
-│  ├─ replay/                 # 回放的解析/序列化 + stateHash 原语 + 回放文件格式版本常量(只依赖 schema;行的形状归 schema)
-│  ├─ engine/                 # 确定性内核 + 沙箱(driver/processor/world/snapshot/runner/sandbox-runtime/replay-writer/ruleset-loader)
-│  ├─ runner/                 # 赛季调度、进程池、排名与种子纯函数、报告、叙事战报
-│  ├─ gen/                    # 脚本生成管线(离线,永不进对局进程)
-│  └─ tools/                  # 仓库自用静态校验器(禁浮点门禁、工具版本耦合断言、声明即依赖门禁)+ 生成器(生成物注册表);以源码执行,不产 JS、不设 bin
-├─ benchmarks/                # 模型基准脚本(≥2)
-├─ prompts/                   # gen 的 prompt 模板(数据文件)
-├─ scripts/                   # 面向人的一次性开通脚本(不进运行时;当前只有 J 的凭证 wizard)
-├─ rulesets/v1.json           # 规则数值数据文件(取值真源)
-├─ maps/                      # 地图 JSON
-├─ docs/rules-v1/{rules.md,api.md}   # 面向模型的文档(表格为生成物)
-├─ archive/<model>/<runId>/   # 冻结脚本存档
-└─ runs/<runId>/              # 对局产物:回放 JSONL、result、报告、叙事战报
-```
-
-**为什么多出 `packages/tools` 这第七个成员**:静态校验器有**两个消费者**——仓库自身的确定性门禁(已落)与将来的参赛脚本静态校验(它的名表读取点已随 `schema` 落地,AST 规则随那张票)——而现有包里没有一个放得下:`schema` 被 §3.2 明文限定为**无行为代码**,把门禁挂在它下面会让"真源"长出行为;`gen` 是**唯一联网包**,把仓库自身的门禁挂在它下面会污染依赖方向(且门禁绝不该继承联网面)。放进独立工具包后依赖方向仍单向,且它不进任何对局进程。形态上的代价是:本包**以源码形式由 Node 的类型擦除直接执行**(`node packages/tools/src/<entry>.ts`),因此全仓库遵守「可擦除语法」(禁 `enum`/`namespace`/参数属性,由基座 `erasableSyntaxOnly` 兜住),`tsconfig` 用 `emitDeclarationOnly` 只产 `.d.ts`(被引用项目不得禁用 emit),`exports` 指向 `./src/index.ts`。
-
-| 模块 | 职责 | 对应需求 |
+| 包 | 职责 | 不可破坏的约束 |
 |---|---|---|
-| engine:driver | **状态唯一所有者**:GameState、Random(整数 LCG)、IdGen、`apply()` 唯一写入口 | FR-2 AC3、NFR-1 |
-| engine:processor | 结算管线(顺序为数据)+ `intents/*.ts` 的 `check()`/`run()` 注册表 | FR-1、FR-3 AC3 |
-| engine:world | 状态模型、对象系统、只读查询 | FR-1 |
-| engine:snapshot | 只读快照构建与只读封存 | FR-3 AC1 |
-| engine:runner | 执行器缝:`SeatRunner` 接口 + `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身) | FR-4、§5.2 |
-| engine:sandbox-runtime | 沙箱内 API 面(TS → IIFE bundle,版本 + hash 入 meta) | FR-4 |
-| engine:replay-writer | JSONL 写出(行格式取自 `schema` 包,§2.2.5;写向注入的输出 sink,不直接碰 `fs`) | FR-2 AC2 |
-| engine:ruleset-loader | 参数装载与版本比对 | NFR-4 AC1、FR-10 AC2 |
-| runner:scheduler | 组合 × 地图 × 种子 × 座位的对局枚举与并发调度 | FR-7 |
-| runner:ranker | 名次积分、并列处理、可选 Elo(**纯函数**) | FR-8 |
-| runner:reporter | Markdown 报告 + JSON 原始数据 + 叙事战报 | FR-8 AC2 |
-| gen:pipeline / validator / archiver | prompt 组装 → 模型 API → 校验迭代 → 冻结脚本;API 误用静态检查挂真源包的类型面而非符号表(名单由 `schema` 生成,§6.2),白名单反转在编译步骤而不在本包;元数据强制存档 | FR-5、FR-6 |
-| replay | 回放的解析/序列化、stateHash 原语、回放**文件格式**版本常量;**不再声明行的类型**(归 `schema`,§2.2.5) | FR-2 AC2、NFR-1 |
-| tools:rules / gate | 禁浮点纯规则(源码 → 带行列的违规)+ 目录薄壳与退出码;工具版本耦合断言;声明即依赖门禁。**名单类数据一个名字都不在这里存**——真源在 `schema` 一侧,本包经生成器读生成物(§3.2) | FR-2 AC3、NFR-1 |
-| tools:generate | 生成器:真源 → 生成物,持有一张**生成物注册表**(每件 = id、产出路径、**形态**、生产函数;形态是 `whole-file` / `section` 的判别联合,两种形态的差别在类型上看得见);**新增生成物是加一行注册**。漂移检查按注册表逐件判定(§2.2.5、§2.2.7) | FR-10 AC2 |
-| cli:replay-view / replay-verify / map-lint | ASCII 查看器(不依赖 engine);重放一致性断言;地图对称性校验 | FR-9、NFR-1、FR-1 AC2 |
+| `schema` | 六类数据形状的类型与 JSON Schema + 常量表 + 参数 key 清单 | **无运行时代码**;不得依赖 ajv 或交付运行时校验器 |
+| `replay` | 回放的解析/序列化 + stateHash 原语 + 回放文件格式版本常量 | 只依赖 `schema`;**库的形状不在此声明**(归 `schema`) |
+| `engine` | 确定性内核 + 沙箱 | 除 `node:crypto` 外禁一切 `node:*`;不做磁盘 I/O |
+| `runner` | 赛季调度、进程池、排名、报告、叙事战报 | **不得 import `engine`**:只以子进程 + 文件消费 |
+| `gen` | 脚本生成管线(离线) | 唯一联网包,永不进对局进程;不 import 引擎或赛季调度器 |
+| `tools` | 仓库自用静态校验器、门禁脚本、生成器 | 以源码形态执行(`emitDeclarationOnly`),不产 JS、不设 bin;只允许 import `schema` 这一个根包 |
+| `apps/cli` | 唯一用户面与唯一 bin | 只做路由;ajv 校验实例只在这一处 |
 
-**生成器为什么在 `packages/tools` 而不在 `packages/gen`**(ADR-0003)。理由按权重:①生成物漂移检查要进 PR 主流水线,而 `gen` 是唯一联网包,将来按 §2.2.6 要装 HTTP 客户端与厂商适配层——一条只读写仓库内文件、零联网的仓库门禁,不该让依赖面随别的节点扩张;②它要推翻上面那段「工具包之所以独立存在,就是为了不把门禁挂在唯一联网包下」;③两个包的产物语义不同——生成管线按批次追加存档,而生成物是整体重生成、判定标准是「重生成后无差异」,放一起会让漂移检查的判定逻辑与追加语义缠在一起。落进 `schema` 或新开第 8 个包也被排除:前者受「无运行时代码」约束,后者要连拓扑图与本表一起改,代价与收益不成比例。
+**生成器为什么在 `tools` 而不在 `gen`**(ADR-0003):漂移检查要进 PR 主流水线,而 `gen` 是唯一联网包;一条只读写仓库内文件、零联网的仓库门禁,不该让依赖面随别的节点扩张。
 
-**生成器与真源之间是混合传输,分界线是「能不能 afford 构建」**:生成器是低频入口(跑一次、产物入库),因此它**import 真源包**并为此在本包正式声明那条依赖;而工具包的规则层是每次提交都跑的快门禁,零构建是硬要求,因此它**读生成出来的源文件**,不 import 真源包。同一份名单在两侧都拿得到,分界线只按调用频率划(实测:让规则层直接 import 真源包,`check:quick` 由 1.04s 涨到约 1.36s,+31%,且新克隆第一次跑门禁就要先构建)。这层反直觉的间接是整件事里最容易被后来者「简化」掉的一处——简化掉它,快门禁就多了一个构建前置。
+**生成器与真源之间是混合传输,分界线是「能不能 afford 构建」**:生成器 import 真源包(低频入口,跑一次、产物入库);工具包的规则层读生成出来的源文件(每次提交都跑,零构建是硬要求)。这层反直觉的间接是最容易被后来者「简化」掉的一处——简化掉它,快门禁就多了一个构建前置。
 
 ### 3.2 依赖规则
 
@@ -381,418 +181,232 @@ schema ←── replay ←── engine ←── apps/cli
    └──────── runner ────┘           │
    └──────── gen ───────────────────┘
 
-packages/tools ──→ @model-war/schema   依赖图的根,本包唯一允许的 @model-war 依赖
-               └─→ 其余 import 都是第三方包,必须在本包 package.json 里声明
+packages/tools ──→ @model-war/schema
 ```
 
-- `schema` 只含类型、常量与 JSON Schema,**无运行时代码**;各包共享数据格式定义不违反 NFR-4 AC2(该条款约束的是运行时进程隔离,与测试代码无关)。
-- `replay` 只依赖 `schema`;**库包一律不得含 `bin`**,唯一 bin 在 `apps/cli`。
-- `runner` 与报告/叙事代码**不得 import `engine`**:只以子进程 + 文件消费。`apps/cli` 通过 engine 公共 API 调用 match / verify,而 map-lint 是 CLI 自己的模块(§3.1、§9)。
-- `engine` 不 import `runner`/`gen`;`gen ⇎ engine`,且 `gen` 禁 import 任何 result 类型(FR-5 AC1)。优化试跑的终局事实只经 schema 的纯数据摘要进入 gen;真实执行与计分投影由 CLI 承载(§7.4),不放宽 result 符号或包边界门禁。
-- `engine` 内除 `node:crypto` 外禁一切 `node:*`。
-- `engine` 内部单向:`world → driver → processor → replay-writer`;`world → snapshot → runner(SeatRunner 缝 → sandbox-runtime)`。`sandbox-runtime` 不 import 宿主代码,只消费 `schema` 生成的常量/API 名表。
-- 上述规则全部由 dependency-cruiser 强制(§2.2.10),违规直接导致全量门禁失败。
-- **工具包只允许 import 真源包这一个根包**,不得 import `replay` / `engine` / `runner` / `gen` / `apps/cli`(ADR-0003 的混合传输:名单类数据的真源在 `schema`,工具包经生成器拿生成物)。这条边指向依赖图的根,方向合法;**但它没有机器守护**,见下面那段缺口说明。
-- **作用域:本节全部规则只作用于运行时代码,测试代码豁免。理由**:门禁约束的是运行时行为——进对局进程的代码路径;测试代码不进对局进程(测试与属性测试必然要读盘、spawn 进程、依赖 vitest),不构成隔离风险(§2.2.10 第 1 条)。
-
-**`packages/tools` 有意落在依赖门的巡航范围之外,这是取舍不是疏漏**:它以源码形态执行、`emitDeclarationOnly`,`dist` 里没有 `.js`,depcruise 因此看不见它(实测巡航出的模块里一个 `tools` 的都没有)。让本包产 `.js` 就要让快门禁付一次构建,而快门禁必须零构建(§2.2.1 的 Node 下限成因之一)。缺掉的覆盖面分两块,**一块已补、一块仍开着**:
-
-- **第三方依赖面:已由 `check:declared-deps` 兜住。** 该门禁读 `packages/tools/package.json` 的 `dependencies` 与本包运行时源码里的每一个 import 说明符,两者对不上即非零退出;它**零构建**(读源码树),与读 `dist` 的 `check:deps` 形态互补。此前这一格记的是「没人兜底」并点名仓库正吃着它(本包 import `oxc-parser` 而 manifest 一个都没声明),那处偷跑已改成正式声明。
-- **包图方向:只由 tsc 兜,本门禁看不到。** 本包现已正式声明 `@model-war/schema` 并加了 project reference,pnpm 只软链已声明的包,于是 import `@model-war/engine` 得 **TS2307**、`tsc -b` 非零退出。**但编译器只拦「没声明」,拦不住「声明了而方向反了」**——真源包不得反向 import 工具包这条仍靠规范,不由门禁承担。
+- `schema` 只含类型、常量与 JSON Schema;`replay` 只依赖 `schema`;**库包一律不得含 `bin`**,唯一 bin 在 `apps/cli`。
+- `runner` 与报告/叙事代码**不得 import `engine`**;`engine` 不 import `runner`/`gen`;`gen` 禁 import 任何 result 类型。
+- `engine` 内除 `node:crypto` 外禁一切 `node:*`;内部单向:`world → driver → processor → replay-writer`、`world → snapshot → runner → sandbox-runtime`。
+- `sandbox-runtime` 不 import 宿主代码,只消费 `schema` 生成的常量/API 名表。
+- `tools` 只允许 import `schema` 这一个根包;**这条边没有机器守护**(编译器只拦「没声明」,拦不住「声明了而方向反了」)。
+- **作用域:本节全部规则只作用于运行时代码,测试代码豁免**——门禁约束的是进对局进程的代码路径。
 
 ## 4. engine 概要设计
 
 ### 4.1 状态模型
 
-```ts
-// 全整数;无浮点字段(FR-2 AC3)
-interface GameState {
-  tick: number;                 // 唯一时间单位
-  players: Player[4];            // index 0..3,固定
-  units: Unit[];                // 按数值 id 升序维护
-  sites: Site[];                // 按数值 id 升序维护(基地 + 资源点)
-  nextId: number;               // 全局单调递增,对象创建时分配
-  outcome: Outcome | null;      // 终局:排名 + 原因
-}
+`GameState` = tick + 四方玩家 + 单位数组 + 点位数组 + 全局单调递增 id 分配器 + 终局结果。玩家持资源池、存活标记与**累计异常 tick 数**(随 JSONL 持久化,VM 中断或重建后由持久化值续算不清零);单位持属主、兵种、网格坐标、血量、携带量;点位持种类、属主、占领进度与驱动者,资源点另有储量,基地另有产线订单。
 
-// Outcome:{ rankings: number[]; reason: 'victory' | 'shortcut' | 'timeout' | 'all-eliminated'; territoryScores: number[] }
-// rankings[i] = 玩家 i 的名次(1 起,可并列),由 gdd《胜利与淘汰》的排序规则产生
-
-interface Player {
-  index: 0|1|2|3;
-  resources: number;            // 全局共享池,无上限
-  alive: boolean;
-  exceptionTicks: number;       // 累计异常 tick 数;随 JSONL 持久化,VM 中断/重建后由持久化值续算不清零
-}
-
-interface Unit {
-  id: number;
-  owner: 0|1|2|3;
-  type: 'worker' | 'melee' | 'ranged' | 'cavalry';
-  x: number; y: number;         // 网格坐标,Chebyshev 八向
-  hp: number;
-  carrying: number;             // 农民携带量
-}
-
-interface Site {
-  id: number;
-  kind: 'base' | 'resource';
-  x: number; y: number;         // 点位为单格
-  owner: -1 | 0|1|2|3;          // -1 = 中立
-  progressOwner: -1 | 0|1|2|3;
-  progress: number;
-  remaining?: number;           // 仅资源点
-  producing: { type: UnitType; remainingTicks: number } | null;  // 产线订单,挂在基地上;无订单为 null
-}
-```
-
-- **id 全局单调递增**(含被销毁对象),一切"按对象处理"的阶段按**数值 id 升序**迭代。数值升序是唯一被声明的定序语义,写入 rules-vN。
-- 一切数值(HP、造价、速度、阈值、上限)**不出现**在上述结构中,统一来自 `rulesets/v1.json` 装载。
-- 胜利条件、淘汰条件、点位数量等由 gdd《对局规则》定义,引擎按"地图数据的点位数"判定,不硬编码数量。
+- **一切数值(HP、造价、速度、阈值、上限)不写进状态结构**,统一来自 `rulesets/*.json` 装载。
+- **id 全局单调递增**(含被销毁对象),一切「按对象处理」的阶段按**数值 id 升序**迭代。这是唯一被声明的定序语义。
+- 胜利条件、淘汰条件、点位数量由 gdd 定义,引擎按「地图数据的点位数」判定,不硬编码数量。
 
 ### 4.2 intent 模型(脚本 → 引擎的唯一通道)
 
-```ts
-type Intent =
-  | { kind: 'move';      unitId: number; dx: -1|0|1; dy: -1|0|1 }
-  | { kind: 'moveTo';    unitId: number; x: number; y: number }   // 引擎端逐 tick 寻路
-  | { kind: 'attack';    unitId: number; targetId: number }
-  | { kind: 'harvest';   unitId: number; siteId: number }
-  | { kind: 'transfer';  unitId: number }                          // 交付全部携带量至相邻己方基地(多个时取 id 最小者,见 gdd《经济与生产》)
-  | { kind: 'spawnUnit'; baseId: number; unitType: UnitType };      // 下单即扣款;资金不足则无效(ERR_NOT_ENOUGH_RESOURCES)
-```
+六种 intent:`move` / `moveTo` / `attack` / `harvest` / `transfer` / `spawnUnit`。一个单位每 tick 至多一个单位级 intent;`spawnUnit` 是玩家级 intent。**重复提交同单位 intent 取最后一个**,前面的静默丢弃(不视为异常,不占异常配额)。
 
-- 一个单位每 tick 至多一个单位级 intent;`spawnUnit` 为玩家级 intent。重复提交同单位 intent:**取该单位最后一个,前面的静默丢弃**(不视为异常,不占用异常配额)。
-- intent 由 `processor` 的 `check()` 统一校验(属主正确、参数在界、目标存在且合法),**无效 intent 丢弃并写入当 tick 事件流**(调试可观测),不触发异常判罚——异常判罚只针对脚本抛出异常与超预算(gdd《异常与出局》)。
-- `attack` 目标须存在且为敌方单位;攻击者无攻击能力时该条 intent 无效丢弃、不计异常。
+intent 由 processor 的统一校验裁决:属主正确、参数在界、目标存在且合法。**无效 intent 丢弃并写入事件流**(调试可观测),**不触发异常判罚**——异常判罚只针对脚本抛异常与超预算。
 
 ### 4.3 tick 结算管线(每 tick 严格按此顺序)
 
 ```
-0. dispatch   构建四方只读快照 → 按 playerIndex 0..3 串行执行各 VM 的 loop()
-              并收集 intents(预算与异常裁决在此层)
-1. validate   intent 先按单位分组、每单位只留最后一个(静默丢弃,不计异常),
-              分组后按 playerIndex 0..3 再按 unitId 升序逐条校验;无效者丢弃
-2. movement   移动结算(基准与冲突裁决见 §4.4)
-3. combat     同 tick 全部 attack 同时结算:
-                a) 先计算全部伤害(攻击者本 tick 死亡不影响其攻击生效)
-                b) 统一扣血,归零者死亡移除(不参与后续阶段)
-4. objectTick 按对象数值 id 升序:
-                a) 占领:单轨累积 / 转轨重计 / 占领进度保留不动(gdd《占领机制》)
-                b) 采集:按 gdd《经济与生产》结算,满携带上限即停
-                c) 交付:carrying 清零入玩家池
-                d) 生产:各队列 ticksLeft--,归零出兵;出兵格被任意单位占据则挂起等待;
-                   基地易主时按 gdd《经济与生产》处理队列(退款走玩家池,全整数运算)
-5. evaluate   胜负判定(顺序即规范,gdd《胜利与淘汰》)
-                a) 淘汰:满足淘汰条件者出局,点位回归中立
-                b) 全部点位归属单一玩家 → 胜
-                c) 仅剩一方尚存 → 捷径条款即胜(兜底)
-                d) 淘汰方 loop() 不再执行(VM 暂停调用,状态保留以便重放取证)
+0. dispatch   构建四方只读快照 → 按 playerIndex 0..3 串行执行各 VM 的 loop(),收集 intents
+1. validate   按单位分组、每单位只留最后一个;按 playerIndex 再按 unitId 升序逐条校验,无效者丢弃
+2. movement   移动结算(占位基准 + 轮转优先,见 §4.4)
+3. combat     同 tick 全部 attack 同时结算:先算全部伤害,再统一扣血,归零者死亡移除
+4. objectTick 按对象数值 id 升序:占领 → 采集 → 交付 → 生产
+5. evaluate   胜负判定(顺序即规范):淘汰 → 全点位归属 → 捷径条款
 6. emit       写 JSONL 一行(完整可渲染状态 + 事件 + stateHash);tick++
-7. loop guard tick 达 ruleset 的 tickLimit → 超时,按 gdd《胜利与淘汰》的领土分规则定名次
+7. loop guard tick 达 tickLimit → 超时,按领土分定名次
 ```
 
-**顺序即规范**:以上顺序与 §4.4 的裁决细则写入 `docs/rules-v1`(FR-10 AC3)。任何顺序调整都是规则变更。
+**顺序即规范**:以上顺序与 §4.4 的裁决细则写入 `docs/rules-v2/rules.md`。**任何顺序调整都是规则变更。**
 
 ### 4.4 移动与碰撞裁决
 
-**占位判定基准(定稿)**:一轮移动结算**只以该轮开始时的占位为准**。单位离开它本轮所在的格子,不会使该格在本轮对后来者变为可进入;同一格至多一个单位成功进入。由此:
+**占位判定基准(定稿)**:一轮移动结算**只以该轮开始时的占位为准**。单位离开它本轮所在的格子,不会使该格在本轮对后来者变为可进入;同一格至多一个单位成功进入。
 
 - **同格竞争**:多方单位目标格相同 → 按轮转优先级 `(tick + playerIndex) mod 4` 取胜者,其余原地不动(不尝试次优目标,规则面最小)。该序列是全序,无平局。
-- **交换/穿行**(A→B 同时 B→A)与**链式移动**(A→B 同时 B→C):按基准判定,B 格本轮被占,故 A 移动失败;B 移动是否成功只取决于 C,二者互不牵连——不需要链式裁决,也不存在环形追逐。
+- **交换 / 穿行 / 链式移动**:按同一基准判定,B 格本轮被占则 A 移动失败;B 是否成功只取决于 C。**不需要链式裁决,也不存在环形追逐。**
 - 己方单位之间同样按此裁决(无友军穿越)。
 
-`moveTo` 每 tick 由引擎执行一步 A*(§4.7),等价于"本 tick 的 move",参与同一套裁决;路径不跨 tick 缓存,每 tick 重算。
+`moveTo` 每 tick 由引擎执行一步 A*,等价于「本 tick 的 move」,参与同一套裁决;路径不跨 tick 缓存。
 
-骑兵的二次移动:**重复整轮结算一次**——第一轮结算后的占位即第二轮的基准,轮转优先中的 `tick` 值不变。
-
-**座位与先后手**:轮转优先只保证一个对局内首发顺序逐 tick 轮转,不消除头对头偏置(下标差 d 的两人,低下标在 `(4-d)/4` 的 tick 中先手)。故座位必须在赛季内轮换,公式见 §8.1。
+**座位与先后手**:轮转优先只保证首发顺序逐 tick 轮转,不消除头对头偏置,故座位必须在赛季内轮换(§8.1)。
 
 ### 4.5 快照与脚本 API 面
 
-- 快照 = GameState 的**深拷贝**,经单次 `__setSnapshot` 传入 VM;脚本持有的引用在下 tick 全部作废,**对象身份不跨 tick 保证**(跨 tick 记忆只能用自己的状态与数值 id,不得缓存对象引用)。`Object.freeze` 由引擎侧在深拷贝上执行(防宿主回调误写);**隔离靠拷贝边界,而非只读封存语义**。
-- **API 面由沙箱内 runtime bundle 实现**(`engine/sandbox-runtime`,TS → IIFE):
-  1. 每 tick 只跨宿主边界两次——`__setSnapshot(snapshot)` 进、`__drainIntents()` 出;
-  2. 查询函数(`getObjectsByType` / `getObjectById` / `getTick` / `getRange` / `findPath` / `getTerrainAt`)与 action 函数(`move` / `moveTo` / `attack` / `harvest` / `transfer` / `spawnUnit`)全部在 VM 内运行,跨边界调用数从 O(API 调用数) 降到 O(1)/tick;
-  3. 脚本可见全局 = runtime 暴露的 API + `schema` 生成的常量表,不注入任何宿主能力。
-- **形态定案**:v0 保留 bundle 形态,不回退逐函数注入(§2.2.2 的回退路径仅留档)。
-- **宿主桥函数不可见(实测已确认)**:runtime bundle 初始化时把 `__setSnapshot` / `__drainIntents` 捕获进闭包并**从 VM 全局删除**。实测(quickjs-wasi 3.6.2 / Node v24.15.0 / Linux x64 / 2026-10-01 复核探针,探针不落库):删除后 `'__setSnapshot' in globalThis` 为 `false`,`typeof` 为 `undefined`,按 `__` 前缀枚举返回空数组——脚本**枚举不到、也捞不回来**;而闭包内的引用照常工作(`callFunction` 能调得动),删除不伤引擎自己那条路。
-- 但删除**不是判罚手段,只是消灭暴露面**,这一点必须写清:脚本引用已删除的桥,拿到的是**普通的 guest `ReferenceError`**,不是任何专属的越权信号。未捕获时它中断本 tick 的脚本执行、被引擎按 §5.2 第一行记成**一次异常**(不再冒成整场 `engine-crash`);**被脚本 `try/catch` 吞掉时宿主零痕迹,脚本继续跑完本 tick**(实测:吞掉后 `after` 标志照常置位,闭包通道仍可用)。因此 §5.2 那行「访问已删除的宿主桥 → 视同 `loop()` 抛异常」只在脚本**不**吞异常时成立(该行是**判罚语义**;未捕获的越权异常与 `loop()` 抛异常**同轨**计数)。真正的防线是 `__*` 前缀的静态禁令(§2.2.3 / §6.2),删除只是纵深防御里的一层。
-- 运行时校验(FR-3 AC3):action 函数做"收集 + 界检查 + API 计数自增",不触碰引擎真实状态;查询函数在 VM 内快照副本上操作;intent 合法性由 `processor` 的 `check()` 统一裁决——**同一份 `check()` 也用于 VM 内的即时 `ERR_*` 反馈**(dual validation),杜绝"沙箱一份、宿主一份"的逻辑漂移。
+- 快照 = 状态的**深拷贝**,经单次 `__setSnapshot` 传入 VM;脚本持有的引用在下 tick 全部作废,**对象身份不跨 tick 保证**(跨 tick 记忆只能用自己的状态与数值 id)。**隔离靠拷贝边界,而非只读封存语义。**
+- **API 面由沙箱内 runtime bundle 实现**:每 tick 只跨宿主边界两次(`__setSnapshot` 进、`__drainIntents` 出);查询函数与 action 函数全部在 VM 内运行,跨边界调用数从 O(API 调用数) 降到 O(1)/tick。
+- **宿主桥函数不可见(实测已确认)**:runtime bundle 初始化时把两个桥捕获进闭包并**从 VM 全局删除**;脚本枚举不到、也捞不回来。
+- **但删除不是判罚手段,只是消灭暴露面**:脚本引用已删除的桥拿到的是普通 guest `ReferenceError`,不是专属越权信号;**被脚本 `try/catch` 吞掉时宿主零痕迹**。真正的防线是 `__*` 前缀的静态禁令(§2.2.3 / §6.2),删除只是纵深防御的一层。
+- 运行时校验:action 函数做「收集 + 界检查 + API 计数自增」,不触碰引擎真实状态;intent 合法性由 processor 统一裁决——**同一份裁决也用于 VM 内的即时错误反馈**,杜绝「沙箱一份、宿主一份」的逻辑漂移。
 
-### 4.6 确定性保障(NFR-1,一票否决)
+### 4.6 确定性保障(一票否决)
 
 | 层 | 措施 |
 |---|---|
-| 运算 | 引擎代码禁浮点(§2.2.3);资源、伤害、进度、领土分全整数 |
+| 运算 | 引擎代码禁浮点;资源、伤害、进度、领土分全整数 |
 | 迭代顺序 | 一切多对象处理按数值 id 升序;玩家处理按 index 0..3;不存在 Set/Map 迭代参与结算 |
-| 随机数 | **对局内不消费随机数**;唯一 `Random`(整数 LCG)在 `engine` 内、开局前一次性用于地图变体填充(§7.3),消费顺序 = 变体槽位 id 升序。rules-vN 只声明"对局内无随机" |
-| 异步隔离 | 同进程串行执行;**`vm.executePendingJobs()` 每 tick 执行 `loop()` 后必须排空**,Promise 回调不得跨 tick 残留;管线内无异步 |
-| 移动裁决 | 占位基准 + 轮转优先(§4.4),全序、无平局、无链式依赖 |
-| 路径搜索 | A* 邻居展开顺序固定(八向按固定方向表),tie-break 按 id;启发式整数化(Chebyshev ×2) |
-| 预算裁决 | 控制流事件计数 + API 调用计数为主判据;墙钟只观测;硬超时使对局作废而非参与判罚(§5.3) |
-| 验证 | CI 重放一致性:抽样对局重新执行,与 JSONL 逐 tick stateHash 比对 |
+| 随机数 | **对局内不消费随机数**;唯一的整数 LCG 在开局前一次性用于地图变体填充(§7.3) |
+| 异步隔离 | 同进程串行执行;`vm.executePendingJobs()` 每 tick 执行 `loop()` 后必须排空,Promise 回调不得跨 tick 残留 |
+| 移动裁决 | 占位基准 + 轮转优先,全序、无平局、无链式依赖 |
+| 路径搜索 | A* 邻居展开顺序固定,tie-break 按 id;启发式整数化 |
+| 预算裁决 | 控制流事件计数 + API 调用计数为主判据;墙钟只观测;硬超时使对局作废而非参与判罚 |
+| 验证 | 重放一致性:抽样对局重新执行,与 JSONL 逐 tick stateHash 比对 |
 | 地图 | 地图 JSON 带内容 hash,回放头部记录;对称性由 map-lint 校验 |
 
 **stateHash**:对每 tick emit 的规范化状态(排序后的对象数组序列化)计算 SHA-256,写入 JSONL。哈希计算在写出路径上,不参与结算。
 
 ### 4.7 寻路(A*)
 
-- `findPath` 暴露给脚本;`moveTo` 内部复用同一实现——**同一实现保证脚本查询结果与引擎实际移动一致**。
-- CostMatrix 参数化(v1:墙不可通行,其余等价);启发式整数 Chebyshev(×2 与步长同量纲,避免浮点)。
-- 寻路调用量计入脚本 API 调用预算,防止用寻路做算力攻击。
+`findPath` 暴露给脚本,`moveTo` 内部复用同一实现——**同一实现保证脚本查询结果与引擎实际移动一致**。启发式用整数 Chebyshev(与步长同量纲,避免浮点)。寻路调用量计入脚本 API 调用预算,防止用寻路做算力攻击。
 
-## 5. 沙箱(sandbox)概要设计(选型:quickjs-wasi)
+## 5. 沙箱(quickjs-wasi)
 
-每方脚本运行在一个独立 QuickJS VM(WASM 实例)中,同对局进程、每 tick 按 playerIndex 串行执行。
-
-**边界说明**:不为"未来换 VM"保留抽象层(那是投机抽象);§5.0 的 `SeatRunner` 缝**只为可测性**存在。
+每方脚本运行在一个独立 QuickJS VM(WASM 实例)中,同对局进程、每 tick 按 playerIndex 串行执行。**不为「未来换 VM」保留抽象层**(那是投机抽象);`SeatRunner` 缝**只为可测性**存在(见 ADR-0001、ADR-0005)。
 
 ### 5.0 选型结论
 
-决策记录(候选取舍与后果):`docs/adr/0001-sandbox-quickjs-wasi.md`。
+决策记录见 [ADR-0001](./adr/0001-sandbox-quickjs-wasi.md)。v0 采用 `quickjs-wasi`(MIT、零第三方依赖),版本**精确锁版**到根 `package.json`。
 
-v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT 协议,零第三方依赖;版本锁定到 `package.json`,**锁定 3.6.2**(基线 ≥3.5.0:3.3.x 的 `memoryLimit` 计账与 OOM 异常形态各有回归))。相对此前候选(QuickJS 嵌入 / WASM + fuel / isolated-vm):
+**以下五条行为结论只对当前锁定版本成立,换版本即失效**。每条各有可执行探针(`pnpm run probes:sandbox`,真 VM、输出落 `reports/sandbox-probes/`、不入库);`check:quick` 里的版本耦合断言(`pnpm run coupling:quickjs`)在根 `package.json` 一改钉版就红,报错信息直接指向复验脚本与本节。
 
-**先交代本节行为结论的出处**:以下五条最初来自 `quickjs-wasi@3.6.2` 的一次 spike(环境 **Node v24.15.0 / Linux x64**,主测量日期 **2026-09-24**),**2026-10-06 按同版本组合复验**并收成可执行探针(`pnpm run probes:sandbox`,真 VM,输出落盘到 `reports/sandbox-probes/`,该目录不入库),结论一致,数字见下表。**这些结论只对 3.6.2 成立**,换版本即失效——为此 `check:quick` 里有一条版本耦合断言(`pnpm run coupling:quickjs`),根 `package.json` 一改钉版就红,报错信息指向复验脚本与本节。复验责任见本节末“升级条款”与 §12 #8。
+| # | 行为 | 结论 |
+|---|---|---|
+| 1 | 脚本入口契约 | 单文件 script-mode 编译产物经 `evalCode` 载入即成,`loop` 是 `function` 且 `callFunction` 调得动;带 `export` / `import` 的产物在**载入期**就取 `SyntaxError` |
+| 2 | 深递归的失败形态 | **host 侧 `RangeError`,`isJSException: false`**——不是 WASM RuntimeError trap,也不是 JSException;guest 吞不掉;**VM 溢出后仍可续用**,故栈溢出不需要防御性重建 |
+| 3 | 中断粒度 | 每 **5000 次控制流事件**(循环回边 / 调用 / 返回)触发一次,**不是每条字节码指令**;中断以 host 侧 `InternalError` 呈现,guest 不可捕获,VM 续用。粒度与噪声区间的冻结值归 `packages/tools/src/sandbox-probes/constants.ts` |
+| 4 | 内存读数字段名 | 判据读 `getMemoryUsage().mallocSize`(与分配上限同记账口径);`memoryUsedSize` 更低且不含空闲池,不作判据 |
+| 5 | 宿主桥函数删除后的不可见性 | 删后脚本枚举不到、也捞不回来,闭包内的引用照常工作;但越权只表现为普通 `ReferenceError`,**被脚本 `try/catch` 吞掉时宿主零痕迹** |
 
-| # | 行为 | 结论 | 机制与参数落在 |
-|---|---|---|---|
-| 1 | 脚本入口契约 | 单文件 script-mode 编译产物经 `evalCode` 载入即成,`loop` 是 `function` 且 `callFunction` 调得动;带 `export` / `import` 的产物在**载入期**就取 `SyntaxError`。来源:探针 01 `probe-01-script-entry-contract.txt`(由 `pnpm run probes:sandbox` 生成,落 `reports/sandbox-probes/`) | §2.2.2 |
-| 2 | 深递归的失败形态 | **host 侧 `RangeError: Maximum call stack size exceeded`,`isJSException: false`**——不是 WASM RuntimeError trap,也不是 JSException;guest 吞不掉;**VM 溢出后仍可续用**。来源:探针 02 `probe-02-deep-recursion.txt`(`reports/sandbox-probes/`) | §5.0 崩溃语义、§5.2 |
-| 3 | `interruptHandler` 的截停能力 | 每 **5000 次控制流事件**(循环回边 / 调用 / 返回)触发一次,**不是每条字节码指令**;中断以 host 侧 `InternalError: interrupted` 呈现,**guest 不可捕获**,VM 续用;纯计数回调拖慢落在噪声区间内(计时类判据是区间 **±10%**,不复述单次读数)。来源:探针 03 `probe-03-interrupt-granularity.txt`(`reports/sandbox-probes/`);粒度与噪声区间的冻结值归 `packages/tools/src/sandbox-probes/constants.ts` | §5.0 预算可复现、§5.3 |
-| 4 | 内存读数字段名 | 判据读 `getMemoryUsage().mallocSize`(与 `memoryLimit` 同记账口径);`memoryUsedSize` 更低且不含空闲池,不作判据;读数封顶是 `memoryLimit − 最大单次分配`,**不是 `−64KB`**。来源:探针 04 `probe-04-memory-reading.txt`(`reports/sandbox-probes/`)里的空 VM 基线(`mallocSize:75128` vs `memoryUsedSize:64098`);封顶以「`memoryLimit` − 最大单次分配」为准操作模型,`−64KB` 模型已被实测推翻 | §5.3 |
-| 5 | 宿主桥函数删除后的不可见性 | 删后脚本枚举不到、也捞不回来,闭包内的引用照常工作;但越权只表现为普通 `ReferenceError`,**被脚本 `try/catch` 吞掉时宿主零痕迹**。来源:探针 05 `probe-05-bridge-deletion.txt`(`reports/sandbox-probes/`;删除后:`'__bridge' in globalThis` 为 `false`、`typeof` 为 `undefined`、按 `__` 前缀枚举为空;闭包捕获的引用照常返回;宿主仍可经 handle 调桥;裸引用 `__bridge()` 为普通 `ReferenceError`,guest 吞掉后照常继续、宿主零痕迹) | §4.5 |
+- **隔离**:One VM = One WASM 实例,线性内存互不可见;包只做显式 I/O,默认无 FS / 网络。隔离靠「不给能力」而非「拿掉能力」。
+- **预算可复现**:中断计数与 API 调用计数构成双主判据,**均不依赖墙钟**;回调开销与粒度已实测校对(拖慢落在噪声区间内),故**回调内不得放每次都做的重活,时钟按抽样读**。
+- **记忆能力**:VM 常驻对局全程,模块级变量天然跨 tick 保留;快照/恢复能力不用(状态以 GameState + JSONL 为准)。
+- **执行器缝**:host 侧 `SeatRunner` 接口只有 `setSnapshot` / `drainIntents` 两个方法;执行器不持生命周期,建 VM 与 `dispose` 归组装层。**在出现第二个真实 VM 实现之前不新增抽象层。**
+- **`maxStackSize` 不启用**:启用会把栈溢出变成 guest 可捕获异常、可被脚本吞掉;不启用则溢出为 host `RangeError`,host 必见。
 
-- **隔离**:One VM = One WASM 实例,线性内存互不可见;包只做显式 I/O(wasm 字节由调用方提供),默认无 FS/网络——满足 FR-4 AC1,且比 worker_threads 的"去全局"做法审计面更小。
-- **预算可复现**:`interruptHandler` 每 5000 次控制流事件(循环回边/调用/返回)触发一次(回调内自乘计数),与 API 调用计数构成双主判据——实测口径是**控制流事件计数**而非指令计数(直线代码不计量,由 §6.2 脚本体积上限封盲区);`memoryLimit` 超限(≥3.5.0)表现为**可捕获的 JS 异常**(`InternalError: out of memory`),内存判据锚定 tick 末存活堆读数(§5.3)——均不依赖墙钟。回调开销与粒度已实测校对(纯计数 handler 对比无 handler,拖慢落在噪声区间内;计时类判据为区间 **±10%**,故**回调内不得放每次都做的重活,时钟按抽样读**)。
-- **崩溃语义**:WASM 执行无进程崩溃概念;死循环由中断计数截停;**深递归栈溢出实测为 host 侧 `RangeError`(`isJSException: false`),既不是 WASM RuntimeError trap 也不是 JSException,guest 吞不掉,VM 溢出后仍可续用**——所以栈溢出**不需要**防御性重建(§5.2);WASM trap 只剩引擎故障级可能,FR-4 AC3 的"一方崩溃不影响他方"降级为"一方失控只计异常分,不污染引擎与他方 VM"。
-- **记忆能力**:VM 常驻对局全程,模块级变量天然跨 tick 保留(FR-3);snapshot/restore 能力暂不用(状态以 GameState + JSONL 为准)。
-- **执行器缝**:host 侧 `SeatRunner` 接口(**两个方法** `setSnapshot` / `drainIntents`,见 `docs/adr/0005`;执行器不持生命周期,建 VM 与 `dispose` 归组装层)+ `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身:回放预置 intent、抛异常、触发 trap、超预算)。**在出现第二个真实 VM 实现之前不新增抽象层**——这条缝只让 §5.2 的四类裁决与结算管线可脱离 WASM 穷举测试。
-- **代价**:Node ≥ 22.18(**下限的成因是我们自己的代码,不是本库**,§2.2.1);`moduleLoader` 不配置(`import` 在静态校验期即拒绝,运行时 script-mode 同样把它当 `SyntaxError`);**`maxStackSize` 选项确实存在**(3.6.2 有;`0` = 关守卫,显式设值 ≤512KB),v0 **不启用**——启用会把栈溢出变成 guest 可捕获异常、可被脚本吞掉;不启用(默认或显式 `0`)则溢出为 host `RangeError`,host 必见。**上一版这里写的“无 `maxStackSize`、栈溢出表现为 WASM trap”两句都不成立**,已按实测改正。
-
-**升级条款**:“升级 `quickjs-wasi` 需重跑重放一致性测试与沙箱行为复测”这条条款,**此前是空头承诺,现已收口**:上表五条各有可执行探针(`pnpm run probes:sandbox`,真 VM、输出落盘到 `reports/sandbox-probes/`、不入库),而 `check:quick` 里的版本耦合断言(`pnpm run coupling:quickjs`)在根 `package.json` 一改钉版时就红,报错信息直接指向复验脚本与本节——**机器会提醒后来者这些结论已经过期**。升级时先跑探针、把新数字写回本节,再让断言转绿(§12 #8 记着这件事)。
+**升级条款**:升级 `quickjs-wasi` 必须先跑探针、把五条结论的新数字写回本节,再让版本耦合断言转绿。只改钉版不改本节,机器会替你拦下来。
 
 ### 5.1 隔离与注入
 
-- 每方一个独立 `QuickJS.create({wasm, memoryLimit, interruptHandler, wasi})` 实例;四个 VM 同进程串行执行,不共享线性内存。`wasm` 字节由 runner 层读盘传入 engine(engine 不做磁盘 I/O)+ `WebAssembly.compile` 预编译,四 VM 复用同一 `WebAssembly.Module`。
-- **WASI 覆盖**(三件套取值定为工程常量,非对局参数):`clock_time_get` 覆盖为 `1700000000000`(`Date.now()`/`new Date()`/`performance.now()` 在对局内因此定格;QuickJS 内部 PRNG 以该值播种 xorshift64*,同值即同 `Math.random()` 序列,故冻钟同时冻住随机源),`timezoneOffset` 固定为 0;不加载 crypto 扩展,故**不覆盖 `random_get`**。三件套取值与 `quickjs-wasi` 版本号一并写入回放 meta 行(§7.5),可审计。
-- 脚本可见全局 = runtime bundle 暴露的 API + `schema` 生成的常量表 + 纯函数子集;`fetch`/`fs`/`process` 等宿主能力一律不注入——隔离靠"不给"而非"拿掉"。**不加载任何 `.so` 扩展**(url/encoding/headers/crypto/structured-clone 均不启用)。
-- 载入次序:`evalCode(runtimeBundle)` 建 API 面 → 取两个桥的函数 handle → 从全局**删除**桥函数 → 注入按座位的 `getMyIndex` → `evalCode(script.js, {filename})` 载入选手脚本 → 取入口 handle。每 tick:`__setSnapshot(snapshot)` → `callFunction(loopFn)` → `executePendingJobs()` 排空到不动点 → `__drainIntents()`。runtime bundle 与脚本同处一个全局环境,但 runtime 的内部计数器与宿主桥引用都在闭包内,且桥函数在**载入期(脚本之前)**即被删除(§4.5);宿主仍持桥的函数 handle,照常调得动。
-- **行动事实采集**:六类行动在 runtime 内部直接递增固定私有调用/公开错误码计数,覆盖非法兵种早退;每 tick 随现有 `setSnapshot` 清零、随现有 `drainIntents` 返回。采集不使用用户脚本 wrapper、不新增桥、不逐动作跨宿主调用。正常返回及 API 超限可取得载荷;事件截停、未吞异常及其他未返回载荷的 tick 不额外执行 guest 补读,只累计 `missingTicks`。行动调用/错误计数与原预算 API 计数分别命名,不从 `undefined`、静默拒绝或调用减错误推出行动成功。
-- **采集计量**:新增 guest 固定计数和 host 聚合有真实开销,沿用完整事件/内存计量与原规则集阈值,不承诺与旧 runtime 的读数逐字相同。官方构建只压缩内部标识符,保留公开属性名与控制流,减少 guest 常驻编译数据开销。改动需重建 runtime bundle,运行受影响的真实 runtime 测试、runtime 漂移与预算复核门禁;宿主结算效果采集开/关须保持相同回放、状态 hash 与判定(ADR-0016)。
-- 定时器与异步调度源在 QuickJS 内默认即不存在;`vm.executePendingJobs()` 每 tick 排空。跨 tick 记忆只认模块级变量。
+- 每方一个独立 VM 实例;四个 VM 同进程串行执行,不共享线性内存。wasm 字节由上层读盘传入,四 VM 复用同一 `WebAssembly.Module`。
+- **WASI 覆盖**(工程常量,非对局参数):`clock_time_get` 覆盖为常量(对局内 `Date.now()` / `performance.now()` 因此定格,内部 PRNG 同步冻结),`timezoneOffset` 固定为 0;不加载 crypto 扩展。取值与版本号一并写入回放 meta 行,可审计。
+- 脚本可见全局 = runtime bundle 暴露的 API + `schema` 生成的常量表;**不注入任何宿主能力**。不加载任何 `.so` 扩展。
+- 载入次序:建 API 面 → 取两个桥的函数 handle → 从全局删除桥 → 注入按座位的 `getMyIndex` → 载入选手脚本 → 取入口 handle。每 tick:喂快照 → 调 `loop` → 排空 pending jobs → 取回 intents。
+- **行动事实采集**:行动调用与公开错误码在 runtime 内部直接计数,每 tick 随快照清零、随取回意图返回;**不新增桥、不逐动作跨宿主调用**。计数与原预算 API 计数分别命名,不从 `undefined`、静默拒绝或「调用减错误」推出行动成功。
 
-### 5.2 异常裁决(gdd《异常与出局》的实现化)
+### 5.2 异常裁决
 
 | 情形 | 处理 | 确定性 |
 |---|---|---|
-| `loop()` 抛异常(host 侧异常同此行:含内存超限转成的 JS 异常、深递归栈溢出的 host `RangeError`) | **判罚语义**:本 tick 该方 intents 置空(单位原地待命);`exceptionTicks++`;达 ruleset 的 exceptionTickLimit → 判负出局(点位回归中立);**VM 续用、记忆保留**。它是 §5.3 四条**计异常轨**中的一条(事件计数轨 / 内存判罚线 / API 计数轨 / 本行),四条经**同一个写入口**累加 | ✅ 计数可复现 |
-| 中断超限(`interruptHandler` 返回 true) | 同上;VM 中断后仍可用,无需重建 | ✅ |
-| WASM trap(引擎故障级;**脚本栈溢出不属此类**,实测为 host `RangeError`) | **不判罚该方**——trap 归引擎故障轨:按 §8.4 与 `engine-crash` 同轨处理(标记后**重跑一次**;再触发则记入报告的问题清单并剔除出排名,**不静默丢弃、不防御性重建该方 VM**);trap 事件写入回放 events 流与报告,夜间扫描复核 | ✅ 判罚可复现;复核在扫描层 |
-| 内存判据超限(该 tick 末存活堆读数 ≥ `memoryTickCeiling`) | 视同第一行(intents 置空 + `exceptionTicks++`);判据于每 tick 末 `runGC()` 后取 `getMemoryUsage().mallocSize`(与分配上限同记账口径),纯记账、可复现;**guest 吞掉 OOM 不影响判据**——判据锚定读数,不依赖异常可见性。残余条款:tick 内瞬时触顶后自行释放的分配不触发判据(分配上限本身不可突破),已在规则文档披露。未被 guest 捕获的超限异常仍走第一行(host 可见) | ✅ |
-| 越权调用(未定义 action / 访问已删除的宿主桥 / 访问未暴露字段) | 脚本未吞异常时**视同第一行的判罚语义**(与 `loop()` 抛异常**同轨**);**吞掉时 host 无感知,防线是 `__*` 静态禁令**(§4.5) | ✅ |
+| `loop()` 抛异常(含内存超限转成的 JS 异常、深递归栈溢出的 host `RangeError`) | **判罚语义**:本 tick 该方 intents 置空(单位原地待命);异常计数 +1;达阈值 → 判负出局(点位回归中立);**VM 续用、记忆保留** | ✅ 计数可复现 |
+| 中断超限 | 同上;VM 中断后仍可用,无需重建 | ✅ |
+| WASM trap(引擎故障级;**脚本栈溢出不属此类**) | **不判罚该方**:归引擎故障轨,标记后**重跑一次**;再触发则记入报告的问题清单并剔除出排名,**不静默丢弃、不防御性重建该方 VM** | ✅ 判罚可复现 |
+| 内存判据超限(tick 末存活堆读数 ≥ 判罚线) | 视同第一行;判据锚定读数,**不依赖 guest 异常可见性**(guest 吞掉 OOM 不影响判据);tick 内瞬时触顶后自行释放不判罚 | ✅ 纯记账 |
+| 越权调用(未定义 action / 访问已删除的宿主桥 / 访问未暴露字段) | 脚本未吞异常时**视同第一行的判罚语义**;**吞掉时 host 无感知**,防线是 `__*` 静态禁令 | ✅ |
 
-注脚:异常/中断/超预算不清记忆、不重建 VM;**WASM trap 归引擎故障轨、不重建该方 VM**(§5.2/§8.4)。`exceptionTicks` 是对局状态的一部分,随每 tick JSONL 持久化,VM 中断或重建后由持久化值续算,**不清零**(否则反复失控可逃逸淘汰)。**预算判据锚定 host 可直接测量的量,不依赖 guest 异常可见性**。OOM 异常身份不可靠(headroom 耗尽时 fallback 抛 `null`),引擎判定不得依赖 `e.name`。
-
-**`loop()` 抛异常 → 异常计数已实现**:未被脚本吞掉的 guest 异常只作废该方本 tick 的 intents、计一次异常,不再冒成整场 `engine-crash`;VM 续用、记忆保留,与事件计数 / 内存判罚线 / API 计数同属计异常轨。
+异常/中断/超预算**不清记忆、不重建 VM**;异常计数是对局状态的一部分,持久化续算,**不清零**(否则反复失控可逃逸淘汰)。预算判据必须锚定 host 可直接测量的量;引擎判定**不得依赖异常的 `name`**(OOM 异常身份不可靠)。
 
 ### 5.3 计算预算(双计数主判据 + 墙钟只观测)
 
-**形态:控制流事件计数 + API 调用计数为双主判据(均可复现);内存侧三层 = 分配上限(硬)+ 判罚线(硬)+ 软阈值(观测);墙钟不参与判罚。**
+| 机制 | 判罚 | 是否影响确定性 |
+|---|---|---|
+| 控制流事件计数(中断回调计数) | 本 tick 该方 **intents 全部丢弃** + 异常计数 +1 | ✅ 纯计数 |
+| API 调用计数 | 同上;脚本 `try/catch` 捕获异常**不能**保留已提交的 intent | ✅ 纯计数 |
+| 内存分配上限 | 超限转 JS 异常(未捕获按 §5.2 第一行处理) | ✅ |
+| 内存判罚线(tick 末存活堆读数) | 视同 §5.2 第一行;软阈值只写报告披露 | ✅ 纯记账 |
+| 墙钟软限 | **只观测**,写成一条观测行,不进回放事件流、不进 `stateHash` | ✅ 不参与判罚 |
+| 墙钟硬超时 | **不判负**:标记后按引擎故障轨处理(重跑 / 剔除并披露) | 隔离出判罚路径 |
 
-| 机制 | 实现 | 判罚 | 是否影响确定性 |
-|---|---|---|---|
-| 控制流事件计数 | QuickJS `interruptHandler` 回调计数(每 5000 次控制流事件一格:循环回边/调用/返回;回调须保持轻量、**不得放每次都做的重活**,时钟按抽样读,计数自乘);到顶返回 true 中断本 tick。直线代码不计量,由 §6.2 脚本体积上限封盲区 | 本 tick 该方 **intents 全部丢弃** + `exceptionTicks++`(与异常同轨) | ✅ 纯计数 |
-| API 调用计数 | 宿主注入的 action/查询函数内自增计数器;到顶后**本 tick 内该方后续所有 intent 一并作废** | 同上。脚本 `try/catch` 捕获异常不能保留已提交的 intent——引擎按"该方本 tick 作废"处理 | ✅ 纯计数 |
-| 内存分配上限 | `memoryLimit`(VM 线性内存)——引擎分配上限,上限本身不可突破 | 超限转 JS 异常(未捕获按 §5.2 第一行处理) | ✅ |
-| 内存判据 | 软/硬双阈值;判据 = 每 tick 末 `runGC()` 后 `getMemoryUsage().mallocSize`(存活堆读数) | 硬线 `memoryTickCeiling`(ruleset 参数)超线 = 视同 §5.2 第一行;软阈值(0.8×硬,推导)仅写报告披露 `memory-pressure`。`runGC()` 固定扫描税 0.5–3.3ms/tick,入 NFR-3 标定考量 | ✅ 纯记账 |
-| 墙钟软限 | 单 tick `loop()` 执行时长(按抽样读,不逐 tick 阻塞) | 写成**一条软限观测行**(观测文件 `observations.jsonl`,轨名 `wallClockSoftLimit`)+ 报告披露,**墙钟不进回放 events 流**;**只观测** | ✅ 不参与判罚 |
-| 墙钟硬超时 | 防宿主卡死的最后防线(如宿主回调卡死) | **不判负**:标记 `nondeterministic-timeout`,按 §8.4 与 `engine-crash` 同轨处理(重跑 / 剔除并披露) | 隔离出判罚路径,判罚仍可复现 |
+**设计理由**:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸由调用计数抓住。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏确定性。
 
-设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只作废当前对局,不改变对局内的胜负判定。
+**取值规则(不写取值)**:全部上限是 `rulesets/*.json` 中的参数,取值真源唯一。三条通用纪律:**任何键都不得以 p50 级读数作依据**;**统计单元**是先取「每场每席的峰值」再取全局最坏;**余量分轨而非统一系数**——计数轨贴边即可,物理量轨(内存、墙钟)留宽。
 
-**全部上限取值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限)为 `rulesets/v1.json` 中的参数**,用 ≥2 个模型基准脚本标定(srs §4 第 2 条)。本节只写**取值规则**;具体数值的唯一家是 `rulesets/v1.json` 与由它生成的面向模型的数值表(`docs/rules-v1/` 两份契约文档,生成机制见 §6.1)与由它衍生的读数(`pnpm run probes:budget` 现场重算,读数落 `runs/budget-calibration`、不入库),判据文本不复抄取值——**规则的重采不改变文字,只有取值会变**。
+- **事件计数上限**必须是中断粒度的整数倍(有效分辨率是一整格,同一格内的不同取值彼此等价)。
+- **API 调用上限**取诚实全局峰值的两倍。
+- **内存分配上限**取二的幂,且不低于判罚线的八倍;**判罚线**取诚实存活堆峰值的 2.5 倍并要求其 0.8 倍不低于诚实峰值的 1.5 倍;**上界**取「判罚线不超过分配上限的一半」(与分配形态无关的可执行形式)。
+- **墙钟软限**取观测机制下界与诚实单 tick 墙钟 p95 的二十倍中的较大者;**硬超时**取二的幂,不低于软限的二十倍,且它是**单 tick 上限、不是整局**。
+- **异常计数上限**取「容错一两回 + 同 tick 最大叠加数」,**拒绝取一**。
+- **脚本体积上限**取二的幂且不低于基准产物最大值的四倍——它是唯一封「直线代码不计量」盲区的键。
 
-标定注脚:`memoryTickCeiling` 取值须高于正常脚本 tick 末存活峰值并留余量,其夹逼上界取「判罚线不超过分配上限的一半」,即 `memoryTickCeiling` ≤ 0.5 × `memoryLimit`。旧式「分配上限 − 最大单次分配」的上界**不可执行**:「最大单次分配」没有一个可代入的定值,实测封顶依分配形态变化(单次请求越小、能塞进的块越多、封顶越贴近分配上限;单次请求越大、封顶越接近「分配上限 − 请求量」),故上界改用与分配形态无关的形式。
+**中断粒度不可配置**:它是宿主对 wasm 侧回调周期的镜像,改 TS 常量只会让读数系统性偏小、不会让回调变密,没有任何门禁会发现,旧回放还会因此不可复算。
 
-升级条款:若赛中"tick 内瞬时借满即还"型脚本普遍牟利,升级为 patch quickjs-wasi 加 sticky OOM 标志、判据回到确证事件(后备设计已评估,触发条件由运营定)。
-
-**脚本异常详情旁挂**：执行器已有的 `tripped` 仍经步 0 唯一入口累加异常计数，同时把安全详情送至已有观测出口；正式 `match` 与赛季对局将其写入同目录 `observations.jsonl`，不改回放、事件、`stateHash`、输入或排名。单行合同唯一归 `schema/observation-line.ts`：旧六栏 `ObservationLine` 不变，新增 `ExceptionLine`（`type: "exception"`、从零起的 tick、seat、diagnostic，以及该轨启用时的 `exceptionTickLimit`），合称 `MatchObservationLine`。累计阈值取当局已解析预算，独立于单次预算详情的 limit；累计数仍从回放玩家状态读取，旧数据缺阈值保持未知。普通软观测仍每座位每类只记首条；异常每次触发均保留，同 tick 内存与 API 双轨各一条，计数与裁决不去重、不改变。文件行数受实际 tick 数、四座位与固定异常轨数限制；每行仅闭合字段、固定枚举与非负安全整数。硬墙钟超时仍整场作废，不作为玩家异常或异常详情落盘。
-
-**详情安全策略**：预算类别保存宿主既有的 used/limit（事件计数、API 次数或 tick 末存活堆字节）；未捕获异常只保存标准错误名白名单或 `unknown`，包括宿主栈溢出的 `RangeError`。guest 错误须经 VM 内部 Error 标签检查，名称从宿主包装器已有缓存投影；普通 throw 字符串/对象及未知名称不回显。标准名仍可能被脚本改写，因此只是类型提示，不是不可伪造的归因证明。不保存任意 message、源码、stack 或 throw 值，也不从脚本可伪造的 stack 提取行列；这依靠不采集自由文本，不声称正则能通用脱敏。缺少异常旁挂的旧产物详情为未知，不能倒推类别；详情不进入模型事实反馈。
-
-#### 标定判据(只写规则,不写取值)
-
-八键的取值规则以「读数 × 系数」表达,最终数字由重采读数代入得出。三条通用纪律:**任何键都不得以 p50 级读数作依据**(事件计数的 p50 恒为零,是粒度假象);**统计单元**是先取「每场每席的峰值」、再在这组峰值上取全局最坏(墙钟软限用 p95、硬超时用全局峰值);**余量分轨而非统一系数**——两条计数轨贴边(诚实与对抗差着数量级,贴边无风险),两条物理量轨(内存、墙钟)留宽(受机器负载与地图规模影响)。
-
-- **事件计数上限**必须是中断粒度的整数倍,取「诚实全局峰值所在的下一格」——诚实局的 p95 已填满一整格,故不能取其下一格以下(这也是它不能取半格值的原因)。
-- **API 调用上限**取诚实全局峰值的两倍(计数精确、分辨率为一,留一倍给赛季脚本进化)。
-- **内存分配上限**取二的幂,且不低于判罚线的八倍、不低于诚实存活峰值的十六倍;它是粗保护、不是判罚线,过大会废掉这个键。
-- **内存判罚线**取诚实存活堆峰值的 2.5 倍、取整到 64 KiB,并要求其 0.8 倍不低于诚实峰值的 1.5 倍:下界由软阈反推(软阈必须高于诚实峰值,故判罚线须高于诚实峰值的 1.25 倍,规则再留一档裕度到 2.5 倍);上界见上文夹逼注脚。
-- **墙钟软限**取「观测机制下界」与「诚实单 tick 墙钟 p95 的二十倍」中的较大者:观测机制有约 8 毫秒的硬下界(读钟每约十万次控制流事件一次,短脚本抽样不到就一条观测都不产),它是观测项,逼太紧只会把宿主负载写进披露数据。
-- **墙钟硬超时**取二的幂,且不低于软限的二十倍、不低于诚实单 tick 墙钟峰值的二百倍:它是最后防线、只兜计数轨的盲区,触发即作废整场,取值「宁小勿大」与「盲目放大」都错——它的定位是成本兜底,不是判据。
-- **异常计数上限**取「容错一两回 + 同 tick 最大叠加数」,**拒绝取一**(它会把「瞬时借满即还」这个已接受的残余变成出局条件)。
-- **脚本体积上限**取二的幂,且不低于基准产物最大值的四倍;它是唯一封「直线代码不计量」盲区的键。
-
-两条与机制绑定的判据:
-
-- **中断粒度是这类上限的有效分辨率**:事件计数上限的真实截停点是「把上限向上取整到中断粒度的整数倍」,取值范围必须落在格边界上;有一条静态门禁(`check:budget`,§2.2.7)钉住「整数倍」并把中断粒度常量与它在文档里的三处副本锁死。**中断粒度不可配置**:它是宿主对 wasm 侧回调周期的镜像,改 TS 常量只会让读数系统性偏小、不会让回调变密,没有任何门禁会发现,旧回放还会因此不可复算——故它属于「使终值失效」的变更之一(ADR-0009)。
-- **内存软阈是推导项、不入键清单**:它是判罚线按一个系数推出的展示项(系数在真源包里,引擎另留一个显式覆写点,但那不是第二个要标定的数)。**「分配上限未定」与「该轨不启用」是两件不同的事**(词条见 `CONTEXT.md`《分配上限》):分配上限未定表示 VM 不设任何上限,判罚线未定表示该轨不启用。**内存判罚线的扫描税要与脚本耗时一起计价**:单独启用内存判罚线会让每 tick 多一次强制回收,这笔固定扫描税落在同一个 tick 的墙钟里,故它进墙钟软限与硬超时的取值考量。
-
-**墙钟两键不属于第三个量**:墙钟轨不参与判罚、不进回放、不进状态哈希——软限只产观测,硬超时只作废整场(与 `engine-crash` 同轨,重跑一次后进问题清单并排除出排名)。硬超时是**单 tick 上限、不是整局**,与 srs《NFR-3》的「对局平均墙钟」不是同一个量:后者的取值规则在 §10.1(「均值 + 一倍余量」),本节点只交基准脚本的单局墙钟分布读数(由 `pnpm run probes:budget` 的诚实侧探针现场重算)。
-
-**异常计数**的累加点有四处(事件计数轨 / 内存判罚线 / API 计数轨 / `loop()` 抛异常),计次数、不清零,同 tick 最多叠加两次(事件计数轨截停后早退,内存与 API 可叠;`loop()` 抛异常即中止本 tick、只计一次,故不与任何轨叠加)。本轮标定的读数由**三轨异常探针**给出:三类探针各自反复触发对应的轨、产出异常计数读数,`exceptionTickLimit` 的下限由此得出。
-
-**终值的常驻守卫与失效触发**:终值一旦落库就**不可就地修改**。以下语义变更要求修改者显式运行 `pnpm run check:budget-recheck`;同一文件中的无关改动不触发复核,也不以路径 diff 自动判断:
-
-- **契约散文**:修订 `docs/rules-v1/` 的机制、顺序或语义时复核。ADR-0008 规定这类修订不升版本号,生成物漂移门禁也不覆盖散文,所以默认门禁不能证明既有预算仍匹配。
-- **快照结构**:改变快照形状、拷贝或封存粒度时复核,因为它会改变快照体量或每 tick 成本,影响内存与墙钟预算推导。
-- **沙箱 runtime 或中断粒度**:升级或改变 runtime,或改变宿主中断粒度时复核。版本耦合门禁只检查版本对齐,不检查预算阈值;中断粒度常量是宿主行为镜像,仅改常量不会让回调变密,却会改变事件计数轨的有效分辨率。
-
-复核使用终值预算重跑预算探针与三份基准脚本,并检查终值推导与规则集一致。**只有判红才确认终值失效**:开新的重标节点,按本节取值规则重采受影响的读数并重算预算键,再落库;不得直接改终值。墙钟两键的推导受负载影响,不要求读数逐字相等,其结构与行为检查仍须通过。夜间流水线可以常驻复核作守卫,但不按时间自动重标。命令与具体断言以根 `package.json`、门禁脚本及其测试为准。
+**终值一旦落库就不可就地修改**。以下语义变更要求修改者显式运行 `pnpm run check:budget-recheck`,**由修改者判断触发,机器不按路径 diff 自动判定**:契约散文修订、快照结构变化、沙箱 runtime 或中断粒度变化。**只有判红才确认终值失效**:开新的重标节点,按上面的取值规则重采读数并重算预算键,再落库;不得直接改终值(见 [ADR-0009](./adr/0009-budget-final-values-are-revocable.md))。
 
 ## 6. 脚本契约与静态校验
 
 ### 6.1 契约载体
 
-`docs/rules-v1/` 两份文档:`rules.md`(机制、结算顺序、确定性约束)与 `api.md`(API 签名与语义),自包含(FR-10 AC1)。二者同时是 gen 管线的 prompt 输入;其**表格部分(API/常量/数值)由 `schema` 包与 `rulesets/v1.json` 生成**,validator 白名单同理(§2.2.5)。
+`docs/rules-v2/` 两份文档:`rules.md`(机制、结算顺序、确定性约束)与 `api.md`(API 签名与语义),**自包含**——模型仅凭它们即可写出能过校验的脚本。二者同时是 gen 管线的 prompt 输入;其表格部分由 `schema` 包与 `rulesets/*.json` 生成(§2.2.5)。契约散文可以修订而**不升版本号**(见 [ADR-0008](./adr/0008-contract-prose-revision-does-not-bump-version.md))。
 
-### 6.2 静态校验规则(gen:validator)
+### 6.2 静态校验规则
 
-**承载分三层**:编译通过与「白名单反转」由生成管线的**编译步骤**承担,其余五类由 `packages/tools` 的**静态校验器**承担,入口**签名**由脚本编译配置的类型声明保证。**静态校验器不是参赛脚本能用什么名字的唯一裁判**——裁判权与编译步骤合并(实测依据见本节末,工具链一面的理由见 §2.2.3)。
+**裁判权与编译步骤合并**:编译通过与「白名单反转」由**编译器的名字解析**承担(脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types` 的环境里编译,「找不到这个名字」即反转),其余规则由 `packages/tools` 的静态校验器承担。**静态校验器不是参赛脚本能用什么名字的唯一裁判。**
 
-| 类别 | 规则 |
-|---|---|
-| 编译 | **校验流水线里有这一步**,不是校验器内部跑这一步:编译责任在 gen 包(§7.4,engine 不引入 tsc),`tsc` 编译通过(产物里有没有入口由下面「脚本入口」那一行判)。**入口签名的形态(返回类型可省略)归契约面 `docs/rules-v1/api.md` §1.1,本文档不抄第二份**;本行只留工程侧那一句——入口必须是顶层声明,因为 VM 以 `evalCode` 载入、拿不到模块作用域。编译诊断由管线直接透传给模型,校验器不复现它。**参赛脚本的编译配置(脚本 tsconfig)由规则落库这一格定、生成管线按它实现**,落点是根层 `tsconfig.scripts.json`:它**刻意不继承** `tsconfig.base.json`(`types: []` + 不带 DOM 的 `lib`,否则等于把 Node 类型带进沙箱),而它承载的正是下面那条白名单反转与入口签名。定与实现分开是刻意的:承载形状与契约面同源,它是下游的实现 |
-| 脚本入口 | 产物顶层必须声明一个引擎取得到的 `loop` 函数(顶层函数声明,或顶层 `var` 绑定一个函数值)。顶层 `let` / `const` 的 `loop` 落在**全局词法环境**里,不是全局对象自己的属性——引擎经 `vm.global.getProp(SCRIPT_ENTRY)` 取不到(实测 `quickjs-wasi` 3.6.2 / 2026-10-11),一律拒。判的是**编译产物的一条静态性质**,由静态校验器承担(落点 `packages/tools/src/rules/script-entry.ts`)——不是 gen 的编译步骤:gen 只依赖真源包、手上没有解析器,而在 gen 进程里执行模型产物既破沙箱纪律、空值桩又会改变顶层 API 的返回值。它封的是一路绿灯的空产物(模型回空代码围栏 → tsc 把空源码编译成 `"use strict";` 照样成功);入口**签名**的形态归契约面,见「编译」那一行 |
-| 模块系统 | 禁 `export` / `import` / 动态 `import()` / `require` / 动态 `eval`(单文件自包含)。静态校验器承担,判据是「这段代码是不是从自己之外取来的」 |
-| 全局白名单 | **承载方是编译器的名字解析**:脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types`、只额外引入脚本 API 类型声明的环境里编译,「找不到这个名字」就是精确的白名单反转。**静态校验器不做反转**,也不为它自建作用域分析(实测与理由见本节末)。名字级别的禁令(`__*` 前缀全禁、确定性污染源)仍由它承担。内置全局表与注入符号表的真源在 `schema`,本包经生成器读生成物(§3.2),与沙箱 runtime 暴露的 API 面同源;**名单取值不在本文档复制**(见下一行与 `packages/schema/src/builtin-globals.ts`) |
-| 内置全局白名单的收录判据 | **这一格放的是一条收录准则(一整句话的判据),不是名单的取值**:判据原文、判据的边界(什么算这一格里的名字)与逐个名字的「为什么收/不收」都在 `packages/schema/src/builtin-globals.ts` 的头注,那是它们的家,本文档只留指针。**这张表的消费者是面向模型的规则文档,不参与白名单反转的判定**;两侧不得互相引用为依据 |
-| 确定性污染源 | 禁 `Date`、`Math.random`、`performance`、`queueMicrotask` 及其他非确定源(运行时 WASI 时钟已定格,本行为纵深防御)。静态校验器承担 |
-| API 误用 | **依赖真源包的类型面(公开 `.d.ts`),不是符号表**:符号表是一张名字数组,给不出签名与结构化 intent 类型,判「用错」靠的是类型面。**承载方即类型面本身**(家是 `packages/schema/script-api/index.d.ts`,`tsconfig.scripts.json` 的 `types` 经它引入,见 [ADR-0006](./adr/0006-script-api-type-surface-lands-in-engine.md)),由对局内核这一格回填。类型面落地后「编译步骤放行但运行时报未定义」在结构上不再发生——放行的是编译器,而编译器现在有一份可校验的名字与签名;静态校验器在这条上从不是裁判 |
-| 脚本体积 | 顶层脚本体积上限——封"直线代码不计量、大循环体放大每格工作量"的计数盲区。**量测对象是编译后产物的字节数**(不是原始 TS 源码,也不是字符数);取值入 `rulesets/v1.json`,由生成管线作为参数传入、校验器不给默认值;**检查时机:每轮迭代都查,迭代期只提示不拦,冻结期才拦** |
-
-**五条规则统一跑在编译产物上,不在原始 TS 上跑**:模块语法、桥前缀、禁列、脚本入口在编译后仍逐条可判定,而在原始 TS 上跑会漏掉类型断言与类型标注这类 TS 特有形态,等于为它们再写一套判据;顺带消掉了「模块源码 / 脚本源码」两种源形态的分支。
-
-**这条不只是「怎么跑」,也是「收在哪」——静态校验器的源形态只有一种,且由解析层独占地兑现**。解析层(`packages/tools/src/parse-source.ts`)对 `script` 源形态用 `lang: "js"` 与 `.js` 文件名(`module` 那侧是 `lang: "ts"` 与 `.ts`,仓库自身源码照旧按 TS 解析),所以一份**未经编译**的参赛脚本(入口带返回类型标注、写着泛型实参或 `as` 断言)落进的是 `syntax-error` 那一支,而不是被几条规则放过。入口签名本身的形态归契约面(同节表格「编译」那一行已留指针)。
-
-**落点选在解析层而不是校验入口**,理由是绕不开:规则层的禁列 / 桥前缀 / 模块系统 / 脚本入口四条各自独立调解析层,入口声明源形态的话要在五个调用点各传一次,任何一处漏传就静默回到「判据更宽」——而更宽正是这条要消除的方向。文件名的另一半是**自述**不是行为开关(实测见下表第 3 条)。
-
-**「未编译」不是误伤,两个方向不能一起处置**:误伤是「合规产物被拒」,这里是「判据比契约宽、放行了不该由本工具判的东西」。收紧因此**两侧都钉**:拒 TS 注解源码的那半在 `parse-source.test.ts`,放行编译产物的那半拿 `benchmarks/*/script.js` 三份真产物在 `benchmarks.test.ts`——只钉前者的话,把 script 形态整个判死(连真产物一起拒)同样能变绿。**TS 专有的模块写法(`import x = require(…)`、`export = x`)不归静态校验器**:`tsconfig.scripts.json` 的 `module: esnext` 让 `tsc` 先判红(实测 TS1202 / TS1203,诊断由编译步骤透传,见上表「编译」那一行)。
-
-**实测结论(只对所记版本组合成立,换版本即失效)**。以下前两条来自 2026-10-03 的一次探针,第 3–6 条来自 2026-10-04 的收源形态探针,环境均为 **`oxc-parser` 0.152.0**(native binding `linux-x64-gnu`)+ Node v24.15.0 / Linux x64,**探针不落库**(与 §5.0 五条沙箱实测同一处置):
-
-| # | 行为 | 结论 |
+| 类别 | 承载方 | 规则要点 |
 |---|---|---|
-| 1 | 解析结果的可见面 | `ParseResult` 只有 `program` / `module` / `comments` / `errors` 四个 getter,`module` 只有 `hasModuleSyntax` / `staticImports` / `staticExports` / `dynamicImports` / `importMetas`;**没有符号表、没有引用解析、没有「这个名字是不是自由变量」的任何 API**,包的全部导出(含 `raw-transfer/*` 子路径)里也没有 symbol/scope 相关入口 |
-| 2 | 标识符不区分引用位与声明位 | 声明位置与引用位置的标识符反序列化后是**同一个 `type` 字符串 `"Identifier"`、同一组字段**,逐字段深比较只差 `start`/`end`。判「引用还是声明」只能靠**父节点字段位置**(实测:`…declarations[0].id` vs `…argument.left`),而哪些父节点字段算声明位(变量/函数/参数/解构简写/`catch` 参数/`for-of` 绑定/class 方法名/对象字面量键)得自己维护 |
-| 3 | `lang` 是开关,文件名是自述 | 同一段源码下,文件名给 `script.js` 或 `script.ts` 配 `lang: "js"` **逐条行为相同**(TS 注解的八种写法全被拒、纯 JS 全放行、行列口径一致);oxc 只在**缺** `lang` 时才看扩展名。`astType` 随 `lang` 变(`js` 形态下不返 TS 专属属性),而三条规则读的那几个字段(`Literal` 的 `raw`、`MemberExpression` 的 object/property)两种取值下形状相同 |
-| 4 | 收紧只动 TS 注解,不动模块语法 | `lang: "js"` + `sourceType: "script"` 下,`export const a = 1` / `import x from "std"` / `import("std")` / `require("std")` 四种**一律零解析错误**(静态 `import` / `export` 另置 `module.hasModuleSyntax`,动态 `import()` / `require()` 不置——而规则层读的是 AST 节点不是那个标志,两种口径对本条结论无影响)——所以**模块系统必须仍是独立一级**,不能靠解析层挡。同形态下 `import.meta` 才由 oxc 直接判解析失败(`Unexpected import.meta expression`),归 `syntax-error` |
-| 5 | 重复导出名在 JS 形态下是解析错误 | `export { a, a }` 在 `lang: "ts"` 下放行、在 `lang: "js"` 下报 `Duplicated export 'a'`。判据取样必须避开它:拿它当「一个 export 节点报一条违规」的样本,收紧后整条落进 `syntax-error`,钉的就不再是原来那件事 |
-| 6 | 注释的可见面两种 `lang` 下逐字相同 | `comments` getter 在 `lang: "js"` 与 `lang: "ts"` 下都给同样的条目与同样的 `type`(`Line` / `Block`),`/// <reference …>` 与 JSDoc `@type` 均在其中。所以「注释算不算源码」不是这次收紧的变量——这条曾被列为两种候选收紧方式的差别,实测排除 |
+| 编译 | 生成管线的编译步骤 | 脚本 tsconfig **刻意不继承** `tsconfig.base.json`(`types: []` + 不带 DOM 的 `lib`,否则等于把 Node 类型带进沙箱);编译诊断直接透传给模型 |
+| 脚本入口 | 静态校验器 | 产物顶层必须声明一个引擎取得到的 `loop` 函数;顶层 `let` / `const` 的 `loop` 落在全局词法环境里,引擎取不到,一律拒 |
+| 模块系统 | 静态校验器 | 禁 `export` / `import` / 动态 `import()` / `require` / 动态 `eval` |
+| 名字级禁令 | 静态校验器 | `__*` 前缀全禁;禁 `Date`、`Math.random`、`performance`、`queueMicrotask` 等确定性污染源 |
+| API 误用 | **真源包的类型面** | 符号表给不出签名;承载方是公开的 `.d.ts` 类型面(见 [ADR-0006](./adr/0006-script-api-type-surface-lands-in-engine.md)) |
+| 脚本体积 | 静态校验器 | 量测**编译后产物的字节数**;每轮迭代只提示不拦,冻结期才拦 |
 
-**承载权因此从静态校验器移到编译器**:白名单反转的本质是自由变量判定,而这一层解析不提供作用域;自建分析器的失败模式是**漏掉任何一处声明位置 = 误伤一份合规脚本**,而误报在五轮迭代预算里不对称地致命(模型拿到一条改不掉的违规,五轮耗尽,这一轮生成作废),漏报的代价只是回到现状。编译器的名字解析对这种不对称性零成本,且已在流水线上。
+**五条规则统一跑在编译产物上,不在原始 TS 上跑**:模块语法、桥前缀、禁列、脚本入口在编译后仍逐条可判定,而在原始 TS 上跑会漏掉类型断言与类型标注这类 TS 特有形态。落点在**解析层**(`lang: "js"` + `.js` 文件名):任何一处漏传源形态,判据就会静默变宽——而**变宽正是这条要消除的方向**。
 
-**测试边界沿用禁浮点门禁那条先例:遍历层不单独测**——本工具的输入是**一份产物文件,不是一棵目录**,所以连「目录遍历」这一层都不存在,入口只做「读文件 → 判定链 → 退出码」;测的是退出码与面向模型的文本。
+**承载权从静态校验器移到编译器**的依据:白名单反转的本质是自由变量判定,而解析层不暴露作用域信息;自建分析器的失败模式是**漏掉任何一处声明位置 = 误伤一份合规脚本**,而误报在有限的迭代预算里不对称地致命(模型拿到一条改不掉的违规,这轮生成就作废)。编译器的名字解析对这种不对称性零成本。
 
-编译、静态校验和冻结期候选预算失败 → 原始诊断回喂模型,下一轮携带完整历史与上轮回答。默认流程的总调用轮数仍受模型配置 `protocolRounds` 上限约束(FR-5 AC1)。`gen` 不导入引擎或赛季调度器,通过子进程与文件进行冻结期试跑,不回喂正式赛季结果。
-
-**统一事实优化**默认关闭,沿用显式 `--score-source-feedback` 开关。开启后执行“初次有效候选 → 自身行动事实与终局事实回喂 → 第一次优化有效候选 → 自身行动事实与终局事实回喂 → 第二次优化有效候选 → 最后试跑并保存终局事实”;未开启选拔时最后有效阶段定版,同时开启选拔时走 §6.3 后定版。共三个通过编译、静态校验与候选预算检查的有效候选,只有前两个触发事实回喂。`noScoreSource`、非零行动、胜负或其他表现都不参与是否继续的判断;第三个有效候选不再回喂;优化编排不按表现提前结束或额外改写。独立选拔不改变这些生成机会。机会分配取代 ADR-0015 与 ADR-0016 的按全零读数补救一次口径,理由见 [ADR-0017](./adr/0017-uniform-two-fact-feedback.md);现行反馈内容升级见 [ADR-0019](./adr/0019-terminal-match-facts-feedback.md)。
-
-**阶段与计数**:初次生成、第一次优化、第二次优化分别拥有独立阶段预算。opt-in 不读取逐模型 `protocolRounds` 或测试替代 `maxRounds`:每阶段统一最多五次有结论的生成调用,包括一次阶段首次响应与至多四次诊断修复。编译、静态或候选预算不通过时只回喂诊断,继续当前阶段,不增加有效候选数或完成的优化轮数。阶段通过才进入下一阶段并重置阶段计数,累计实际调用序号持续递增,完整消息历史继续保留。成功流程最多十五次有结论的生成调用,两次事实优化与阶段修复分别计数。阶段修复耗尽按该阶段失败收口,保留已有候选证据,不得将较早候选冒充最终候选。传输重试仍重发同一调用,不消耗阶段轮数;不确定墙钟超时的作废重跑仍是同一试跑,不新增优化轮或候选,正常游戏超时保留合法终局,正式淘汰规则不变。
-
-**优化试跑与正式评测**:所有启用模型的三个有效候选使用同一固定试跑计划,seed 为 101/202/303;地图模板固定为 `corridor-split`,候选固定 seat0,三基准 `cell-a-melee-pressure` / `cell-b-expansion-economy` / `cell-c-claim-no-harvest` 固定 seat1/2/3。每个 seed 的地图实例与已安装的规则集、runtime、基准字节在各阶段共享,不按候选表现随机抽取或更换。跨进程 seed/候选座位身份真源归 `schema/trial-plan.ts`,地图与基准由 CLI 的试跑安装面承载,各消费者不得另立计划配置。正式评测采用统一赛季配置与种子选择规则,实际物化的评测种子集合必须与该优化集合不相交,碰撞时拒绝运行,不静默替换(§8.1);正式结果不回喂。需求与验收见 srs FR-5/FR-7/FR-8/NFR-2,不将固定试跑读数写成正式成绩。
-
-原 `scoreSource` 是候选 runner 在结算前所见快照的差分:交付取本座位单位相邻快照载量下降之和,占点取属主由非本座位变为本座位的次数(开局归属不计)。该口径有末 tick 与异常淘汰缺口,只保留观测作用,不称为完整实际账本,也不再作为事实回喂触发条件。新增宿主结算效果来自实际成功 apply 的移动、采集、交付、易主和生产订单变更,仅聚合候选座位,覆盖末结算 tick 与候选 runner 停止后的结算;已移动后死亡不撤销移动格数,订单开始不等于生产完成。
-
-两次反馈按固定对局/seed 顺序陈述前一有效候选的完整行动事实(调用数、公开错误码计数、独立宿主结算效果)与三场真实终局摘要(§7.4),原 delivered/captures 明示为快照读数;hash 只留归档侧。终局摘要明确四方座位及身份,列出终局控制基地数、控制资源点数、存活单位总造价、计分组成、领土分、名次、名次积分、存活状态、淘汰时间及结束原因,使用统一、确定、可审计的格式。允许回喂这些优化试跑结果,仍不回喂独立选拔或正式评测结果,也不回喂动作参数、坐标、对象 ID、路径、完整快照、异常消息/堆栈、目标切换、占领进度或因果/策略建议。后缀只沿既有契约要求返回完整脚本,非零读数不得套用“全部无得分来源”的旧文案。
-
-旧四栏与缺少终局摘要的历史观测继续兼容读取,只陈述实际基础快照读数,终局事实标为未知;不完整行动事实只陈述基础读数与覆盖缺失,不发送部分行动计数,缺失不补零。行动采集覆盖与合法终局是分别校验的证据,不能从其中一个推断另一个。新流程前两个有效候选若缺少本次三场可用终局摘要或所需试跑观测,不得捏造、跳过反馈后宣称完成优化;停止该生成,披露未完成阶段与已有证据。最后有效阶段保存终局事实但无新增回喂要求,观测写出或最终兼容路径发布失败沿旁证警告口径,报告披露缺失。损坏与 hash/seed/seat 归属违约按严格协议错误收口,基础设施失败不转成策略反馈。各候选证据分开保存(§7.4),生成归档报告明确区分初次候选、各优化候选与最终候选,不并入赛季排名;未开启流程沿用原生成调用与定版行为。
+**生成协议**:编译、静态校验和冻结期候选预算失败 → 原始诊断回喂模型,下一轮携带完整历史与上轮回答;默认流程的总调用轮数受模型配置上限约束。**显式事实优化**(统一两次行动事实与终局事实回喂)与**独立选拔**默认关闭,开启后的阶段预算、种子隔离与公平性规则见 [ADR-0017](./adr/0017-uniform-two-fact-feedback.md)、[ADR-0018](./adr/0018-generation-policy-and-candidate-selection.md)、[ADR-0019](./adr/0019-terminal-match-facts-feedback.md) 与 [gdd §3.3](./gdd.md)。
 
 ### 6.3 独立有效候选选拔
 
-`--select-best-candidate` 必须同时启用事实优化;gen 在首次请求前取得本轮预定计划,三个有效阶段完成后通过最小 `SelectionProbe` 调 CLI 私有子进程。CLI 承载真实执行、runner 名次积分和完整复算;gen 只交换 schema 数据,不 import runner/engine/replay 或直接消费 result 计分。子进程 `--plan`/默认执行/`--validate` 共用本轮真实安装面,返回值按未知输入复算并核对环境及全部候选身份,在发布前再核对。
+选拔必须同时启用事实优化;gen 在首次请求前取得本轮预定计划,三个有效阶段完成后通过最小 `SelectionProbe` 调 CLI 私有子进程。**CLI 承载真实执行、runner 名次积分和完整复算;gen 只交换 schema 数据**,不 import runner/engine/replay,不直接消费 result 计分。
 
-跨进程计划及身份真源为 `schema/selection-plan.ts`。`selection.version` 保持不变,形状同时允许新理由 `later-stage` 与历史理由 `earlier-stage`;runner 公共读取器遇到历史理由时按原决胜算法完整复算,仍拒绝错误的 selected 身份、计分或 reason。新 CLI `--validate` 额外拒绝 `earlier-stage`,防止历史规则产物进入新生成流程;公共 meta、正式装载与报告读取保留旧档兼容,不重写历史字节。候选数组始终按 stage 升序保存,胜者单独记录于 selected。兼容边界见 [ADR-0020](./adr/0020-selection-tiebreak-compatibility.md)。固定独立 seeds 为 401/402/403,每 seed 对候选与三基准整组循环左移四次,相对环形顺序不变,候选覆盖四座;每候选十二个完整终局,三个阶段最多三十六个本地选拔对局。规则、地图、runtime 和三基准沿用真实优化试跑安装面,hash 由实际读取与执行的同一份字节产生。`selectionInputSha256` 覆盖计划、候选 JS 与对局条件,不是正式赛季 `input.json` 的字节 hash。
-
-仅 `completed` 的完整终局可入证据。计分/决胜规则归 gdd §3.3,沿用 runner `rankSeason/perMatchScores`（积分及并列计算归 §8.2）,不复用赛季异常剔除分母。相同 JS、相同计划可复用较早阶段全部十二场证据,记 `reusedFromStage`,TS/hash/实际协议轮仍独立。选拔不发模型请求、不回喂分数,不增加模型响应预算;失败实际执行了多少对局未被完整记录时报告 `null`,不猜测为零。模型阶段与响应上限沿用 §6.2,规则与沙箱预算沿用 §5,均不因选拔或模型而变化。取舍见 [ADR-0018](./adr/0018-generation-policy-and-candidate-selection.md)。
+计分与决胜规则归 [gdd §3.3](./gdd.md),不复用赛季异常剔除分母。仅 `completed` 的完整终局可入证据;缺失、异常或不确定终局**不缩小分母、不补零、不用已有候选替补**未完成阶段。选拔不发模型请求、不回喂分数、不增加模型响应预算。历史兼容边界见 [ADR-0020](./adr/0020-selection-tiebreak-compatibility.md)。
 
 ## 7. 数据设计
 
-### 7.1 ruleset 数据文件(`rulesets/v1.json`)
+### 7.1 ruleset 数据文件
 
-**全部参数取值的真源**:兵种表、经济参数、占领参数、tick 上限、异常阈值、领土分权重、点位数量不变量(每方主基地数)、预算参数。地图的尺寸与具体点位数量归地图数据(§7.2),不在此文件。参数的含义与设计意图由 gdd《参数清单》定义,取值一致性由 JSON Schema 校验;版本号的一致性口径见本节末段。
+**全部参数取值的真源**:`rulesets/vN.json`。参数的**名字、类型、量纲与含义**由真源包的键清单持有(机器可读的那一份);含义与意图见 [gdd §7](./gdd.md)。地图的尺寸与具体点位数量归地图数据(§7.2)。
 
-**键清单与必填性**:参数的**名字、类型、量纲、取值范围与含义**由真源包的键清单持有(它是机器可读的那一份,gdd《参数清单》定义含义与意图);取值文件按清单逐键落值。本仓现为 21 个键 = 13 个定稿键 + 8 个预算键。**全部必填,没有可选键**。
+- **全部必填,没有可选键**;**缺键与「键存在但取 0」是两种不同的错误**:前者直接拒,后者通过校验,只影响面向模型的规则文档怎么渲染(未定值渲染成「未定」而不是数字)。
+- **派生量双存 + 装载期断言**:既出现在取值文件里、又由派生式算出的键,两个都保留(取值文件是那份数据的真源);一致性由**装载期断言**判,不等即拒跑。
+- **规则版本号三处一致,一致性由机器判定**:取值文件名 `rulesets/vN.json`、规则文档目录名 `docs/rules-vN/`、真源包导出的版本常量。**取值文件内部没有版本键**——同一个值若既在文件名里又在内容里,那就是两处可能各写各的。三处对不上在装载期拒跑,不静默降级。
 
-**预算键的未定值口径,以及「缺键 ≠ 未定值」**:8 个预算键在标定完成前**一律必填**,取占位值 `0`,语义是**未定值**——机制已定、终值归后续的标定(hld §12 #2)。因此在 JSON Schema 里,**缺键与「键存在但取 0」是两种不同的错误**:前者是 `required` 缺失,直接拒;后者通过校验,只影响**面向模型的规则文档怎么渲染**——数值表把未定值渲染成「未定」而不是数字,是文档可见性,不为它引任何判罚逻辑。清单里每一键的标定状态是键自身的一个两态字段,不是一个全局标志位:某个预算上限标定完之后它的终值**可以真的取 0**,那时文档就该显示 0 而不是「未定」。
+### 7.2 地图 JSON
 
-**派生量双存 + 装载期断言**:生产耗时一类既出现在取值文件里、又由派生式算出的键,**两个都保留**——取值文件是那份数据的真源(缺了它,兵种表的可读性就依赖读者做算术),而派生系数只活在代码里就是第二真源。一致性由**装载期断言**判,不等即拒跑;断言与校验器同在 `apps/cli` 那一个入口(§2.2.5),真源包不交付「这个值算出来是多少」。
+地图 JSON 声明:名称、网格边长、`rulesetMin`、terrain 行字符串、点位数组、初始单位、`variantSlots`。**七字段全部必填且禁止额外属性**(`additionalProperties: false`)——手写 schema 若放行额外属性,那只是一份注释,不是校验。
 
-**规则版本号三处一致,一致性由机器判定**:版本号由三处名字承担——取值文件 `rulesets/vN.json` 的文件名、规则文档目录名 `docs/rules-vN/`、真源包导出的版本常量——**取值文件内部没有版本键**(同一个值若既在文件名里又在内容里,那就是两处可能各写各的)。三处对不上在装载期拒跑,不静默降级。取值本身由真源包的项目键清单与 `rulesets/*.json` 承担,本文档不复制。
-
-### 7.2 地图 JSON(`maps/*.json`)
-
-```jsonc
-{
-  "name": "open-clash",
-  "size": <正整数>,                 // 网格边长,取值归 maps/*.json,本文档不复制
-  "rulesetMin": "v1",
-  "terrain": ["...", ...],          // 行字符串,'.'=平原,'#'=墙
-  "sites": [ { "id": 1, "kind": "base", "x": 10, "y": 10, "initialOwner": 0 }, ... ],
-  "spawnUnits": [ { "owner": 0, "type": "worker", "offset": [0,0] }, ... ],
-  "variantSlots": [ [[x,y],[x,y],[x,y],[x,y]], ... ]  // 静态候选轨道清单,见下;机制见 gdd《地图变体》
-}
-```
-
-**七字段全部必填,并且禁止额外属性**:JSON Schema 对地图设 `additionalProperties: false`,规则集同理(§7.1)——手写 schema 若放行额外属性,那只是一份注释,不是校验。跨字段的自洽(terrain 行长等于 `size`、点位不越界、四重对称)JSON Schema 表达不了,归 map-lint。
-
-- 初始单位配置围绕主基地,由地图声明,引擎不硬编码。
-- **map-lint 强制校验**,分两层。**单图层**:四重旋转对称(terrain 与 sites 绕中心 90° 旋转自洽)、点位不重叠且不在墙上、变体槽位是合法轨道。**池层**:地图数满足规则下限、池内 `size` 一致(三张图取同一值;取值由 `maps/*.json` 承担,本文档不复制)、每方开局恰好拥有家附近**最近的一圈**资源点、家门到最近自家矿的**矿路红线**、以及两两墙格 **Jaccard 相似度上限**。校验不过的地图不进地图池。
-
-  几条判据的读法值得写全,因为它们最容易被读成一个更松的形状:
-
-  - **「最近一圈」用 Chebyshev 理论距离,不按绕墙的路径距离**(直接算坐标差,不是网格最短路)。并列**一律判失败**而不是自动 tie-break——任何自动选择都会把一个设计歧义悄悄定死。四方最近一圈的**并集**须由完整的四重轨道构成,那是「四方初始条件对等」可判的那一句;逐方判会误判内圈高危矿(每方各拿一个,一方的最近圈不是整条轨道)。
-  - **矿路红线用八向最短路(墙不可通行),与上面那条刻意用不同的尺,不许顺手统一**。两把尺量的根本不是同一件事:红线问「走过去要多少格」,归属问「声明的最近与坐标上的最近是否一致」。红线若也用理论距离,就量不到墙——它判不出「墙把矿路拉长了」,而那正是这条红线存在的理由(采集往返随路长放大),一张矿摆在隔壁、中间隔一道墙绕路很远的图会被放行。归属若反过来改成路径距离,改一堵墙就可能改掉某家的开局矿归属,于是「迭代这张图」变成「每加一堵墙重验四条归属」的排雷——点位归属是**与墙正交**的设计维度,只有理论距离下才成立。矿摆得远不一定是错的,矿走不到才一定是。
-  - **两把尺并存是有意的设计,不是过渡状态**;当前这几张真图在两把尺下结论一致(路径不因墙拉伸),所以换尺对它们的零成本**不是**「这把尺无关紧要」的证据——差别只在刻意把矿路绕远的图上才显形。
-  - **风格由墙判,不引入自报的 `style` 字段**:一张标着「开阔」而布满墙的图必须挡住。开阔/廊道/要塞只是描述性标签(gdd §4)。
-  - **Jaccard 上限是按一道缝定的**:真图两两之间的实测相似度,与「同风格只挪动一处结构」这类最像真实手误的探针之间留着一道缝,阈值就落在这道缝里。**放宽要有理由**,否则这条断言会在第一次压力下退化成摆设。
-
-  **红线与上限的取值归校验器的具名常量**,本文档不复制;当初量到的数字与负对照探针在那些常量的头注里——要让日后想改阈值的人先看见它们。
-- **变体槽位的元素形状已定稿**:一条**完整四重旋转轨道的 4 个坐标对**。类型侧是定长 4 元组、schema 侧是 `minItems/maxItems: 4` 加坐标对形状,map-lint 只再判「这 4 格是不是同一条轨道」——**四重对称这条不变量因此从运行时断言挪进了类型层**。取 4 元组而不是「一个代表元坐标」或「一个带语义字段的对象」,理由写在 `MapVariantSlot` 的头注里,那处裁法的家在那里,本文档不复述。
-- `variantSlots` 是**静态候选轨道清单**:清单在地图 JSON 里,种子只决定从候选里选中哪些填(§7.3)。它**不是**某个种子上实际填上的那几条——读成后者会以为清单的大小随种子变,而那会直接推翻「地图 + 种子 → 地形是纯函数」。槽位不得压点位及其八邻域、不得压初始落点、不得与地形里已有的墙格重叠,三条都是跨字段判据,归 map-lint。
+- **跨字段自洽**(terrain 行长、点位不越界、四重对称)JSON Schema 表达不了,归 map-lint。
+- **map-lint 分两层**:单图层(四重旋转对称、点位不重叠且不在墙上、变体槽位是合法轨道);池层(地图数下限、池内边长一致、每方开局恰好拥有家附近**最近的一圈**资源点、家门到最近自家矿的**矿路红线**、两两墙格相似度上限)。
+  - 「最近一圈」用 **Chebyshev 理论距离**,并列**一律判失败**而不是自动 tie-break(任何自动选择都会把设计歧义悄悄定死)。
+  - 矿路红线用**八向最短路**,与上面刻意用不同的尺:红线问「走过去要多少格」,归属问「声明的最近与坐标上的最近是否一致」。**两把尺并存是有意的设计,不是过渡状态。**
+  - 风格由墙判,不引入自报的 `style` 字段;红线与相似度上限的取值归校验器的具名常量。
+- **`variantSlots` 是静态候选轨道清单**,不是某个种子上实际填上的那几条;槽位不得压点位及其八邻域、不得压初始落点。
 
 ### 7.3 种子的用途
 
-规则集本身无对局内随机过程,故种子驱动**地图变体**:**候选轨道清单在地图 JSON 里**(§7.2 的 `variantSlots`,静态数据),种子只决定从候选里选中哪些填上墙,以确定性方式(整数 LCG)填充,保持四重对称与点位布局不变。变体只做装饰性微扰,不计入风格多样性(gdd《地图变体》)。地图坐标与槽位设计已定稿并落库(`maps/`);**变体是否参与策略决策由 gdd《开放项》#6 裁决**,本节只管「种子怎么选出候选并填墙」这件事。
+规则集本身无对局内随机过程,故种子驱动**地图变体**:清单在地图 JSON 里,种子只决定从候选里选中哪些填上墙,以确定性方式(整数 LCG)填充,保持四重对称与点位布局不变。变体只做装饰性微扰,**不参与策略决策**(裁决见 [gdd §8](./gdd.md) 记录 #12)。
 
-### 7.4 冻结脚本存档(`archive/<modelSlug>/<runId>/`)
+### 7.4 冻结脚本存档
 
 ```
-script.ts      # 定版源码,一字不改(FR-6 AC1)
-script.js      # 由 gen 包在定版前用 tsc 编译为 script-mode JS;文本 + sha256 入 meta.json
-meta.json      # 模型名、模型版本/快照标识、生成日期、协议迭代轮数、完整 prompt(逐轮)、
-               # 生成日志、ruleset 版本、校验结果、tsc 版本、script.js 的 sha256、sandbox-runtime hash
+archive/<modelSlug>/<runId>/
+  script.ts      # 定版源码,一字不改
+  script.js      # 定版前用 tsc 编译为 script-mode JS;文本 + sha256 入 meta.json
+  meta.json      # 十一项必填 + 可选的 optimization / selection
 ```
 
-- 编译责任在 gen 包(定版前完成),engine 不引入 tsc(§2.2.8)。
-- `meta.json` 的十一项字段的形状家在 `packages/schema/src/archive-meta.ts`(类型与 JSON Schema),**读入端校验已接线**:`modelwar match` 装载时逐座位调 `validateArchiveMeta` 判缺档与元数据完整性。形状不再改,生成管线落地时**只填值、不改形状**(真要改字段是一次有意的变更,像改一个错误码名那样)。统一两轮优化就是这样一次有意的形状变更：在十一项必填冻结之外追加第十二个**可选**键 `optimization`（跨进程候选契约，见 §12 #12）；旧档无此键继续通过。选拔另追加可选 `selection`；完整形状与版本归 `schema/selection-plan.ts`。
-- **runner 启动即校验元数据完整性**,缺档**报错退出**(FR-6 AC2,不跳过)。**这里的「runner」指本 feature 的那个进程——第一个执行脚本的进程**(即 `modelwar match` 的装载段),不是赛季调度器 `runner` 那个包;赛季调度复用同一条校验路径,不复写。不消歧的话「runner」两个包都算。
-- **写盘原子、一跑一目录**:`script.ts` + `script.js` + `meta.json` 先在临时目录组装,冻结期校验(编译步骤 + `run-validate-script.ts --phase freeze --max-bytes <rulesets 取值>`)全过,才 rename 到 `archive/<modelSlug>/<runId>/`;目标已存在(秒级 `runId` 撞车)即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量,§7.1 的缺档判据不会被半截产物误触。`runId` 是生成时间戳,旧目录不删——这就是「定版副本不可变」的落地方式。
-- **协议轮数与 prompt 链**:`meta.protocolRounds` 继续记录**实际收敛模型响应总轮数,含初次生成**,不填优化轮数或阶段上限;`meta.prompts` 逐条记该调用**完整发出**的 prompt 文本,长度与 `protocolRounds` 相等(读入端已断言,§2.2.5)。`generationLog.round` 也按全程实际调用序号递增,不随优化阶段重置。默认流程的配置上限与实际总数沿原口径;opt-in 的每阶段上限、诊断修复与两次事实回喂分别计量(§6.2),阶段与候选角色的跨进程关联接口见 §12 #12。传输层错误(429 / 5xx / 超时)与截断(`finishReason = length`)走退避**重试同一调用、不消耗协议轮数**,重试耗尽才另记一类失败。
-- **失败的模型不写 `archive/`**:跑满轮数仍未过校验、或传输重试耗尽的模型,只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + generationLog + 最终诊断 + 失败分类 `tsc` / `contract` / `transport` / `selection` + 已有候选描述),供报告侧(I)读成失败名单。`archive/` 下的**存档目录**只收已通过校验的冻结脚本(FR-5 AC2、FR-6);目录旁边可以并着两类旁挂文件——失败记录与试跑观测——它们都不是存档,装载段一律不读。名字与语义见 CONTEXT 的《校验失败记录》,形状家归真源包(§2.2.5),`packages/schema/src/failure-record.ts`。
-- **试跑观测旁挂**:最终候选路径为 `archive/<modelSlug>/observed-<runId>.jsonl`;默认生成保持每次成功跑完试跑后整份重写,中途 infra 不写新内容。显式事实优化沿用逐实际调用轮号的 `observed-<runId>-round-<N>.jsonl` 旁挂,试跑前将本轮实际编译 JS 与源码 TS 不覆盖地保存为该路径加 `.candidate.js` / `.candidate.ts`,可凭原输入/日志和该 JS 重跑;不同候选及 archive 不相互覆盖。仅成功提交冻结脚本后将最终 JSONL 发布到兼容路径,不把各轮相加称为最终成绩。每行一个实际完成对局,保留旧四栏并增加可选 `actionFacts` 与 `terminalSummary`;预算早停只写实际完成的对局,不确定墙钟超时重跑不累加作废 attempt。类型、固定行动/错误码清单、前缀与闭合 JSON Schema 真源为 `packages/schema/src/trial-observation.ts`,写出侧为 `apps/cli/src/trial/observations.ts`,路径组装在 gen。旁挂不进三件套或 meta 十一键;观测 JSONL 写出或最终发布失败在试跑写出侧仅警告,不改变候选预算 verdict/试跑退出码,但 opt-in 生成编排在前两个有效候选缺少所需观测时按 §6.2 停止,不能把写出警告当作优化已经完成。用于事实可重放的独占 `.candidate.js` 保存失败或撞名则是生成基础设施错误,停止该生成并保留既有证据。触发与反馈见 §6.2。
-- **行动事实归属与完整性**:`actionFacts` 绑定当前编译 JS 的 `scriptSha256`、本对局 seed 与候选 seat,带版本、`complete`、`observedTicks/missingTicks`(仅候选实际被调度的执行 tick,淘汰后未调度不算缺失)、固定 `calls/errors` 与独立 `effects`。所有计数为非负安全整数,各行动错误总数不得超过调用数,`complete` 当且仅当 `missingTicks=0`;缺失不补零。gen 在本轮编译 JS 上独立计算 hash,核对对局下标对应固定 seed 与候选座位。读取拒绝未知版本、额外键、非法计数及归属违约,额外内容不得进入模型。
-- **终局事实采集与纯数据合同**:`terminalSummary` 只从引擎 `completed` 分支的真实 `result/finalState` 产生;CLI 在结束时读取四方点位控制、存活单位与淘汰记录,使用当局 ruleset 的权重和单位造价,并复用 runner `perMatchScores` 及实际名次积分表计算积分(§8.2),不从末次行动快照或累计读数反推。摘要保存版本、seed、结束原因、终局时间读数、实际使用的权重/单位造价/名次积分表与按座位排列的四方计分依据及结果;计分组成与存活兵种数量供复算,字段形状唯一归 `schema/trial-observation.ts`。schema 只交付类型、常量与 JSON Schema,不承载运行或评分行为;gen 只消费该数据,不 import engine/runner/replay 或 result 符号。正常游戏 `timeout`、提前获胜、合法淘汰及并列均有真实摘要;`uncertain-timeout`、执行故障或缺失终局不生成零分或完整结果。
-- **终局时间读数**:`terminalSummary.tick` 原样保存 `finalState.tick`,它等于 `runMatch.tickCount`,表示已执行并结算的 tick 数,也是下一 tick 的编号。它不是从零起算的最后结算 tick 编号,不得静默减一;`eliminatedAtTick` 则保存引擎记录的从零起算的淘汰 tick 编号,存活者为 `null`。真实终局中的淘汰编号应小于已执行 tick 数,二者不能直接当作同一种时间读数。
-- **终局摘要读取与安全投影**:CLI、gen 与报告读入端从共享 JSON Schema 派生形状校验,另核对对局下标/seed、四方座位顺序与实际候选/基准身份、候选旁挂归属及行动事实 seed/seat 关系。按摘要所保存的当局权重与造价复算存活单位总造价、各计分组成和领土分;名次核对 gdd §3.1 的胜利、存活/淘汰、领土分与并列关系,名次积分核对既有并列区间均分规则。未知版本、额外键、非法数值、不自洽结果或身份违约不作为可用摘要;gen 按协议错误停止,公开报告只披露白名单状态与缺失范围,不回显坏行或任意扩展字段。缺少摘要的旧观测保持未知,不补零、不追填历史。通过校验后逐项白名单投影,模型消息、读取回调、JSON 与 Markdown 出口共用该边界。
-- **候选与冻结身份**:共享 `archive-optimization.ts` 从 ArchiveMeta JSON Schema 派生读取形状,CLI 校验器、赛季准入与报告共用 `validateArchiveCandidateRelations`。优化阶段固定按原 stage0/1/2 和实际协议轮保存;旧优化档要求 stage2 JS=顶层 JS hash,新 selection 档要求完整复算胜者 JS=顶层 JS hash,并与优化阶段和环境身份一致。新档 CLI 对实际冻结 TS/JS 都量 hash;发布从胜者旁挂复制确切原字节,不重新编译较早 TS,同盘 rename 前检查冻结 TS/JS。失败无冻结身份;selection 失败保留三阶段候选及可选 `selectionFailure` 预定计划/TS/JS 身份,不伪造部分分数或胜者。阶段旁挂与兼容观测仍指向最后生成阶段,不能当作胜者观测。
-- **生成归档报告**:公共入口为 runner 的 `readArchiveReports` / `runArchiveReport`,返回对象本身即安全摘要,JSON、Markdown、读取回调及错误文本共用该边界。只投影固定参数键、能力状态枚举、已知停止码、非负安全整数 token 及共享 schema 验证的观测与候选身份;不透传任意旧日志中的 rawUsage/未知 token 值、请求头/证据来源自由文本、prompt/响应、provider 错误、失败 diagnostics/message 或坏行。未知停止文本只显示 `unknown` 状态,停止值不回显;失败只展示白名单分类与诊断条数。收敛用量完整合计和已记录小计/覆盖分别显示,全部尝试逐条列出,传输错误消费未知,不叠加两套读数作费用。transport 未收敛末行不是新增协议轮,其顶层用量/停止状态不展示。
-- **报告范围与预算**:显式 `--run-id` 标出本轮,其他记录为历史,不按目录最新项推断;未给标识时为未分轮。失败记录数不代表参赛失败模型数或当前资格,正式名册只引用成功冻结档。报告分别披露有效阶段数、不同 JS 数、每候选完整分母/均分/TS/JS/复用、胜者/理由、冻结字节状态和计划环境 hash。模型预算展示 §6.2 额度、实际收敛轮数、HTTP 尝试证据覆盖和未知消费;本地预算展示有效候选优化观测（不包含未记录无效候选/作废重跑总量）、选拔上限及完整证据证明的执行/复用场数;失败实际场数保持未知。新旧观测、行动事实完整性及终局摘要沿用本节各自判据;逐候选分开显示行动事实和真实终局计分依据/四方结果,缺失或不可用终局标为未知,不将行动采集不完整等同于没有合法终局。不合并候选读数、不补零、不并入正式成绩,新字段不追填历史。
-- 对局输入物化:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash)与产物——任意一个对局可凭 input.json 复算(FR-7 AC3、NFR-2)。哈希取每座存档的 `script.js` / `meta.json` 各一份与地图一份,**不含 `script.ts`**(复算认编译产物,定版源码的不可变由 gen 保证,FR-6 AC1);**座位由 `archives` 的下标承载**(下标即 `playerIndex`),轮换算法归赛季调度物化期,不进这份文件。
+- **十一项必填**(`packages/schema/src/archive-meta.ts` 是形状的家):`model`、`modelVersion`、`generatedAt`、`protocolRounds`、`prompts`、`generationLog`、`ruleset`、`validation`、`tscVersion`、`scriptSha256`、`sandboxRuntimeHash`。形状不再改,生成管线**只填值、不改形状**。
+- **runner 启动即校验元数据完整性,缺档报错退出**(不跳过)。这里指第一个执行脚本的进程(装载段),不是赛季调度器那个包。
+- **写盘原子、一跑一目录**:三件套先在临时目录组装,冻结期校验全过才 rename 到目标目录;目标已存在即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量。`runId` 是生成时间戳,旧目录不删——这是「定版副本不可变」的落地方式。
+- **失败的模型不写 `archive/`**:只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + 生成日志 + 最终诊断 + 失败分类),供报告侧读成失败名单。
+- **试跑观测旁挂**(`observed-<runId>.jsonl`)与候选旁挂不覆盖地保存各阶段产物;**行动事实**绑定当前编译产物 hash、本对局 seed 与候选座位,带版本与完整性标记,缺失不补零;**终局事实**只从真实 `completed` 终局产生,由 CLI 用当局规则集权重与单位造价计算,不从末次行动或累计读数反推。
+- **对局输入物化**:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + 规则集版本 + 各文件 hash)。哈希取每座存档的 `script.js` / `meta.json` 与地图各一份,**不含 `script.ts`**(复算认编译产物);座位由 `archives` 的下标承载。
 
-### 7.5 回放 JSONL(`matches/<...>/replay.jsonl`)
+### 7.5 回放 JSONL
 
 ```
 第 1 行   {"type":"meta", schemaVersion, ruleset, runner, quickjsWasiVersion, sandboxRuntimeHash,
@@ -801,136 +415,96 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 末 行    {"type":"result", rankings, reason, territoryScores}
 ```
 
-- `schemaVersion` 由 `replay` 包 `CURRENT_SCHEMA_VERSION` 常量承担,跨版本兼容性以它为准(FR-9 AC2)。**它是回放文件格式的版本,不是行的形状**:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包,`replay` 包只做编解码、不再声明行的类型(§2.2.5、§3.1)。这一格曾经有两个家(§2.2.5 说形状在真源包、§3.1 说行格式取自 `replay` 包),按「每个事实只有一个家」留在真源包。
-- **meta 行共十三栏,`runner` 是判别式**(取值 `"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,缺这一栏就把可读性押在「五个沙箱栏同时为空」这个约定上。**`runner === "stub"` 时五个沙箱栏(`quickjsWasiVersion` / `sandboxRuntimeHash` / `wasiClock` / `wasiRandomFill` / `wasiTimezoneOffset`)全为 `null`**(不是空串、不是 `0`——「未发生」与「恰好是空串」要能区分),故桩回放五栏皆 `null`;`runner === "quickjs"` 时五栏都是非空字符串(十进制毫秒 / 十六进制字节不带前缀 / 十进制分钟),填错在类型上编译不过(判别联合)。
-- 每 tick 记录足以绘制完整画面的状态:点位归属、占领进度条、单位位置血量携带、玩家资源。
-- **events 事件流**(叙事战报的统一来源,**七种**):`first-contact`、`site-captured`、`unit-destroyed`(聚合)、`player-eliminated`、`economy-dead`(判定条件由 gdd《经济与生产》定义)、`exception`、`victory`。叙事战报生成器只消费 events,不重新解析状态;墙钟软限与内存压力是**观测行**(`observations.jsonl`),不进事件流、更不进 `stateHash`。
-- **异常详情读取**：与回放同目录的 `observations.jsonl` 可含 §5.3 的 `ExceptionLine`，读者按 tick/seat 关联展示。它独立于 replay schemaVersion 与哈希；旧回放的 `exception` 事件仍表示异常阈值出局，不新增每 tick 异常事件，不推测历史缺失详情。
-- **`first-contact` 的判据是观测量,不是规则参数**:任意敌对单位 Chebyshev ≤ 2、**整局第一次**一条,故不进 `rulesets/v1.json`(它不判胜负、不判合法、不影响移动,只给事件流标一个时刻)。判据的定性半句在 gdd 首触那一段(「首触判据吃的是接近度」),**给予它的精确定义是 gdd 那一侧的欠账**;引擎按该口径实现并在 `packages/engine/src/processor/steps/step2-movement.ts` 的注释里注明出处。
+- `schemaVersion` 由 `replay` 包的常量承担,跨版本兼容性以它为准。**它是回放文件格式的版本,不是行的形状**:行(meta / tick / result)的类型与 JSON Schema 归真源包。
+- **meta 行的 `runner` 是判别式**(`"stub" | "quickjs"`):报告要分开「桩跑的」与「真沙箱跑的」两批读数,故 `runner === "stub"` 时五个沙箱栏全为 `null`(不是空串、不是 0),`runner === "quickjs"` 时五栏都是非空字符串。
+- 每 tick 记录足以绘制完整画面的状态:点位归属与占领进度、单位位置血量携带、玩家资源。
+- **events 事件流**(叙事战报的唯一来源):首次接触、点位易手、单位阵亡、玩家淘汰、经济死亡、异常、胜利。叙事战报只消费 events,不重新解析状态;墙钟软限与内存压力是**观测行**,不进事件流、更不进 `stateHash`。
+- **`first-contact` 的判据是观测量,不是规则参数**:不进 `rulesets/*.json`(它不判胜负、不判合法、不影响移动,只给事件流标一个时刻)。
 
-## 8. runner 与排名概要设计
+## 8. runner 与排名
 
 ### 8.1 对局枚举与座位轮换
 
-- 输入:`season.yaml`(本地配置,不入库;参赛存档引用列表、地图池、种子数 K、并发度、`rankPoints`、ruleset 版本、根种子 `masterSeed`)。字段、取值域与默认值的真源 = `packages/runner` 的 zod season schema(`src/season-config.ts`);格式范例见仓库根 `season.example.yaml`。**本节只写字段意图,不复制 schema 细节**。
-- 枚举:全部 4 人组合 × M 地图 × K 种子(srs FR-7 AC1);种子值 = 确定性函数(根种子、组合、地图、序号),同一对局的输入物化对全体参赛者一致。正式评测共用同一赛季配置与派生规则,不按模型或候选表现挑选。
-- **优化/选拔种子隔离**:赛季完成配置和归档解析后、任何 input 写出/续跑/spawn 前,核对正式评测计划全部 seed 与各参赛归档实际记录的优化试跑集合及可选选拔集合无交集,存在交集即明确拒绝,包括用户所选根种子派生后导致的碰撞;不同根种子不自动证明无交集。比较按 `seed % 2^31` 归一化（`101 + 2^31` 与 `101` 同一随机源初态）。校验不静默替换 seed,不改变原座位轮换与对局数量。配置接线：season 可选 `evaluationSeeds`（与 `seeds` 等长，不改对局规模；省略时沿用 masterSeed 派生）。无 `optimization` 的纯旧档沿用旧行为；有优化但无 `selection` 的旧档只检查其记录的优化 seeds，不从目录推测参加过新选拔。
-- **座位轮换**:把组合内 4 名参赛者按 slug 升序为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4` 循环移位。**精确均摊要求 `M × K ≡ 0 (mod 4)`**(地图数通常为 3,故 K 需为 4 的倍数;K 具体取多少由 gdd《开放项》#6 的裁决给出,本节只给均摊条件);不满足时**直接报错**(不静默产生偏移清单)。分配对全体一致且完全确定(FR-7 AC1)。
-- 并发:进程池语义的对局子进程池,并发度默认 `min(cpus, 8)`;对局之间互不干扰。
+- 输入:`season.yaml`(本地配置,不入库)。**字段与取值的真源是 `packages/runner` 的 season schema**,本文不复制。
+- 枚举:全部 4 人组合 × M 地图 × K 种子;种子值 = 确定性函数(根种子、组合、地图、序号),同一对局的输入物化对全体参赛者一致。
+- **座位轮换**:把组合内 4 名参赛者按 slug 升序为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4` 循环移位。**精确均摊要求 `M × K ≡ 0 (mod 4)`**,不满足时**直接报错**(不静默产生偏移清单)。分配对全体一致且完全确定。
+- **优化/选拔种子隔离**:赛季配置与归档解析后、任何 input 写出 / 续跑 / spawn 前,核对正式评测计划的全部 seed 与各参赛归档实际记录的优化试跑集合及可选选拔集合无交集,存在交集即明确拒绝(含用户所选根种子派生后导致的碰撞);**不静默替换种子**。比较按 `seed % 2^31` 归一化。
+- 并发:对局子进程池,默认并发度 `min(cpus, 8)`;对局之间互不干扰。
 
 ### 8.2 排名(名次积分制)
 
-- 名次由 gdd《胜利与淘汰》的排序规则决定(引擎在 `outcome` 中给出),`runner:ranker` 只做**纯函数记账**:名次分向量由赛季配置给出(`season.yaml` 的 `rankPoints`,默认 `[3,2,1,0]`,**不进 `rulesets/`**——名次积分属于调度计分配置,不属于 rules-vN 的对局规则契约);并列名次分 = 并列名次区间分值之和 ÷ 并列人数(并列第 2 → (2+1)/2 = 1.5)。
-- 赛季总分 = Σ 对局得分;对局均分排名,只保证主排名(FR-8 AC1)。**Elo 不在 v0 内**。
+名次由规则层的排序规则决定(引擎在终局结果中给出),ranker 只做**纯函数记账**:名次分向量由赛季配置给出(`rankPoints`,**不进 `rulesets/`**——名次积分属于调度计分配置,不属于对局规则契约);并列名次分 = 并列名次区间分值之和 ÷ 并列人数。赛季总分 = Σ 对局得分;主排名按对局均分。
 
-### 8.3 报告输出(`runs/<runId>/`)
+### 8.3 报告输出
 
 | 产物 | 内容 | 消费者 |
 |---|---|---|
 | `report.md` | 排名、对局均分、代表性对局叙事、校验失败名单、规则版本标注 | 人类 / 自媒体素材 |
-| `report.json` | 每个对局的输入引用 + 名次 + 分数 | 机器复算(NFR-2 AC) |
-| `narrative/<对局>.md` | 从 events 生成的叙事战报(时间线:首触、易手、淘汰、经济死亡、终局) | 自媒体文案 |
+| `report.json` | 每个对局的输入引用 + 名次 + 分数 | 机器复算 |
+| `narrative/<对局>.md` | 从 events 生成的叙事战报 | 自媒体文案 |
+
+生成归档报告是另一件事:它只读冻结脚本与失败记录的摘要,区分生成阶段、选拔胜者与实际冻结身份,披露证据覆盖;**不透传 prompt / 响应、provider 错误体、失败诊断原文与任意自由文本**。
 
 ### 8.4 对局异常的处理
 
-进程崩溃(engine bug)或硬超时 → 标记 `engine-crash` / `nondeterministic-timeout` 并重跑一次;再触发则记入报告的**问题清单并排除出排名**,不静默丢弃(FR-7 AC2)。内存超限判负在报告中披露。
+进程崩溃(engine bug)或硬超时 → 标记后**重跑一次**;再触发则记入报告的**问题清单并排除出排名**,不静默丢弃。内存超限判负在报告中披露。
 
-## 9. CLI 设计(统一入口 `modelwar`)
+## 9. CLI(统一入口 `modelwar`)
 
-| 命令 | 模块 | 说明 |
+唯一 bin 在 `apps/cli`;`index.ts` 只做路由,各子命令动态加载;库包不含 `bin`。
+
+| 命令 | 承载包 | 说明 |
 |---|---|---|
-| `modelwar gen --config models.yaml [--root <仓库根>] [--model <slug>] [--score-source-feedback] [--select-best-candidate]` | gen | 生成并冻结脚本;根目录解析同 `match`(默认 cwd),`--config` 相对根;`--model` 只跑一个模型。显式统一事实优化与独立阶段预算见 §6.2。gen 启动时若 `<root>/.env` 存在即 `process.loadEnvFile()`,凭据只经 `process.env[credentialEnvVar]` 读 |
-| `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告。根目录解析同 `match`(默认 cwd),`--config` 相对根;对局阶段**不联网**,故**不加载 `.env`**(与 `gen` 相反);同 `outputDir` + 同配置再跑即断点续跑(已完成局跳过 spawn) |
-| `modelwar report [--root <仓库根>] [--model <slug>] [--run-id <本轮标识>] [--json]` | runner | 只读生成记录摘要:实际协议轮数、逐轮/合计模型调用耗时、带来源的 token 读数与候选试跑观测;默认 Markdown,`--json` 为机器读数。不联网、不加载 `.env`,不启动赛季 |
+| `modelwar gen --config models.yaml [--model <slug>] [--score-source-feedback] [--select-best-candidate]` | gen | 生成并冻结脚本;只有它联网、只有它读 `.env` 里的凭证 |
+| `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告;**对局阶段不联网**;同配置再跑即断点续跑 |
+| `modelwar report [--model <slug>] [--run-id <id>] [--json]` | runner | 只读生成记录摘要;不联网 |
 | `modelwar match <input.json>` | engine | 执行一个对局(runner 与调试都走这条路径) |
-| `modelwar replay <replay.jsonl>` | apps/cli → `replay` | 终端 ASCII 回放,单步/暂停;只读回放,**不依赖 engine** |
-| `modelwar verify <replay.jsonl>` | apps/cli → engine + `replay` | 按 input.json 重新执行,逐 tick hash 比对(CI 调用);不起子进程 |
+| `modelwar replay <replay.jsonl>` | replay | 终端 ASCII 回放,单步/暂停;只读回放,**不依赖 engine** |
+| `modelwar verify <replay.jsonl>` | engine + replay | 重新执行并逐 tick hash 比对 |
 | `modelwar map-lint <maps/>` | apps/cli | 地图对称性与合法性校验 |
 
-> 唯一 bin 在 `apps/cli`;`index.ts` 只做路由,各子命令 `await import()` 动态加载。库包不含 `bin`。
-
-### 规范名册启动
-
-在已安装依赖与配置凭据的仓库根构建 CLI,再对 `models.yaml` 当前完整名册统一运行;不加 `--model` 过滤。名册、渠道、能力证据、推理控制和输出上限真源只有该配置文件,此处不复制各模型取值。下面生成命令会调用模型,由操作者显式启动;普通加载、报告和自动化测试均不探测渠道。
-
-```sh
-pnpm --filter @model-war/cli run build
-node apps/cli/dist/modelwar.mjs gen --config models.yaml --score-source-feedback --select-best-candidate
-node apps/cli/dist/modelwar.mjs report --run-id <本次生成runId>
-node apps/cli/dist/modelwar.mjs report --run-id <本次生成runId> --json
-```
-
-`--score-source-feedback` 控制统一事实优化;`--select-best-candidate` 控制完成全部阶段后的独立选拔,两者缺省都关闭。只启用前者仍定版最后有效阶段,只启用后者在配置读取/首次请求前拒绝。规范比较须对整个名册同时启用二者,共享生成机会、基准、地图和沙箱预算;渠道未知能力如实保留,离线测试通过不证明真实渠道执行了 high。报告 `--run-id` 仅标出本轮与历史,不删除历史记录;不指定时全部未分轮。
-
-正式赛季 participants 只填成功发布的 `archive/<slug>/<runId>`，不得引用候选旁挂或失败记录。优化 seeds 供事实反馈,选拔 seeds 供定版比较,正式 seeds 供横向评测;隔离由 §8.1 准入执行。选拔失败的模型不参赛,不能以其历史成功档代替本轮结果后宣称同批完成。
-
-### 退出码表
-
-**全 CLI 一张表**(不只 `match` / `verify`):调度器只认退出码,细节另在 stderr 给一行 JSON。
+**退出码表**(调度器只认退出码,细节另在 stderr 给一行 JSON):
 
 | 码 | 含义 |
 |---|---|
-| `0` | 正常。对局无论胜/负/超时/淘汰,只要产出一份合法 `result` 行即是 0 |
-| `1` | 用法错或装载期校验错(缺参、读不到文件、输入/存档/地图/规则集未过校验、沙箱字节读不到) |
-| `2` | 引擎崩溃(未捕获异常、确定性断言失败、WASM trap) |
-| `3` | 不确定超时(`nondeterministic-timeout`;墙钟硬超时) |
-| `4` | 其它内部错(如产物写盘失败) |
+| 0 | 正常。对局无论胜/负/超时/淘汰,只要产出一份合法 `result` 行即是 0 |
+| 1 | 用法错或装载期校验错 |
+| 2 | 引擎崩溃(未捕获异常、确定性断言失败、WASM trap) |
+| 3 | 不确定超时(墙钟硬超时) |
+| 4 | 其它内部错(如产物写盘失败) |
 
-> 「规则内结果一律 0」:一份完全正常的对局可以带着异常出局的席位,给它非零码会让赛季按 §8.4 的崩溃条款误判重跑并剔除。真源常量在 `apps/cli/src/exit-codes.ts`。
+> 「规则内结果一律 0」:一份完全正常的对局可以带着异常出局的席位,给它非零码会让赛季按 §8.4 的崩溃条款误判重跑并剔除。
 
 ## 10. 非功能落地
 
-### 10.1 性能(NFR-3)
+### 10.1 性能
 
-预算分解:以算例 75 个对局 × 1500 tick ≈ 11 万 tick 计。单 tick 成本 = 4 次快照构建(单次拷贝进 VM) + 4 次串行 VM 执行 + 结算(≤ 数百对象);宿主↔VM 跳边界次数为 O(1)/tick,主要成本在快照拷贝与 VM 执行。若超标,优化优先级:**先测沙箱开销**(快照改按需字段拷贝)→ 再调对局子进程并发度。任何优化不得改变结算结果(stateHash 回归守护)。
+单 tick 成本 = 四次快照构建 + 四次串行 VM 执行 + 结算;宿主↔VM 跳边界次数为 O(1)/tick,主要成本在快照拷贝与 VM 执行。若超标,优化优先级:**先测沙箱开销** → 再调对局子进程并发度。**任何优化不得改变结算结果**(stateHash 回归守护)。
 
-**NFR-3 的对局平均墙钟上限 X(取值在 srs,规则在此)。** 单局墙钟的口径:同机、**单进程**、逐局取 `runMatch` 一次调用的墙钟,执行体是同一批**入库基准脚本**(`benchmarks/<cell>/script.js`,≥2 份),≥30 局,报 p50 / 均值 / 最坏三栏。**X = 均值的两倍(即均值 + 一倍余量),向上取整到 100 ms**——这是**物理量轨**的留宽口径(「余量分轨而非统一系数」见 §5.3),不拿最坏值当口径。它只回答「整轮排期时单局的平均成本上限」:既**不含**并发度与子进程启动开销(runner 的事),也**不是**单 tick 上限(墙钟硬超时,§5.3);单局墙钟的分布读数(K 的 10 场基准 + 本节的 ≥30 局采样)由探针与 `check:limits` 现场重算。**可执行复算**:`check:limits`(按需→夜间)重跑这条并把开放项 #6/#7 的两条停止断言一起判;要留读数就加 `--readings-out=<路径>`(自选路径,建议 `reports/`,该目录不入库),机器配置随同一份文件落地。
+**单局平均墙钟上限 X 的取值规则**:同机、单进程、入库基准脚本、≥30 局,报 p50 / 均值 / 最坏三栏;**X = 均值的两倍,向上取整到 100 ms**。它是物理量轨的留宽口径,不是单 tick 上限(那是墙钟硬超时),也不含并发度与子进程启动开销。可执行复算:`check:limits`。
 
-### 10.2 可维护性(NFR-4)
+### 10.2 可维护性
 
-- 数值与逻辑分离:`rulesets/` + `maps/`,改数值零代码改动。
-- 包间仅文件交换(§3.2);gen 与 engine 无任何运行时耦合,架构审查以 import 图为准。
+数值与逻辑分离:`rulesets/` + `maps/`,改数值零代码改动;包间仅文件交换(§3.2);gen 与 engine 无任何运行时耦合,架构审查以 import 图为准。
 
-### 10.3 可信性(NFR-2)
+### 10.3 可信性
 
 复算链:`report.json` → `input.json`(存档引用 + 地图 + 种子 + 座位)→ `modelwar match` 重跑 → 逐 tick `stateHash` 与末行 `result` 与原 `replay.jsonl` 比对。全程不需要模型 API 与网络。
 
-## 11. 需求追溯矩阵
+## 11. 验收落点
 
-| 需求 | 设计承接 |
+验收不写在需求编号里,而是写在**能被跑出来的东西**上:
+
+| 验收面 | 落点 |
 |---|---|
-| FR-1 引擎 | §4(全节),AC2 → §7.2 map-lint |
-| FR-2 确定性与回放 | §4.6、§7.5、§9 verify |
-| FR-3 脚本接口 | §4.2、§4.5、§6.1 |
-| FR-4 沙箱与预算 | §5(全节) |
-| FR-5 生成管线 | §2.1 离线侧、§6.2/§6.3、§7.4 事实反馈合同与投影 |
-| FR-6 可追溯存档 | §7.4 |
-| FR-7 赛季调度 runner | §8.1、§8.4 |
-| FR-8 排名与报告 | §8.2、§8.3、§7.4 生成归档报告 |
-| FR-9 CLI 回放查看器 | §9、§7.5 schemaVersion |
-| FR-10 规则文档 | §6.1、§7.1 |
-| NFR-1 确定性 | §4.6、§5.3 |
-| NFR-2 可信性 | §10.3 |
-| NFR-3 性能 | §10.1 |
-| NFR-4 可维护性 | §3.2、§10.2 |
+| 确定性 | 属性测试(重放一致性、序列化往返)+ `modelwar verify` + 夜间重放扫描 |
+| 四方对等 | 属性测试(四重旋转对称)+ `modelwar map-lint` |
+| 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
+| 沙箱与预算 | 沙箱裁决单测 + 预算结构门禁 + 预算探针复核 |
+| 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
+| 可追溯与复算 | 存档元数据读入端校验 + 对局输入物化 + 报告双轨 |
+| 确定性 | 属性测试 + `stateHash` 断言(禁浮点门禁是其中一轨) |
 
 ## 12. 开放项(工程侧)
 
-规则侧的开放项(数值终值、地图坐标、机制取舍)见 gdd《开放项》,此处不重复。
-
-事实优化的循环、计数与种子边界见 §6.2/§8.1;跨进程候选保存和报告关联已收口于下表 #12。
-
-| # | 项 | 备注 |
-|---|---|---|
-| 2 | 预算参数终值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限) | **已收口**:八键已按「读数 × 系数」标定为终值并就地写入 `rulesets/v1.json`(不新开版本,ADR-0009),面向模型的数值表随之渲染成数字。判据文本见 §5.3「标定判据」;读数与推导由探针 `pnpm run probes:budget`(三类预算探针 + 诚实侧基准)现场重算,读数落 `runs/budget-calibration`、不入库。本项关闭。 |
-| 3 | 座位轮换的效果验证 | 用基准脚本对局统计各座位胜率，验证偏置被摊平（§8.1）。判据只吃基准脚本（cell-a / cell-b / cell-c 两两对打，cell-a vs cell-b 优先；同脚本对称局只作 harness 校准基线，不进三档定档；真模型脚本只作补充观察，不进判据）。分母走混合口径：赛季 60 局每局恰产出一个获胜座位，混合后每座位 n=60（Wilson 95% 半宽约 ±10.7pp）；单人每座位 n≈12（±22pp）只能看方向，不定档。主判据为最大 seat 胜率落差 + 各座位 Wilson 95% 区间：<5% 干净通过（备注线）；<10% 通过；10–15% 灰区触发补矩阵；>15% 判摊不平走回流（规则侧动作另票，本图只写触发条件；补矩阵规格见票「灰区补矩阵」，hld 只留触发线）。补测触发线有两条，任一命中即触发：①落差落灰区；②任一座位 Wilson 下限 <20%（样本不够线）。10% 线是决策阈值不是检测阈值（n=60 对 10pp 真偏置功效约五成，灰区常态化是预期内）。chi-square p 值如报告仅作括号备注，不设红线、永不做绿灯。前置条件：同脚本对称校准须先拉平，否则判 harness 自身有偏，先修线、本判据暂不生效。（以上判据文本由票「摊平阈值与判据文本拍板」原样回流，表格换行压成单行，文字未动。）**已收口（红档触发交回）**：基准 H 异质 12 局最大落差 58.3%（75.0%−16.7%）>15% 判红；两条触发线全中（seat1/2/3 Wilson 下限 13.8%/8.9%/4.7% 均 <20%）。S 对称校准 4 局胜席分散但半宽 ±30pp 量级判不动，前置闸既未被硬证据触发、也未被证拉平。真模型 60 局落差 51.7% 只作补充观察，不进判据。触发条件交回 gdd §3.3（指针 `docs/gdd.md:93` 该行旧注），本图不动机制。本项关闭。 |
-| 5a | TypeScript 7.0 GA 时点 | **已收口**:7.0.2(2026-07-08 GA,Go 实现,`tsgo` 名已取消)为精确锁版,见 ADR-0002 锁定版本表。本项关闭。 |
-| 5b | 类型感知 lint 的可用性与耗时 | **已收口**:oxlint-tsgolint 已 stable(oxlint 1.86.0 `--help` 无 experimental 标记),进 `check:types` 不再并行试跑;版本耦合形状 `7.0.<tsPatch><golintPatch>` 由 `coupling` 断言脚本强制(§2.2.3)。耗时见 §2.2.7 实测表(只此一处,不在此复述)。本项关闭,后续只剩随仓库规模重测。 |
-| 5c | oxfmt 0.x 风险 | **已收口为接受风险**:官方称 JS/TS 已 100% 通过 Prettier conformance,未兑现的只是 1.0 发布;由 caret + lockfile + `oxfmt --check` 门禁兜住(ADR-0002)。**不设降级到 Prettier 的退路**。本项关闭。 |
-| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**已收口(停止条件归 L,本票据此收成可执行断言)**:深拷贝+深 freeze 与纯 clone 的差值,按「每 tick 四席各一次」换算成整局拷贝税,占**同一局墙钟 < 10%** 即停——超了即红,**不做零拷贝重构**(合并深 freeze 与 stateHash 规范化两次遍历会踩 `snapshot/traversal-independence.test.ts` 钉住的禁令)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(占比 **4.96%**)与测法由 `check:limits --readings-out=<路径>` 现场重算。**本项关闭** |
-| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**已收口(停止条件归 L,本票据此收成可执行断言)**:一个赛季(算例 75 局)的回放总量 **< 1 GiB**,且夜间一遍读完 **< 10 min**——超了即红,**不做压缩 / 增量回放**(真超的那天另开优化节点)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(单季 **171.1 MiB** / 一遍 **0.140 s**)与测法由 `check:limits --readings-out=<路径>` 现场重算。**本项关闭** |
-| 8 | 沙箱行为五条结论的复验 | **已收口**:五条各有可执行探针(`pnpm run probes:sandbox`,输出落盘 `reports/sandbox-probes/`、不入库),2026-10-06 按 `quickjs-wasi@3.6.2` 复验并写回 §5.0;`check:quick` 的版本耦合断言(`pnpm run coupling:quickjs`)在根钉版一改即红并指向复验脚本与 §5.0。本项关闭。 |
-| 9 | 地图与经济等效命题的复验 | 判据、复验结论与重推窗口的触发条件归 gdd §8 记录 #8/#13。 |
-| 10 | `match` 的 spawn / 进程池 / 重跑编排 | 由 `packages/runner` 的 `scheduler` 承担,进程与异常重跑边界见 §8.4。 |
-| 11 | 赛季输入与回放接线 | 真实模型赛季验收归 srs §4;对局输入物化、重跑与剔除归 §8;回放读入端见 `packages/replay/src/parse.ts`。 |
-| 12 | 统一事实优化的跨进程候选保存与报告关联接口 | **已收口**：候选旁挂、条件冻结身份、新旧共享消费者与生成报告边界归 §7.4；循环与独立选拔归 §6.2/§6.3，正式 seed 准入归 §8.1。历史 two-feedback 关系在无 selection 的旧档保持；新增 selection 不改写阶段身份。 |
+规则侧开放项与决策记录见 [gdd §8](./gdd.md);工程侧决策见 [docs/adr/](./adr/)。已收口的开放项(预算终值标定、类型感知 lint 的可用性、沙箱行为复验、快照拷贝粒化、回放体积)其结论已落进代码与门禁,不再单列条目;**重新打开的条件写在对应 ADR 与门禁里**。

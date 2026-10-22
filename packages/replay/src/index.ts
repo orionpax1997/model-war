@@ -104,7 +104,7 @@ export { HOST_BRIDGE_PREFIX } from "@model-war/schema";
 export { FORBIDDEN_GLOBAL_NAMES, SANDBOX_INJECTED_API_SYMBOLS } from "@model-war/schema";
 
 /**
- * 回放**文件格式**的版本(hld §7.5 末段)。跨版本兼容性以它为准(FR-9 AC2)。
+ * 回放**文件格式**的版本(hld §7.5 末段)。跨版本兼容性以它为准。
  *
  * 它是格式的版本,不是行的形状:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包
  * 所有(ADR-0003),本包只做编解码。取值从 1 起,格式发生不兼容变更时递增。
@@ -116,7 +116,7 @@ export { renderReplay } from "./render.js";
 /**
  * 读入端:`readLinesOf` 逐行解析(行仍是 `JsonValue`),`parseReplay` 再按 `type` 收窄成
  * `ReplayLine`。`ReplayReadError` 是它俩的拒跑标记,导出是为了让消费者 `instanceof` 认出
- * 「这是坏回放,不是内部错」。渲染器与 NFR-2 复算链走同一条路径。
+ * 「这是坏回放,不是内部错」。渲染器与复算链走同一条路径。
  */
 export { parseReplay, readLinesOf, ReplayReadError } from "./parse.js";
 

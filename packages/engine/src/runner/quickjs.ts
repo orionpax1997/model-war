@@ -1,5 +1,5 @@
 /**
- * `QuickJsRunner`:执行器缝的**真实沙箱**适配器(票 03 的第一枚 tracer bullet)。
+ * `QuickJsRunner`:执行器缝的**真实沙箱**适配器。
  *
  * ── 缝不变:仍然恰好两个方法 ──
  *
@@ -46,7 +46,7 @@
  * `pumpJobs` 分成两步暴露(而非在 `drainIntents` 里一把梭),正是为了给这条反例留一个
  * 能弄红的入口:见 `quickjs.test.ts`。
  *
- * ── 双计数与墙钟(票 07/09):宿主 authored 的纯整数计数 + 抽样读钟 ──
+ * ── 双计数与墙钟(hld §5.3):宿主 authored 的纯整数计数 + 抽样读钟 ──
  *
  * 控制流事件计数用 `QuickJS.create({ interruptHandler })` 装一个宿主闭包计数器:WASM 侧每
  * `INTERRUPT_EVENT_GRANULARITY` 次控制流事件(循环回边/调用/返回)调一次,回调**每次只做整数
@@ -70,7 +70,7 @@
  *
  * 本 tick 的计数在进入下一 tick 时重置;`exceptionTicks` 却是跨 tick 单调递增、不清零的。
  *
- * ── 内存判据(票 08):读数,不是异常 ──
+ * ── 内存判据(hld §5.2):读数,不是异常 ──
  *
  * 判据锚定在宿主**可直接测量**的量上,与 guest 的异常可见性无关:guest 可以把内存超限转成的
  * 异常 `try/catch` 吞掉,那时宿主全程无感知——靠异常披露那条路是死的。所以每 tick 的次序是
@@ -110,7 +110,7 @@ import {
 
 export type { ActionTickFacts } from "./index.js";
 
-/** 冻钟的固定读数:十进制毫秒。三件套之一,取值是工程常量(见 spec《WASI 三件套与回放 meta》)。 */
+/** 冻钟的固定读数:十进制毫秒。三件套之一,取值是工程常量(见 hld §5.1)。 */
 export const WASI_CLOCK_MS = 1_700_000_000_000;
 
 /** 时区偏移:十进制分钟(UTC = 0)。三件套之一。`Date` 与 `getTimezoneOffset()` 由它决定。 */
@@ -138,7 +138,7 @@ export type QuickJsVmOptions = {
   readonly clockMs?: number;
   /** 时区偏移(分钟)。缺席取 `WASI_TIMEZONE_OFFSET_MINUTES`。 */
   readonly timezoneOffsetMinutes?: number;
-  /** VM 线性内存分配上限(字节)。缺席即不设上限(预算机制归票 07/08)。 */
+  /** VM 线性内存分配上限(字节)。缺席即不设上限(预算机制归 hld §5.3)。 */
   readonly memoryLimit?: number;
   /**
    * 控制流事件计数的上限(次/本 tick)。**只能在构造时装**:计数回调是 `QuickJS.create` 的选项,
@@ -148,7 +148,7 @@ export type QuickJsVmOptions = {
   readonly eventTickLimit?: number;
   /**
    * 单 tick 墙钟软限(ms)。缺席即本轨不启用(不读钟)。软限**只产一条 `wall-clock-soft`
-   * 观测、不判罚、不进回放**(spec《双重计数与墙钟》)。
+   * 观测、不判罚、不进回放**(hld §5.3)。
    */
   readonly wallClockSoftLimit?: number;
   /**
@@ -346,7 +346,7 @@ export type SandboxSession = {
   readonly runLoop: () => void;
   /** 把待处理 job 排空到不动点,返回执行数(0 = 干净)。 */
   readonly pumpJobs: () => number;
-  /** 经 `__drainIntents()` 取回这一 tick 的意图与 API 调用计数(票 07 的返回载荷加栏)。 */
+  /** 经 `__drainIntents()` 取回这一 tick 的意图与 API 调用计数。 */
   readonly drainIntents: () => DrainedGuest;
   /** 开始本 tick 的计数(归零并 arm,记下墙钟起点)。三条轨均未启用时是一次空操作。 */
   readonly beginTick: () => void;
@@ -412,7 +412,7 @@ export const openSandbox = async (options: QuickJsSessionOptions): Promise<Sandb
   try {
     // 一次性 setup 载荷:座位 + 规则面。**在 runtime 载入之前**先放在 `__setSnapshot` 这个名字下;
     // runtime 载入时把它读进闭包,并立刻把同一个名字换成每 tick 的桥函数。这样不必新增一个只出现
-    // 一次的注入名(那会给 tools 的构建面添一处与并行票的耦合),而名字仍由 `HOST_BRIDGE_*` 常量拼出。
+    // 一次的注入名(那会给 tools 的构建面添一处与并行改动的耦合),而名字仍由 `HOST_BRIDGE_*` 常量拼出。
     vm.setProp(
       vm.global,
       HOST_BRIDGE_SET_SNAPSHOT,
@@ -507,7 +507,7 @@ export type QuickJsRunnerOptions = QuickJsSessionOptions & {
   /**
    * 内存判据的判罚线(bytes,tick 末存活堆读数)。**缺席即本轨不启用**:`loop()` 之外不强制回收、
    * 不产观测、不判负。组装层读键清单的 `calibration.state`,未定值就不传这个字段——引擎不认识
-   * 「未定值」这个概念(spec《未定值与预算配置》)。
+   * 「未定值」这个概念(键清单见 `packages/schema/src/ruleset-keys.ts`)。
    */
   readonly memoryTickCeiling?: number;
   /**

@@ -1,17 +1,17 @@
 /**
- * 票 03:预算标定探针的骨架(缝 A:引擎侧「读数测试 + `MW_READINGS_DIR` 落盘」约定)与**两个量测探针**。
- * 票 04:在同一条骨架上加**三类预算探针**与**诚实侧基准读数**。
+ * 预算标定探针的骨架(引擎侧「读数测试 + `MW_READINGS_DIR` 落盘」约定)与**两个量测探针**;
+ * 同一条骨架上还挂着**三类预算探针**与**诚实侧基准读数**。
  *
  * ── 它交付什么 ──
  *
- * 票 03:①**分配上限的封顶**(`memoryLimit − 读出封顶`,以及它如何随分配形态变化);②**装 runtime
+ * ①**分配上限的封顶**(`memoryLimit − 读出封顶`,以及它如何随分配形态变化);②**装 runtime
  * bundle 之后的存活堆基线**,与空 VM 基线(`EMPTY_VM_MALLOC_SIZE = 75128`)分列。
- * 票 04:③**死循环探针**与**API 轰炸探针**各自的「每毫秒能烧多少」与**截停它的是哪条轨**;
+ * ③**死循环探针**与**API 轰炸探针**各自的「每毫秒能烧多少」与**截停它的是哪条轨**;
  * ④**三轨异常探针**:三条轨各被反复触发,产出 `exceptionTicks` 读数(并记下同 tick 最多叠加两次);
  * ⑤**诚实侧**:三份基准脚本在真引擎上跑出「每场每席峰值 → 全局最坏」(存活堆峰值、单 tick 与单局
  * 墙钟、API 峰值)。
  *
- * 本文件**只放数与测法、不放任何建议阈值**(取值是后续票的事)。
+ * 本文件**只放数与测法、不放任何建议阈值**(取值规则见 hld §5.3)。
  *
  * ── 骨架来自哪 ──
  *
@@ -336,7 +336,7 @@ const makeProbeState = (): GameState => ({
   economyDeadAtTick: [null, null, null, null],
 });
 
-// ── 票 03:两个量测探针 ─────────────────────────────────────────────────────
+// ── 两个量测探针 ──────────────────────────────────────────────────────────
 
 type CapShape = {
   readonly requestBytes: number;
@@ -450,7 +450,7 @@ it("量测探针②:装 runtime bundle 之后的存活堆基线(与空 VM 基线
   expect(Math.min(...loadedRuntimeMallocSamples)).toBeGreaterThan(0);
 });
 
-// ── 票 04:三类预算探针 ─────────────────────────────────────────────────────
+// ── 三类预算探针 ──────────────────────────────────────────────────────────
 
 type ProbeSampleReport = {
   readonly stoppedBy: string | null;
@@ -759,7 +759,7 @@ it("三轨异常探针:同 tick 最多叠加两次(内存 + API 可叠,事件轨
   };
 }, 120_000);
 
-// ── 票 04:诚实侧(三份基准脚本在真引擎上跑) ────────────────────────────────
+// ── 诚实侧(三份基准脚本在真引擎上跑) ─────────────────────────────────────
 
 const peakOfSeat = (readings: readonly ProbeTickReading[]): SeatPeaks => ({
   ticks: readings.length,
@@ -942,10 +942,10 @@ const buildReport = (): Report => {
   };
 };
 
-// ── 终值推导(由读数按 spec《Implementation Decisions》第 1 条的规则代入)────────────────
+// ── 终值推导(由读数按 hld §5.3 的取值规则代入)────────────────────────────────────────
 //
-// 这一段是**生成代码**,不是手写段落:它从上面的读数里重算每个已定稿预算键的终值。票 05 当时把
-// 推导手写进了读数报告,而重跑探针会把那份文件整个覆盖——所以推导必须留在这里。
+// 这一段是**生成代码**,不是手写段落:它从上面的读数里重算每个已定稿预算键的终值。推导曾被手写进
+// 读数报告,而重跑探针会把那份文件整个覆盖——所以推导必须留在这里。
 // 终值的家仍是 `rulesets/v1.json`;这里渲染的是「读数 × 系数」的算式与代入结果,并核一次
 // 它是否与规则集里的取值一致(不一致会把两者都写出来,而不是静默)。
 
@@ -1171,9 +1171,9 @@ const renderReadingsMarkdown = (report: Report): string => {
   const softThreshold = Math.floor(MEMORY_SOFT_THRESHOLD_RATIO * derivedCeiling);
 
   return [
-    "# 预算标定探针读数(票 03:探针骨架 + 两个量测探针;票 04:三类预算探针 + 诚实侧基准)",
+    "# 预算标定探针读数(探针骨架 + 两个量测探针;三类预算探针 + 诚实侧基准)",
     "",
-    "> 本文件**只放数与测法,不放任何建议阈值**——取值是后续票的事。",
+    "> 本文件**只放数与测法,不放任何建议阈值**——取值规则见 hld §5.3。",
     "",
     `复现命令:\`${report.meta.rerunCommand}\``,
     "",
@@ -1283,7 +1283,7 @@ const renderReadingsMarkdown = (report: Report): string => {
     `- 单 tick 墙钟峰值:**${report.honestSide.globalWorst.loopMsPeak.toFixed(2)}** ms。`,
     `- 单局墙钟最坏:**${Math.round(report.honestSide.globalWorst.matchWallMs)}** ms。`,
     "",
-    "单局墙钟这一栏是**给节点 L 的输入指针**:NFR-3 的「对局平均墙钟 `X`」归 L 定(K 只交读数,不取值)。",
+    "单局墙钟这一栏是**墙钟取值的输入**:「对局平均墙钟 `X`」由 hld §5.3 的取值规则消费(本文件只交读数,不取值)。",
     "",
     `**诚实局事件读数的分布(逐 tick 格数):p50 = ${String(grid.p50)}、p95 = ${String(
       grid.p95,
@@ -1299,24 +1299,24 @@ const renderReadingsMarkdown = (report: Report): string => {
     "## 终值推导(由读数按规则代入;本节由渲染器生成)",
     "",
     "> 本节是**生成代码**产出的,不是手写:重跑 `pnpm run probes:budget` 会按同一批读数重算。",
-    "> 终值的家仍是 `rulesets/v1.json`;这里渲染的是 spec《Implementation Decisions》第 1 条的",
-    "> 取值规则与代入算式,并核对代入结果与规则集取值是否一致。",
+    "> 终值的家仍是 `rulesets/v1.json`;这里渲染的是 hld §5.3 的取值规则与代入算式,并核对代入结果",
+    "> 与规则集取值是否一致。",
     "",
     "| 键 | 取值规则 | 代入的读数 | 算式 | 终值(规则集) |",
     "|---|---|---|---|---|",
     ...derivationRows,
     "",
     undeterminedKeyNames.length === 0
-      ? `本节覆盖**全部 ${String(finalKeys.length)} 个已定稿的预算键**;未定键集为空(票 07 收口)。`
+      ? `本节覆盖**全部 ${String(finalKeys.length)} 个已定稿的预算键**;未定键集为空。`
       : `本节只覆盖**当前已定稿**的预算键(${String(finalKeys.length)} 个);仍未定稿的 ${String(
           undeterminedKeyNames.length,
-        )} 个(\`${undeterminedKeyNames.join("、")}\`)待对应票落定后并入。`,
+        )} 个(\`${undeterminedKeyNames.join("、")}\`)待定稿后并入。`,
     "",
     "### 墙钟硬超时的取值调和(1024 ms vs 示范值 1000 ms)",
     "",
-    "spec《Implementation Decisions》第 1 条的规则文本写「2 的幂,≥ 200 × 诚实单 tick 峰值,",
+    "hld §5.3 的取值规则写「2 的幂,≥ 200 × 诚实单 tick 峰值,",
     "≥ 100 × 软限」,而它自己的代入示范值是 1000 ms——1000 既不是 2 的幂,也不 ≥ 100 × 50(= 5000)。",
-    "能同时满足「2 的幂」「示范值约一秒」「§4『宁小勿大』的成本兜底口径」的唯一读法,是把",
+    "能同时满足「2 的幂」「示范值约一秒」「宁小勿大的成本兜底口径」的唯一读法,是把",
     "「≥ 100 × 软限」读作「≥ 20 × 软限」之笔误(20 × 50 = 1000)。据此取值:",
     `\`wallClockHardTimeout\` = 满足 ≥ 20 × 软限与 ≥ 200 × 诚实单 tick 峰值的最小 2 的幂 = **${String(
       derivedHard,
@@ -1363,7 +1363,7 @@ const renderReadingsMarkdown = (report: Report): string => {
 // 这三条只在 `MW_BUDGET_RECHECK` 设上时跑（默认 `test` 与 `probes:budget` 都不设它）。
 // 「终值仍自洽」此前只渲染成读数报告里的散文：推导与规则集不一致时没有任何断言会红。
 // 这里把它变成可执行断言，并把诚实侧从空预算换成**终值预算**——空预算下没有一条轨启用，
-// 「不被截停」证明不了任何事（spec 决策 6 的缺口）。
+// 「不被截停」证明不了任何事（hld §5.3 要求的复算缺口）。
 
 it.runIf(recheckMode)("复算:终值下三类探针必被截停", async () => {
   // 事件轨：死循环探针在终值事件上限上被截停。

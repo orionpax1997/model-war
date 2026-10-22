@@ -19,8 +19,8 @@ import { buildSelectionPlan, buildArchiveSelection, selectionInputSha256 } from 
  *
  * 断言对象是外部可观察产物——写出的 `input.json` 的键集与内容、`report.json` 的内容(含问题
  * 清单)、退出码、每局被 spawn 的次数——而不是内部函数调用。真沙箱那一路由
- * `apps/cli/src/cli.test.ts` 的 fixture 赛季 e2e 盯着,这里只盯调度逻辑本身(票 07 的
- * 并发池、退出码 2/3 重跑一次、1/4/null 中止、确定性排序)。
+ * `apps/cli/src/cli.test.ts` 的 fixture 赛季 e2e 盯着,这里只盯调度逻辑本身(并发池、
+ * 退出码 2/3 重跑一次、1/4/null 中止、确定性排序)。
  */
 
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-scheduler-"));
@@ -466,7 +466,7 @@ it("同一 fixture 下并发 4 与串行 1 产出的 report.json 逐字节相同
   expect(new Set(report.matches.map((match) => match.inputPath)).size).toBe(4);
 });
 
-// ── 票 13:赛季断点续跑(同 outputDir + 同配置再跑即续跑) ───────────────────────
+// ── 赛季断点续跑(同 outputDir + 同配置再跑即续跑) ─────────────────────────────
 
 /** 第二次跑的计数桩:被调即记数并写一份合法回放(若续跑生效,应一次都不被调)。 */
 const countingSpawn =

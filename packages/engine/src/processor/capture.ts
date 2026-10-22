@@ -38,7 +38,7 @@ import type { PlayerIndex, Site, Unit } from "../world/state.js";
  *
  * ── 为什么取升序遍历里的第一个(数值 id 最小者)──
  *
- * 正常路径下**单格单单位**:同一 tick 两个单位想进同一格,由票 04 的占位裁决判掉一个
+ * 正常路径下**单格单单位**:同一 tick 两个单位想进同一格,由移动步的占位裁决判掉一个(hld §4.4)
  * (`processor/movement.ts` 的 `candidateInto`:目标格被基准占位即失败),所以这里遍历到的
  * 第一个也是唯一一个。唯一的例外是**开局**——`createInitialState` 按地图的 `spawnUnits`
  * 逐个摆单位,地图数据若声明了两个落在同一格的初始单位,就绕过了那条裁决。

@@ -34,8 +34,8 @@ import type {
 /**
  * 一次状态变更。这是状态**唯一**的写入口所收的那张表。
  *
- * 02a 只登记自己用得到的四种:建点位、建单位、销毁单位、移动单位;占领进度(票 05)随后追加。
- * 剩下的机制(扣款、产线推进、异常计数)随各自的机制票追加到这张表上——**走同一条登记**,
+ * 这张表最初只登记四种:建点位、建单位、销毁单位、移动单位;占领进度随后追加(见 `processor/capture.ts`)。
+ * 剩下的机制(扣款、产线推进、异常计数)随各自的机制落地追加到这张表上——**走同一条登记**,
  * 于是「唯一写入口」在整局里始终是一句能被检查的话。
  */
 export type Change =
@@ -59,13 +59,13 @@ export type Change =
       readonly unitType: UnitType;
       readonly x: number;
       readonly y: number;
-      /** 携带量开局恒 0;采集机制那一票开始用它。 */
+      /** 携带量开局恒 0;采集机制(`processor/economy.ts`)开始用它。 */
       readonly carrying?: number;
     }
   | { readonly kind: "destroy-unit"; readonly unitId: number }
   | { readonly kind: "move-unit"; readonly unitId: number; readonly x: number; readonly y: number }
   /**
-   * 把单位血量改成某个值(票 08)。
+   * 把单位血量改成某个值(战斗步 `processor/steps/step3-combat.ts`)。
    *
    * ── 为什么扣血要经变更表,而不在步 3 里就地写一栏 ──
    * 「唯一写入口」是对**整份 `GameState`** 成立,不只是对某几个字段。伤害结算要改 `Unit.hp`,
@@ -81,7 +81,7 @@ export type Change =
    */
   | { readonly kind: "set-unit-hp"; readonly unitId: number; readonly hp: number }
   /**
-   * 记下首触发生的 tick(票 04)。
+   * 记下首触发生的 tick(gdd §2)。
    *
    * ── 为什么这条要进变更表,而不在步 2 里直接赋一栏 ──
    * 「唯一写入口」这句话不是只对玩家可见的状态字段成立,而是对**整份 `GameState`** 成立。
@@ -90,7 +90,7 @@ export type Change =
    */
   | { readonly kind: "mark-first-contact"; readonly tick: number }
   /**
-   * 记下某座位 `economy-dead` **事件**已发的那一 tick(票 07)。
+   * 记下某座位 `economy-dead` **事件**已发的那一 tick(gdd §3.1)。
    *
    * ── 为什么这条要进变更表 ──
    * 与 `mark-first-contact` 同理:「这条事件发过没有」是跨 tick 的状态,而「唯一写入口」是对
@@ -101,7 +101,7 @@ export type Change =
    */
   | { readonly kind: "mark-economy-dead"; readonly seat: PlayerIndex; readonly tick: number }
   /**
-   * 累加某座位的 `exceptionTicks`(票 02 的预置件;判据与淘汰归票 07)。
+   * 累加某座位的 `exceptionTicks`(判据与淘汰归 hld §5.2/§5.3)。
    *
    * ── 为什么这条要进变更表 ──
    * 与 `mark-first-contact` / `mark-economy-dead` 同理:`exceptionTicks` 是跨 tick 的状态,
@@ -123,7 +123,7 @@ export type Change =
       readonly track: string;
     }
   /**
-   * 推进一个点位的占领轨道(票 05)。
+   * 推进一个点位的占领轨道(gdd §3.2)。
    *
    * `progressOwner` / `progress` 是**更新后的**整条轨道;`newOwner` 只在本 tick 易主时出现
    * (那时 `progressOwner` 已被清成 `-1`、`progress` 清成 `0`,见 `processor/capture.ts`)。
@@ -139,8 +139,8 @@ export type Change =
        *
        * ── 为什么旧属主是这条变更带上来的,而不是让调用方事后去状态里翻 ──
        * a) 段一旦落地,`state` 里这个点位的 `owner` 已经是新主;谁在易主前拥有它,只有算易主的
-       * 那一处知道。生产那一格(票 06)要靠这个值把订单退款给**原主**,若让它去读落地后的状态,
-       * 「原主是谁」就成了一件靠「读的是前一份状态」隐式成立的事——那种依赖不会编译报错、
+       * 那一处知道。生产那一格(`processor/production.ts`)要靠这个值把订单退款给**原主**,若让它去读
+       * 落地后的状态,「原主是谁」就成了一件靠「读的是前一份状态」隐式成立的事——那种依赖不会编译报错、
        * 也不会在任何断言里变红,只会在某天有人调整读取时机时静默退错款。带在这一栏上是显式的。
        * `apply()` 不读它:它是给下游消费者(生产那一格的退款)的事实,不是要落下的一栏。
        */
@@ -148,13 +148,13 @@ export type Change =
       readonly newOwner?: PlayerIndex;
     }
   /**
-   * 在基地产线下单(票 06):**同一个变更同时落「占住队列」与「扣款」**。
+   * 在基地产线下单(gdd §5):**同一个变更同时落「占住队列」与「扣款」**。
    *
    * ── 为什么两件事必须是一条变更,而不是两条 ──
    * 一条规则一次落子,中间没有可观察的半截状态。拆成「先扣款」「再占队列」两条变更,就打开了
    * 一个窗口:第一条落了、第二条因为任何原因没落,
    * 状态里就出现「扣了款却没占上队列」——它不会被任何断言发现,只会在下一 tick 表现成凭空少钱。
-   * 资金是否足够由 `checkSpawn()` 在**产生这条变更之前**判掉(票 06),所以这条变更的施加是无条件的。
+   * 资金是否足够由 `checkSpawn()` 在**产生这条变更之前**判掉(gdd §5),所以这条变更的施加是无条件的。
    */
   | {
       readonly kind: "start-production";
@@ -168,7 +168,7 @@ export type Change =
       readonly cost: number;
     }
   /**
-   * 推进一条已有订单(票 06):`remainingTicks` 减一。
+   * 推进一条已有订单(gdd §5):`remainingTicks` 减一。
    *
    * 与 `start-production` 分开,是因为它**只改队列、不碰资源池**;把它并进下单那一条会让
    * 「扣款」与「不扣款」两种语义挤进同一个变更,调用点每次都要多传一个「这次扣不扣」。
@@ -180,12 +180,12 @@ export type Change =
       readonly remainingTicks: number;
     }
   /**
-   * 取消一条产线订单(票 06):清空队列,**可**附带一次全额退款。
+   * 取消一条产线订单(gdd §5):清空队列,**可**附带一次全额退款。
    *
    * ── 为什么取消与退款是同一条变更 ──
    * 与 `start-production` 同理:一次落子,不留「队列清了、款没退」的半截状态。
    * `refund` 省略就是「取消但不退款」——那正是**回归中立**那条路的形态(点位回到 -1、
-   * 没有可退的席位),归票 09;本票(基地易主)走的是带 `refund` 的那一支。
+   * 没有可退的席位),归 gdd §3.1 的淘汰处理;基地易主走的是带 `refund` 的那一支。
    */
   | {
       readonly kind: "cancel-production";
@@ -193,7 +193,7 @@ export type Change =
       readonly refund?: { readonly player: PlayerIndex; readonly amount: number };
     }
   /**
-   * 一次采集落子(票 07):**同一个变更同时加携带量、减矿的储量**。
+   * 一次采集落子(gdd §5):**同一个变更同时加携带量、减矿的储量**。
    *
    * ── 为什么两件事必须是一条变更 ──
    * 与 `start-production` 的「占队列 + 扣款」同理:一条规则一次落子,中间不留可观察的半截状态。
@@ -210,7 +210,7 @@ export type Change =
       readonly amount: number;
     }
   /**
-   * 一次交付落子(票 07):**同一个变更同时把携带量清零、把资源加进玩家池**。
+   * 一次交付落子(gdd §5):**同一个变更同时把携带量清零、把资源加进玩家池**。
    *
    * 与 `harvest` 同理:一次落子,不留「携带量清了、资源没进池」或反之的半截状态。
    * `amount` 由 `processor/economy.ts` 取成单位当前的携带量,所以清零后 `carrying` 恒为 `0`。
@@ -227,7 +227,7 @@ export type Change =
       readonly amount: number;
     }
   /**
-   * 把一个座位判为出局(票 09)。
+   * 把一个座位判为出局(gdd §3.1)。
    *
    * ── 为什么一条变更同时写两处(玩家码位与淘汰时刻) ──
    * 「这个座位出局了」与「它是在哪个 tick 出局的」是**同一件事**的两个面:名次第三条要用后者
@@ -237,15 +237,15 @@ export type Change =
    */
   | { readonly kind: "eliminate-player"; readonly seat: PlayerIndex; readonly tick: number }
   /**
-   * 把一个点位的残余进度与队列一起清回中立(票 09, gdd《胜利与淘汰》)。
+   * 把一个点位的残余进度与队列一起清回中立(gdd §3.1)。
    *
    * `owner` 回 `-1`、占领轨道清零、`producing` 取消。**队列取消不退款**——这条路径与
-   * 「易主 → 退款」是两件事(给票 06 的话:基地回归中立那条路取消队列且不退款)。
+   * 「易主 → 退款」是两件事(给生产那一格的话:基地回归中立那条路取消队列且不退款)。
    * 不做成「另发几条变更」:回归中立是一个原子结果,分几条写会让中间态里出现
    * 「已中立但还挂着一条产线」这种半截状态。
    */
   | { readonly kind: "return-site-to-neutral"; readonly siteId: number }
-  /** 写上终局结果(票 09)。步 5 写 `victory` / `shortcut` / `all-eliminated`,步 7 写 `timeout`。 */
+  /** 写上终局结果(gdd §3.1)。步 5 写 `victory` / `shortcut` / `all-eliminated`,步 7 写 `timeout`。 */
   | { readonly kind: "set-outcome"; readonly outcome: Outcome };
 
 /** 按数值 id 升序插入。数组短(每 tick 几百个对象),有序插入比「先插后排」少一次全数组重排。 */

@@ -108,14 +108,14 @@ it("gen 运行时代码里没有对局结果符号", () => {
   const hits = forbiddenHits(runtimeSourceText(genSrc));
   expect(
     hits.map(({ symbol }) => symbol),
-    `gen 运行时代码出现对局结果符号(FR-5 AC1):${hits
+    `gen 运行时代码出现对局结果符号:${hits
       .map(({ symbol, why }) => `\n  ${symbol} —— ${why}`)
       .join("")}`,
   ).toEqual([]);
 });
 
-it("覆盖口径:后续票在子目录里加的运行时代码也进判据", () => {
-  // 临时造一棵「后续票会加出来的」树,验的是判据的覆盖口径而不是「今天 gen 恰好有哪几个文件」:
+it("覆盖口径:后续在子目录里加的运行时代码也进判据", () => {
+  // 临时造一棵「后续会加出来的」树,验的是判据的覆盖口径而不是「今天 gen 恰好有哪几个文件」:
   // 顶层文件、子目录文件都要被看到(遍历不递归 / 只看顶层列表时会漏),而测试文件、属性测试、
   // 声明文件与产物目录里的同一串不算违规。写死文件清单的实现会在这条用例上原形毕露。
   const dir = mkdtempSync(join(tmpdir(), "gen-runtime-sources-"));

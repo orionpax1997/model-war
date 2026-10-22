@@ -33,7 +33,7 @@
  * 接缝:它读**原主**(由占领机的变更单显式带出的 `previousOwner`)与该基地**易主前**的订单,
  * 产出一次 `cancel-production`(队列清空 + 全额退款一条落子)。
  * 「原主已淘汰(基地回归中立)时不退款」对应的是**回归中立**那条路(点位回到 -1、没有可退的席位),
- * 归票 09;本票只做「退款对象是原主、金额是全额」。
+ * 归 gdd §3.1 的淘汰处理;本模块只做「退款对象是原主、金额是全额」。
  */
 
 import type { RulesetView } from "../ruleset-loader/index.js";
@@ -45,7 +45,7 @@ import { costOf, spawnVerdict } from "./intent-verdicts.js";
 /** 本模块唯一处理的那条意图。收窄判别式,不靠 `as`。 */
 export type SpawnIntent = Extract<Intent, { kind: "spawnUnit" }>;
 
-/** 判别 `spawnUnit`。其余五条不是生产(归 04–09),本票只交付这一条。 */
+/** 判别 `spawnUnit`。其余五条不是生产(归移动/战斗/采集/终局那几格),本模块只交付这一条。 */
 export const isSpawnIntent = (intent: Intent): intent is SpawnIntent => intent.kind === "spawnUnit";
 
 /**
@@ -133,7 +133,7 @@ export const runSpawn = (
  *
  * ── 出兵那一刻的归属 ──
  *
- * 单位属于**基地当前的 owner**(`site.owner`),不是下单时的 owner。本票不区分这两者:
+ * 单位属于**基地当前的 owner**(`site.owner`),不是下单时的 owner。这里不区分这两者:
  * 基地一旦易主,它的队列已随易主取消(见 `cancelOnCaptureOf`)——所以不存在「原主的单在别人家的
  * 基地里出个兵」这种情形。
  */
@@ -184,7 +184,7 @@ export const productionChangesOf = (site: Site, units: readonly Unit[]): readonl
  *   这里**不**去读易主后的状态:那一刻状态里的 owner 已经是新主。
  * - **原主已淘汰(`alive === false`)也照退**:退款只是往 `Player.resources` 这个数上加一笔,
  *   退给一个已出局的席位不违反任何不变量。「原主已淘汰时不退款」对应的是**回归中立**那条路
- *   (点位回到 -1、没有可退的席位),归票 09——两条路的差别就在「有没有一个原主可退」。
+ *   (点位回到 -1、没有可退的席位),归 gdd §3.1——两条路的差别就在「有没有一个原主可退」。
  */
 export const cancelOnCaptureOf = (
   site: Site,

@@ -1,10 +1,10 @@
 /**
- * 赛季调度器:并发子进程池 + 退出码驱动的异常重跑/剔除(hld §8.1 / §8.3 / §9,票 06 → 07)
- * + 断点续跑(票 13):同 `outputDir` + 同配置再跑,已完成局跳过 spawn。
+ * 赛季调度器:并发子进程池 + 退出码驱动的异常重跑/剔除(hld §8.1 / §8.3 / §9)
+ * + 断点续跑:同 `outputDir` + 同配置再跑,已完成局跳过 spawn。
  *
- * ── 这一票把「串行」换成「并发池」 ────────────────────────────────────────
+ * ── 为什么是「并发池」而不是串行 ────────────────────────────────────────
  *
- * 票 06 走通了端到端窄路(物化 → spawn → 读末行 → 写报告)。票 07 把那条 `for … await` 换成
+ * 端到端窄路是串行的(物化 → spawn → 读末行 → 写报告)。这里把那条 `for … await` 换成
  * **信号量池**:并发上限 = `season.concurrency ?? min(cpus().length, 8)`,每局一个
  * `modelwar match <input.json> --root <root>` 子进程,各自写进自己的 `<matchDir>`,互不干扰。
  * 池完成顺序不确定 ⇒ 写盘前**按 `(comboIndex, mapIndex, seedIndex)` 排序**,保证并发度 1 与 N
@@ -44,7 +44,7 @@
  *
  * 赛季声明单一 `ruleset`;启动即逐参赛者读 `archive/<slug>/<runId>/meta.json` 的 `ruleset`
  * 字段,任一与赛季声明不一致 → stderr 报错 + 退出码 1,不在同一份报告里分版本分节
- * (spec《规则版本隔离(前置拒绝,非分组)》,复用 FR-10 AC2 的拒跑口径)。
+ * (hld §8.1)。
  *
  * **这里只比对 `meta.ruleset` 这一个字段**:完整校验(逐座位哈希、缺档、规则集三处一致、
  * 沙箱 runtime hash)仍由 `modelwar match` 子进程的装载段(退 1)承担——那是 `validateArchiveMeta`
@@ -310,8 +310,8 @@ const standingsInMatch = (
 /**
  * 读回放末行的 `result`,只取名次与终局原因。
  *
- * 经 `@model-war/replay` 的 `parseReplay` 读入(与渲染器、NFR-2 复算链同一条读入端,spec《回放
- * 读入端(最小面)》);空回放 / 坏行由 `parseReplay` 抛 `ReplayReadError`,末行不是 `result`
+ * 经 `@model-war/replay` 的 `parseReplay` 读入(与渲染器、复算链同一条读入端);空回放 / 坏行
+ * 由 `parseReplay` 抛 `ReplayReadError`,末行不是 `result`
  * 则在此报错——不静默取个空结果。
  */
 const readResult = (
@@ -662,7 +662,7 @@ export const scheduleSeason = async (
     matches,
     standings,
     // 校验失败名单:扫 archive/<slug>/failed-*.json,只留本季未参赛的 slug
-    // (本季已参赛 slug 的历史失败记录不计;票 09 收窄口径,票 12)。
+    // (本季已参赛 slug 的历史失败记录不计——口径见 hld §8.3)。
     validationFailures: readFailureRecords(
       root,
       new Set(season.participants.map((archiveRef) => slugOf(archiveRef))),
@@ -670,7 +670,7 @@ export const scheduleSeason = async (
     matchIssues,
   };
   writeReportJson(join(outputDir, "report.json"), report);
-  // 人类面产物:每局一篇 narrative/<对局>.md + 一份 report.md(票 09)。
+  // 人类面产物:每局一篇 narrative/<对局>.md + 一份 report.md(hld §8.3)。
   writeReportArtifacts(outputDir, report);
   return EXIT_OK;
 };

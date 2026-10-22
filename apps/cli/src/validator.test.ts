@@ -1,5 +1,5 @@
 /**
- * 校验器的自测——spec《Testing Decisions》的**副缝**:断言对象是「一段 JSON 值 → 接受 / 带诊断拒绝」,
+ * 校验器的自测——**副缝**:断言对象是「一段 JSON 值 → 接受 / 带诊断拒绝」,
  * 这是一个纯函数,不碰文件系统、不碰 CLI 退出码。`map-lint` 的地图校验断言也落在这里,
  * 不去测子命令的退出码。
  *
@@ -936,7 +936,7 @@ it("优化存档在 match 读入端拒绝阶段倒序，不能只校验字段形
 
 it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有可选 optimization 与 selection", () => {
   // 名单是**抄 hld 的措辞**抄下来的,不是抄 schema 的:抄 schema 的话,少一项时两边一起少,
-  // 这条断言就恒真了。逐项对照的是 hld.md:714-715 的十一项。
+  // 这条断言就恒真了。逐项对照的是 hld.md §7.4 的十一项。
   const required = [...ARCHIVE_META_JSON_SCHEMA.required];
   expect(required).toEqual([
     "model",
@@ -959,7 +959,7 @@ it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有�
 });
 
 it("input schema 的必填键集合就是 hld §7.4 那一栏的五项,且与 properties 一一对应", () => {
-  // hld.md:721 逐项:4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash。
+  // hld.md §7.4 逐项:4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash。
   // 「各文件 hash」落在 archives 元素内(两格)与 mapSha256 一格,合计五项。
   const required = [...MATCH_INPUT_JSON_SCHEMA.required];
   expect(required).toEqual(["archives", "map", "mapSha256", "seed", "ruleset"]);
@@ -1023,7 +1023,7 @@ it("meta:产物哈希与实测不符即被拒(记录值改与实测值改两个�
   expect(metaKeywords(measured)).toEqual([SHA256_MISMATCH_KEYWORD]);
   expect(metaPointers(measured)).toEqual(["/scriptSha256"]);
 
-  // sandbox-runtime 同理:换一副沙箱跑同一条脚本,结果不保证一致(FR-3),故它也是必检项。
+  // sandbox-runtime 同理:换一副沙箱跑同一条脚本,结果不保证一致,故它也是必检项。
   const runtime = rejectMeta(badMeta(GOOD_META, { sandboxRuntimeHash: HASH.script0 }));
   expect(metaPointers(runtime)).toEqual(["/sandboxRuntimeHash"]);
   expect(metaKeywords(runtime)).toEqual([SHA256_MISMATCH_KEYWORD]);
@@ -1197,7 +1197,8 @@ it("input:规则集那几项在,赛季那几项不在(一份对局只认自己�
     "seed",
   ]);
   // 「不在」:hld §8 的赛季配置(参赛名单 / 地图池 / 种子数 / 并发度 / 名次分)逐个塞进去都被拒。
-  // 塞进去的后果是那份文件长成第二个 season.yaml,而 FR-7 AC3 要的是「凭它复算这一盘」。
+  // 塞进去的后果是那份文件长成第二个 season.yaml,而对局输入要的是「凭它复算这一盘」
+  // (理由写在 `packages/schema/src/match-input.ts` 的头注里)。
   for (const [key, value] of [
     ["season", "2026-autumn"],
     ["seasonConfig", {}],

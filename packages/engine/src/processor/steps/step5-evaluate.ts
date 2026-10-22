@@ -1,5 +1,5 @@
 /**
- * 步 5 · evaluate:胜负判定(**顺序即规范**,gdd《胜利与淘汰》)。
+ * 步 5 · evaluate:胜负判定(**顺序即规范**,docs/rules-v2/rules.md §7)。
  *
  * ── 四段的顺序为什么不可换 ──
  *
@@ -33,7 +33,7 @@ import { outcomeOf } from "../outcome.js";
 /** 一段判定。签名收到上下文,返回**改过的**上下文——判出终局时写 `state.outcome`,那是唯一出口。 */
 type EvaluateStage = (context: TickContext) => TickContext;
 
-/** 段名。中文小标题即 gdd《胜利与淘汰》里那四条,与判据的措辞对齐。 */
+/** 段名。中文小标题即 docs/rules-v2/rules.md §7 里那四条,与判据的措辞对齐。 */
 export const EVALUATE_STAGE_NAMES = [
   "a) 淘汰:无单位且无基地者,或累计异常达 exceptionTickLimit 者,出局",
   "b) 点位回归中立:被淘汰玩家名下残余点位全部回归中立",
@@ -46,7 +46,7 @@ const SEATS: readonly PlayerIndex[] = [0, 1, 2, 3];
 
 /**
  * a) 淘汰:同时**无任何单位且无任何基地**者出局(gdd);或**累计异常达 `exceptionTickLimit`** 者
- *    判负出局(hld §5.2 第一/二/四类的共同后果,gdd《异常与出局》)。
+ *    判负出局(hld §5.2 第一/二/四类的共同后果,docs/rules-v2/rules.md §8)。
  *
  * 条件是「或」的两支:
  * - 「无单位且无基地」是与——部队尚存就仍有翻盘可能——被夺家后靠残兵反夺基地是刻意保留的戏剧空间;
@@ -176,7 +176,7 @@ const shortcutStage: EvaluateStage = (context) => {
 
 /**
  * 四段按 gdd 定的顺序排开。**这张表的顺序就是规则**,改它要走一次有意的规则变更
- * (FR-10 AC3:顺序写入 `docs/rules-v1`)。
+ * (顺序写入 `docs/rules-v1`;「顺序即规范」见 hld §4.3)。
  *
  * hld §4.3 步 5 还列了第四条「淘汰方 `loop()` 不再执行(VM 暂停调用,状态保留以便重放取证)」。
  * 它**不另起一段**:那是 a) 淘汰的**后果**而不是一次独立判定——被淘汰者在下一 tick 的步 0
