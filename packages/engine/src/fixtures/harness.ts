@@ -10,7 +10,7 @@
  *
  * ── 为什么它是「一批」而不是「一场」 ──
  *
- * 桩探针(`.scratch/rules-calibration/sim/`)量的一律是**分布**(min / 中位 / max、某种结局的
+ * 桩探针(`packages/tools/selfproof/stub/probes/`)量的一律是**分布**(min / 中位 / max、某种结局的
  * 占比),不是一个对局的一次读数。把它落成「接受一组种子的 `runBatch`」而不是让每个夹具各写一层
  * `for` 循环:批量这一层只有一个实现,三个夹具与首触复核共用它。
  *

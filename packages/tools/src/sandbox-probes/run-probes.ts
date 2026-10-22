@@ -3,8 +3,8 @@
  *
  * 用法:`node packages/tools/src/sandbox-probes/run-probes.ts`(或 `pnpm run probes:sandbox`)。
  * **不进** `check:quick`,也**不进**默认 `test`:它真装 VM、真跑行为,不是每次编辑都该付的成本。
- * 只在按当时版本组合复验 hld §5.0 那五条结论时跑;输出落盘到 `PROBE_OUTPUT_DIR`(可入库复核),
- * 退出码 0/1(与本仓库其余命名脚本同形)。
+ * 只在按当时版本组合复验 hld §5.0 那五条结论时跑;输出落盘到 `PROBE_OUTPUT_DIR`
+ * (`reports/` 那一档观测产物,不入库;首次运行自建目录),退出码 0/1(与本仓库其余命名脚本同形)。
  *
  * ── 为什么探针不 import 引擎 ──
  * 它断言的是 hld §5.0 那五条**关于运行时本身**的行为,不是引擎的内部结构。直接驱动

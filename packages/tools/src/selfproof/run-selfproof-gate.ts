@@ -18,11 +18,12 @@
  * 4. 三份的**取策略互不相同**——区分度的可观测代理:若三份脚本的行为指标收敛到同一形态,
  *    规则集就还没被证明有区分度。
  *
- * ── 跑在哪个桩上、为什么那个桩不搬不修 ──────────────────────────────────────
- * 跑在标定环那个已经跑过 **1336 场**的桩上(`.scratch/rules-calibration/sim/`),**一行未改**:
- * 加载路径、结算管线、取证指标口径全部是桩自己的,本文件只做两件事——按 `SCRIPTS[].inject`
+ * ── 跑在哪个桩上 ──────────────────────────────────────────────────────────
+ * 跑在标定环那个已经跑过 **1336 场**的桩上(`packages/tools/selfproof/stub/`):
+ * 运行所需的最小闭包已纳入版本控制,移除了未使用的实验脚本登记与失效资料路径,
+ * 仿真逻辑、结算管线、取证指标口径保持原样。本文件按 `SCRIPTS[].inject`
  * 把兼容层前缀注进去(那是桩自己的扩展点,标定环的探针就是这么用的),以及把每场读数裁剪成
- * 汇总要的那几项。搬桩或修桩都会让 gdd §8 #7~#13 那些记录不可复现,票面因此禁止。
+ * 汇总要的那几项,保持 gdd §8 #7~#13 的口径可复验。
  * 终稿契约与草案代桩之间的四处缺口由 `contract-compat.ts` 记着,不静默换口径。
  *
  * ── 矩阵:与标定环那一轮同夹具、同臂数 ────────────────────────────────────────
@@ -91,8 +92,8 @@ import {
 
 const SELF = fileURLToPath(import.meta.url);
 
-/** 桩的位置:标定环那个跑过 1336 场的 sim 目录。本门禁只引用它,不改它。 */
-const STUB = `${repoRoot}.scratch/rules-calibration/sim`;
+/** 纳入版本控制的标定桩最小运行闭包;不参与 tools 的 TypeScript 构建。 */
+const STUB = `${repoRoot}packages/tools/selfproof/stub`;
 
 /** 与 #13 复验那一轮逐字同夹具:三张真图 + 一张无墙对照。 */
 const MAP_NAMES = ["open-clash", "corridor-split", "fortress-core"];
@@ -727,7 +728,7 @@ const main = async (argv: readonly string[]): Promise<number> => {
   );
   process.stdout.write(`${report}\n`);
   process.stdout.write(
-    `矩阵：${jobs.length} 场（${options.probe ? "探针缩矩阵（反例用）" : `4 臂 × 4 座位轮转 × ${SEEDS.length} 种子`}，桩 ${STUB.replace(repoRoot, "")} 未改），用时 ${elapsed}s\n`,
+    `矩阵：${jobs.length} 场（${options.probe ? "探针缩矩阵（反例用）" : `4 臂 × 4 座位轮转 × ${SEEDS.length} 种子`}，桩 ${STUB.replace(repoRoot, "")} 仿真逻辑未改），用时 ${elapsed}s\n`,
   );
 
   if (options.out !== null) {

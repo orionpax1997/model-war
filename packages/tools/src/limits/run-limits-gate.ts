@@ -69,7 +69,7 @@ const SEASON_BYTE_LIMIT = 1024 ** 3;
 const NIGHTLY_READ_LIMIT_SECONDS = 600;
 /** 每 tick 每席各构一次快照,四席串行共用一份(hld §4.5)。 */
 const SNAPSHOTS_PER_TICK = 4;
-/** 快照拷贝微基准的取样次数(与 `.scratch/engine-core/readings.md` 同口径,取中位)。 */
+/** 快照拷贝微基准的取样次数(取中位,与 hld 开放项 #6 那一行的口径同形)。 */
 const COPY_SAMPLES = 5;
 
 // ── 命令行 ──────────────────────────────────────────────────────────────────

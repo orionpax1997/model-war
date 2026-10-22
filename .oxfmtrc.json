@@ -16,10 +16,10 @@
   "sortImports": false,
   "sortPackageJson": false,
   "ignorePatterns": [
-    ".scratch/**",
     ".pi/**",
     "node_modules/**",
     "dist/**",
+    "packages/tools/selfproof/stub/**",
     "packages/engine/sandbox-runtime/runtime.iife.js"
   ]
 }

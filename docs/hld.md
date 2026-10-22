@@ -9,7 +9,7 @@
 | 本文件拥有 | 架构与包拓扑、进程模型、确定性手段、沙箱与预算机制、数据结构、数据格式、CLI、CI 与工具链、工程侧开放项 |
 | 本文件不写 | 规则机制与参数含义(→ gdd)、参数取值(→ `rulesets/*.json`)、需求定义(→ srs)、可行性论证(→ fsr) |
 
-本文档是概要设计(HLD):系统分解、模块职责与接口、关键数据结构、进程模型、确定性保障方案。函数级详细设计由后续 spec / issue 承接。
+本文档是概要设计(HLD):系统分解、模块职责与接口、关键数据结构、进程模型、确定性保障方案。函数级实现细节由代码与 ADR 承接。
 
 ## 1. 设计支柱(工程含义)
 
@@ -176,7 +176,7 @@
 | 编辑循环(每轮) | `check:quick`(**6 步**) | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁;**零构建**,所以贴得住每轮编辑循环。链上的 `check:no-float` / `check:budget` 同样可单独敲(`check:budget` 只读规则集取值、键清单源码与文档文本,读到零个预算键 / 零个已定稿键按失败处理) |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);AI 实现与 spec 收口的唯一默认入口 |
 | 提交前全量 | `check` | `check:types` + 默认 `test` + `check:deps`(巡航 `dist` 而非 `src`,§2.2.10)+ `check:declared-deps`(读源码清单,与 `check:deps` 互补)+ **末尾复核组**;末尾复核组 = `check:drift` / `check:bench` / `check:runtime`(清单在 `gates-harness.ts` 的 `CONTENT_RECHECKS`);`check:runtime` 判 runtime bundle **三段**——入库产物与重新构建逐字节一致、sha256 与冻结常量相符、不含模块语法 |
-| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁自测与契约自证;`check:selfproof` 拿终稿契约把 `benchmarks/` 三份产物过静态校验器 → 跑标定环那个桩的矩阵,只回答四问(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同),改契约、改 `rulesets/`、改自证桩时手工敲;`check:cross-process` 走 CLI 主接缝(`match` → `verify`)抽正式对局样本重跑并逐 tick 比对 `stateHash`(跨进程那一层);`check:limits` 用真引擎单进程跑入库基准脚本,判 NFR-3 的 X 与开放项 #6/#7 的两条停止断言(见 §10.1);`check:budget-recheck` 重跑预算探针与三份基准脚本、判终值仍自洽(失效触发事件与命令见 §5.3 与 `.scratch/release-gates/budget-recheck-triggers.md`);`test:gates` 是门禁自测的快一半,`test:slow` 是慢的一半(契约自证四问 + 三个反例 + 会 spawn `check` 的那一条);它们**都不进 `check`、也不进默认 `test`**,按需手工跑,归属夜间流水线 |
+| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁自测与契约自证;`check:selfproof` 拿终稿契约把 `benchmarks/` 三份产物过静态校验器 → 跑标定环那个桩的矩阵,只回答四问(三份零静态违规 / 三份打出正常终局 / 三份消耗中位 ≤ 总储量 1/4 / 三份取策略互不相同),改契约、改 `rulesets/`、改自证桩时手工敲;`check:cross-process` 走 CLI 主接缝(`match` → `verify`)抽正式对局样本重跑并逐 tick 比对 `stateHash`(跨进程那一层);`check:limits` 用真引擎单进程跑入库基准脚本,判 NFR-3 的 X 与开放项 #6/#7 的两条停止断言(见 §10.1);`check:budget-recheck` 重跑预算探针与三份基准脚本、判终值仍自洽(触发事件与处置见 §5.3);`test:gates` 是门禁自测的快一半,`test:slow` 是慢的一半(契约自证四问 + 三个反例 + 会 spawn `check` 的那一条);它们**都不进 `check`、也不进默认 `test`**,按需手工跑,归属夜间流水线 |
 | 按需 → 夜间 | `mutate` / `scan` | **只观测、不设红线**(spec §7;三夜基线之前不谈红线)。`mutate` = Stryker 变异,范围限定 `engine` 结算管线(mutate glob 只认 `packages/engine/src/processor/`,配置 `stryker.config.mjs`),产物落 `reports/mutation/`;`scan` = `scc` 行数/复杂度观测(`scc` 是手动装的外部工具,`command -v scc` 失败写一份带 `skipped` 字段的 `reports/scan/meta.json` 并退 0),产物落 `reports/scan/`。两者都**不进 `check:quick`、也不进 `check`** |
 
 > `check:drift` / `check:bench` 刻意**不进 `check:quick`**:前者要一次 `tsc -b`(生产函数 import 真源包),后者要 spawn 一次 `tsc`。`check:declared-deps` 零构建,但要在每轮编辑循环里多付一次全源码树遍历加读 manifest,所以也留在 `check`。命名脚本里另有 `test`(默认功能测试:`unit` + `property`,不含类型检查、门禁自测或慢测试)、`generate`(提交前动作:重跑生成器产出全部生成物并入库,要一次构建,不是门禁)与 `test:props`(只跑 property,长时属性测试单独跑)。
@@ -198,7 +198,7 @@
 | `test:slow` | — | — | — | **396.16s** |
 | `check:selfproof` | — | — | — | **120s** |
 
-> 本轮(2026-10-09,基线 `ea23863`)六道门禁的逐次样本、机器与方法,以及同旧基线的并列对照,见 `.scratch/release-gates/readings.md`(原始证据 `readings-raw.log`);本文只登记中位数,不复制逐次样本。`test:gates` / `test:slow` / `check:selfproof` 本轮才首次单列。
+> 本轮(2026-10-09,基线 `ea23863`)六道门禁的逐次样本、机器与方法是一次性观测产物,不随图入库;本文只登记中位数,不复制逐次样本。`test:gates` / `test:slow` / `check:selfproof` 本轮才首次单列。
 
 **先说清楚这些数字的适用边界**:两次取数之间,`oxfmt --check` 的目标清单从 49 个文件长到 **77 个**(apps/ 与 packages/ 下 68 个 + 根 9 个配置文件),`check` 里的测试从空壳变成 17 个测试文件、152 条用例(含门禁自测的反例),于是全量门禁的中位数从 4.52s 涨到 5.65s——**这就是同一方法重测一次能拿到的信息:增长是可测的,不需要靠猜**。快门禁几乎没动(1.04s → 1.05s),因为新增的代码与测试都不在它的巡航面上;生成物漂移检查与「声明即依赖」门禁都刻意**不进快门禁**——前者要一次 `tsc -b`(ADR-0003 给这一条记了实测数字),后者要在每轮编辑循环里多付一次全源码树遍历加读 manifest;快门禁那几项本身在两次取数之间没有变过,这是分层取舍,不是遗漏。
 
@@ -554,15 +554,15 @@ type Intent =
 
 v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT 协议,零第三方依赖;版本锁定到 `package.json`,**锁定 3.6.2**(基线 ≥3.5.0:3.3.x 的 `memoryLimit` 计账与 OOM 异常形态各有回归))。相对此前候选(QuickJS 嵌入 / WASM + fuel / isolated-vm):
 
-**先交代本节行为结论的出处**:以下五条最初来自 `quickjs-wasi@3.6.2` 的一次 spike,环境 **Node v24.15.0 / Linux x64**,主测量日期 **2026-09-24**(数据在 `.scratch/sandbox-budget/spike/`,逐条判定见 `spike/FINDINGS.md`);**2026-10-06 按同版本组合复验**(真 VM 探针,可执行、输出落盘:`.scratch/sandbox-executor/probe-output/`,一键跑 `pnpm run probes:sandbox`),结论与 spike 一致,数字见下表。**这些结论只对 3.6.2 成立**,换版本即失效——为此 `check:quick` 里有一条版本耦合断言(`pnpm run coupling:quickjs`),根 `package.json` 一改钉版就红,报错信息指向复验脚本与本节。复验责任见本节末“升级条款”与 §12 #8。
+**先交代本节行为结论的出处**:以下五条最初来自 `quickjs-wasi@3.6.2` 的一次 spike(环境 **Node v24.15.0 / Linux x64**,主测量日期 **2026-09-24**),**2026-10-06 按同版本组合复验**并收成可执行探针(`pnpm run probes:sandbox`,真 VM,输出落盘到 `reports/sandbox-probes/`,该目录不入库),结论一致,数字见下表。**这些结论只对 3.6.2 成立**,换版本即失效——为此 `check:quick` 里有一条版本耦合断言(`pnpm run coupling:quickjs`),根 `package.json` 一改钉版就红,报错信息指向复验脚本与本节。复验责任见本节末“升级条款”与 §12 #8。
 
 | # | 行为 | 结论 | 机制与参数落在 |
 |---|---|---|---|
-| 1 | 脚本入口契约 | 单文件 script-mode 编译产物经 `evalCode` 载入即成,`loop` 是 `function` 且 `callFunction` 调得动;带 `export` / `import` 的产物在**载入期**就取 `SyntaxError`。来源:`spike/results/m7-doc-gaps.txt`(M7.2,M7.3)+ 探针 01 `probe-output/probe-01-script-entry-contract.txt` | §2.2.2 |
-| 2 | 深递归的失败形态 | **host 侧 `RangeError: Maximum call stack size exceeded`,`isJSException: false`**——不是 WASM RuntimeError trap,也不是 JSException;guest 吞不掉;**VM 溢出后仍可续用**。来源:`spike/results/m3-runaway.txt`(M3 deep-default/deep-guard-off,VM 续用 `eval:3`)+ 探针 02 `probe-output/probe-02-deep-recursion.txt` | §5.0 崩溃语义、§5.2 |
-| 3 | `interruptHandler` 的截停能力 | 每 **5000 次控制流事件**(循环回边 / 调用 / 返回)触发一次,**不是每条字节码指令**;中断以 host 侧 `InternalError: interrupted` 呈现,**guest 不可捕获**,VM 续用;纯计数回调拖慢落在噪声区间内(计时类判据是区间 **±10%**,不复述单次读数)。来源:`spike/results/m1-interrupt.txt`(M1.1 `itersPerCb: 5000.00`,M1.2 −2.5%~+2.4%,M1.3 `catchRan: NO`)+ 探针 03 `probe-output/probe-03-interrupt-granularity.txt` | §5.0 预算可复现、§5.3 |
-| 4 | 内存读数字段名 | 判据读 `getMemoryUsage().mallocSize`(与 `memoryLimit` 同记账口径);`memoryUsedSize` 更低且不含空闲池,不作判据;读数封顶是 `memoryLimit − 最大单次分配`,**不是 `−64KB`**。来源:`spike/results/m2-memory.txt`(基线 `mallocSize:75128` vs `memoryUsedSize:64098`)+ `.scratch/sandbox-budget/findings/02b-*`(02 的 `−64KB` 模型已被 02b 推翻,封顶为准操作模型)+ 探针 04 `probe-output/probe-04-memory-reading.txt` | §5.3 |
-| 5 | 宿主桥函数删除后的不可见性 | 删后脚本枚举不到、也捞不回来,闭包内的引用照常工作;但越权只表现为普通 `ReferenceError`,**被脚本 `try/catch` 吞掉时宿主零痕迹**。来源:探针 05 `probe-output/probe-05-bridge-deletion.txt`(删除后:`'__bridge' in globalThis` 为 `false`、`typeof` 为 `undefined`、按 `__` 前缀枚举为空;闭包捕获的引用照常返回;宿主仍可经 handle 调桥;裸引用 `__bridge()` 为普通 `ReferenceError`,guest 吞掉后照常继续、宿主零痕迹) | §4.5 |
+| 1 | 脚本入口契约 | 单文件 script-mode 编译产物经 `evalCode` 载入即成,`loop` 是 `function` 且 `callFunction` 调得动;带 `export` / `import` 的产物在**载入期**就取 `SyntaxError`。来源:探针 01 `probe-01-script-entry-contract.txt`(由 `pnpm run probes:sandbox` 生成,落 `reports/sandbox-probes/`) | §2.2.2 |
+| 2 | 深递归的失败形态 | **host 侧 `RangeError: Maximum call stack size exceeded`,`isJSException: false`**——不是 WASM RuntimeError trap,也不是 JSException;guest 吞不掉;**VM 溢出后仍可续用**。来源:探针 02 `probe-02-deep-recursion.txt`(`reports/sandbox-probes/`) | §5.0 崩溃语义、§5.2 |
+| 3 | `interruptHandler` 的截停能力 | 每 **5000 次控制流事件**(循环回边 / 调用 / 返回)触发一次,**不是每条字节码指令**;中断以 host 侧 `InternalError: interrupted` 呈现,**guest 不可捕获**,VM 续用;纯计数回调拖慢落在噪声区间内(计时类判据是区间 **±10%**,不复述单次读数)。来源:探针 03 `probe-03-interrupt-granularity.txt`(`reports/sandbox-probes/`);粒度与噪声区间的冻结值归 `packages/tools/src/sandbox-probes/constants.ts` | §5.0 预算可复现、§5.3 |
+| 4 | 内存读数字段名 | 判据读 `getMemoryUsage().mallocSize`(与 `memoryLimit` 同记账口径);`memoryUsedSize` 更低且不含空闲池,不作判据;读数封顶是 `memoryLimit − 最大单次分配`,**不是 `−64KB`**。来源:探针 04 `probe-04-memory-reading.txt`(`reports/sandbox-probes/`)里的空 VM 基线(`mallocSize:75128` vs `memoryUsedSize:64098`);封顶以「`memoryLimit` − 最大单次分配」为准操作模型,`−64KB` 模型已被实测推翻 | §5.3 |
+| 5 | 宿主桥函数删除后的不可见性 | 删后脚本枚举不到、也捞不回来,闭包内的引用照常工作;但越权只表现为普通 `ReferenceError`,**被脚本 `try/catch` 吞掉时宿主零痕迹**。来源:探针 05 `probe-05-bridge-deletion.txt`(`reports/sandbox-probes/`;删除后:`'__bridge' in globalThis` 为 `false`、`typeof` 为 `undefined`、按 `__` 前缀枚举为空;闭包捕获的引用照常返回;宿主仍可经 handle 调桥;裸引用 `__bridge()` 为普通 `ReferenceError`,guest 吞掉后照常继续、宿主零痕迹) | §4.5 |
 
 - **隔离**:One VM = One WASM 实例,线性内存互不可见;包只做显式 I/O(wasm 字节由调用方提供),默认无 FS/网络——满足 FR-4 AC1,且比 worker_threads 的"去全局"做法审计面更小。
 - **预算可复现**:`interruptHandler` 每 5000 次控制流事件(循环回边/调用/返回)触发一次(回调内自乘计数),与 API 调用计数构成双主判据——实测口径是**控制流事件计数**而非指令计数(直线代码不计量,由 §6.2 脚本体积上限封盲区);`memoryLimit` 超限(≥3.5.0)表现为**可捕获的 JS 异常**(`InternalError: out of memory`),内存判据锚定 tick 末存活堆读数(§5.3)——均不依赖墙钟。回调开销与粒度已实测校对(纯计数 handler 对比无 handler,拖慢落在噪声区间内;计时类判据为区间 **±10%**,故**回调内不得放每次都做的重活,时钟按抽样读**)。
@@ -571,7 +571,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 - **执行器缝**:host 侧 `SeatRunner` 接口(**两个方法** `setSnapshot` / `drainIntents`,见 `docs/adr/0005`;执行器不持生命周期,建 VM 与 `dispose` 归组装层)+ `QuickJsRunner`(唯一真实实现)+ `StubRunner`(测试替身:回放预置 intent、抛异常、触发 trap、超预算)。**在出现第二个真实 VM 实现之前不新增抽象层**——这条缝只让 §5.2 的四类裁决与结算管线可脱离 WASM 穷举测试。
 - **代价**:Node ≥ 22.18(**下限的成因是我们自己的代码,不是本库**,§2.2.1);`moduleLoader` 不配置(`import` 在静态校验期即拒绝,运行时 script-mode 同样把它当 `SyntaxError`);**`maxStackSize` 选项确实存在**(3.6.2 有;`0` = 关守卫,显式设值 ≤512KB),v0 **不启用**——启用会把栈溢出变成 guest 可捕获异常、可被脚本吞掉;不启用(默认或显式 `0`)则溢出为 host `RangeError`,host 必见。**上一版这里写的“无 `maxStackSize`、栈溢出表现为 WASM trap”两句都不成立**,已按实测改正。
 
-**升级条款**:“升级 `quickjs-wasi` 需重跑重放一致性测试与沙箱行为复测”这条条款,**此前是空头承诺,现已收口**:上表五条各有可执行探针(`pnpm run probes:sandbox`,真 VM、输出落盘到 `.scratch/sandbox-executor/probe-output/`),而 `check:quick` 里的版本耦合断言(`pnpm run coupling:quickjs`)在根 `package.json` 一改钉版时就红,报错信息直接指向复验脚本与本节——**机器会提醒后来者这些结论已经过期**。升级时先跑探针、把新数字写回本节,再让断言转绿(§12 #8 记着这件事)。
+**升级条款**:“升级 `quickjs-wasi` 需重跑重放一致性测试与沙箱行为复测”这条条款,**此前是空头承诺,现已收口**:上表五条各有可执行探针(`pnpm run probes:sandbox`,真 VM、输出落盘到 `reports/sandbox-probes/`、不入库),而 `check:quick` 里的版本耦合断言(`pnpm run coupling:quickjs`)在根 `package.json` 一改钉版时就红,报错信息直接指向复验脚本与本节——**机器会提醒后来者这些结论已经过期**。升级时先跑探针、把新数字写回本节,再让断言转绿(§12 #8 记着这件事)。
 
 ### 5.1 隔离与注入
 
@@ -612,7 +612,7 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 
 设计理由:双计数互相覆盖对方的盲区——纯计算型死循环由事件计数抓住,API 轰炸(如每 tick 数万次 `findPath`)由调用计数抓住。**预算判据必须锚定 host 可直接测量的量,不依赖 guest 异常可见性**(guest 吞 OOM 异常时 host 零痕迹,故内存判据锚定 tick 末存活堆读数)。墙钟受机器负载影响,任何参与判罚的墙钟都会破坏 FR-2,故硬超时只作废当前对局,不改变对局内的胜负判定。
 
-**全部上限取值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限)为 `rulesets/v1.json` 中的参数**,用 ≥2 个模型基准脚本标定(srs §4 第 2 条)。本节只写**取值规则**;具体数值的唯一家是 `rulesets/v1.json` 与由它生成的面向模型的数值表(`docs/rules-v1/` 两份契约文档,生成机制见 §6.1)与由它衍生的读数(见 `.scratch/budget-calibration/readings.md`),判据文本不复抄取值——**规则的重采不改变文字,只有取值会变**。
+**全部上限取值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限)为 `rulesets/v1.json` 中的参数**,用 ≥2 个模型基准脚本标定(srs §4 第 2 条)。本节只写**取值规则**;具体数值的唯一家是 `rulesets/v1.json` 与由它生成的面向模型的数值表(`docs/rules-v1/` 两份契约文档,生成机制见 §6.1)与由它衍生的读数(`pnpm run probes:budget` 现场重算,读数落 `runs/budget-calibration`、不入库),判据文本不复抄取值——**规则的重采不改变文字,只有取值会变**。
 
 标定注脚:`memoryTickCeiling` 取值须高于正常脚本 tick 末存活峰值并留余量,其夹逼上界取「判罚线不超过分配上限的一半」,即 `memoryTickCeiling` ≤ 0.5 × `memoryLimit`。旧式「分配上限 − 最大单次分配」的上界**不可执行**:「最大单次分配」没有一个可代入的定值,实测封顶依分配形态变化(单次请求越小、能塞进的块越多、封顶越贴近分配上限;单次请求越大、封顶越接近「分配上限 − 请求量」),故上界改用与分配形态无关的形式。
 
@@ -640,11 +640,17 @@ v0 采用 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时,MIT
 - **中断粒度是这类上限的有效分辨率**:事件计数上限的真实截停点是「把上限向上取整到中断粒度的整数倍」,取值范围必须落在格边界上;有一条静态门禁(`check:budget`,§2.2.7)钉住「整数倍」并把中断粒度常量与它在文档里的三处副本锁死。**中断粒度不可配置**:它是宿主对 wasm 侧回调周期的镜像,改 TS 常量只会让读数系统性偏小、不会让回调变密,没有任何门禁会发现,旧回放还会因此不可复算——故它属于「使终值失效」的变更之一(ADR-0009)。
 - **内存软阈是推导项、不入键清单**:它是判罚线按一个系数推出的展示项(系数在真源包里,引擎另留一个显式覆写点,但那不是第二个要标定的数)。**「分配上限未定」与「该轨不启用」是两件不同的事**(词条见 `CONTEXT.md`《分配上限》):分配上限未定表示 VM 不设任何上限,判罚线未定表示该轨不启用。**内存判罚线的扫描税要与脚本耗时一起计价**:单独启用内存判罚线会让每 tick 多一次强制回收,这笔固定扫描税落在同一个 tick 的墙钟里,故它进墙钟软限与硬超时的取值考量。
 
-**墙钟两键不属于第三个量**:墙钟轨不参与判罚、不进回放、不进状态哈希——软限只产观测,硬超时只作废整场(与 `engine-crash` 同轨,重跑一次后进问题清单并排除出排名)。硬超时是**单 tick 上限、不是整局**,与 srs《NFR-3》的「对局平均墙钟」不是同一个量:后者的取值规则在 §10.1(「均值 + 一倍余量」),本节点只交基准脚本的单局墙钟分布读数(见 `.scratch/budget-calibration/readings.md`)。
+**墙钟两键不属于第三个量**:墙钟轨不参与判罚、不进回放、不进状态哈希——软限只产观测,硬超时只作废整场(与 `engine-crash` 同轨,重跑一次后进问题清单并排除出排名)。硬超时是**单 tick 上限、不是整局**,与 srs《NFR-3》的「对局平均墙钟」不是同一个量:后者的取值规则在 §10.1(「均值 + 一倍余量」),本节点只交基准脚本的单局墙钟分布读数(由 `pnpm run probes:budget` 的诚实侧探针现场重算)。
 
 **异常计数**的累加点有四处(事件计数轨 / 内存判罚线 / API 计数轨 / `loop()` 抛异常),计次数、不清零,同 tick 最多叠加两次(事件计数轨截停后早退,内存与 API 可叠;`loop()` 抛异常即中止本 tick、只计一次,故不与任何轨叠加)。本轮标定的读数由**三轨异常探针**给出:三类探针各自反复触发对应的轨、产出异常计数读数,`exceptionTickLimit` 的下限由此得出。
 
-**终值的常驻守卫与失效触发表**:终值一旦落库就**不可就地修改**,契约散文修订、快照结构变更、沙箱 runtime 版本或中断粒度变更触发专用复核,判红才确认失效并开重标节点(`docs/adr/0009-budget-final-values-are-revocable.md`)。三类事件**都不会让默认门禁变红**,故这条纪律落成一条按需门禁 `check:budget-recheck`(重跑预算探针与三份基准脚本,判探针仍被截停、基准仍不被截停,并核终值推导与规则集逐键一致);命令与判定真源在根 `package.json` 与该门禁脚本,三类事件各跑哪条命令、红了开重标节点的触发表在 `.scratch/release-gates/budget-recheck-triggers.md`。
+**终值的常驻守卫与失效触发**:终值一旦落库就**不可就地修改**。以下语义变更要求修改者显式运行 `pnpm run check:budget-recheck`;同一文件中的无关改动不触发复核,也不以路径 diff 自动判断:
+
+- **契约散文**:修订 `docs/rules-v1/` 的机制、顺序或语义时复核。ADR-0008 规定这类修订不升版本号,生成物漂移门禁也不覆盖散文,所以默认门禁不能证明既有预算仍匹配。
+- **快照结构**:改变快照形状、拷贝或封存粒度时复核,因为它会改变快照体量或每 tick 成本,影响内存与墙钟预算推导。
+- **沙箱 runtime 或中断粒度**:升级或改变 runtime,或改变宿主中断粒度时复核。版本耦合门禁只检查版本对齐,不检查预算阈值;中断粒度常量是宿主行为镜像,仅改常量不会让回调变密,却会改变事件计数轨的有效分辨率。
+
+复核使用终值预算重跑预算探针与三份基准脚本,并检查终值推导与规则集一致。**只有判红才确认终值失效**:开新的重标节点,按本节取值规则重采受影响的读数并重算预算键,再落库;不得直接改终值。墙钟两键的推导受负载影响,不要求读数逐字相等,其结构与行为检查仍须通过。夜间流水线可以常驻复核作守卫,但不按时间自动重标。命令与具体断言以根 `package.json`、门禁脚本及其测试为准。
 
 ## 6. 脚本契约与静态校验
 
@@ -815,7 +821,7 @@ meta.json      # 模型名、模型版本/快照标识、生成日期、协议�
 ### 8.2 排名(名次积分制)
 
 - 名次由 gdd《胜利与淘汰》的排序规则决定(引擎在 `outcome` 中给出),`runner:ranker` 只做**纯函数记账**:名次分向量由赛季配置给出(`season.yaml` 的 `rankPoints`,默认 `[3,2,1,0]`,**不进 `rulesets/`**——名次积分属于调度计分配置,不属于 rules-vN 的对局规则契约);并列名次分 = 并列名次区间分值之和 ÷ 并列人数(并列第 2 → (2+1)/2 = 1.5)。
-- 赛季总分 = Σ 对局得分;对局均分排名,只保证主排名(FR-8 AC1)。**Elo 不在 v0 内**——裁决见 `.scratch/season-scheduler/spec.md`《Out of Scope》,hld 不再把 Elo 写成 v0 的产物。
+- 赛季总分 = Σ 对局得分;对局均分排名,只保证主排名(FR-8 AC1)。**Elo 不在 v0 内**。
 
 ### 8.3 报告输出(`runs/<runId>/`)
 
@@ -878,7 +884,7 @@ node apps/cli/dist/modelwar.mjs report --run-id <本次生成runId> --json
 
 预算分解:以算例 75 个对局 × 1500 tick ≈ 11 万 tick 计。单 tick 成本 = 4 次快照构建(单次拷贝进 VM) + 4 次串行 VM 执行 + 结算(≤ 数百对象);宿主↔VM 跳边界次数为 O(1)/tick,主要成本在快照拷贝与 VM 执行。若超标,优化优先级:**先测沙箱开销**(快照改按需字段拷贝)→ 再调对局子进程并发度。任何优化不得改变结算结果(stateHash 回归守护)。
 
-**NFR-3 的对局平均墙钟上限 X(取值在 srs,规则在此)。** 单局墙钟的口径:同机、**单进程**、逐局取 `runMatch` 一次调用的墙钟,执行体是同一批**入库基准脚本**(`benchmarks/<cell>/script.js`,≥2 份),≥30 局,报 p50 / 均值 / 最坏三栏。**X = 均值的两倍(即均值 + 一倍余量),向上取整到 100 ms**——这是**物理量轨**的留宽口径(「余量分轨而非统一系数」见 §5.3),不拿最坏值当口径。它只回答「整轮排期时单局的平均成本上限」:既**不含**并发度与子进程启动开销(runner 的事),也**不是**单 tick 上限(墙钟硬超时,§5.3);单局墙钟的分布读数(K 的 10 场基准 + 本节的 ≥30 局采样)在 `.scratch/budget-calibration/readings.md` 与 `.scratch/release-gates/readings.md`。**可执行复算**:`check:limits`(按需→夜间)重跑这条并把开放项 #6/#7 的两条停止断言一起判;读数与机器配置落 `.scratch/release-gates/readings.md`。
+**NFR-3 的对局平均墙钟上限 X(取值在 srs,规则在此)。** 单局墙钟的口径:同机、**单进程**、逐局取 `runMatch` 一次调用的墙钟,执行体是同一批**入库基准脚本**(`benchmarks/<cell>/script.js`,≥2 份),≥30 局,报 p50 / 均值 / 最坏三栏。**X = 均值的两倍(即均值 + 一倍余量),向上取整到 100 ms**——这是**物理量轨**的留宽口径(「余量分轨而非统一系数」见 §5.3),不拿最坏值当口径。它只回答「整轮排期时单局的平均成本上限」:既**不含**并发度与子进程启动开销(runner 的事),也**不是**单 tick 上限(墙钟硬超时,§5.3);单局墙钟的分布读数(K 的 10 场基准 + 本节的 ≥30 局采样)由探针与 `check:limits` 现场重算。**可执行复算**:`check:limits`(按需→夜间)重跑这条并把开放项 #6/#7 的两条停止断言一起判;要留读数就加 `--readings-out=<路径>`(自选路径,建议 `reports/`,该目录不入库),机器配置随同一份文件落地。
 
 ### 10.2 可维护性(NFR-4)
 
@@ -916,15 +922,15 @@ node apps/cli/dist/modelwar.mjs report --run-id <本次生成runId> --json
 
 | # | 项 | 备注 |
 |---|---|---|
-| 2 | 预算参数终值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限) | **已收口**:八键已按「读数 × 系数」标定为终值并就地写入 `rulesets/v1.json`(不新开版本,ADR-0009),面向模型的数值表随之渲染成数字。判据文本见 §5.3「标定判据」;读数与推导见 `.scratch/budget-calibration/readings.md`,探针 `pnpm run probes:budget`(三类预算探针 + 诚实侧基准)。本项关闭。 |
-| 3 | 座位轮换的效果验证 | 用基准脚本对局统计各座位胜率，验证偏置被摊平（§8.1）。判据只吃基准脚本（cell-a / cell-b / cell-c 两两对打，cell-a vs cell-b 优先；同脚本对称局只作 harness 校准基线，不进三档定档；真模型脚本只作补充观察，不进判据）。分母走混合口径：赛季 60 局每局恰产出一个获胜座位，混合后每座位 n=60（Wilson 95% 半宽约 ±10.7pp）；单人每座位 n≈12（±22pp）只能看方向，不定档。主判据为最大 seat 胜率落差 + 各座位 Wilson 95% 区间：<5% 干净通过（备注线）；<10% 通过；10–15% 灰区触发补矩阵；>15% 判摊不平走回流（规则侧动作另票，本图只写触发条件；补矩阵规格见票「灰区补矩阵」，hld 只留触发线）。补测触发线有两条，任一命中即触发：①落差落灰区；②任一座位 Wilson 下限 <20%（样本不够线）。10% 线是决策阈值不是检测阈值（n=60 对 10pp 真偏置功效约五成，灰区常态化是预期内）。chi-square p 值如报告仅作括号备注，不设红线、永不做绿灯。前置条件：同脚本对称校准须先拉平，否则判 harness 自身有偏，先修线、本判据暂不生效。（以上判据文本由票「摊平阈值与判据文本拍板」原样回流，表格换行压成单行，文字未动。）**已收口（红档触发交回）**：基准 H 异质 12 局最大落差 58.3%（75.0%−16.7%）>15% 判红；两条触发线全中（seat1/2/3 Wilson 下限 13.8%/8.9%/4.7% 均 <20%）。S 对称校准 4 局胜席分散但半宽 ±30pp 量级判不动，前置闸既未被硬证据触发、也未被证拉平。真模型 60 局落差 51.7% 只作补充观察，不进判据。触发条件交回 gdd §3.3（指针 `docs/gdd.md:93` 该行旧注），本图不动机制。读数 `.scratch/seat-rotation/readings.md` §5，handoff 见票「终 verdict 与 handoff」。本项关闭。 |
+| 2 | 预算参数终值(事件计数上限、API 上限、内存上限、`memoryTickCeiling`、软限、硬超时、exceptionTickLimit、脚本体积上限) | **已收口**:八键已按「读数 × 系数」标定为终值并就地写入 `rulesets/v1.json`(不新开版本,ADR-0009),面向模型的数值表随之渲染成数字。判据文本见 §5.3「标定判据」;读数与推导由探针 `pnpm run probes:budget`(三类预算探针 + 诚实侧基准)现场重算,读数落 `runs/budget-calibration`、不入库。本项关闭。 |
+| 3 | 座位轮换的效果验证 | 用基准脚本对局统计各座位胜率，验证偏置被摊平（§8.1）。判据只吃基准脚本（cell-a / cell-b / cell-c 两两对打，cell-a vs cell-b 优先；同脚本对称局只作 harness 校准基线，不进三档定档；真模型脚本只作补充观察，不进判据）。分母走混合口径：赛季 60 局每局恰产出一个获胜座位，混合后每座位 n=60（Wilson 95% 半宽约 ±10.7pp）；单人每座位 n≈12（±22pp）只能看方向，不定档。主判据为最大 seat 胜率落差 + 各座位 Wilson 95% 区间：<5% 干净通过（备注线）；<10% 通过；10–15% 灰区触发补矩阵；>15% 判摊不平走回流（规则侧动作另票，本图只写触发条件；补矩阵规格见票「灰区补矩阵」，hld 只留触发线）。补测触发线有两条，任一命中即触发：①落差落灰区；②任一座位 Wilson 下限 <20%（样本不够线）。10% 线是决策阈值不是检测阈值（n=60 对 10pp 真偏置功效约五成，灰区常态化是预期内）。chi-square p 值如报告仅作括号备注，不设红线、永不做绿灯。前置条件：同脚本对称校准须先拉平，否则判 harness 自身有偏，先修线、本判据暂不生效。（以上判据文本由票「摊平阈值与判据文本拍板」原样回流，表格换行压成单行，文字未动。）**已收口（红档触发交回）**：基准 H 异质 12 局最大落差 58.3%（75.0%−16.7%）>15% 判红；两条触发线全中（seat1/2/3 Wilson 下限 13.8%/8.9%/4.7% 均 <20%）。S 对称校准 4 局胜席分散但半宽 ±30pp 量级判不动，前置闸既未被硬证据触发、也未被证拉平。真模型 60 局落差 51.7% 只作补充观察，不进判据。触发条件交回 gdd §3.3（指针 `docs/gdd.md:93` 该行旧注），本图不动机制。本项关闭。 |
 | 5a | TypeScript 7.0 GA 时点 | **已收口**:7.0.2(2026-07-08 GA,Go 实现,`tsgo` 名已取消)为精确锁版,见 ADR-0002 锁定版本表。本项关闭。 |
 | 5b | 类型感知 lint 的可用性与耗时 | **已收口**:oxlint-tsgolint 已 stable(oxlint 1.86.0 `--help` 无 experimental 标记),进 `check:types` 不再并行试跑;版本耦合形状 `7.0.<tsPatch><golintPatch>` 由 `coupling` 断言脚本强制(§2.2.3)。耗时见 §2.2.7 实测表(只此一处,不在此复述)。本项关闭,后续只剩随仓库规模重测。 |
 | 5c | oxfmt 0.x 风险 | **已收口为接受风险**:官方称 JS/TS 已 100% 通过 Prettier conformance,未兑现的只是 1.0 发布;由 caret + lockfile + `oxfmt --check` 门禁兜住(ADR-0002)。**不设降级到 Prettier 的退路**。本项关闭。 |
-| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**已收口(停止条件归 L,本票据此收成可执行断言)**:深拷贝+深 freeze 与纯 clone 的差值,按「每 tick 四席各一次」换算成整局拷贝税,占**同一局墙钟 < 10%** 即停——超了即红,**不做零拷贝重构**(合并深 freeze 与 stateHash 规范化两次遍历会踩 `snapshot/traversal-independence.test.ts` 钉住的禁令)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(占比 **4.96%**)与测法见 `.scratch/release-gates/readings.md`,票 11 原始读数见 `.scratch/engine-core/readings.md`。**本项关闭** |
-| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**已收口(停止条件归 L,本票据此收成可执行断言)**:一个赛季(算例 75 局)的回放总量 **< 1 GiB**,且夜间一遍读完 **< 10 min**——超了即红,**不做压缩 / 增量回放**(真超的那天另开优化节点)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(单季 **171.1 MiB** / 一遍 **0.140 s**)与测法见 `.scratch/release-gates/readings.md`,票 11 原始读数见 `.scratch/engine-core/readings.md`。**本项关闭** |
-| 8 | 沙箱行为五条结论的复验 | **已收口**:五条各有可执行探针(`pnpm run probes:sandbox`,输出落盘 `.scratch/sandbox-executor/probe-output/`),2026-10-06 按 `quickjs-wasi@3.6.2` 复验并写回 §5.0;`check:quick` 的版本耦合断言(`pnpm run coupling:quickjs`)在根钉版一改即红并指向复验脚本与 §5.0。本项关闭。 |
-| 9 | A 的两条等效命题在首轮赛季上的复验 | 承自 A 收口时的交办账(`docs/diagrams/v0-milestone-dag.md` §7),归本 spec(`.scratch/season-scheduler/spec.md`)票 11。旧处(`v0-milestone-dag.md` §7)已改成指向本行的指针。**已收口**:关账条件是「首轮赛季读数含两条等效命题的复验结论,若仍未排期则明文写出『仍未排期』」——两条各给结论:命题 **② 已在终稿契约下复验通过**(证据 `.scratch/rules-landing/selfproof/report.md`、门禁 `check:selfproof`;首轮赛季用的是真实模型脚本而非命题要求的基准脚本口径,故本季读数不构成又一次测量);命题 **① 仍未排期**(窗口本身可疑须重推,返工方向与触发条件在 gdd《开放项》#8 记录 #13,窗口定案前根本无从复验)。结论、口径与读数缺口均写进 `.scratch/season-scheduler/e2e-readings.md` §10,不是留空。本项关闭。 |
-| 10 | `match` 的 spawn / 进程池 / 重跑编排 | 承自 G 收口时的交办账(`v0-milestone-dag.md` §4 的 G 行②)——`match` 只做成子进程入口,不对局编排。归 `packages/runner` 的 `scheduler`,本 spec 票 06 / 07。旧处已改成指向本行的指针。**已收口**:一条 `modelwar run` 跑完整轮(退出码 0),`c3-corridor-split-s2` 以 `engine-crash`(退出码 2)按 §8.4 重跑 1 次仍触发,记入对局问题清单并排除出排名(`excludedFromRanking: true`)。读数在 `.scratch/season-scheduler/e2e-readings.md` §3 / §4。本项关闭。 |
-| 11 | H 的四项交办(选 ≥4 个真实模型 / `input.json` 物化 / 硬超时·崩溃重跑与剔除 / 回放读入端接线) | 承自 H 收口时的交办账(`.scratch/generation-pipeline/spec.md` 的历史件,原文不改),分别落本 spec 票 **11**(真实模型参赛集)/ **03**(对局元组,`input.json` 的物化输入)/ **07**(重跑与剔除)/ **02**(回放读入端 `parseReplay`)。**已收口**:五条真实模型冻结入库(`archive/<slug>/2026-10-09T01-09-09-599Z/`)、逐局 `input.json` 物化 60 份、崩溃/超时重跑剔除读数、`parseReplay` 读入端落地(`packages/replay/src/parse.ts`,经 `index.ts` 导出)——四项读数与位置均见 `.scratch/season-scheduler/e2e-readings.md` §1 / §4 / §5 与票面 Answer。本项关闭。 |
+| 6 | 快照进出 VM 的拷贝粒度优化 | §10.1,先测后优化。**本 feature(票 11)出的读数**:`buildSnapshot`(深拷贝 + 深 freeze)中位 **0.307 ms**、只 `structuredClone` 中位 **0.245 ms**(48 单位 / 28 点位,连续 5 次取中位,Node v24.15.0 / Linux x64)。**已收口(停止条件归 L,本票据此收成可执行断言)**:深拷贝+深 freeze 与纯 clone 的差值,按「每 tick 四席各一次」换算成整局拷贝税,占**同一局墙钟 < 10%** 即停——超了即红,**不做零拷贝重构**(合并深 freeze 与 stateHash 规范化两次遍历会踩 `snapshot/traversal-independence.test.ts` 钉住的禁令)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(占比 **4.96%**)与测法由 `check:limits --readings-out=<路径>` 现场重算。**本项关闭** |
+| 7 | 回放体积与夜间全量扫描的存储/IO 方案 | 每 tick 全量状态的体量未评估。**本 feature(票 11)出的读数**:600 tick 回放共 **2 388 636 B**、每 tick 平均 **3 981.1 B/tick**(空对局跑满 `tickLimit`,取值见数值表)。**已收口(停止条件归 L,本票据此收成可执行断言)**:一个赛季(算例 75 局)的回放总量 **< 1 GiB**,且夜间一遍读完 **< 10 min**——超了即红,**不做压缩 / 增量回放**(真超的那天另开优化节点)。可执行断言:`check:limits`(按需→夜间)复测并两条一起判,本次读数(单季 **171.1 MiB** / 一遍 **0.140 s**)与测法由 `check:limits --readings-out=<路径>` 现场重算。**本项关闭** |
+| 8 | 沙箱行为五条结论的复验 | **已收口**:五条各有可执行探针(`pnpm run probes:sandbox`,输出落盘 `reports/sandbox-probes/`、不入库),2026-10-06 按 `quickjs-wasi@3.6.2` 复验并写回 §5.0;`check:quick` 的版本耦合断言(`pnpm run coupling:quickjs`)在根钉版一改即红并指向复验脚本与 §5.0。本项关闭。 |
+| 9 | 地图与经济等效命题的复验 | 判据、复验结论与重推窗口的触发条件归 gdd §8 记录 #8/#13。 |
+| 10 | `match` 的 spawn / 进程池 / 重跑编排 | 由 `packages/runner` 的 `scheduler` 承担,进程与异常重跑边界见 §8.4。 |
+| 11 | 赛季输入与回放接线 | 真实模型赛季验收归 srs §4;对局输入物化、重跑与剔除归 §8;回放读入端见 `packages/replay/src/parse.ts`。 |
 | 12 | 统一事实优化的跨进程候选保存与报告关联接口 | **已收口**：候选旁挂、条件冻结身份、新旧共享消费者与生成报告边界归 §7.4；循环与独立选拔归 §6.2/§6.3，正式 seed 准入归 §8.1。历史 two-feedback 关系在无 selection 的旧档保持；新增 selection 不改写阶段身份。 |

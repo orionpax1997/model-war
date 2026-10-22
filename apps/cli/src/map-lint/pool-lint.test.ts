@@ -193,7 +193,7 @@ const jaccardOf = (left: MapDefinition, right: MapDefinition): number => {
 
 // ── 原型那个「双环图」探针:落库后能不能原样复现 0.195 ───────────────────────
 
-/** 盒 `[lo, hi]` 的整圈边框。与原型 `.scratch/map-pool/proto/quad.mjs` 的 `ring` 同一形状(那里再挖缺口)。 */
+/** 盒 `[lo, hi]` 的整圈边框。与原型那个「双环图」探针的 `ring` 同一形状(那里再挖缺口)。 */
 const boxBorder = (lo: number, hi: number): readonly (readonly [number, number])[] => {
   const cells: [number, number][] = [];
   for (let x = lo; x <= hi; x += 1) cells.push([x, lo], [x, hi]);

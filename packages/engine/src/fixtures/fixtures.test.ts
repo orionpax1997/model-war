@@ -9,12 +9,12 @@
  *
  * **不做**:不写「应该落在某个区间」这类结论式断言——那会把复验结论提前塞进夹具,越界成结论。
  * 复验(在真引擎上以属性测试 / 基准门禁的形式对着 §8 那批桩读数判过/不过)归节点 L,
- * 见 `.scratch/engine-core/spec.md:207`、`docs/diagrams/v0-milestone-dag.md:227`(边 `F ⇢ L`)。
+ * 见 `docs/diagrams/v0-milestone-dag.md:227`(边 `F ⇢ L`)。
  *
  * ── 规模:默认小,读数按 env 放大 ──
  *
- * check 链上每跑一次都要便宜,所以每个探针的默认样本很小(每个夹具几场)。要复现
- * `.scratch/engine-core/readings.md` 里那批读数,把样本按 env 放大即可(命令写在读数文件里):
+ * check 链上每跑一次都要便宜,所以每个探针的默认样本很小(每个夹具几场)。要复现 gdd §8 那批
+ * 标定环读数的规模,把样本按 env 放大即可:
  *
  *     MW_FC_N=64 MW_DEP_N=8 MW_EG_N=4 MW_CAV_N=4 \
  *       MW_READINGS_DIR=runs/t11-readings \

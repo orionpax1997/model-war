@@ -43,8 +43,8 @@
  * `packages/tools/src/gates.test.ts` 的 `跨进程一致性门禁按需跑…` 盯着。
  *
  * ── 与另两份文档的分工 ──────────────────────────────────────────────────────
- * F ⇢ L 的桩结论复验矩阵(gdd §8 #7/#8/#9/#10 的夹具位置 / 复验形态 / 停止条件)在
- * `.scratch/release-gates/verification-matrix.md`,本文件只引用、不重复它的内容。
+ * F ⇢ L 的桩结论复验矩阵(gdd §8 #7/#8/#9/#10 的夹具位置 / 复验形态 / 停止条件)归 gdd §8;
+ * 本文件只引用、不重复它的内容。
  */
 
 import { spawnSync } from "node:child_process";

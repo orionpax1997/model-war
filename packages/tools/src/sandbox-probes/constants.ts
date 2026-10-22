@@ -30,8 +30,9 @@ export const PROBED_ENVIRONMENT = "Node v24.15.0 / linux-x64";
 /** 本轮复验的测量日期(UTC)。 */
 export const PROBED_ON = "2026-10-06";
 
-/** 探针输出落盘目录(相对仓库根)。`.scratch/**` 不过 `.gitignore`,产出可入库复核。 */
-export const PROBE_OUTPUT_DIR = ".scratch/sandbox-executor/probe-output";
+/** 探针输出落盘目录(相对仓库根)。归 `reports/` 这一档观测产物:只用于人读复核,
+ * 不被版本控制跟踪(与变异 / 扫描报告同一条纪律),首次运行时自建。 */
+export const PROBE_OUTPUT_DIR = "reports/sandbox-probes";
 
 /**
  * `interruptHandler` 每多少次控制流事件触发一次(循环回边 / 调用 / 返回)。
@@ -62,17 +63,17 @@ export const MEMORY_LIMIT_BYTES = 8 * 1024 * 1024;
 /**
  * 诚实侧基准脚本在真引擎上的**存活堆峰值**(字节,所有场次所有席位的峰值里再取最坏)。
  *
- * 来源 `.scratch/budget-calibration/readings.md`(票 04,复现命令 `pnpm run probes:budget`);
+ * 来源:由“诚实侧”探针实测(`pnpm run probes:budget`,读数落 `runs/budget-calibration`,不入库);
  * 口径 = 每场每席的 tick 末 `runGC()` 后存活堆 `mallocSize` 峰值,再取全局最坏。
  * 它是内存两个键取值的下界依据(判罚线与软阈都必须严格高于它),所以冻在这里供 `check:budget`
- * 与票 06 的结构断言读;整数,不随运行微动到需要区间的程度。
+ * 与预算结构断言读;整数,不随运行微动到需要区间的程度。
  */
 export const HONEST_ALIVE_HEAP_PEAK_BYTES = 201_384;
 
 /**
  * 诚实侧基准脚本在真引擎上的**全局 API 调用峰值**(次/tick,同上口径的全局最坏)。
  *
- * 来源 `.scratch/budget-calibration/readings.md`(票 04)。`apiCallTickLimit` 的取值规则是它 × 2;
- * 冻在这里供票 06/07 的读数复算与结构断言引用。
+ * 来源:同一次诚实侧实测(`pnpm run probes:budget`)。`apiCallTickLimit` 的取值规则是它 × 2;
+ * 冻在这里供读数复算与预算结构断言引用。
  */
 export const HONEST_API_CALL_PEAK = 133;

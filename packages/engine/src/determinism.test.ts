@@ -7,8 +7,8 @@
  * (`package.json:32`)显式跑 `vitest run --project unit --project property`,而 `test`
  * (`package.json:12`)也跑 `unit`。所以放在这里 = **check 链上每次必执行**,不可能静默回退。
  *
- * 为什么**不**新建一个 `check:determinism` 门禁脚本:`.scratch/engine-core/spec.md:271` 与
- * `docs/diagrams/v0-milestone-dag.md:173`(节点 L)把「集成门禁(端到端 + `verify` + 重跑 10 次
+ * 为什么**不**新建一个 `check:determinism` 门禁脚本:`docs/diagrams/v0-milestone-dag.md:173`(节点 L)把
+ * 「集成门禁(端到端 + `verify` + 重跑 10 次
  * hash)」整格划给 L,而其中 `verify` 归节点 G、本票不实现。本票交的是**check 链上的可执行
  * 验收**;把它接进 L 的 CI 集成门禁(L 那一格)是后续接线,这里留指针,不抢它的定义。
  *

@@ -18,13 +18,14 @@
  * `packages/engine/src/runner/probe-harness.ts` 的 `createProbeSeat` 逐条镜像
  * `createQuickJsRunner` 的每 tick 次序、只在中间多记一笔读数(它的头注记着两个必须继承的坑)。
  * 判定式探针用 `runBudgetProbeTick`(它走**真执行器**,截停轨由引擎自己给出,不是探针重算的)。
- * 两者都长自一次性 prototype `.scratch/budget-calibration/prototype/readings-probe.mjs`。
+ * 两者都长自一次性 prototype,原型不进仓库。
  *
  * ── 规模:默认小,读数时按 env 放大 ──
  *
  * check 链上每跑一次都要便宜:默认样本很小(一个分配形态、1 MiB 上限、探针各 1 次、三轨各 3 tick、
  * 诚实侧一场),只在 `MW_READINGS_DIR` 设上时才展开(四个形态、8 MiB 上限、探针各 5 次、三轨各 8 tick、
- * 诚实侧三舱 × 三图 + 混编)。复现命令见 `readings.md` 与根 `package.json` 的 `probes:budget`。
+ * 诚实侧三舱 × 三图 + 混编)。复现入口是根 `package.json` 的 `probes:budget`(读数落
+ * `runs/budget-calibration`,`runs/**` 已被 gitignore)。
  * **不设读数目录时零文件副作用**——落盘全在这一个闸门后面。
  *
  * ── 为什么不另写「读数等于某个数」的断言 ──
@@ -944,7 +945,7 @@ const buildReport = (): Report => {
 // ── 终值推导(由读数按 spec《Implementation Decisions》第 1 条的规则代入)────────────────
 //
 // 这一段是**生成代码**,不是手写段落:它从上面的读数里重算每个已定稿预算键的终值。票 05 当时把
-// 推导手写进了 `readings.md`,而重跑探针会把那份文件整个覆盖——所以推导必须留在这里。
+// 推导手写进了读数报告,而重跑探针会把那份文件整个覆盖——所以推导必须留在这里。
 // 终值的家仍是 `rulesets/v1.json`;这里渲染的是「读数 × 系数」的算式与代入结果,并核一次
 // 它是否与规则集里的取值一致(不一致会把两者都写出来,而不是静默)。
 
@@ -1360,7 +1361,7 @@ const renderReadingsMarkdown = (report: Report): string => {
 // ── 复算（门禁 `check:budget-recheck`）：终值预算真装着，判失配语义与终值自洽 ────────
 //
 // 这三条只在 `MW_BUDGET_RECHECK` 设上时跑（默认 `test` 与 `probes:budget` 都不设它）。
-// 「终值仍自洽」此前只渲染成 `readings.md` 的散文：推导与规则集不一致时没有任何断言会红。
+// 「终值仍自洽」此前只渲染成读数报告里的散文：推导与规则集不一致时没有任何断言会红。
 // 这里把它变成可执行断言，并把诚实侧从空预算换成**终值预算**——空预算下没有一条轨启用，
 // 「不被截停」证明不了任何事（spec 决策 6 的缺口）。
 

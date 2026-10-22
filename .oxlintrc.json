@@ -7,6 +7,7 @@
     "**/dist/**",
     "**/*.d.ts",
     "**/coverage/**",
+    "packages/tools/selfproof/stub/**",
     "packages/engine/sandbox-runtime/runtime.iife.js"
   ],
   "categories": { "correctness": "error" },

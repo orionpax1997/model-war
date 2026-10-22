@@ -6,7 +6,7 @@ status: accepted
 
 模型回一个空代码围栏时,`extractScriptSource` 给出空串,`tsc` 把空源码编译成 `"use strict";` 照样**成功**,
 体积 / 禁列 / 桥前缀 / 模块系统四级都无事可查,冻结期试跑又只看 events/apis 两条预算轨
-(见 `.scratch/generation-pipeline/issues/11-freeze-trial.md` 的分工)——于是空产物被冻进赛季,
+(`docs/hld.md` §6.2 的冻结期校验链)——于是空产物被冻进赛季,
 每 tick 调 `loop()` 抛异常,靠 `exceptionTickLimit` 出局。`docs/hld.md` §6.2「编译」那一行早就把通过判据写成
 「`tsc` 编译通过 **+** 顶层声明 `loop` 入口」,`tsconfig.scripts.json` 的注释也写着「它在生成管线的编译步骤里
 查产物(`typeof loop === "function"`)」,但这半句**从未实现**。本 ADR 记这次落点裁定。

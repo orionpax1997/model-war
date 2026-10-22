@@ -32,8 +32,8 @@ node apps/cli/dist/modelwar.mjs --help
 
 - 领域词汇(对局 / 回放 / 冻结脚本 / 预算轨……)唯一真源:[CONTEXT.md](CONTEXT.md)
 - 决策记录:[docs/adr/](docs/adr/)(如 ADR-0001 沙箱选型 quickjs-wasi、ADR-0009 预算终值可失效)
-- 里程碑与对账状态:[docs/diagrams/v0-milestone-dag.md](docs/diagrams/v0-milestone-dag.md)
-- agent 工作指引(issue 跟踪 / triage / 域约定):[docs/agents/](docs/agents/)
+- 里程碑与交付拓扑:[docs/diagrams/v0-milestone-dag.md](docs/diagrams/v0-milestone-dag.md)
+- agent 工作指引与域约定:[docs/agents/](docs/agents/)
 - 两份文档冲突时的采信顺序见 AGENTS.md;先修矛盾的一方,不要两边各留一份
 
 ## 仓库地图
@@ -52,9 +52,8 @@ node apps/cli/dist/modelwar.mjs --help
 | archive/ | 冻结脚本与校验失败记录 |
 | maps/ | 对局地图;runs/ 是对局产物(gitignored,可重生成) |
 | probes/ | 上游缺陷的一次性复现探针 |
-| .scratch/ | 本地 issue 与 spec 的家,见 docs/agents/issue-tracker.md |
 
 ## 工作约定
 
-- 实现期间跑 `pnpm run check:quick`,整份 spec 收口只认 `pnpm run verify:fast`;全量门禁(check / test:gates / test:slow / mutate 等)不是默认流程,按需跑(理由见 AGENTS.md)。
+- 实现期间跑 `pnpm run check:quick`,收口跑 `pnpm run verify:fast`;全量门禁(check / test:gates / test:slow / mutate 等)不是默认流程,按需跑(理由见 AGENTS.md)。
 - 提交信息禁 `Co-Authored-By`(单作者,commit-msg hook 强制)。
