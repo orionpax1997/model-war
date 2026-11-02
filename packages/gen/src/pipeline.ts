@@ -654,7 +654,21 @@ export const generateOneModel = async (
           candidates.length <= OPTIMIZATION_FEEDBACK_ROUNDS
         ) {
           stageAttempts = 0;
-          feedback = renderScoreSourceFeedback(readings, trialPlan);
+          // 上一层候选的读数作为「上一阶段」的对照：对差表据此给出同一格的变化。
+          // 第一次回喂（刚跑完第 0 阶段）没有上一阶段，所以传 undefined。
+          const earlier = candidates[candidates.length - 2];
+          const previousReadings =
+            earlier === undefined
+              ? undefined
+              : readTrialObservations(
+                  join(request.root, "archive", slug, earlier.observationsFile),
+                  earlier.scriptSha256,
+                  trialPlan,
+                );
+          // 对照看观测读不到就不回喂：只给本阶段数字会让「差距在缩小还是扩大」变成猜的。
+          if (earlier !== undefined && previousReadings === undefined)
+            throw new Error("上一阶段观测读不到（无法给出与上一阶段同一格的变化），拒绝回喂");
+          feedback = renderScoreSourceFeedback(readings, trialPlan, previousReadings);
         } else {
           // 现场读编译产物字节算 sha256:复算认的是产物,不是内存里那份源文本。
           let scriptBytes = readFileSync(result.jsPath);

@@ -3,11 +3,21 @@
  * 并确保缺失的行动事实不会被反馈解释为零。生成历史与固定两次机会归 pipeline seam。
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 
-import { ACTION_API_NAMES, ACTION_ERROR_CODES, FAILURE_RECORD_PREFIX } from "@model-war/schema";
+import {
+  ACTION_API_NAMES,
+  ACTION_ERROR_CODES,
+  FAILURE_RECORD_PREFIX,
+  TRIAL_BENCHMARK_IDS,
+  TRIAL_PLAYER_IDS,
+  type TrialObservationLine,
+  type TrialPlan,
+  type TrialPlanScript,
+  type TrialTerminalSummary,
+} from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 
 import {
@@ -266,3 +276,348 @@ it("旧观测终局缺失明确未知，反馈直接接收不可信摘要也不�
     expect(feedback).not.toMatch(/领土分=|名次=|HOST_SECRET/);
   }
 });
+
+// ── 三层反馈（对差表 / 逐场一行 / 最差三场）─────────────────────────────────
+
+/**
+ * 四方领土分由调用方给的终局：名次与名次积分按领土分降序推出（timeout、四方都活着）。
+ *
+ * 构造时保证 `领土分 = 基地×4 + 资源点×1 + 单位分`（两个 worker = 8 造价 → 单位分 1），
+ * 于是它经得起终局读入端的同一套跨字段校验——反馈里的数字不会因夹具宽松而失真。
+ */
+const rankedSummary = (
+  seed: number,
+  seats: readonly [string, string, string, string],
+  territories: readonly [number, number, number, number],
+): TrialTerminalSummary => {
+  const units = 1;
+  const order = [...territories].sort((left, right) => right - left);
+  return {
+    version: 1,
+    seed,
+    tick: 1,
+    reason: "timeout",
+    weights: { baseScore: 4, resourceScore: 1, unitCostDivisor: 6 },
+    unitCosts: { worker: 4, melee: 8, ranged: 12, cavalry: 16 },
+    rankPoints: [3, 2, 1, 0],
+    players: territories.map((territory, seat) => {
+      const rest = territory - units;
+      const bases = rest >= 4 ? 1 : 0;
+      const resources = rest - bases * 4;
+      const rank = order.indexOf(territory) + 1;
+      return {
+        seat: seat as 0 | 1 | 2 | 3,
+        player: seats[seat]!,
+        controlledBases: bases,
+        controlledResources: resources,
+        survivingUnits: { worker: 2, melee: 0, ranged: 0, cavalry: 0 },
+        survivingUnitCost: 8,
+        score: { bases: bases * 4, resources, units },
+        territoryScore: territory,
+        rank,
+        rankPoints: [3, 2, 1, 0][rank - 1]!,
+        alive: true,
+        eliminatedAtTick: null,
+      };
+    }) as unknown as TrialTerminalSummary["players"],
+  };
+};
+
+/** 每格一条读数的整张网格：四方领土分按座位给（候选的名次随它在哪个座位而变）。 */
+const gridReadingsOf = (
+  gridPlan: TrialPlan,
+  pick: (index: number) => readonly [number, number, number, number],
+): TrialObservationLine[] =>
+  gridPlan.matches.map((each, index) => ({
+    matchIndex: each.matchIndex,
+    delivered: 0,
+    captures: 0,
+    noScoreSource: true,
+    terminalSummary: rankedSummary(each.seed, each.seats, pick(index)),
+  }));
+
+/** 去掉终局（`exactOptionalPropertyTypes` 下不能用 `undefined` 覆写可选键）。 */
+const withoutTerminal = (reading: TrialObservationLine): TrialObservationLine => ({
+  matchIndex: reading.matchIndex,
+  delivered: reading.delivered,
+  captures: reading.captures,
+  noScoreSource: reading.noScoreSource,
+  ...(reading.actionFacts === undefined ? {} : { actionFacts: reading.actionFacts }),
+});
+
+/** 去掉行动事实，保留终局。 */
+const withoutActions = (reading: TrialObservationLine): TrialObservationLine => ({
+  matchIndex: reading.matchIndex,
+  delivered: reading.delivered,
+  captures: reading.captures,
+  noScoreSource: reading.noScoreSource,
+  ...(reading.terminalSummary === undefined ? {} : { terminalSummary: reading.terminalSummary }),
+});
+
+const SECTION_DIFF = "一、对差表";
+const SECTION_MATCHES = "二、逐场一行";
+const SECTION_WORST = "三、最差三场";
+const cellLines = (feedback: string): string[] =>
+  feedback.split("\n").filter((line) => /^ {2}座位\d \/ /.test(line));
+const matchLines = (feedback: string): string[] =>
+  feedback.split("\n").filter((line) => /^ {2}#\d{2} \| /.test(line));
+const detailLines = (feedback: string): string[] =>
+  feedback.split("\n").filter((line) => line.startsWith("- 第 "));
+/** 最差三场展开的场次（1 起，与「第 N 个对局」一致）。 */
+const detailIndexes = (feedback: string): number[] =>
+  detailLines(feedback).map((line) => Number(/^- 第 (\d+) 个对局/.exec(line)?.[1]));
+
+it("三层结构：对差表 8 格（座位 × 地图）+ 逐场一行 = 计划场数 + 只展开最差三场", () => {
+  const gridPlan = gridPlanFixture();
+  const feedback = renderScoreSourceFeedback(
+    gridReadingsOf(gridPlan, () => [93, 58, 14, 10]),
+    gridPlan,
+  );
+
+  expect(feedback).toContain("试跑观测：本候选实际完成的 32 个对局。");
+  expect(feedback).toContain(SECTION_DIFF);
+  expect(feedback).toContain(SECTION_MATCHES);
+  expect(feedback).toContain(SECTION_WORST);
+
+  // 对差表：4 座位 × 2 图 = 8 行，行序先座位后地图（与计划的地图序一致）。
+  const cells = cellLines(feedback);
+  expect(cells).toHaveLength(8);
+  expect(cells.map((line) => line.slice(2, line.indexOf("：")))).toEqual([
+    "座位0 / corridor-split",
+    "座位0 / open-clash",
+    "座位1 / corridor-split",
+    "座位1 / open-clash",
+    "座位2 / corridor-split",
+    "座位2 / open-clash",
+    "座位3 / corridor-split",
+    "座位3 / open-clash",
+  ]);
+  // 每格都带与上一阶段的对照列；首轮没有上一阶段就明写，而不是留空或按 0 算。
+  for (const cell of cells) expect(cell).toContain("与上一阶段同一格：无上一阶段。");
+  // 每格的聚合事实：4 局一格的均值与末位局数（候选在 0 号位时领土分 93 居首）。
+  expect(cells[0]).toContain(
+    "座位0 / corridor-split：4 局，平均名次 1.00，平均名次积分 3.00，平均领土分 93.00（第一名 93.00，分差 0.00），末位 0 局",
+  );
+
+  // 逐场一行：一行一场，行数 = 计划场数；每行都是「图、座位、组合、名次、四方领土分、结束原因」。
+  const rows = matchLines(feedback);
+  expect(rows).toHaveLength(gridPlan.matches.length);
+  expect(rows[0]).toBe(
+    "  #00 | corridor-split | 座位0 | 组合0（轮空 top:alpha） | 1 | 93/58/14/10 | timeout",
+  );
+  expect(rows[31]).toBe(
+    "  #31 | open-clash | 座位1 | 组合3（轮空 incumbent:delta） | 2 | 93/58/14/10 | timeout",
+  );
+
+  // 最差三场：候选在 3 号位（领土分 10）的场次最差，八场并列 → 按场次定序取前三。
+  expect(detailLines(feedback)).toHaveLength(3);
+  expect(detailIndexes(feedback)).toEqual([3, 4, 11]);
+
+  // 缩小网格：对差表只铺计划里实际出现的格，不凭空补齐 4 × 2。
+  const reduced: TrialPlan = {
+    ...gridPlan,
+    matchesPerCandidate: 2,
+    matches: gridPlan.matches.slice(0, 2),
+  };
+  const reducedText = renderScoreSourceFeedback(
+    gridReadingsOf(reduced, () => [93, 58, 14, 10]),
+    reduced,
+  );
+  expect(cellLines(reducedText).map((line) => line.slice(2, line.indexOf("：")))).toEqual([
+    "座位0 / corridor-split",
+    "座位0 / open-clash",
+  ]);
+  expect(matchLines(reducedText)).toHaveLength(2);
+});
+
+it("对差表的同格变化按阶段给：Δ = 本阶段 − 上一阶段（含方向与符号）", () => {
+  const gridPlan = gridPlanFixture();
+  const current = gridReadingsOf(gridPlan, () => [93, 58, 14, 10]);
+  const previous = gridReadingsOf(gridPlan, () => [58, 93, 12, 9]);
+  const feedback = renderScoreSourceFeedback(current, gridPlan, previous);
+  const cellOf = (seat: number, map: string): string =>
+    feedback.split("\n").find((line) => line.startsWith(`  座位${String(seat)} / ${map}：`)) ?? "";
+
+  // 座位0：上一阶段 58 分排第 2（与第一名差 35），本阶段 93 分排第 1（差 0）→ 积分 +1、分差 −35。
+  expect(cellOf(0, "corridor-split")).toContain("平均名次积分 3.00");
+  expect(cellOf(0, "corridor-split")).toContain("Δ平均名次积分 +1.00，Δ分差 -35.00");
+  // 座位1 反过来：积分 −1、分差 +35（差距扩大）。
+  expect(cellOf(1, "open-clash")).toContain("Δ平均名次积分 -1.00，Δ分差 +35.00");
+  // 每个格都带变化，不只是其中一格。
+  expect(feedback.match(/与上一阶段同一格：Δ平均名次积分 [+-]/g)).toHaveLength(8);
+
+  // 没有上一阶段（第一次回喂）：八格都写「无上一阶段」，全文不出现 Δ。
+  const first = renderScoreSourceFeedback(current, gridPlan);
+  expect(first.match(/与上一阶段同一格：无上一阶段。/g)).toHaveLength(8);
+  expect(first).not.toContain("Δ平均名次积分");
+});
+
+it("最差三场顺序确定：先名次积分升序、再领土分升序、最后场次升序（改输入顺序结果不变）", () => {
+  const gridPlan = gridPlanFixture();
+  // 前两组让候选在 3 号位的领土分分别为 10 与 14（都排在末位），于是最差三场先按领土分、
+  // 再按场次定序：领土分 10 的有 #2/#3/#18/#19，取前三个场次。
+  const variants: readonly (readonly [number, number, number, number])[] = [
+    [93, 58, 14, 10],
+    [93, 58, 20, 14],
+    [93, 58, 14, 10],
+    [93, 58, 20, 14],
+  ];
+  const readings = gridReadingsOf(gridPlan, (index) => variants[Math.floor(index / 8) % 4]!);
+  const forward = renderScoreSourceFeedback(readings, gridPlan);
+  expect(detailIndexes(forward)).toEqual([3, 4, 19]);
+  // 输入顺序（读数数组的顺序）不影响任何一层：对差表、逐场行、最差三场都逐字相同。
+  expect(renderScoreSourceFeedback([...readings].reverse(), gridPlan)).toBe(forward);
+  expect(
+    renderScoreSourceFeedback(
+      [...readings].sort(() => 1),
+      gridPlan,
+    ),
+  ).toBe(forward);
+});
+
+it("覆盖缺失单独说明、不补零：缺终局的格不给平均，逐场行与明细都写未知", () => {
+  const gridPlan = gridPlanFixture();
+  const full = gridReadingsOf(gridPlan, () => [93, 58, 14, 10]);
+  // 第 0 场（座位0 / corridor-split 的一格）缺终局：其余三局仍进平均，覆盖缺口单独说。
+  const partial = full.map((reading) =>
+    reading.matchIndex === 0 ? withoutTerminal(reading) : reading,
+  );
+  const feedback = renderScoreSourceFeedback(partial, gridPlan);
+  expect(cellLines(feedback)[0]).toContain(
+    "平均领土分 93.00（第一名 93.00，分差 0.00），末位 0 局（终局已知 3/4 局）",
+  );
+  expect(matchLines(feedback)[0]).toBe(
+    "  #00 | corridor-split | 座位0 | 组合0（轮空 top:alpha） | 未知 | 未知 | 未知",
+  );
+  // 终局未知的场次不进最差三场排序，也不当作零分。
+  expect(detailIndexes(feedback)).toEqual([3, 4, 11]);
+
+  // 全部缺终局：每格都写明「终局未知、未将缺失解释为零」，没有任何平均数字。
+  const stripped = full.map(withoutTerminal);
+  const unknown = renderScoreSourceFeedback(stripped, gridPlan);
+  expect(unknown).toContain("覆盖：计划 32 场，读数 32 场，终局可用 0 场；缺失一律不补零。");
+  for (const cell of cellLines(unknown))
+    expect(cell).toContain("终局未知，未将缺失解释为零，不报告平均名次与平均领土分");
+  expect(unknown).not.toMatch(/平均名次 \d|平均领土分 \d|分差 \d/);
+  expect(unknown.match(/终局成绩未知（缺少有效终局事实），未将缺失解释为零。/g)).toHaveLength(3);
+
+  // 缺行动事实与行动事实不完整照旧如实说明（沿用既有文案的语义）。
+  const noActions = renderScoreSourceFeedback(full.map(withoutActions), gridPlan);
+  expect(noActions.match(/行动事实缺失，未将缺失解释为零。/g)).toHaveLength(3);
+  // 全文不给因果结论与策略建议。
+  for (const text of [feedback, unknown, noActions])
+    expect(text).not.toMatch(/请检查|建议|应该|坐标|策略诊断|因为|导致/);
+});
+
+/** 生产口径的四份陪练身份：role 限定的 slug 比夹具长，量体积要用接近真实的字串。 */
+const productionScripts: readonly TrialPlanScript[] = [
+  {
+    role: "top",
+    id: "top:claude-opus-5-5",
+    source: "archive:claude-opus-5-5/r1",
+    scriptSha256: "1".repeat(64),
+  },
+  {
+    role: "mid",
+    id: "mid:minimax-m3.1-flash",
+    source: "archive:minimax-m3.1-flash/r2",
+    scriptSha256: "2".repeat(64),
+  },
+  {
+    role: "last",
+    id: "last:glm-5.3-flash",
+    source: "archive:glm-5.3-flash/r3",
+    scriptSha256: "3".repeat(64),
+  },
+  {
+    role: "incumbent",
+    id: "incumbent:muse-spark-1.3-contributor",
+    source: "archive:muse-spark-1.3-contributor/r4",
+    scriptSha256: "4".repeat(64),
+  },
+];
+
+/** 32 场反馈的体积上限：现有三场反馈实测 3 547 字符 × 2.5，向上取整到 9 000。 */
+const FEEDBACK_CHAR_LIMIT = 9_000;
+
+it("体积守上限：32 场的反馈不超过现有 3 场（3 547 字符）的约 2.5 倍", () => {
+  const gridPlan = gridPlanFixture(productionScripts);
+  const readings = gridReadingsOf(gridPlan, () => [93, 58, 14, 10]);
+  const first = renderScoreSourceFeedback(readings, gridPlan);
+  // 带上一阶段的第二次回喂是对差表最长的一版（八格都要写 Δ），所以上限按它守。
+  const second = renderScoreSourceFeedback(readings, gridPlan, readings);
+  expect(first.length).toBeLessThanOrEqual(FEEDBACK_CHAR_LIMIT);
+  expect(second.length).toBeLessThanOrEqual(FEEDBACK_CHAR_LIMIT);
+  // 下界只防夹具退化成空文本：真跑出来的长度记在提交正文（6 676 / 6 820 字符）。
+  expect(second.length).toBeGreaterThan(first.length);
+  expect(first.length).toBeGreaterThan(3_000);
+});
+
+// ── 用真实历史归档的观测重建一份反馈（人工核对用；CI 没有 archive/ 时整条跳过）──
+
+/** v1 计划（三场单图、候选 0 号位、三份基准）：历史归档的观测按它读。 */
+const v1ArchivePlan = (): TrialPlan => ({
+  version: 1,
+  ruleset: "v2",
+  rulesetSha256: "9".repeat(64),
+  sandboxRuntimeHash: "8".repeat(64),
+  scripts: TRIAL_BENCHMARK_IDS.map((id) => ({
+    id,
+    role: "benchmark" as const,
+    source: `benchmark:${id}`,
+    scriptSha256: "f".repeat(64),
+  })),
+  maps: [{ name: "corridor-split", sha256: "a".repeat(64) }],
+  matchesPerCandidate: 3,
+  matches: [101, 202, 303].map((seed, matchIndex) => ({
+    matchIndex,
+    comboIndex: 0,
+    seed,
+    seats: [...TRIAL_PLAYER_IDS] as unknown as [string, string, string, string],
+    candidateSeat: 0 as const,
+    map: "corridor-split",
+    mapSha256: "a".repeat(64),
+  })),
+  planSha256: "0".repeat(64),
+});
+
+/** 归档里候选末位的那一份真实观测（2026-10-13 三场、四方终局齐、行动事实完整）。 */
+const archiveObservations = join(
+  import.meta.dirname,
+  "../../..",
+  "archive/minimax-m3.1-flash/observed-2026-10-13T13-48-45-729Z.jsonl",
+);
+
+it.skipIf(!existsSync(archiveObservations))(
+  "真实历史归档的观测重建三层反馈：事实可读、无多出来的解读",
+  () => {
+    const planOfArchive = v1ArchivePlan();
+    const first = JSON.parse(readFileSync(archiveObservations, "utf8").split("\n")[0] ?? "{}") as {
+      actionFacts?: { scriptSha256?: string };
+    };
+    const readings = readTrialObservations(
+      archiveObservations,
+      first.actionFacts?.scriptSha256 ?? "",
+      planOfArchive,
+    );
+    expect(readings).toHaveLength(3);
+    const feedback = renderScoreSourceFeedback(readings ?? [], planOfArchive);
+
+    expect(feedback).toContain(SECTION_DIFF);
+    expect(feedback).toContain(SECTION_MATCHES);
+    expect(feedback).toContain(SECTION_WORST);
+    // v1 三场是同一格（座位0 / corridor-split）：候选末位、与第一名差 58。
+    expect(cellLines(feedback)).toEqual([
+      expect.stringContaining(
+        "座位0 / corridor-split：3 局，平均名次 4.00，平均名次积分 0.00，平均领土分 0.00（第一名 58.00，分差 58.00），末位 3 局",
+      ),
+    ]);
+    // v1 没有轮空，组合列如实写「无轮空」而不是硬套网格的读法。
+    expect(matchLines(feedback)[0]).toBe(
+      "  #00 | corridor-split | 座位0 | 组合0（无轮空） | 4 | 0/58/0/4 | timeout",
+    );
+    expect(detailLines(feedback)).toHaveLength(3);
+    expect(feedback).toContain("终局事实：seed=101，已执行 tick=600，结束原因=timeout");
+    expect(feedback).not.toMatch(/请检查|建议|应该|坐标|策略诊断/);
+  },
+);

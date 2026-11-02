@@ -993,10 +993,15 @@ it("所有有效候选固定两次事实回喂，编译修复不占优化轮，�
     }
   }
   const feedback = callAt(stub, 1).messages[2]?.content ?? "";
-  // 网格的 32 场逐场入反馈：种子来自计划（不是 101/202/303 三场）。
+  // 三层结构：对差表按座位 × 地图聚合（8 格）、逐场一行 = 计划场数（32 行）、只展开最差三场。
   expect(feedback).toContain("试跑观测：本候选实际完成的 32 个对局。");
-  expect(feedback).toContain("seed=5000");
-  expect(feedback).toContain("seed=5031");
+  expect(feedback.match(/^  座位\d \/ .+：4 局，/gm)).toHaveLength(8);
+  expect(feedback.match(/^  #\d{2} \| .+ \| timeout$/gm)).toHaveLength(32);
+  expect(feedback.match(/^- 第 \d+ 个对局：/gm)).toHaveLength(3);
+  // 首轮没有上一阶段：八格都写明，而不是留空或按 0 算。
+  expect(feedback.match(/无上一阶段/g)).toHaveLength(8);
+  // 最差三场的明细仍是原来的三栏（四方全并列时按场次定序）。
+  expect(feedback).toContain("终局事实：seed=5000");
   expect(feedback).toContain("harvest：调用=2");
   expect(feedback).toContain("spawnUnit：调用=5");
   expect(feedback).toContain("ERR_NOT_ENOUGH_RESOURCES=4");
@@ -2027,7 +2032,7 @@ const selectionTrial: NonNullable<GenerationRequest["trial"]> = (options) => {
 };
 
 it.each([false, true])(
-  "两次实际请求各接收上一阶段三场四方终局，最终保存且选拔开关%s不回喂",
+  "两次回喂各带本阶段 32 场三层事实与同格变化，最终保存且选拔开关%s不回喂",
   async (selectBestCandidate) => {
     const root = selectionRoot();
     const runId = "terminal-two-feedback";
@@ -2041,7 +2046,7 @@ it.each([false, true])(
       {
         ...requestWith(root, stub, runId, (options) => {
           if (options.plan === undefined) throw new Error("试跑桩需要计划");
-          // 每阶段把「资源点」抬一格：两次回喂的文本因此可区分（同格变化是 05 的渲染，这里只看原料）。
+          // 每阶段把「资源点」抬一格：两次回喂的文本因此可区分，第二次的对差表还带着与上一阶段的同格变化。
           const readings = gridReadings(options.plan).map((reading) => {
             const terminalSummary = terminalSummaryFixture(
               reading.terminalSummary!.seed,
@@ -2086,23 +2091,32 @@ it.each([false, true])(
     const first = callAt(stub, 1).messages[2]?.content ?? "";
     const second = callAt(stub, 2).messages[4]?.content ?? "";
     for (const feedback of [first, second]) {
-      // 网格：32 场逐场入反馈，种子与座位都由计划给（不是 101/202/303 × 0 号位）。
       expect(feedback).toContain("试跑观测：本候选实际完成的 32 个对局。");
-      for (const seed of [5000, 5016, 5031]) expect(feedback).toContain(`终局事实：seed=${seed}`);
-      expect(feedback.match(/结束原因=timeout/g)).toHaveLength(32);
-      for (const player of ["top:alpha", "mid:beta", "last:gamma", "incumbent:delta"])
-        // 每份陪练在四种组合里各上场一次 × 8 格 = 24 行；候选自己的 32 行身份是 candidate。
-        expect(feedback.match(new RegExp(`身份=${player}，`, "g"))).toHaveLength(24);
-      expect(feedback.match(/身份=candidate，/g)).toHaveLength(32);
+      // 逐场一行 = 计划场数；每行三列事实齐全（名次 / 四方领土分 / 结束原因）。
+      expect(feedback.match(/^  #\d{2} \| .+ \| timeout$/gm)).toHaveLength(32);
+      // 只展开最差三场：三块明细，不是 32 块。
+      expect(feedback.match(/^- 第 \d+ 个对局：/gm)).toHaveLength(3);
       expect(feedback).toContain("名次=1，名次积分=1.5");
       expect(feedback).not.toMatch(
         /请检查|建议|应该|坐标|987654|401|402|403|highest-average-points|candidatePoints/,
       );
     }
-    // 每阶段 32 场 × 四方 = 128 行领土分；阶段差只体现在资源点那一格上。
-    expect(first.match(/领土分=6，/g)).toHaveLength(128);
+    // 第一阶段没有对照：八格都写「无上一阶段」。
+    expect(first.match(/无上一阶段/g)).toHaveLength(8);
+    expect(first).toContain("平均领土分 6.00（第一名 6.00，分差 0.00）");
+    // 第二阶段给出同一格的变化：本测试只抬领土分，四方同抬，所以名次积分与分差都不变。
+    expect(second).not.toContain("无上一阶段");
+    expect(second.match(/与上一阶段同一格：Δ平均名次积分 \+0\.00，Δ分差 \+0\.00/g)).toHaveLength(8);
+    expect(second).toContain("平均领土分 7.00（第一名 7.00，分差 0.00）");
+    // 领土分从 6 抬到 7：逐场行与最差三场明细都跟着变，前一轮的数字不再出现。
+    expect(first).toContain("| 1 | 6/6/6/6 | timeout");
+    expect(second).toContain("| 1 | 7/7/7/7 | timeout");
+    expect(second).not.toContain("6/6/6/6");
+    expect(second).not.toContain("领土分=6，");
+    // 每阶段 3 场明细 × 四方 = 12 行领土分（逐场行里是 `a/b/c/d`，不是这套逐方明细）。
+    expect(first.match(/领土分=6，/g)).toHaveLength(12);
     expect(first).not.toContain("领土分=7，");
-    expect(second.match(/领土分=7，/g)).toHaveLength(128);
+    expect(second.match(/领土分=7，/g)).toHaveLength(12);
     expect(second).not.toContain("领土分=6，");
     expect(
       stub.calls

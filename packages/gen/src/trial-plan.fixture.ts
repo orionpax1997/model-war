@@ -10,7 +10,7 @@ import {
 } from "@model-war/schema";
 
 /** 四份夹具陪练：id 是角色限定写法（与 `loadSparringPool` 交回的同一形状）。 */
-const scripts: readonly TrialPlanScript[] = [
+export const fixtureScripts: readonly TrialPlanScript[] = [
   { role: "top", id: "top:alpha", source: "archive:alpha/r1", scriptSha256: "1".repeat(64) },
   { role: "mid", id: "mid:beta", source: "archive:beta/r2", scriptSha256: "2".repeat(64) },
   { role: "last", id: "last:gamma", source: "archive:gamma/r3", scriptSha256: "3".repeat(64) },
@@ -28,7 +28,9 @@ const scripts: readonly TrialPlanScript[] = [
  * 场序与 runner 的派生规则同形（组合 → 座位轮转 → 地图），但本包不得 import runner，
  * 所以这里留一份纯数据构造：它只服务于「读观测/读汇总/回喂」这些消费端，不参与生产。
  */
-export const gridPlanFixture = (): TrialPlan => {
+export const gridPlanFixture = (
+  scripts: readonly TrialPlanScript[] = fixtureScripts,
+): TrialPlan => {
   const maps = [
     { name: TRIAL_GRID_MAP_NAMES[0], sha256: "a".repeat(64) },
     { name: TRIAL_GRID_MAP_NAMES[1], sha256: "b".repeat(64) },
