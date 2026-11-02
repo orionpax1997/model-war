@@ -45,6 +45,12 @@ import type {
   TrialObservationLine,
   UnitStats,
 } from "@model-war/schema";
+import {
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_SPARRING_LADDER,
+  TRIAL_SPARRING_SUBSTITUTE,
+} from "@model-war/schema";
+import { buildTrialPlan } from "@model-war/runner";
 import { expect, it } from "vitest";
 
 import {
@@ -932,6 +938,95 @@ it("优化存档在 match 读入端拒绝阶段倒序，不能只校验字段形
     optimization: { ...changed.optimization, candidates: [...candidates].reverse() },
   };
   expect(validateArchiveMeta(value, GOOD_META_PROVENANCE).ok).toBe(false);
+});
+
+/**
+ * v2（评测网格）优化档：计划 + 四份陪练身份 + 每候选的网格分数与场数。
+ *
+ * 计划用 runner 的 `buildTrialPlan` 现造（同一张 32 场网格），不手抄一份场次表——
+ * 抄一份就等于给「网格长什么样」留了第二个家。
+ */
+const GRID_SCRIPTS = [
+  ...TRIAL_SPARRING_LADDER.map((identity) => ({
+    id: `${identity.role}:${identity.id}`,
+    role: identity.role,
+    source: `archive:${identity.id}/${identity.runId}`,
+    scriptSha256: identity.scriptSha256,
+  })),
+  {
+    id: `incumbent:${TRIAL_SPARRING_SUBSTITUTE.id}`,
+    role: "incumbent" as const,
+    source: `archive:${TRIAL_SPARRING_SUBSTITUTE.id}/${TRIAL_SPARRING_SUBSTITUTE.runId}#substitute`,
+    scriptSha256: TRIAL_SPARRING_SUBSTITUTE.scriptSha256,
+  },
+];
+
+const GOOD_GRID_META: ArchiveMeta = {
+  ...GOOD_META,
+  protocolRounds: 3,
+  prompts: ["initial", "optimization1", "optimization2"],
+  optimization: {
+    version: 2,
+    feedbackRounds: 2,
+    plan: buildTrialPlan({
+      ruleset: RULESET_VERSION,
+      rulesetSha256: "9".repeat(64),
+      sandboxRuntimeHash: GOOD_META.sandboxRuntimeHash,
+      scripts: GRID_SCRIPTS,
+      maps: [
+        { name: TRIAL_GRID_MAP_NAMES[0], sha256: HASH.map },
+        { name: TRIAL_GRID_MAP_NAMES[1], sha256: HASH.meta0 },
+      ],
+    }),
+    sparring: GRID_SCRIPTS,
+    candidates: [0, 1, 2].map((stage) => ({
+      stage: stage === 0 ? 0 : stage === 1 ? 1 : 2,
+      protocolRound: stage + 1,
+      scriptFile: `observed-run-round-${String(stage + 1)}.jsonl.candidate.js`,
+      observationsFile: `observed-run-round-${String(stage + 1)}.jsonl`,
+      scriptSha256: GOOD_META.scriptSha256,
+      score: { totalPoints: 48, averagePoints: 1.5, countedMatches: 32 },
+      matchCount: 32,
+      // 同字节：后两阶段复用第 0 阶段的网格（v2 装载判据要求同字节必须复用）。
+      ...(stage === 0 ? {} : { reusedFromStage: 0 as const }),
+    })),
+  },
+};
+
+it("v2 网格档：计划、陪练身份、分数与场数齐即被接受（v1 历史档同时仍被接受）", () => {
+  expect(validateArchiveMeta(GOOD_GRID_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  // 同一份 schema 里两个分支并存：v1 档照旧通过，不是「升到 v2 就把旧档拒了」。
+  expect(validateArchiveMeta(GOOD_OPTIMIZATION_META, GOOD_META_PROVENANCE).ok).toBe(true);
+});
+
+it("v2 网格档：缺候选分数 / 多带 trialSeeds 即被拒（版本分派写在 schema 里）", () => {
+  const missingScore = structuredClone(GOOD_GRID_META) as unknown as {
+    optimization: { candidates: Record<string, unknown>[] };
+  };
+  Reflect.deleteProperty(missingScore.optimization.candidates[1]!, "score");
+  const rejected = rejectMeta(JSON.parse(JSON.stringify(missingScore)) as JsonValue);
+  expect(metaKeywords(rejected)).toContain("required");
+  expect(metaPointers(rejected)).toContain("/optimization/candidates/1/score");
+
+  // v2 不再写 `trialSeeds`（种子逐场落在计划里）：写了就是第二个家。
+  const withSeeds = structuredClone(GOOD_GRID_META) as unknown as {
+    optimization: Record<string, unknown>;
+  };
+  withSeeds.optimization["trialSeeds"] = [101, 202, 303];
+  expect(metaKeywords(rejectMeta(JSON.parse(JSON.stringify(withSeeds)) as JsonValue))).toContain(
+    "additionalProperties",
+  );
+});
+
+it("v2 网格档：计划与档的规则集/运行时不一致、或计划被改过即被拒（跨字段关系）", () => {
+  const tampered = structuredClone(GOOD_GRID_META) as unknown as {
+    optimization: { plan: { matches: { seed: number }[] } };
+  };
+  tampered.optimization.plan.matches[0]!.seed += 1;
+  const result = rejectMeta(JSON.parse(JSON.stringify(tampered)) as JsonValue);
+  expect(result.machineDiagnostics.some((diagnostic) => diagnostic.message.includes("不符"))).toBe(
+    true,
+  );
 });
 
 it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有可选 optimization 与 selection", () => {

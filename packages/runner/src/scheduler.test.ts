@@ -13,6 +13,7 @@ import { basename, dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { scheduleSeason, type SeasonSchedulerDeps } from "./scheduler.js";
 import { buildSelectionPlan, buildArchiveSelection, selectionInputSha256 } from "./selection.js";
+import { trialGridPlanFixture } from "./trial-grid.fixture.js";
 
 /**
  * `scheduleSeason` 的可测核心直测:用可控 `deps.spawnMatch` 桩替掉真实子进程。
@@ -656,6 +657,93 @@ const addOptimizationMeta = (root: string, model = "alpha"): void => {
     }),
   );
 };
+
+/**
+ * 把 alpha 的存档改造成 v2（评测网格）形状：计划里的逐场种子就是这一档的种子。
+ *
+ * 三份候选写同一个 `scriptSha256`（与 `meta.scriptSha256` 一致），后两份标 `reusedFromStage: 0`
+ * ——同字节必须复用，否则 v2 的装载判据自己就先拒了。
+ */
+const addGridOptimizationMeta = (root: string, model = "alpha"): void => {
+  const path = join(root, "archive", model, "r1/meta.json");
+  const meta = JSON.parse(readFileSync(path, "utf8"));
+  const plan = trialGridPlanFixture();
+  writeFileSync(
+    path,
+    JSON.stringify({
+      ...meta,
+      protocolRounds: 3,
+      prompts: ["initial", "feedback1", "feedback2"],
+      // 计划里的规则集与运行时摘要也是这一档的事实（装载期按它们对账）。
+      ruleset: plan.ruleset,
+      sandboxRuntimeHash: plan.sandboxRuntimeHash,
+      optimization: {
+        version: 2,
+        feedbackRounds: 2,
+        plan,
+        sparring: plan.scripts.map(({ id, role, source, scriptSha256 }) => ({
+          id,
+          role,
+          source,
+          scriptSha256,
+        })),
+        candidates: [0, 1, 2].map((stage) => ({
+          stage,
+          protocolRound: stage + 1,
+          scriptFile: `observed-r1-round-${String(stage + 1)}.jsonl.candidate.js`,
+          observationsFile: `observed-r1-round-${String(stage + 1)}.jsonl`,
+          scriptSha256: meta.scriptSha256,
+          score: {
+            totalPoints: 48,
+            averagePoints: 1.5,
+            countedMatches: plan.matchesPerCandidate,
+          },
+          matchCount: plan.matchesPerCandidate,
+          ...(stage === 0 ? {} : { reusedFromStage: 0 }),
+        })),
+      },
+    }),
+  );
+};
+
+it("v2 网格档的网格种子参与重叠判据：撞上 plan.matches[].seed 即拒跑，零 spawn", async () => {
+  const { root, configPath } = buildFixture();
+  addGridOptimizationMeta(root);
+  const gridSeed = trialGridPlanFixture().matches[0]!.seed;
+  appendFileSync(
+    join(root, configPath),
+    `evaluationSeeds:\n  - ${String(gridSeed)}\n  - 404\n  - 505\n  - 606\n`,
+  );
+  let spawned = 0;
+  const code = await scheduleSeason(
+    { root, configPath },
+    {
+      spawnMatch: async (inputPath) => {
+        spawned += 1;
+        writeFakeReplay(inputPath);
+        return { code: 0 };
+      },
+    },
+  );
+  expect(code).toBe(1);
+  expect(spawned).toBe(0);
+});
+
+it("v2 网格档：不与网格种子重叠的显式评测 seed 照跑", async () => {
+  const { root, configPath } = buildFixture();
+  addGridOptimizationMeta(root);
+  appendFileSync(join(root, configPath), "evaluationSeeds:\n  - 404\n  - 505\n  - 606\n  - 707\n");
+  const plan = scriptedSpawn(() => 0);
+  const code = await scheduleSeason({ root, configPath }, { spawnMatch: plan.spawnMatch });
+  expect(code).toBe(0);
+  expect(readReport(root).matches).toHaveLength(4);
+  // 用到的正是用户显式指定的那四个（不静默替换种子）。
+  expect(
+    readReport(root)
+      .matches.map((match) => match.seed)
+      .sort(),
+  ).toEqual([404, 505, 606, 707]);
+});
 
 it("混合新优化/旧档拒绝用户指定的重叠评测 seed，先于任何物化与子进程", async () => {
   const { root, configPath } = buildFixture();

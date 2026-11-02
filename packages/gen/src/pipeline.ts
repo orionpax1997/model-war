@@ -62,14 +62,14 @@ import { constants, copyFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import {
-  OPTIMIZATION_VERSION,
+  OPTIMIZATION_GRID_VERSION,
   OPTIMIZATION_FEEDBACK_ROUNDS,
   OPTIMIZATION_STAGES,
-  TRIAL_SEEDS,
   type ArchiveMeta,
   type TrialPlan,
   type ArchiveSelection,
   type ArchiveOptimizationCandidate,
+  type ArchiveOptimizationGrid,
   type ArchiveValidation,
   type FailureClassification,
   type FailureRecord,
@@ -96,6 +96,7 @@ import {
 } from "./generation-evidence.js";
 import type { ChatMessage, ModelParams } from "./model-client.js";
 import {
+  missingTrialGridMatches,
   observationsPathOf,
   readTrialObservations,
   renderScoreSourceFeedback,
@@ -105,6 +106,7 @@ import { retryTransport, type TransportFailure } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
 import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
 import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
+import { gridEvidenceDigests, reuseTrialGrid, type ReusableGridEvidence } from "./trial-reuse.js";
 import {
   prepareSelection,
   runSelection,
@@ -231,6 +233,11 @@ type RoundResult =
       readonly validation: ArchiveValidation;
       readonly log: GenerationLogEntry;
       readonly observationsPath: string;
+      /**
+       * 本轮没有重跑网格：证据来自这一阶段的同字节候选（`reusedFromStage` 落进存档）。
+       * 缺席 = 本轮自己跑满了整张网格。
+       */
+      readonly reusedFromStage?: 0 | 1 | 2;
     }
   | {
       readonly kind: "failed";
@@ -280,6 +287,13 @@ const sendOneRound = async (options: {
   readonly observationsPath: string;
   /** 本次生成共用的评测网格计划（`prepareTrialPlan` 那一次的输出，逐字交给入口）。 */
   readonly plan?: TrialPlan;
+  /**
+   * 同字节候选的网格复用：给一个 `scriptSha256`，回答「本次生成里更早的哪一阶段跑过它」。
+   *
+   * 查得到就不调试跑入口（省下一次 32 场），而是把那阶段的观测与 `.grid.json` 搬过来；
+   * 查不到就照旧跑满整张网格。
+   */
+  readonly findReusable?: (scriptSha256: string) => ReusableGridEvidence | undefined;
 }): Promise<RoundResult> => {
   const {
     request,
@@ -292,6 +306,7 @@ const sendOneRound = async (options: {
     trial,
     observationsPath,
     plan,
+    findReusable,
   } = options;
   // 一轮一个客户端:重试在**同一次 `send` 之内**完成(同一份 messages),协议轮数不动(契约 §2.1)。
   const client = request.createClient(config);
@@ -428,19 +443,32 @@ const sendOneRound = async (options: {
       constants.COPYFILE_EXCL,
     );
   }
-  const trialResult = trial({
-    root: request.root,
-    model: config.slug,
-    artifactPath: compile.jsPath,
-    observationsPath,
-    ...(plan === undefined ? {} : { plan }),
-  });
+  // 字节守卫之后先看能不能复用：同一次生成里更早阶段跑过**完全相同**的编译产物时，
+  // 网格的输入身份（计划摘要 + 候选摘要 + 运行时）与那次逐字相同，所以不必重跑 32 场。
+  // 复用只省「跑」不省「查」：搬证据前逐关校验（来源字节摘要、计划同源、观测完整、
+  // 搬完逐场逐字比对），见 `trial-reuse.ts` 头注。
+  const reusable = findReusable?.(scriptSha256);
+  if (reusable !== undefined && plan === undefined)
+    throw new Error("复用网格证据需要本次生成的评测计划（计划是它的身份）");
+  const trialResult =
+    reusable === undefined
+      ? trial({
+          root: request.root,
+          model: config.slug,
+          artifactPath: compile.jsPath,
+          observationsPath,
+          ...(plan === undefined ? {} : { plan }),
+        })
+      : undefined;
+  if (reusable !== undefined && plan !== undefined) {
+    reuseTrialGrid({ source: reusable, targetObservationsPath: observationsPath, plan });
+  }
   if (sha256Hex(readFileSync(join(stagingDir, SCRIPT_SOURCE_NAME))) !== sourceSha256)
     throw new Error("试跑期间 TS 字节改变");
   if (sha256Hex(readFileSync(compile.jsPath)) !== scriptSha256) {
     throw new Error("试跑期间编译 JS 字节改变，拒绝使用错配的试跑结论");
   }
-  if (!trialResult.passed) {
+  if (trialResult !== undefined && !trialResult.passed) {
     return {
       kind: "failed",
       text,
@@ -463,6 +491,7 @@ const sendOneRound = async (options: {
     validation: { passed: iteration.passed, errors: iteration.errors },
     log: { ...base, kind: "contract", errorCodes: [] },
     observationsPath,
+    ...(reusable === undefined ? {} : { reusedFromStage: reusable.stage }),
   };
 };
 
@@ -474,6 +503,31 @@ const messageOfFailure = (slug: string, result: RoundResult & { kind: "failed" }
     ? `模型 ${slug} 第 ${String(result.log.round)} 轮冻结期试跑未通过`
     : `模型 ${slug} 第 ${String(result.log.round)} 轮静态校验未通过`;
 };
+
+/**
+ * 这次生成的优化旁证（v2）：整张计划与四份陪练身份入档，每个候选带网格分数与场数。
+ *
+ * 陪练身份**从计划的 `scripts` 搬**（不另写一份）：计划的这两栏是同一格事实，
+ * 装载期会逐项比对（`archive-optimization.ts`）。
+ *
+ * 不写 `trialSeeds`：v1 那三个固定种子在网格里根本不是一个数（每格一个，见 `plan.matches[].seed`
+ * 与 `planSha256`）。再存一份就是同一件事的第二个家，还会让人以为「种子只有三个」。
+ */
+const archiveOptimizationOf = (
+  plan: TrialPlan,
+  candidates: readonly ArchiveOptimizationCandidate[],
+): ArchiveOptimizationGrid => ({
+  version: OPTIMIZATION_GRID_VERSION,
+  feedbackRounds: OPTIMIZATION_FEEDBACK_ROUNDS,
+  plan,
+  sparring: plan.scripts.map(({ id, role, source, scriptSha256 }) => ({
+    id,
+    role,
+    source,
+    scriptSha256,
+  })),
+  candidates,
+});
 
 /**
  * 单模型逐轮回喂环：未启用时直到通过或用尽总尝试数；启用时每阶段独立诊断额度，
@@ -530,6 +584,8 @@ export const generateOneModel = async (
   const candidates: ArchiveOptimizationCandidate[] = [];
   const selectionArtifacts: SelectionArtifact[] = [];
   const candidateValidations: ArchiveValidation[] = [];
+  // 本次生成里已收录的网格证据：下一轮候选字节与其中哪个阶段相同，就复用那一份（不重跑网格）。
+  const acceptedGrids: ReusableGridEvidence[] = [];
   let stageAttempts = 0;
   try {
     for (let round = 1; round <= totalRounds; round += 1) {
@@ -548,6 +604,12 @@ export const generateOneModel = async (
             ? observationsPathOf(request.root, slug, runId, round)
             : observationsPath,
         ...(trialPlan === undefined ? {} : { plan: trialPlan }),
+        ...(trialPlan === undefined
+          ? {}
+          : {
+              findReusable: (scriptSha256: string) =>
+                acceptedGrids.find((evidence) => evidence.scriptSha256 === scriptSha256),
+            }),
       });
 
       // 未收敛轮不增加 prompts / protocolRounds；规范配置另记白名单传输末行。
@@ -586,34 +648,18 @@ export const generateOneModel = async (
         if (request.scoreSourceFeedback === true && trialPlan !== undefined) {
           // 读入边界已严格验证每个存在的摘要；新优化阶段还必须有**整张网格**的完整终局。
           // 历史观测仍可缺摘要读取，但不能据此推进本次反馈或发布最终候选。
-          const complete =
-            readings !== undefined &&
-            readings.length === trialPlan.matches.length &&
-            trialPlan.matches.every((match) =>
-              readings.some(
-                (reading) =>
-                  reading.matchIndex === match.matchIndex && reading.terminalSummary !== undefined,
-              ),
-            );
-          if (!complete) {
-            const missing = trialPlan.matches
-              .filter(
-                (match) =>
-                  !(readings ?? []).some(
-                    (reading) =>
-                      reading.matchIndex === match.matchIndex &&
-                      reading.terminalSummary !== undefined,
-                  ),
-              )
-              .map((match) => String(match.matchIndex));
+          // 复用路径同样跑这一道：复用不是不校验的借口（`trial-reuse.ts` 已校过来源，
+          // 这里校的是「搬到本阶段落点后的那份证据」）。
+          const missing = missingTrialGridMatches(readings ?? [], trialPlan);
+          if (readings === undefined || missing.length > 0) {
             throw new Error(
-              `统一事实反馈缺少完整评测网格的有效终局摘要（计划 ${String(trialPlan.matches.length)} 场，缺 matchIndex ${missing.join(" / ")}），优化阶段 ${String(candidates.length)} 未完成，拒绝推进或冻结候选`,
+              `统一事实反馈缺少完整评测网格的有效终局摘要（计划 ${String(trialPlan.matches.length)} 场，缺 matchIndex ${missing.map(String).join(" / ")}），优化阶段 ${String(candidates.length)} 未完成，拒绝推进或冻结候选`,
             );
           }
           // 旁挂的网格汇总必须与本次 expected plan 逐字相同：换图/换座位/换种子/换陪练即整批失败。
-          // 汇总里的 `score` 只过形状（分母恒等于计划声明的场数）：生成侧不重算分数，
-          // 复算与逐位比对落在选拔，落档落在存档。
-          readTrialGridSummary({
+          // 汇总里的 `score` 只过形状（分母恒等于计划声明的场数）：生成侧**不重算分数**，
+          // 复算与逐位比对落在选拔，落档落在存档——这一份的 `score` 就是该候选唯一的成绩。
+          const summary = readTrialGridSummary({
             path: gridSummaryPathOf(result.observationsPath),
             expectedPlan: trialPlan,
             scriptSha256: result.scriptSha256,
@@ -630,6 +676,19 @@ export const generateOneModel = async (
             // 也不必猜 mapping。与 `generationLog[].params` 同源（同一个 `params` 变量）。
             // `JSON.parse(JSON.stringify(...))` 保证落档的是 JSON 值（不携带 undefined / 共享引用）。
             params: JSON.parse(JSON.stringify(params)) as JsonValue,
+            // 成绩与反馈同源：分数与场数逐字来自这一轮的 `.grid.json`。
+            score: summary.score,
+            matchCount: trialPlan.matchesPerCandidate,
+            ...(result.reusedFromStage === undefined
+              ? {}
+              : { reusedFromStage: result.reusedFromStage }),
+          });
+          // 收录本阶段证据，供后续同字节候选复用（摘要取的就是刚校过的那份字节）。
+          acceptedGrids.push({
+            stage,
+            scriptSha256: result.scriptSha256,
+            observationsPath: result.observationsPath,
+            ...gridEvidenceDigests(result.observationsPath),
           });
           selectionArtifacts.push({
             stage,
@@ -714,15 +773,8 @@ export const generateOneModel = async (
             ...(selection === undefined ? {} : { selection }),
             tscVersion: result.tscVersion,
             scriptSha256: sha256Hex(scriptBytes),
-            ...(request.scoreSourceFeedback === true
-              ? {
-                  optimization: {
-                    version: OPTIMIZATION_VERSION,
-                    feedbackRounds: OPTIMIZATION_FEEDBACK_ROUNDS,
-                    trialSeeds: TRIAL_SEEDS,
-                    candidates,
-                  },
-                }
+            ...(request.scoreSourceFeedback === true && trialPlan !== undefined
+              ? { optimization: archiveOptimizationOf(trialPlan, candidates) }
               : {}),
           });
 
@@ -779,14 +831,22 @@ export const generateOneModel = async (
           committed = true;
           // 拒绝撞名时不发布：既有候选的最终观测不能被失败尝试覆盖。
           // 发布只属旁证：复制失败只警告，不改变已通过候选的结论。
+          // `.grid.json` 与观测同源，必须一起发布：只发观测会让「这份最终候选跑了哪张网格、
+          // 得多少分」在兼容路径上断掉（报告侧读最终档时只剩一份没有计划的观测）。
           if (readings !== undefined) {
-            try {
-              copyFileSync(result.observationsPath, observationsPath);
-            } catch (cause) {
-              const message = cause instanceof Error ? cause.message : String(cause);
-              process.stderr.write(
-                `modelwar gen: 警告：最终试跑观测发布失败 ${observationsPath}: ${message}\n`,
-              );
+            const summaryPath = gridSummaryPathOf(result.observationsPath);
+            for (const [from, to] of [
+              [result.observationsPath, observationsPath],
+              [summaryPath, gridSummaryPathOf(observationsPath)],
+            ] as const) {
+              try {
+                copyFileSync(from, to);
+              } catch (cause) {
+                const message = cause instanceof Error ? cause.message : String(cause);
+                process.stderr.write(
+                  `modelwar gen: 警告：最终试跑观测发布失败 ${to}: ${message}\n`,
+                );
+              }
             }
           }
           return { kind: "frozen", slug, runId, dir: commit.dir, meta };

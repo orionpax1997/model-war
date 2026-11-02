@@ -36,20 +36,25 @@ const matchesSummary = compileProtocolSchema(TRIAL_GRID_SUMMARY_JSON_SCHEMA);
 export const gridSummaryPathOf = (observationsPath: string): string =>
   `${observationsPath}${TRIAL_GRID_SUMMARY_SUFFIX}`;
 
-/** 对象键排序、数组保序的规范序列化（只用于结构相等，不产摘要）。 */
-const canonical = (value: unknown): string => {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+/**
+ * 对象键排序、数组保序的规范序列化（只用于结构相等，不产摘要）。
+ *
+ * 复用路径也用它做「逐场逐字比对」：两份观测行是不是同一件事，只能靠同一套序列化回答。
+ */
+export const canonicalText = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalText).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const object = value as Readonly<Record<string, unknown>>;
     return `{${Object.keys(object)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(object[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${canonicalText(object[key])}`)
       .join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
 };
 
-const same = (left: unknown, right: unknown): boolean => canonical(left) === canonical(right);
+const same = (left: unknown, right: unknown): boolean =>
+  canonicalText(left) === canonicalText(right);
 
 /**
  * 汇总里的逐场身份 = 计划的投影（场序、种子、候选座位、地图名与地图摘要）。
@@ -66,22 +71,18 @@ const projectMatches = (plan: TrialPlan): readonly TrialGridMatch[] =>
   }));
 
 /**
- * 读一次调用的网格汇总，并回答三件事：形状、说的是哪份候选、是否与 expected plan 逐字相同。
+ * 一份汇总文本 → 已校过的汇总。读盘那一步单独拆出来，是因为**复用**要校验的不是
+ * 目标文件，而是来源文件的那一份字节（它必须与收录时的字节逐字相同）。
  *
  * 任一不符都抛（infra 错）：生成侧据此拒绝推进/冻结，而不是静默降级或换一份计划重跑。
  */
-export const readTrialGridSummary = (options: {
+export const parseTrialGridSummary = (options: {
   readonly path: string;
+  readonly text: string;
   readonly expectedPlan: TrialPlan;
   readonly scriptSha256: string;
 }): TrialGridSummary => {
-  const { path, expectedPlan, scriptSha256 } = options;
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    throw new Error(`评测网格汇总读不到（执行器未写或路径不对）：${path}`);
-  }
+  const { path, text, expectedPlan, scriptSha256 } = options;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -99,4 +100,22 @@ export const readTrialGridSummary = (options: {
   if (!same(summary.matches, projectMatches(expectedPlan)))
     throw new Error(`评测网格汇总的逐场身份与计划不一致：${path}`);
   return summary;
+};
+
+/**
+ * 读一次调用的网格汇总，并回答三件事：形状、说的是哪份候选、是否与 expected plan 逐字相同。
+ */
+export const readTrialGridSummary = (options: {
+  readonly path: string;
+  readonly expectedPlan: TrialPlan;
+  readonly scriptSha256: string;
+}): TrialGridSummary => {
+  const { path } = options;
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    throw new Error(`评测网格汇总读不到（执行器未写或路径不对）：${path}`);
+  }
+  return parseTrialGridSummary({ ...options, text });
 };

@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,7 +72,10 @@ const entry = (slug: string, extra: readonly string[] = []): readonly string[] =
 const configOf = (...entries: readonly (readonly string[])[]): string =>
   ["models:", ...entries.flat()].join("\n") + "\n";
 
-it("顺利路径:经端口发一次请求、回得合法脚本,退出码 0", async () => {
+// 说明：本文件凡真的走到编译 / 试跑的用例都显式放宽超时。`unit` project 没有全局
+// `testTimeout`（默认 5s），而一条用例要真跑 tsc、真写契约与安装面符号链接；全量并发下
+// 这些耗时会被同时跑的重用例抬高（实测单跑 1s 的用例在全量里能到 5s 以上）。
+it("顺利路径:经端口发一次请求、回得合法脚本,退出码 0", { timeout: 30_000 }, async () => {
   const root = writeRoot(configOf(entry("alpha")));
   const stub = stubClient([reply(VALID_SCRIPT)]);
   const code = await runGeneration({
@@ -77,7 +88,7 @@ it("顺利路径:经端口发一次请求、回得合法脚本,退出码 0", asy
   expect(stub.calls).toHaveLength(1);
 });
 
-it("一次调用发出的 messages 含完整契约与模板渲染结果(user 角色)", async () => {
+it("一次调用发出的 messages 含完整契约与模板渲染结果(user 角色)", { timeout: 30_000 }, async () => {
   // 本用例只关心第 1 轮发出的 prompt 形状;钉死单轮,避免桩脚本用尽干扰。
   const root = writeRoot(configOf(entry("alpha", ["    protocolRounds: 1"])));
   const stub = stubClient([reply("x")]);
@@ -91,7 +102,7 @@ it("一次调用发出的 messages 含完整契约与模板渲染结果(user 角
   expect(content).toContain("契约:");
 });
 
-it("配置里的 strategy 进 prompt;params 透传给端口", async () => {
+it("配置里的 strategy 进 prompt;params 透传给端口", { timeout: 30_000 }, async () => {
   const root = writeRoot(
     configOf(
       entry("alpha", [
@@ -109,20 +120,24 @@ it("配置里的 strategy 进 prompt;params 透传给端口", async () => {
   expect(stub.calls[0]?.params).toEqual({ temperature: 0.2 });
 });
 
-it("模型没配 strategy 时,发出的 prompt 不留 `{{strategy}}` 也不留空占位", async () => {
-  const root = writeRoot(
-    configOf(entry("alpha", ["    protocolRounds: 1"])),
-    "策略:{{strategy}}\n\n{{contract}}\n",
-  );
-  const stub = stubClient([reply("x")]);
-  await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
-  const content = stub.calls[0]?.messages[0]?.content ?? "";
-  expect(content).not.toContain("{{strategy}}");
-  expect(content).not.toContain("策略:");
-  expect(content).toContain(CONTRACT_RULES);
-});
+it(
+  "模型没配 strategy 时,发出的 prompt 不留 `{{strategy}}` 也不留空占位",
+  { timeout: 30_000 },
+  async () => {
+    const root = writeRoot(
+      configOf(entry("alpha", ["    protocolRounds: 1"])),
+      "策略:{{strategy}}\n\n{{contract}}\n",
+    );
+    const stub = stubClient([reply("x")]);
+    await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
+    const content = stub.calls[0]?.messages[0]?.content ?? "";
+    expect(content).not.toContain("{{strategy}}");
+    expect(content).not.toContain("策略:");
+    expect(content).toContain(CONTRACT_RULES);
+  },
+);
 
-it("`--model` 只跑选中的那一个,其余模型不发请求", async () => {
+it("`--model` 只跑选中的那一个,其余模型不发请求", { timeout: 30_000 }, async () => {
   const root = writeRoot(configOf(entry("alpha"), entry("beta")));
   const alpha = stubClient([reply(VALID_SCRIPT)]);
   const beta = stubClient([reply(VALID_SCRIPT)]);
@@ -188,56 +203,63 @@ it("`generateAndFreeze` 解析出 root 后加载 `<root>/.env`(存在才加载)"
   }
 });
 
-it("runGeneration 显式选项贯通：两次事实优化后第三个有效候选冻结", async () => {
-  const root = writeRoot(configOf(entry("alpha", ["    protocolRounds: 3"])));
-  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
-  const code = await runGeneration({
-    root,
-    configPath: "models.yaml",
-    createClient: () => stub,
-    scoreSourceFeedback: true,
-    // 计划与观测都按注入桩来：真 `--plan` 要读本地冻结档案（`archive/` 不入库）。
-    trialPlan: () => gridPlanFixture(),
-    trial: ({ artifactPath, observationsPath, plan }) => {
-      if (plan === undefined) throw new Error("试跑桩需要计划");
-      const readings = plan.matches.map((match) => ({
-        matchIndex: match.matchIndex,
-        delivered: 0,
-        captures: 0,
-        noScoreSource: true,
-        terminalSummary: terminalSummaryFixture(match.seed, "timeout", match.seats),
-      }));
-      writeFileSync(observationsPath, readings.map((row) => JSON.stringify(row)).join("\n") + "\n");
-      writeFileSync(
-        `${observationsPath}.grid.json`,
-        JSON.stringify({
-          version: plan.version,
-          plan,
-          // 汇总说的是这份候选脚本（执行器认编译产物字节）。
-          scriptSha256: sha256(readFileSync(artifactPath)),
-          // 桩写的终局是四方并列 rank 1（`terminalSummaryFixture` 的 timeout 口径）：
-          // 每场各得 (3+2+1+0)/4 = 1.5 名次积分 → 32 场共 48 分，均分仍是 1.5。
-          // 分母恒等于计划声明的场数，不因零交付而缩小（生成侧只验形状，不重算分数）。
-          score: {
-            totalPoints: 48,
-            averagePoints: 1.5,
-            countedMatches: plan.matchesPerCandidate,
-          },
-          matches: plan.matches.map((match) => ({
-            matchIndex: match.matchIndex,
-            seed: match.seed,
-            candidateSeat: match.candidateSeat,
-            map: match.map,
-            mapSha256: match.mapSha256,
-          })),
-        }),
-      );
-      return { passed: true, stdout: "" };
-    },
-  });
-  expect(code).toBe(0);
-  expect(stub.calls).toHaveLength(3);
-});
+it(
+  "runGeneration 显式选项贯通：两次事实优化后第三个有效候选冻结",
+  { timeout: 30_000 },
+  async () => {
+    const root = writeRoot(configOf(entry("alpha", ["    protocolRounds: 3"])));
+    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+    const code = await runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: () => stub,
+      scoreSourceFeedback: true,
+      // 计划与观测都按注入桩来：真 `--plan` 要读本地冻结档案（`archive/` 不入库）。
+      trialPlan: () => gridPlanFixture(),
+      trial: ({ artifactPath, observationsPath, plan }) => {
+        if (plan === undefined) throw new Error("试跑桩需要计划");
+        const readings = plan.matches.map((match) => ({
+          matchIndex: match.matchIndex,
+          delivered: 0,
+          captures: 0,
+          noScoreSource: true,
+          terminalSummary: terminalSummaryFixture(match.seed, "timeout", match.seats),
+        }));
+        writeFileSync(
+          observationsPath,
+          readings.map((row) => JSON.stringify(row)).join("\n") + "\n",
+        );
+        writeFileSync(
+          `${observationsPath}.grid.json`,
+          JSON.stringify({
+            version: plan.version,
+            plan,
+            // 汇总说的是这份候选脚本（执行器认编译产物字节）。
+            scriptSha256: sha256(readFileSync(artifactPath)),
+            // 桩写的终局是四方并列 rank 1（`terminalSummaryFixture` 的 timeout 口径）：
+            // 每场各得 (3+2+1+0)/4 = 1.5 名次积分 → 32 场共 48 分，均分仍是 1.5。
+            // 分母恒等于计划声明的场数，不因零交付而缩小（生成侧只验形状，不重算分数）。
+            score: {
+              totalPoints: 48,
+              averagePoints: 1.5,
+              countedMatches: plan.matchesPerCandidate,
+            },
+            matches: plan.matches.map((match) => ({
+              matchIndex: match.matchIndex,
+              seed: match.seed,
+              candidateSeat: match.candidateSeat,
+              map: match.map,
+              mapSha256: match.mapSha256,
+            })),
+          }),
+        );
+        return { passed: true, stdout: "" };
+      },
+    });
+    expect(code).toBe(0);
+    expect(stub.calls).toHaveLength(3);
+  },
+);
 
 it.each([{ flags: [] }, { flags: ["--select-best-candidate"] }])(
   "gen CLI 接受事实反馈与选拔无值开关 %j 并继续读取配置",
@@ -278,3 +300,48 @@ it("CLI 选拔开关要求事实反馈，在读配置与首次请求前报错", 
   ]);
   expect(code).toBe(1);
 });
+
+it(
+  "网格执行失败（预算触限用尽）即整批失败：不建存档目录，失败记录就位",
+  { timeout: 30_000 },
+  async () => {
+    const root = writeRoot(configOf(entry("alpha")));
+    // 五轮各回一份字节不同的候选：每一轮都是一次**新的**候选尝试（棋格被拦下，不是同一份字节
+    // 换轮次）。复用来源池只收录“已通过”的阶段（`pipeline.ts` 的 `acceptedGrids`），本用例
+    // 没有任何阶段通过，所以池子始终为空——即便五轮回同一份字节也不会被复用。字节各异
+    // 是为了让“五次尝试 = 五份不同候选”在用例里成立，而不是靠同一份字节凑数。
+    const stub = stubClient(
+      Array.from({ length: 5 }, (_, index) =>
+        reply(
+          `var ticks = 0;\nfunction loop() {\n  ticks += ${String(index + 2)};\n  return ticks;\n}\n`,
+        ),
+      ),
+    );
+    const code = await runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: () => stub,
+      scoreSourceFeedback: true,
+      trialPlan: () => gridPlanFixture(),
+      // 网格执行失败（预算触限）：pipeline 归 `contract` / `trial` 段，五轮响应用尽即整批失败。
+      trial: () => ({ passed: false, stdout: "预算诊断\n" }),
+    });
+    expect(code).toBe(1);
+    expect(stub.calls).toHaveLength(5);
+    const archived = readdirSync(join(root, "archive", "alpha"));
+    // 没有存档目录：`<runId>/` 那样的目录一个都不该有（失败的尝试只留下候选旁挂文件）。
+    expect(archived.filter((name) => /^\d{4}-\d{2}-\d{2}T/.test(name))).toEqual([]);
+    const records = archived.filter((name) => name.startsWith("failed-"));
+    expect(records).toHaveLength(1);
+    const record = JSON.parse(
+      readFileSync(join(root, "archive", "alpha", records[0]!), "utf8"),
+    ) as {
+      classification: string;
+      message: string;
+      protocolRounds: number;
+    };
+    expect(record.classification).toBe("contract");
+    expect(record.message).toContain("冻结期试跑未通过");
+    expect(record.protocolRounds).toBe(5);
+  },
+);

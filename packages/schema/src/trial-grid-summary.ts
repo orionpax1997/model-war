@@ -95,7 +95,8 @@ const GRID_MATCH_JSON_SCHEMA = {
   },
 } as const;
 
-const SCORE_JSON_SCHEMA = {
+/** 网格分数的 JSON 形状（存档 `optimization.candidates[].score` 与 `.grid.json` 同一格事实）。 */
+export const TRIAL_GRID_SCORE_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["totalPoints", "averagePoints", "countedMatches"],
@@ -122,7 +123,7 @@ export const TRIAL_GRID_SUMMARY_JSON_SCHEMA = {
     version: { const: TRIAL_GRID_SUMMARY_VERSION },
     plan: TRIAL_PLAN_JSON_SCHEMA,
     scriptSha256: SHA256_JSON_SCHEMA,
-    score: SCORE_JSON_SCHEMA,
+    score: TRIAL_GRID_SCORE_JSON_SCHEMA,
     matches: {
       type: "array",
       minItems: TRIAL_PLAN_JSON_SCHEMA.properties.matchesPerCandidate.const,

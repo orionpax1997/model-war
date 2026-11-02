@@ -20,7 +20,7 @@ import {
   ACTION_API_NAMES,
   ACTION_ERROR_CODES,
   ACTION_EFFECT_NAMES,
-  ARCHIVE_META_JSON_SCHEMA,
+  ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA,
   ARCHIVE_SELECTION_JSON_SCHEMA,
   OPTIMIZATION_STAGES,
   SELECTION_MATCHES_PER_CANDIDATE,
@@ -507,7 +507,7 @@ const candidateObservationsOf = (
  */
 const failureCandidateSchema = z.fromJSONSchema(
   JSON.parse(
-    JSON.stringify(ARCHIVE_META_JSON_SCHEMA.properties.optimization.properties.candidates.items),
+    JSON.stringify(ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA),
   ) as z.core.JSONSchema.JSONSchema,
 );
 

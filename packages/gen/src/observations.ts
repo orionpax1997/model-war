@@ -159,6 +159,27 @@ export const readTrialObservations = (
     });
 };
 
+/**
+ * 网格证据的完整性：计划里的哪些场次缺一行或**缺终局摘要**。
+ *
+ * 空数组 = 整张网格齐了。两个消费端共用这一条判据：本轮刚跑完的证据，与**复用**更早阶段
+ * 的那份证据（复用不是不校验的借口：字节守卫、计划一致性、观测完整性照旧）。
+ * 不把缺场当成零分——少一场就拒绝，不缩分母、不补零。
+ */
+export const missingTrialGridMatches = (
+  readings: readonly TrialObservationLine[],
+  plan: TrialPlan,
+): readonly number[] =>
+  plan.matches
+    .filter(
+      (match) =>
+        !readings.some(
+          (reading) =>
+            reading.matchIndex === match.matchIndex && reading.terminalSummary !== undefined,
+        ),
+    )
+    .map((match) => match.matchIndex);
+
 const renderActions = (reading: TrialObservationLine | undefined): string => {
   const facts = reading?.actionFacts;
   if (facts === undefined) return "  行动事实缺失，未将缺失解释为零。";

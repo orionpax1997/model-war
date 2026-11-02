@@ -66,6 +66,7 @@ import { cpus } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { parseReplay, readLinesOf } from "@model-war/replay";
 import {
+  OPTIMIZATION_GRID_VERSION,
   TRIAL_SEEDS,
   type JsonValue,
   type MatchInput,
@@ -501,13 +502,21 @@ export const scheduleSeason = async (
   // 完整计划在任何物化、spawn 或 resume 之前检查；不替换用户选择的种子。
   // 比较按 `seed % 2^31` 归一化（`101 + 2^31` 与 `101` 同一随机源初态，原始值直比会漏检）。
   // 无 `optimization` 字段的纯旧档名册沿用旧行为（test-plan legacy 行：不改旧种子行为）；
-  // 名册一旦含有 opt-in 归档，即按「固定默认 ∪ 该档记录」集合检查（schema 现把记录值固定为 TRIAL_SEEDS，union 是防未来放宽不断 gate）。
+  // 名册一旦含有 opt-in 归档，即按「固定默认 ∪ 该档记录」集合检查（union 是防未来放宽不断 gate）。
+  //
+  // 种子读哪一栏**按优化档版本分派**：v1 档读 `trialSeeds`（三场单图试跑的固定三值），
+  // v2 档读网格计划里的逐场种子（`plan.matches[].seed`，每格一个）。v2 档没有 `trialSeeds`，
+  // 从它读种子会读到 `undefined` 而静默放行——那正是 hld §8.1「不静默替换种子」要防的事。
   for (const archivePath of season.participants) {
     const meta = optimizationMetaOf(JSON.parse(readText(join(root, archivePath, META_NAME))));
-    const trialSeeds = meta?.optimization?.trialSeeds;
-    if (trialSeeds === undefined) continue;
+    const optimization = meta?.optimization;
+    if (optimization === undefined) continue;
+    const recordedSeeds =
+      optimization.version === OPTIMIZATION_GRID_VERSION
+        ? optimization.plan.matches.map((match) => match.seed)
+        : optimization.trialSeeds;
     const forbidden = new Set(
-      [...TRIAL_SEEDS, ...trialSeeds, ...(meta?.selection?.plan.seeds ?? [])].map(
+      [...TRIAL_SEEDS, ...recordedSeeds, ...(meta?.selection?.plan.seeds ?? [])].map(
         (seed) => seed % SEED_STREAM_MODULUS,
       ),
     );

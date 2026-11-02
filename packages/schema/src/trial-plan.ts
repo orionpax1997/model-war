@@ -226,7 +226,8 @@ const SHA256_JSON_SCHEMA = { type: "string", pattern: "^[0-9a-f]{64}$" } as cons
 /** 座位号在 JSON 里的形状（四座恒满）。 */
 const SEAT_JSON_SCHEMA = { type: "integer", minimum: 0, maximum: 3 } as const;
 
-const PLAN_SCRIPT_JSON_SCHEMA = {
+/** 计划里一份对手身份的形状；存档的 `sparring[]` 与它同形（同一格事实，只有一处写法）。 */
+export const TRIAL_PLAN_SCRIPT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["id", "role", "source", "scriptSha256"],
@@ -269,13 +270,12 @@ const PLAN_MATCH_JSON_SCHEMA = {
 } as const;
 
 /**
- * 计划的**单份 JSON 形状**（TypeScript 是形状真源，此处手工对齐，ADR-0003）。
+ * 计划的**单份 JSON 形状正文**（不含 `$schema` 方言声明）。
  *
- * 只管形状：座位/种子/地图/场序是否与事实自洽归 runner 的 `checkTrialPlan`（跨字段关系
- * 不住在 JSON Schema 里，见 `archive-meta.ts` 头注）。
+ * 单独导出正文是为了嵌进别的 schema（存档 meta 的 `optimization.plan`）：子 schema 不该
+ * 再声明一次方言，但形状本身只能有一处写法。`TRIAL_PLAN_JSON_SCHEMA` 就是它加上方言声明。
  */
-export const TRIAL_PLAN_JSON_SCHEMA = {
-  $schema: "http://json-schema.org/draft-07/schema#",
+export const TRIAL_PLAN_JSON_SHAPE = {
   title: "model-war 试跑计划",
   type: "object",
   additionalProperties: false,
@@ -299,7 +299,7 @@ export const TRIAL_PLAN_JSON_SCHEMA = {
       type: "array",
       minItems: TRIAL_SPARRING_ROLE_ORDER.length,
       maxItems: TRIAL_SPARRING_ROLE_ORDER.length,
-      items: PLAN_SCRIPT_JSON_SCHEMA,
+      items: TRIAL_PLAN_SCRIPT_JSON_SCHEMA,
     },
     maps: {
       type: "array",
@@ -316,4 +316,15 @@ export const TRIAL_PLAN_JSON_SCHEMA = {
     },
     planSha256: SHA256_JSON_SCHEMA,
   },
+} as const;
+
+/**
+ * 计划的**单份 JSON 形状**（TypeScript 是形状真源，此处手工对齐，ADR-0003）。
+ *
+ * 只管形状：座位/种子/地图/场序是否与事实自洽归 runner 的 `checkTrialPlan`（跨字段关系
+ * 不住在 JSON Schema 里，见 `archive-meta.ts` 头注）。
+ */
+export const TRIAL_PLAN_JSON_SCHEMA = {
+  $schema: "http://json-schema.org/draft-07/schema#",
+  ...TRIAL_PLAN_JSON_SHAPE,
 } as const;
