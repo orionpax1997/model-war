@@ -357,13 +357,13 @@ intent 由 processor 的统一校验裁决:属主正确、参数在界、目标�
 
 **承载权从静态校验器移到编译器**的依据:白名单反转的本质是自由变量判定,而解析层不暴露作用域信息;自建分析器的失败模式是**漏掉任何一处声明位置 = 误伤一份合规脚本**,而误报在有限的迭代预算里不对称地致命(模型拿到一条改不掉的违规,这轮生成就作废)。编译器的名字解析对这种不对称性零成本。
 
-**生成协议**:编译、静态校验和冻结期候选预算失败 → 原始诊断回喂模型,下一轮携带完整历史与上轮回答;默认流程的总调用轮数受模型配置上限约束。**显式事实优化**(统一两次行动事实与终局事实回喂)与**独立选拔**默认关闭,开启后的阶段预算、种子隔离与公平性规则见 [ADR-0017](./adr/0017-uniform-two-fact-feedback.md)、[ADR-0018](./adr/0018-generation-policy-and-candidate-selection.md)、[ADR-0019](./adr/0019-terminal-match-facts-feedback.md) 与 [gdd §3.3](./gdd.md)。
+**生成协议**:编译、静态校验和冻结期候选预算失败 → 原始诊断回喂模型,下一轮携带完整历史与上轮回答;默认流程的总调用轮数受模型配置上限约束。**显式事实优化**(统一两次行动事实与终局事实回喂)与**有效候选选拔**(同一张评测网格的排序 + 独立复算)默认关闭,开启后的阶段预算、种子隔离与公平性规则见 [ADR-0017](./adr/0017-uniform-two-fact-feedback.md)、[ADR-0023](./adr/0023-sparring-scripts-replace-benchmarks-as-opponents.md)、[ADR-0024](./adr/0024-single-evaluation-grid-and-selection-as-recompute.md)、[ADR-0025](./adr/0025-feedback-aggregates-and-cross-stage-gap.md) 与 [gdd §3.3](./gdd.md)。
 
-### 6.3 独立有效候选选拔
+### 6.3 有效候选选拔(排序 + 全量复算)
 
-选拔必须同时启用事实优化;gen 在首次请求前取得本轮预定计划,三个有效阶段完成后通过最小 `SelectionProbe` 调 CLI 私有子进程。**CLI 承载真实执行、runner 名次积分和完整复算;gen 只交换 schema 数据**,不 import runner/engine/replay,不直接消费 result 计分。
+选拔必须同时启用事实优化;但它不另起一次实验:排序直接用生成阶段那张评测网格的分数([ADR-0024](./adr/0024-single-evaluation-grid-and-selection-as-recompute.md)),复算阶段在三个有效阶段完成后通过最小 `SelectionProbe` 调 CLI 私有子进程,由 CLI 用**同一份计划**重建并重跑整张网格,逐场比对观测行与分数三元组,任一不一致即整次生成失败。计划不同源(摘要不相等)同样整次失败,不是降级警告。**CLI 承载真实执行、runner 名次积分和完整复算;gen 只交换 schema 数据**,不 import runner/engine/replay,不直接消费 result 计分。
 
-计分与决胜规则归 [gdd §3.3](./gdd.md),不复用赛季异常剔除分母。仅 `completed` 的完整终局可入证据;缺失、异常或不确定终局**不缩小分母、不补零、不用已有候选替补**未完成阶段。选拔不发模型请求、不回喂分数、不增加模型响应预算。历史兼容边界见 [ADR-0020](./adr/0020-selection-tiebreak-compatibility.md)。
+计分与决胜规则归 [gdd §3.3](./gdd.md),不复用赛季异常剔除分母。仅 `completed` 的完整终局可入证据;缺失、异常或不确定终局**不缩小分母、不补零、不用已有候选替补**未完成阶段。选拔不发模型请求、不回喂分数、不增加模型响应预算。历史兼容按版本分派:v1 历史档按原形状读取(旧选拔计划与 `earlier-stage` 决胜语义),不迁移不回填;v2 档的选拔计划与生成阶段同源,不再产生该历史理由。边界见 [ADR-0020](./adr/0020-selection-tiebreak-compatibility.md) 与 [ADR-0024](./adr/0024-single-evaluation-grid-and-selection-as-recompute.md)。
 
 ## 7. 数据设计
 
@@ -404,6 +404,8 @@ archive/<modelSlug>/<runId>/
 - **写盘原子、一跑一目录**:三件套先在临时目录组装,冻结期校验全过才 rename 到目标目录;目标已存在即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量。`runId` 是生成时间戳,旧目录不删——这是「定版副本不可变」的落地方式。
 - **失败的模型不写 `archive/`**:只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + 生成日志 + 最终诊断 + 失败分类),供报告侧读成失败名单。
 - **试跑观测旁挂**(`observed-<runId>.jsonl`)与候选旁挂不覆盖地保存各阶段产物;**行动事实**绑定当前编译产物 hash、本对局 seed 与候选座位,带版本与完整性标记,缺失不补零;**终局事实**只从真实 `completed` 终局产生,由 CLI 用当局规则集权重与单位造价计算,不从末次行动或累计读数反推。
+- **网格汇总与观测一起发布**(`<观测文件>.grid.json`):计划正文(含计划摘要)、候选摘要、逐场身份与网格分数。它是候选成绩的**唯一**来源——上游逐字读它而不自己算分,避免两套计分逻辑漂成两个真源;两份文件分开发布会让下游读到半截状态。反馈文本只从观测与计划渲染,同样的观测重渲染逐字相同,所以「模型当时看到了什么」是可查的事实而不是推测。
+- **存档可选段按版本分派**:`optimization` / `selection` 都是可选旁证,且各有版本——v1 是历史形状(固定试跑种子 / 旧选拔计划),v2 是网格形状(完整计划 + 陪练身份 + 每候选的分数、场数与复用来源)。读入端按版本分流:**v1 历史档按原形状读取,不迁移、不回填**,v2 的必填字段不回溯强加给旧档([ADR-0024](./adr/0024-single-evaluation-grid-and-selection-as-recompute.md))。
 - **对局输入物化**:`runs/<runId>/matches/<combo>-<map>-<seed>/input.json`(4 × 存档路径 + 地图 + 种子 + 规则集版本 + 各文件 hash)。哈希取每座存档的 `script.js` / `meta.json` 与地图各一份,**不含 `script.ts`**(复算认编译产物);座位由 `archives` 的下标承载。
 
 ### 7.5 回放 JSONL
@@ -428,7 +430,7 @@ archive/<modelSlug>/<runId>/
 - 输入:`season.yaml`(本地配置,不入库)。**字段与取值的真源是 `packages/runner` 的 season schema**,本文不复制。
 - 枚举:全部 4 人组合 × M 地图 × K 种子;种子值 = 确定性函数(根种子、组合、地图、序号),同一对局的输入物化对全体参赛者一致。
 - **座位轮换**:把组合内 4 名参赛者按 slug 升序为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4` 循环移位。**精确均摊要求 `M × K ≡ 0 (mod 4)`**,不满足时**直接报错**(不静默产生偏移清单)。分配对全体一致且完全确定。
-- **优化/选拔种子隔离**:赛季配置与归档解析后、任何 input 写出 / 续跑 / spawn 前,核对正式评测计划的全部 seed 与各参赛归档实际记录的优化试跑集合及可选选拔集合无交集,存在交集即明确拒绝(含用户所选根种子派生后导致的碰撞);**不静默替换种子**。比较按 `seed % 2^31` 归一化。
+- **优化/选拔种子隔离**:赛季配置与归档解析后、任何 input 写出 / 续跑 / spawn 前,核对正式评测计划的全部 seed 与各参赛归档实际记录的优化试跑集合及可选选拔集合无交集,存在交集即明确拒绝(含用户所选根种子派生后导致的碰撞);**不静默替换种子**。优化试跑的种子集合按存档版本取:v1 是固定的一组试跑种子,v2 是计划里逐场的网格种子(两代都要比到位,否则隔离门只守旧档)。比较按 `seed % 2^31` 归一化。
 - 并发:对局子进程池,默认并发度 `min(cpus, 8)`;对局之间互不干扰。
 
 ### 8.2 排名(名次积分制)
@@ -443,7 +445,7 @@ archive/<modelSlug>/<runId>/
 | `report.json` | 每个对局的输入引用 + 名次 + 分数 | 机器复算 |
 | `narrative/<对局>.md` | 从 events 生成的叙事战报 | 自媒体文案 |
 
-生成归档报告是另一件事:它只读冻结脚本与失败记录的摘要,区分生成阶段、选拔胜者与实际冻结身份,披露证据覆盖;**不透传 prompt / 响应、provider 错误体、失败诊断原文与任意自由文本**。
+生成归档报告是另一件事:它只读冻结脚本与失败记录的摘要,区分生成阶段、选拔胜者与实际冻结身份,披露证据覆盖,并把**三类分数分列**:生成阶段分数(网格均分,分母为计划场数)、选拔复算分数(只作校验,应与前者逐位相同)、赛季分数(归档里不适用,不拿上面两类冒充),不许互相替代;**不透传 prompt / 响应、provider 错误体、失败诊断原文与任意自由文本**。
 
 ### 8.4 对局异常的处理
 
@@ -455,7 +457,7 @@ archive/<modelSlug>/<runId>/
 
 | 命令 | 承载包 | 说明 |
 |---|---|---|
-| `modelwar gen --config models.yaml [--model <slug>] [--score-source-feedback] [--select-best-candidate]` | gen | 生成并冻结脚本;只有它联网、只有它读 `.env` 里的凭证 |
+| `modelwar gen --config models.yaml [--model <slug>] [--score-source-feedback] [--select-best-candidate]` | gen | 生成并冻结脚本;只有它联网、只有它读 `.env` 里的凭证。开启 `--score-source-feedback` 后每个候选都在整张评测网格上跑满一遍,`--select-best-candidate` 按同一张计划复算校验而不是另跑实验;生成侧与执行侧经私有子进程的 `--plan` / `--expected-plan` 交换计划数据 |
 | `modelwar run --config season.yaml` | runner | 整轮赛季 + 报告;**对局阶段不联网**;同配置再跑即断点续跑 |
 | `modelwar report [--model <slug>] [--run-id <id>] [--json]` | runner | 只读生成记录摘要;不联网 |
 | `modelwar match <input.json>` | engine | 执行一个对局(runner 与调试都走这条路径) |
@@ -497,13 +499,14 @@ archive/<modelSlug>/<runId>/
 
 | 验收面 | 落点 |
 |---|---|
-| 确定性 | 属性测试(重放一致性、序列化往返)+ `modelwar verify` + 夜间重放扫描 |
+| 重放确定性 | 属性测试(重放一致性、序列化往返)+ `modelwar verify` + 夜间重放扫描 |
 | 四方对等 | 属性测试(四重旋转对称)+ `modelwar map-lint` |
 | 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
 | 沙箱与预算 | 沙箱裁决单测 + 预算结构门禁 + 预算探针复核 |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
 | 可追溯与复算 | 存档元数据读入端校验 + 对局输入物化 + 报告双轨 |
-| 确定性 | 属性测试 + `stateHash` 断言(禁浮点门禁是其中一轨) |
+| 评测网格与选拔复算 | 计划形状断言(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ 逐场复算比对 + 生成阶段分数与赛季口径分离 |
+| 状态与数值确定性 | 属性测试 + `stateHash` 断言(禁浮点门禁是其中一轨) |
 
 ## 12. 开放项(工程侧)
 

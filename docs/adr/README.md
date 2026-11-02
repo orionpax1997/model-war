@@ -32,12 +32,15 @@
 | [0014](./0014-script-entry-checked-by-validator.md) | 脚本入口的「存在性」检查落在静态校验器:gen 不解析、也不执行模型产物 | accepted | — |
 | [0015](./0015-opt-in-score-source-feedback.md) | 无得分来源回喂仅作为显式有限实验 | partially superseded | 机会分配口径被 ADR-0017 取代 |
 | [0016](./0016-production-action-facts.md) | 行动事实沿现有桥采集,以完整性约束回喂 | partially superseded | 反馈边界被 ADR-0017 / ADR-0019 取代 |
-| [0017](./0017-uniform-two-fact-feedback.md) | 显式事实优化统一两轮,诊断修复按阶段独立计量 | accepted | — |
-| [0018](./0018-generation-policy-and-candidate-selection.md) | 规范生成意图与完整候选选拔分开审计 | accepted | — |
-| [0019](./0019-terminal-match-facts-feedback.md) | 两次事实反馈纳入真实终局计分依据与四方结果 | accepted | — |
-| [0020](./0020-selection-tiebreak-compatibility.md) | 选拔决胜更新与历史身份兼容 | accepted | — |
+| [0017](./0017-uniform-two-fact-feedback.md) | 显式事实优化统一两轮,诊断修复按阶段独立计量 | accepted | 反馈的内容与呈现口径由 ADR-0025 演进(机会分配与计量边界仍现行) |
+| [0018](./0018-generation-policy-and-candidate-selection.md) | 规范生成意图与完整候选选拔分开审计 | partially superseded | 选拔作为「另一次独立实验」的表述被 ADR-0024 取代(同字节复用一条被继承) |
+| [0019](./0019-terminal-match-facts-feedback.md) | 两次事实反馈纳入真实终局计分依据与四方结果 | partially superseded | 选拔按独立计划的语义被 ADR-0024 取代;逐场全展开的边界被 ADR-0025 取代 |
+| [0020](./0020-selection-tiebreak-compatibility.md) | 选拔决胜更新与历史身份兼容 | accepted | 历史决胜语义的适用范围由 ADR-0024 的 v1/v2 分流限定(`earlier-stage` 只属 v1 档) |
 | [0021](./0021-google-generate-content-family.md) | Google 线协议作为第四个端点族,并承认无收尾哨兵的流 | accepted | — |
 | [0022](./0022-generate-content-thinking-level-and-params-evidence.md) | Google 族的推理控制用 `thinkingLevel`,候选的实际参数随存档落档 | accepted | 满足 ADR-0021 的重评条件 |
+| [0023](./0023-sparring-scripts-replace-benchmarks-as-opponents.md) | 优化与选拔的对手换成能力阶梯,基准脚本退回契约回归 | accepted | — |
+| [0024](./0024-single-evaluation-grid-and-selection-as-recompute.md) | 一次生成只定义一张评测网格,选拔是排序加独立复算 | accepted | 局部取代 ADR-0018 / ADR-0019 的选拔独立性表述;限定 ADR-0020 的版本适用范围 |
+| [0025](./0025-feedback-aggregates-and-cross-stage-gap.md) | 事实回喂分三层:聚合对差表、逐场一行、最差三场展开 | accepted | 演进 ADR-0017;局部取代 ADR-0019 的逐场全展开边界 |
 
 ## 写一份新 ADR
 

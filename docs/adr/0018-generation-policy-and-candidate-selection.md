@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: partially superseded
+partially_superseded_by: ADR-0024
 ---
 
 # 规范生成意图与完整候选选拔分开审计

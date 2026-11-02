@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: partially superseded
+partially_superseded_by: ADR-0024, ADR-0025
 ---
 
 # 两次事实反馈纳入真实终局计分依据与四方结果
