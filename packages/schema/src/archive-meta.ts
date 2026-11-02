@@ -34,7 +34,11 @@
  * 轮数与 prompt 条数是否相等)归 `apps/cli` 的装载期断言。
  */
 
-import { ARCHIVE_SELECTION_JSON_SCHEMA, type ArchiveSelection } from "./selection-plan.js";
+import {
+  ARCHIVE_GRID_SELECTION_JSON_SCHEMA,
+  ARCHIVE_SELECTION_JSON_SCHEMA,
+  type ArchiveSelection,
+} from "./selection-plan.js";
 import { TRIAL_GRID_SCORE_JSON_SCHEMA, type TrialGridScore } from "./trial-grid-summary.js";
 import {
   TRIAL_MATCHES_PER_CANDIDATE,
@@ -375,7 +379,12 @@ export const ARCHIVE_META_JSON_SCHEMA = {
       description:
         "script.js 的 sha256。**复算认编译产物,不认定版源码**——同一份 script.ts 换一版 tsc 会产出不同的 script.js,所以哈希取在产物这一侧。装载期与实测比对,不等即拒跑。",
     },
-    selection: ARCHIVE_SELECTION_JSON_SCHEMA,
+    selection: {
+      // 与 `optimization` 同一条纪律：两版是**两个完整形状**（各自的 `additionalProperties: false`
+      // 与必填集），所以 v1 档带 `plan.seeds` / v2 档带 `plan.scripts` 都只能匹配上自己那一支，
+      // 而不是被宽松放行。历史档不迁移，两种形状同时合法。
+      oneOf: [ARCHIVE_SELECTION_JSON_SCHEMA, ARCHIVE_GRID_SELECTION_JSON_SCHEMA],
+    },
     optimization: {
       // 版本分派：两版是**两个完整形状**（各自的 `additionalProperties: false` 与必填集），
       // 所以 v1 档带 `plan` / v2 档缺 `plan` 都只能匹配不上，而不是被宽松放行。

@@ -8,7 +8,7 @@ import { afterAll, expect, it } from "vitest";
 import {
   RULESET_VERSION,
   TRIAL_BENCHMARK_IDS,
-  type ArchiveSelection,
+  type ArchiveSelectionV1,
   type Ruleset,
   type SelectionPlan,
 } from "@model-war/schema";
@@ -78,7 +78,7 @@ it(
     const f = fixture(["function loop() {}\n", "function loop() {}\n", "function loop() {}\n"]);
     const ran = f.run([], f);
     expect(ran.status, ran.stderr).toBe(0);
-    const selection: ArchiveSelection = JSON.parse(ran.stdout);
+    const selection: ArchiveSelectionV1 = JSON.parse(ran.stdout);
     expect(selection.plan.matches.map((match) => match.candidateSeat)).toEqual([
       0, 3, 2, 1, 0, 3, 2, 1, 0, 3, 2, 1,
     ]);
@@ -116,7 +116,7 @@ it(
     const valid = f.run(["--validate"], { ...f, selection });
     expect(valid.status, valid.stderr).toBe(0);
     const { stage, protocolRound, scriptSha256, sourceSha256 } = selection.candidates[0]!;
-    const legacy: ArchiveSelection = {
+    const legacy: ArchiveSelectionV1 = {
       ...selection,
       selected: { stage, protocolRound, scriptSha256, sourceSha256 },
       reason: "earlier-stage",
@@ -141,7 +141,7 @@ it("真实候选正常三振淘汰保留十二场终局，四座积分均为零�
   ]);
   const ran = f.run([], f);
   expect(ran.status, ran.stderr).toBe(0);
-  const selection: ArchiveSelection = JSON.parse(ran.stdout);
+  const selection: ArchiveSelectionV1 = JSON.parse(ran.stdout);
   const candidate = selection.candidates[0]!;
   expect(candidate.matches).toHaveLength(12);
   expect(candidate.totalPoints).toBe(0);

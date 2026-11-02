@@ -74,6 +74,7 @@ import {
   type MatchInputArchives,
 } from "@model-war/schema";
 import { optimizationMetaOf } from "./archive-optimization.js";
+import { selectionSeedsOf } from "./selection.js";
 import { enumerateMatchUps, slugOf, type MatchUp } from "./enumerate.js";
 import { DEFAULT_RANK_POINTS, perMatchScores, rankSeason, type MatchStanding } from "./ranker.js";
 import type { MatchIssue, MatchIssueReason, SeasonMatchReport, SeasonReport } from "./reporter.js";
@@ -516,9 +517,11 @@ export const scheduleSeason = async (
         ? optimization.plan.matches.map((match) => match.seed)
         : optimization.trialSeeds;
     const forbidden = new Set(
-      [...TRIAL_SEEDS, ...recordedSeeds, ...(meta?.selection?.plan.seeds ?? [])].map(
-        (seed) => seed % SEED_STREAM_MODULUS,
-      ),
+      [
+        ...TRIAL_SEEDS,
+        ...recordedSeeds,
+        ...(meta?.selection === undefined ? [] : selectionSeedsOf(meta.selection)),
+      ].map((seed) => seed % SEED_STREAM_MODULUS),
     );
     const conflicts = matchUps.filter((match) => forbidden.has(match.seed % SEED_STREAM_MODULUS));
     if (conflicts.length > 0) {

@@ -19,9 +19,12 @@ import { z } from "zod";
 import {
   ARCHIVE_META_JSON_SCHEMA,
   OPTIMIZATION_GRID_VERSION,
+  SELECTION_GRID_VERSION,
   type ArchiveMeta,
+  type ArchiveOptimization,
   type ArchiveOptimizationCandidate,
   type ArchiveOptimizationGrid,
+  type ArchiveSelection,
 } from "@model-war/schema";
 
 import { validateSelection } from "./selection.js";
@@ -121,6 +124,33 @@ const checkGridRelations = (meta: ArchiveMeta, optimization: ArchiveOptimization
   }
 };
 
+/**
+ * v2 选拔与生成阶段网格是同一件事：计划必须逐字相同（`planSha256`），每个候选的分数必须
+ * 与它自己那一阶段的网格分数逐位相同。选拔的复算只校不对——所以报告侧看到的「那个分数」
+ * 只能有一个值，两处一旦分叉，存档就不能再声称「这 32 场是它跑出来的」。
+ */
+const checkGridSelection = (
+  optimization: ArchiveOptimization,
+  selection: Extract<ArchiveSelection, { version: typeof SELECTION_GRID_VERSION }>,
+): void => {
+  if (optimization.version !== OPTIMIZATION_GRID_VERSION)
+    throw new Error("网格选拔存档必须包含网格形态的优化阶段");
+  if (selection.plan.planSha256 !== optimization.plan.planSha256)
+    throw new Error("选拔计划与生成阶段的网格计划不同源");
+  selection.candidates.forEach((candidate, index) => {
+    const generated = optimization.candidates[index];
+    if (generated?.score === undefined) throw new Error("网格候选缺少分数");
+    if (
+      generated.score.totalPoints !== candidate.score.totalPoints ||
+      generated.score.averagePoints !== candidate.score.averagePoints ||
+      generated.score.countedMatches !== candidate.score.countedMatches
+    )
+      throw new Error("选拔候选分数与生成阶段的网格分数不一致");
+    if (candidate.matches.length !== selection.plan.matchesPerCandidate)
+      throw new Error("选拔候选的逐场证据条数与计划场数不一致（不许缩分母）");
+  });
+};
+
 /** 形状通过之后的共享身份判据；CLI、赛季及报告共用。 */
 export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
   const optimization = meta.optimization;
@@ -138,6 +168,7 @@ export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
     return;
   }
   const selection = validateSelection(meta.selection);
+  if (selection.version === SELECTION_GRID_VERSION) checkGridSelection(optimization, selection);
   if (
     selection.plan.ruleset !== meta.ruleset ||
     selection.plan.sandboxRuntimeHash !== meta.sandboxRuntimeHash ||

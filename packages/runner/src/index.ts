@@ -24,6 +24,9 @@ export * from "./scheduler.js";
 export * from "./archive-report.js";
 
 export * from "./selection.js";
+// v2 选拔（评测网格）：排序用生成阶段的分数，复算只校不对（逐场观测行摘要 + 分数三元组）。
+export * from "./selection-grid.js";
+export * from "./selection-order.js";
 export * from "./archive-optimization.js";
 
 // 试跑计划的构造、校验与单场身份摘要（纯数据 + hash，不起 VM）。

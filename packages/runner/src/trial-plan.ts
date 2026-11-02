@@ -54,6 +54,7 @@ import {
   TRIAL_SPARRING_ROLE_ORDER,
   TRIAL_SPARRING_ROLES,
   type JsonValue,
+  type TrialGridMatch,
   type TrialGridSummary,
   type TrialPlan,
   type TrialPlanMatch,
@@ -278,15 +279,24 @@ export const buildTrialGridSummary = (options: {
     // 分数紧跟在完整性判据之后算：到这里计划里每一场都有自己的读数了，
     // 但「读数属于这一格吗」与「哪一场没有终局」仍由计分再判一次（缺场不缩分母）。
     score: scoreTrialGrid(plan, readings),
-    matches: plan.matches.map((match) => ({
-      matchIndex: match.matchIndex,
-      seed: match.seed,
-      candidateSeat: match.candidateSeat,
-      map: match.map,
-      mapSha256: match.mapSha256,
-    })),
+    matches: trialGridMatchesOf(plan),
   };
 };
+
+/**
+ * 计划的逐场投影（场序、种子、候选座位、地图名与地图摘要）。
+ *
+ * 网格汇总的 `matches` 就是它：`plan` 相等说明「同一张网格」，`matches` 相等说明「这些格子
+ * 确实是按它跑的」。投影只有这一处写法——汇总（本文件）、选拔的校验与报告侧都读它。
+ */
+export const trialGridMatchesOf = (plan: TrialPlan): readonly TrialGridMatch[] =>
+  plan.matches.map((match) => ({
+    matchIndex: match.matchIndex,
+    seed: match.seed,
+    candidateSeat: match.candidateSeat,
+    map: match.map,
+    mapSha256: match.mapSha256,
+  }));
 
 /** 单场身份：计划摘要 + 候选脚本摘要 + 该场。同一份计划与同一份候选 JS 共享这个身份。 */
 export const trialMatchInputSha256 = (

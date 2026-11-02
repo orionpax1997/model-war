@@ -65,9 +65,9 @@ import {
   OPTIMIZATION_GRID_VERSION,
   OPTIMIZATION_FEEDBACK_ROUNDS,
   OPTIMIZATION_STAGES,
+  type ArchiveGridSelection,
   type ArchiveMeta,
   type TrialPlan,
-  type ArchiveSelection,
   type ArchiveOptimizationCandidate,
   type ArchiveOptimizationGrid,
   type ArchiveValidation,
@@ -107,12 +107,7 @@ import type { GenerationRequest } from "./run.js";
 import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
 import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
 import { gridEvidenceDigests, reuseTrialGrid, type ReusableGridEvidence } from "./trial-reuse.js";
-import {
-  prepareSelection,
-  runSelection,
-  verifySelection,
-  type SelectionArtifact,
-} from "./selection.js";
+import { runSelection, verifySelection, type SelectionArtifact } from "./selection.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
 /** 未在配置里给 `protocolRounds` 时的 gen 内部默认:模型调用总轮数,含第 1 轮。 */
@@ -544,8 +539,6 @@ export const generateOneModel = async (
 ): Promise<ModelOutcome> => {
   if (request.selectBestCandidate === true && request.scoreSourceFeedback !== true)
     throw new Error("--select-best-candidate 要求 --score-source-feedback");
-  const expectedPlan =
-    request.selectBestCandidate === true ? prepareSelection(request.root) : undefined;
   const slug = config.slug;
   // 一次生成只定义一张评测网格：三份候选都按它跑，读观测与判完整性也按它（不逐轮重造）。
   // 造计划要读盘算摘要，所以生产路径只能经子进程搬（本包不得跨到 runner 那一侧）；
@@ -558,6 +551,12 @@ export const generateOneModel = async (
     request.scoreSourceFeedback === true
       ? preparePlan({ root: request.root, model: slug })
       : undefined;
+  /**
+   * 选拔用的计划就是生成阶段这张网格的**同一份对象**（`planSha256` 必然相等，不存在
+   * 「两份计划之间有时间窗」的坑）。选拔子进程会按安装面重建一遍并与它逐字比：
+   * 换图、换座位、换种子、换一份陪练摘要都在那里被指到具体位置。
+   */
+  const expectedPlan = request.selectBestCandidate === true ? trialPlan : undefined;
   const runId = request.runId;
   const params: ModelParams = generationParams(config);
   // 优化机会与修复上限对全部模型统一；旧模式仍按配置优先并接受 maxRounds 替代默认值。
@@ -697,6 +696,9 @@ export const generateOneModel = async (
             sourceSha256: result.sourceSha256,
             scriptPath: `${result.observationsPath}.candidate.js`,
             sourcePath: `${result.observationsPath}.candidate.ts`,
+            // 选拔复算的比对基准：这一阶段的观测行与它旁挂的网格汇总（分数与计划都来自它）。
+            observationsPath: result.observationsPath,
+            gridSummaryPath: gridSummaryPathOf(result.observationsPath),
           });
           candidateValidations.push(result.validation);
           // 每次推进前复核已有旁证；下一阶段不能替换首次候选后仍发布成功存档。
@@ -734,11 +736,12 @@ export const generateOneModel = async (
           if (sha256Hex(scriptBytes) !== result.scriptSha256) {
             throw new Error("试跑后编译 JS 字节改变，拒绝冻结未经验证的候选");
           }
-          let selection: ArchiveSelection | undefined;
+          let selection: ArchiveGridSelection | undefined;
           let validation = result.validation;
           if (expectedPlan !== undefined) {
             const probed: unknown = await (request.selection ?? runSelection)({
               root: request.root,
+              model: slug,
               candidates: structuredClone(selectionArtifacts),
               expectedPlan: structuredClone(expectedPlan),
             });

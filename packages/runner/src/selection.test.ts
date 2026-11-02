@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import {
-  type ArchiveSelection,
+  type ArchiveSelectionV1,
   type ReplayResultLine,
   type SelectionPlan,
 } from "@model-war/schema";
@@ -154,7 +154,7 @@ it.each([
 ] as const)("旧 earlier-stage 记录 %j 按旧算法验证阶段 %i，拒绝错胜者和理由", (ranks, stage) => {
   const current = buildArchiveSelection(plan, evidence(ranks));
   const candidate = current.candidates[stage]!;
-  const legacy: ArchiveSelection = {
+  const legacy: ArchiveSelectionV1 = {
     ...current,
     selected: {
       stage: candidate.stage,
@@ -206,7 +206,7 @@ it("缺场、重复场次、错 input/candidate hash、伪造计分、计划或�
       : T extends readonly (infer Element)[]
         ? MutableJson<Element>[]
         : { -readonly [Key in keyof T]: MutableJson<T[Key]> };
-  const mutations: ((value: MutableJson<ArchiveSelection>) => void)[] = [
+  const mutations: ((value: MutableJson<ArchiveSelectionV1>) => void)[] = [
     (value) => value.candidates[0]!.matches.pop(),
     (value) => (value.candidates[0]!.matches[1]!.matchIndex = 0),
     (value) => (value.candidates[0]!.matches[0]!.inputSha256 = "a".repeat(64)),
@@ -223,10 +223,16 @@ it("缺场、重复场次、错 input/candidate hash、伪造计分、计划或�
     (value) => (value.candidates[2]!.reusedFromStage = 0),
   ];
   for (const mutate of mutations) {
-    const changed = JSON.parse(JSON.stringify(good)) as MutableJson<ArchiveSelection>;
+    const changed = JSON.parse(JSON.stringify(good)) as MutableJson<ArchiveSelectionV1>;
     mutate(changed);
     expect(() => validateSelection(changed)).toThrow();
   }
+});
+
+it("v1 的历史构造与校验路径原样保留（v2 走 selection-grid.test.ts）", () => {
+  const selection = buildArchiveSelection(plan, evidence([2, 1, 4]));
+  expect(selection.version).toBe(1);
+  expect(validateSelection(JSON.parse(JSON.stringify(selection)))).toEqual(selection);
 });
 
 it("结果完成顺序可变，输出按阶段与场次排序；不接受缩小分母或缺少最终阶段", () => {

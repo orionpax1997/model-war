@@ -26,6 +26,7 @@
  */
 
 import type { SelectionCandidateIdentity, SelectionPlan } from "./selection-plan.js";
+import type { TrialPlan } from "./trial-plan.js";
 import type { ArchiveOptimizationCandidate } from "./archive-meta.js";
 
 /** 失败记录文件名的前缀:`failed-<runId>.json` 与存档目录 `<runId>/` 在同一父目录下并列。 */
@@ -82,7 +83,8 @@ export type FailureRecord = FailureIdentity & {
   readonly candidates?: readonly ArchiveOptimizationCandidate[];
   /** 完成三阶段后选拔失败的预定输入与不可变候选身份，不伪造部分胜者。 */
   readonly selectionFailure?: {
-    readonly plan: SelectionPlan;
+    /** 预定计划：v1 选拔是它自己的 12 场计划，v2 是生成阶段那张网格（`TrialPlan`）。 */
+    readonly plan: SelectionPlan | TrialPlan;
     readonly candidates: readonly SelectionCandidateIdentity[];
   };
 };

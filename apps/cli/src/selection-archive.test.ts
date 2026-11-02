@@ -18,18 +18,27 @@ import {
   SANDBOX_RUNTIME_HASH,
   QUICKJS_WASI_WASM_PATH,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_MATCHES_PER_CANDIDATE,
   type MatchInput,
   type ArchiveMeta,
+  type ArchiveSelectionV1,
   type ReplayResultLine,
+  type TrialPlan,
+  type TrialPlanScript,
 } from "@model-war/schema";
 import {
+  buildArchiveGridSelection,
   buildSelectionPlan,
+  buildTrialPlan,
   buildArchiveSelection,
   selectionInputSha256,
   optimizationMetaOf,
   readArchiveReports,
   runArchiveReport,
   scheduleSeason,
+  trialMatchInputSha256,
+  validateSelection,
 } from "@model-war/runner";
 import {
   buildArchiveMeta,
@@ -68,6 +77,8 @@ const products = [
   "function loop() { return []; }",
   "function loop() { return [1]; }",
 ];
+/** 这一档的选拔段：v1 形状（本文件的 fixture 全是历史口径，v2 另有用例）。 */
+const selectionOf = (meta: ArchiveMeta): ArchiveSelectionV1 => meta.selection as ArchiveSelectionV1;
 const metaOf = (winner: 0 | 1 | 2, scripts = products): ArchiveMeta => {
   const plan = buildSelectionPlan({
     ruleset: RULESET_VERSION,
@@ -281,7 +292,7 @@ it("重复 JS 的三个阶段/不同 TS、全部十二场分母、较晚胜者/�
   const scripts = [products[0]!, products[0]!, products[2]!];
   const meta = metaOf(0, scripts);
   // JS 相同阶段的完整证据一致；各自 TS 身份保留，stage1 复用 stage0。
-  const selection = meta.selection!;
+  const selection = selectionOf(meta);
   const plan = selection.plan;
   const rebuilt = buildArchiveSelection(
     plan,
@@ -370,11 +381,12 @@ it("历史 earlier-stage 同分档经公共 meta 与真实 report CLI 读取，�
   const root = mkdtempSync(join(scratch, "legacy-selection-"));
   const scripts = [products[0]!, products[0]!, products[0]!];
   const current = metaOf(0, scripts);
-  const candidate = current.selection!.candidates[0]!;
+  const currentSelection = selectionOf(current);
+  const candidate = currentSelection.candidates[0]!;
   const meta: ArchiveMeta = {
     ...current,
     selection: {
-      ...current.selection!,
+      ...currentSelection,
       selected: {
         stage: candidate.stage,
         protocolRound: candidate.protocolRound,
@@ -690,4 +702,168 @@ it("旧优化档字节错配仍作兼容诊断；不把缺选拔记录的旧档�
     selection: null,
     frozenCandidate: { scriptState: "mismatch" },
   });
+});
+
+/**
+ * v2（评测网格）存档：计划与生成阶段同一份、选拔分数与存档分数逐位相同。
+ *
+ * 这一档只断言「读得进来、校验得过去、篡改被拒」——报告口径归 08。
+ */
+const gridSparring: readonly TrialPlanScript[] = [
+  { role: "top", id: "top:alpha", source: "archive:alpha/r1", scriptSha256: "1".repeat(64) },
+  { role: "mid", id: "mid:beta", source: "archive:beta/r2", scriptSha256: "2".repeat(64) },
+  { role: "last", id: "last:gamma", source: "archive:gamma/r3", scriptSha256: "3".repeat(64) },
+  {
+    role: "incumbent",
+    id: "incumbent:delta",
+    source: "archive:delta/r4#substitute",
+    scriptSha256: "4".repeat(64),
+  },
+];
+
+const gridPlanOf = (): TrialPlan =>
+  buildTrialPlan({
+    ruleset: RULESET_VERSION,
+    rulesetSha256: "9".repeat(64),
+    sandboxRuntimeHash: SANDBOX_RUNTIME_HASH,
+    scripts: gridSparring,
+    maps: [
+      { name: TRIAL_GRID_MAP_NAMES[0], sha256: "a".repeat(64) },
+      { name: TRIAL_GRID_MAP_NAMES[1], sha256: "b".repeat(64) },
+    ],
+  });
+
+/** v2 存档：三份候选各 32 场证据，stage0 全胜、其余全败（于是胜者是 stage0）。 */
+const gridMetaOf = (options: { readonly mutateSelection?: boolean } = {}): ArchiveMeta => {
+  const plan = gridPlanOf();
+  const points = [3, 0, 0] as const;
+  const selection = buildArchiveGridSelection(
+    plan,
+    ([0, 1, 2] as const).map((stage) => {
+      const scriptSha256 = sha256Hex(products[stage]!);
+      return {
+        stage,
+        protocolRound: stage + 1,
+        scriptSha256,
+        sourceSha256: sha256Hex(source[stage]!),
+        score: {
+          totalPoints: points[stage]! * TRIAL_MATCHES_PER_CANDIDATE,
+          averagePoints: points[stage]!,
+          countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
+        },
+        matches: plan.matches.map((match) => ({
+          matchIndex: match.matchIndex,
+          inputSha256: trialMatchInputSha256(plan, scriptSha256, match),
+          observationSha256: "e".repeat(64),
+          candidatePoints: points[stage]!,
+        })),
+      };
+    }),
+  );
+  const meta = buildArchiveMeta({
+    model: "alpha",
+    modelVersion: "test",
+    generatedAt: "2026-10-13T00:00:00Z",
+    prompts: ["initial", "feedback1", "feedback2"],
+    generationLog: [],
+    validation: { passed: true, errors: [] },
+    tscVersion: "7.0.2",
+    scriptSha256: sha256Hex(products[0]!),
+    optimization: {
+      version: 2,
+      feedbackRounds: 2,
+      plan,
+      sparring: gridSparring.map(({ id, role, source: from, scriptSha256 }) => ({
+        id,
+        role,
+        source: from,
+        scriptSha256,
+      })),
+      candidates: ([0, 1, 2] as const).map((stage) => ({
+        stage,
+        protocolRound: stage + 1,
+        scriptFile: `observed-r1-round-${stage + 1}.jsonl.candidate.js`,
+        observationsFile: `observed-r1-round-${stage + 1}.jsonl`,
+        scriptSha256: sha256Hex(products[stage]!),
+        score: {
+          totalPoints: points[stage]! * TRIAL_MATCHES_PER_CANDIDATE,
+          averagePoints: points[stage]!,
+          countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
+        },
+        matchCount: TRIAL_MATCHES_PER_CANDIDATE,
+      })),
+    },
+    selection,
+  });
+  return options.mutateSelection === true
+    ? (() => {
+        const forged = JSON.parse(JSON.stringify(meta)) as ArchiveMeta;
+        const grid = forged.selection as import("@model-war/schema").ArchiveGridSelection;
+        Reflect.set(grid.candidates[0]!, "score", {
+          totalPoints: 0,
+          averagePoints: 0,
+          countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
+        });
+        return forged;
+      })()
+    : meta;
+};
+
+it("v2 网格存档经公共 meta 校验与报告读入：计划同源、分数逐位一致；改任一处即拒", () => {
+  const root = mkdtempSync(join(scratch, "grid-archive-"));
+  const meta = gridMetaOf();
+  const directory = join(root, "archive/alpha/r1");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "script.ts"), source[0]!);
+  writeFileSync(join(directory, "script.js"), products[0]!);
+  writeFileSync(join(directory, "meta.json"), JSON.stringify(meta));
+  writeCandidateSidecars(root, meta);
+  expect(validateArchiveMeta(meta, provenance(meta)).ok).toBe(true);
+  expect(optimizationMetaOf(meta)).toEqual(meta);
+  expect(validateSelection(meta.selection)!.version).toBe(2);
+  expect(readArchiveReports(root)[0]?.selection).toMatchObject({
+    version: 2,
+    stage: 0,
+    averagePoints: 3,
+    countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
+    reason: "highest-average-points",
+  });
+
+  // 选拔分数与生成阶段的网格分数逐位不同 → 存档不成立。
+  const forged = gridMetaOf({ mutateSelection: true });
+  expect(() => optimizationMetaOf(forged)).toThrow(/分数/);
+  expect(validateArchiveMeta(forged, provenance(forged)).ok).toBe(false);
+
+  // 选拔计划与生成阶段的计划不同源（换一张图）→ 存档不成立。
+  const otherPlan = gridMetaOf();
+  const grid = otherPlan.selection as import("@model-war/schema").ArchiveGridSelection;
+  const rebuilt = buildTrialPlan({
+    ruleset: RULESET_VERSION,
+    rulesetSha256: "9".repeat(64),
+    sandboxRuntimeHash: SANDBOX_RUNTIME_HASH,
+    scripts: gridSparring,
+    maps: [
+      { name: TRIAL_GRID_MAP_NAMES[0], sha256: "c".repeat(64) },
+      { name: TRIAL_GRID_MAP_NAMES[1], sha256: "b".repeat(64) },
+    ],
+  });
+  expect(() =>
+    optimizationMetaOf({
+      ...otherPlan,
+      selection: buildArchiveGridSelection(
+        rebuilt,
+        grid.candidates.map((candidate) => ({
+          ...candidate,
+          matches: candidate.matches.map((match, index) => ({
+            ...match,
+            inputSha256: trialMatchInputSha256(
+              rebuilt,
+              candidate.scriptSha256,
+              rebuilt.matches[index]!,
+            ),
+          })),
+        })),
+      ),
+    }),
+  ).toThrow(/不同源/);
 });

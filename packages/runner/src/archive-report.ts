@@ -23,9 +23,13 @@ import {
   ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA,
   ARCHIVE_SELECTION_JSON_SCHEMA,
   OPTIMIZATION_STAGES,
-  SELECTION_MATCHES_PER_CANDIDATE,
+  TRIAL_PLAN_JSON_SHAPE,
+  type SelectionCandidate,
   type SelectionPlan,
   type SelectionCandidateIdentity,
+  type SelectionGridCandidate,
+  type TrialGridScore,
+  type TrialPlan,
   FAILURE_RECORD_PREFIX,
   OBSERVATIONS_FILE_PREFIX,
   TRIAL_CANDIDATE_SEAT,
@@ -37,6 +41,7 @@ import {
 
 import { optimizationMetaOf } from "./archive-optimization.js";
 import { buildSelectionPlan } from "./selection.js";
+import { checkTrialPlan } from "./trial-plan.js";
 import {
   objectOf,
   numberOf,
@@ -48,6 +53,45 @@ import {
   observationEvidenceOf,
   type ReportRequestEvidence,
 } from "./archive-report-evidence.js";
+
+/**
+ * 选拔候选的分数投影：v1 把总分 / 均分 / 分母摊在候选自己身上，v2 把它们收进 `score`
+ * （生成阶段那张网格的分数）。报告栏位保持同名同义——两版的口径差别（两张图、四份陪练）
+ * 归 08 重做，本文件只保证两种档都读得出来。
+ */
+const selectionCandidateScoreOf = (
+  candidate: SelectionCandidate | SelectionGridCandidate,
+): TrialGridScore =>
+  "score" in candidate
+    ? candidate.score
+    : {
+        totalPoints: candidate.totalPoints,
+        averagePoints: candidate.averagePoints,
+        countedMatches: candidate.countedMatches,
+      };
+
+/** 选拔计划的两版投影（种子 / 场数 / 图摘要 / 基准或陪练脚本摘要）。判据：v1 有 `seeds`。 */
+const selectionPlanFactsOf = (
+  plan: SelectionPlan | TrialPlan,
+): {
+  readonly seeds: readonly number[];
+  readonly matchesPerCandidate: number;
+  readonly mapSha256: string;
+  readonly baselineScriptSha256: readonly string[];
+} =>
+  "seeds" in plan
+    ? {
+        seeds: [...plan.seeds],
+        matchesPerCandidate: plan.matchesPerCandidate,
+        mapSha256: plan.mapSha256,
+        baselineScriptSha256: plan.baselines.map((baseline) => baseline.scriptSha256),
+      }
+    : {
+        seeds: plan.matches.map((match) => match.seed),
+        matchesPerCandidate: plan.matchesPerCandidate,
+        mapSha256: plan.maps[0]!.sha256,
+        baselineScriptSha256: plan.scripts.map((script) => script.scriptSha256),
+      };
 
 export type ReportTotal = {
   readonly value: number | null;
@@ -111,13 +155,17 @@ export type ArchiveReport = {
   /** 最后生成阶段与实际冻结阶段分别保留；旧档冻结第三阶段。 */
   readonly frozenCandidate: ReportCandidate | null;
   readonly selection: {
-    readonly version: 1;
+    /**
+     * 选拔记录版本：1 = 历史档（12 场 / 三基准），2 = 评测网格（32 场 / 四陪练）。
+     * 两版的报告栏位**同名同义**（均分 / 总分 / 分母），口径重做归 08。
+     */
+    readonly version: 1 | 2;
     readonly stage: number;
     readonly protocolRound: number;
     readonly scriptSha256: string;
     readonly sourceSha256: string;
     readonly averagePoints: number;
-    readonly countedMatches: 12;
+    readonly countedMatches: number;
     readonly reason: string;
     readonly planSha256: string;
     readonly distinctScripts: number;
@@ -125,7 +173,7 @@ export type ArchiveReport = {
     readonly candidates: readonly (SelectionCandidateIdentity & {
       readonly averagePoints: number;
       readonly totalPoints: number;
-      readonly countedMatches: 12;
+      readonly countedMatches: number;
       readonly reusedFromStage: number | null;
     })[];
     readonly executedMatches: number;
@@ -139,7 +187,7 @@ export type ArchiveReport = {
   readonly selectionFailure: {
     readonly planSha256: string;
     readonly seeds: readonly number[];
-    readonly matchesPerCandidate: 12;
+    readonly matchesPerCandidate: number;
     readonly candidates: readonly SelectionCandidateIdentity[];
   } | null;
   readonly candidateStages: number;
@@ -538,11 +586,20 @@ const failureCandidatesOf = (record: unknown): ArchiveOptimizationCandidate[] =>
   return out;
 };
 
+/**
+ * 失败旁证里的计划：v1 是 12 场选拔计划，v2 是生成阶段那张网格（`TrialPlan`）。
+ *
+ * 两版形状互斥（有 `seeds` 的是 v1），所以用联合而不是就地改检查：历史失败记录不迁移，
+ * 新失败记录带的是网格计划。
+ */
 const selectionFailureSchema = z
   .object({
-    plan: z.fromJSONSchema(
-      ARCHIVE_SELECTION_JSON_SCHEMA.properties.plan as unknown as z.core.JSONSchema.JSONSchema,
-    ),
+    plan: z.union([
+      z.fromJSONSchema(
+        ARCHIVE_SELECTION_JSON_SCHEMA.properties.plan as unknown as z.core.JSONSchema.JSONSchema,
+      ),
+      z.fromJSONSchema(TRIAL_PLAN_JSON_SHAPE as unknown as z.core.JSONSchema.JSONSchema),
+    ]),
     candidates: z
       .array(
         z.fromJSONSchema(
@@ -553,17 +610,32 @@ const selectionFailureSchema = z
       .length(3),
   })
   .strict();
+
+/** 计划能否由它自己的事实重建：v1 用选拔计划的构造，v2 用 `checkTrialPlan`。 */
+const rebuiltSelectionFailurePlan = (
+  plan: SelectionPlan | TrialPlan,
+): SelectionPlan | TrialPlan => {
+  if (!("seeds" in plan)) {
+    checkTrialPlan(plan);
+    return plan;
+  }
+  return buildSelectionPlan(plan);
+};
+
 const selectionFailureOf = (
   record: Record<string, unknown>,
   descriptors: readonly ArchiveOptimizationCandidate[],
   protocolRounds: number,
-): { plan: SelectionPlan; candidates: SelectionCandidateIdentity[] } | null => {
+): { plan: SelectionPlan | TrialPlan; candidates: SelectionCandidateIdentity[] } | null => {
   if (record.selectionFailure === undefined) return null;
   const parsed = selectionFailureSchema.safeParse(record.selectionFailure);
   if (!parsed.success || record.classification !== "selection" || descriptors.length !== 3)
     throw new Error("选拔失败旁证形状不合法");
-  const value = parsed.data as { plan: SelectionPlan; candidates: SelectionCandidateIdentity[] };
-  const expected = buildSelectionPlan(value.plan);
+  const value = parsed.data as {
+    plan: SelectionPlan | TrialPlan;
+    candidates: SelectionCandidateIdentity[];
+  };
+  const expected = rebuiltSelectionFailurePlan(value.plan);
   if (
     JSON.stringify(expected) !== JSON.stringify(value.plan) ||
     value.candidates.some((identity, index) => {
@@ -869,7 +941,7 @@ const readRecord = (
         ? null
         : {
             planSha256: failedSelection.plan.planSha256,
-            seeds: [...failedSelection.plan.seeds],
+            seeds: selectionPlanFactsOf(failedSelection.plan).seeds,
             matchesPerCandidate: failedSelection.plan.matchesPerCandidate,
             candidates: failedSelection.candidates.map((identity) => ({
               stage: identity.stage,
@@ -914,17 +986,17 @@ const readRecord = (
         selectionMaximumMatches:
           selection === undefined && failedSelection === null
             ? null
-            : OPTIMIZATION_STAGES.length * SELECTION_MATCHES_PER_CANDIDATE,
+            : OPTIMIZATION_STAGES.length * (selection ?? failedSelection)!.plan.matchesPerCandidate,
         selectionExecutedMatches:
           selection === undefined
             ? null
             : selection.candidates.filter((candidate) => candidate.reusedFromStage === undefined)
-                .length * SELECTION_MATCHES_PER_CANDIDATE,
+                .length * selection.plan.matchesPerCandidate,
         selectionReusedMatches:
           selection === undefined
             ? null
             : selection.candidates.filter((candidate) => candidate.reusedFromStage !== undefined)
-                .length * SELECTION_MATCHES_PER_CANDIDATE,
+                .length * selection.plan.matchesPerCandidate,
       },
     },
     initialCandidate: optimizationCandidates[0] ?? failureDescribed[0] ?? null,
@@ -944,9 +1016,9 @@ const readRecord = (
             protocolRound: optimizationMeta.selection.selected.protocolRound,
             scriptSha256: optimizationMeta.selection.selected.scriptSha256,
             sourceSha256: optimizationMeta.selection.selected.sourceSha256,
-            averagePoints:
-              optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!
-                .averagePoints,
+            averagePoints: selectionCandidateScoreOf(
+              optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!,
+            ).averagePoints,
             countedMatches: optimizationMeta.selection.plan.matchesPerCandidate,
             reason: optimizationMeta.selection.reason,
             planSha256: optimizationMeta.selection.plan.planSha256,
@@ -956,31 +1028,33 @@ const readRecord = (
             reusedFromStage:
               optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!
                 .reusedFromStage ?? null,
-            candidates: optimizationMeta.selection.candidates.map((candidate) => ({
-              stage: candidate.stage,
-              protocolRound: candidate.protocolRound,
-              scriptSha256: candidate.scriptSha256,
-              sourceSha256: candidate.sourceSha256,
-              averagePoints: candidate.averagePoints,
-              totalPoints: candidate.totalPoints,
-              countedMatches: candidate.countedMatches,
-              reusedFromStage: candidate.reusedFromStage ?? null,
-            })),
+            candidates: optimizationMeta.selection.candidates.map((candidate) => {
+              const score = selectionCandidateScoreOf(candidate);
+              return {
+                stage: candidate.stage,
+                protocolRound: candidate.protocolRound,
+                scriptSha256: candidate.scriptSha256,
+                sourceSha256: candidate.sourceSha256,
+                averagePoints: score.averagePoints,
+                totalPoints: score.totalPoints,
+                countedMatches: score.countedMatches,
+                reusedFromStage: candidate.reusedFromStage ?? null,
+              };
+            }),
             executedMatches:
               optimizationMeta.selection.candidates.filter(
                 (candidate) => candidate.reusedFromStage === undefined,
-              ).length * SELECTION_MATCHES_PER_CANDIDATE,
+              ).length * optimizationMeta.selection.plan.matchesPerCandidate,
             reusedMatches:
               optimizationMeta.selection.candidates.filter(
                 (candidate) => candidate.reusedFromStage !== undefined,
-              ).length * SELECTION_MATCHES_PER_CANDIDATE,
-            seeds: [...optimizationMeta.selection.plan.seeds],
+              ).length * optimizationMeta.selection.plan.matchesPerCandidate,
+            seeds: selectionPlanFactsOf(optimizationMeta.selection.plan).seeds,
             rulesetSha256: optimizationMeta.selection.plan.rulesetSha256,
-            mapSha256: optimizationMeta.selection.plan.mapSha256,
+            mapSha256: selectionPlanFactsOf(optimizationMeta.selection.plan).mapSha256,
             sandboxRuntimeHash: optimizationMeta.selection.plan.sandboxRuntimeHash,
-            baselineScriptSha256: optimizationMeta.selection.plan.baselines.map(
-              (baseline) => baseline.scriptSha256,
-            ),
+            baselineScriptSha256: selectionPlanFactsOf(optimizationMeta.selection.plan)
+              .baselineScriptSha256,
           },
     protocolRounds,
     rounds,

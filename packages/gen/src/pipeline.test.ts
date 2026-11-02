@@ -36,6 +36,7 @@ import {
   type TrialObservationLine,
   type TrialPlan,
   type TrialPlanMatch,
+  type TrialTerminalSummary,
 } from "@model-war/schema";
 import { afterAll, expect, it, vi } from "vitest";
 
@@ -874,22 +875,120 @@ const gridReadings = (
   });
 
 /**
+ * 名次 → 每座位的名次积分（并列占名次区间均分）。
+ *
+ * 这是**夹具**的算术，只为让桩写下的汇总分数与它自己那 32 行观测自洽：真正计分的唯一真源在
+ * runner（选拔子进程会把它重算一遍，与这里不一致就会被逐场比对拒掉）。
+ */
+const pointsOfRanks = (ranks: readonly number[]): readonly number[] => {
+  const table = [3, 2, 1, 0] as const;
+  const points = Array.from<number>({ length: ranks.length }).fill(0);
+  const sorted = [...ranks].sort((left, right) => left - right);
+  for (let cursor = 0; cursor < sorted.length; cursor += 1) {
+    const rank = sorted[cursor]!;
+    let last = cursor;
+    while (last + 1 < sorted.length && sorted[last + 1] === rank) last += 1;
+    const tied = last - cursor + 1;
+    let sum = 0;
+    for (let offset = 0; offset < tied; offset += 1) sum += table[rank - 1 + offset] ?? 0;
+    for (const [seat, value] of ranks.entries()) if (value === rank) points[seat] = sum / tied;
+    cursor = last;
+  }
+  return points;
+};
+
+/**
+ * 一份**自洽**的终局：名次由领土分高低决定，名次积分按并列区间均分。
+ *
+ * gen 的观测读入端会自己按「层 → 领土分」推出名次并核对 `rankPoints`（`terminal-summary.ts`），
+ * 所以夹具不能只改 `rank` 一栏——领土分与积分必须跟着名次一起造，否则那份观测根本不是引擎能
+ * 产出的东西。`resourceBump` 用来在阶段之间抬同一位资源（回喂文本的「同格变化」靠它区分）。
+ */
+const terminalSummaryWithRanks = (
+  match: TrialPlanMatch,
+  ranks: readonly number[],
+  resourceBump = 0,
+): TrialTerminalSummary => {
+  const summary = terminalSummaryFixture(match.seed, "timeout", match.seats);
+  const table = [3, 2, 1, 0] as const;
+  const players = summary.players.map((player, seat) => {
+    const rank = ranks[seat] ?? 1;
+    const tied = ranks.filter((value) => value === rank).length;
+    let total = 0;
+    for (let offset = 0; offset < tied; offset += 1) total += table[rank - 1 + offset] ?? 0;
+    // 名次越高资源越多 → 领土分越高（基地 4 + 资源 + 单位 1）。
+    const controlledResources = 4 - rank + resourceBump;
+    return {
+      ...player,
+      controlledResources,
+      territoryScore: 4 + controlledResources + 1,
+      score: { ...player.score, resources: controlledResources * summary.weights.resourceScore },
+      rank,
+      rankPoints: total / tied,
+    };
+  });
+  return { ...summary, players: players as unknown as TrialTerminalSummary["players"] };
+};
+
+/** 一张网格的读数（四方名次按座位序给定）：候选在每场拿第 `rank` 名，其余按名次补满。 */
+const gridReadingsAtRank = (
+  plan: TrialPlan,
+  rank: number,
+  resourceBump = 0,
+): TrialObservationLine[] =>
+  plan.matches.map((match) => {
+    const rest = [1, 2, 3, 4].filter((value) => value !== rank);
+    const ranks = match.seats.map((_, seat) =>
+      seat === match.candidateSeat ? rank : (rest.shift() ?? rank),
+    );
+    return {
+      matchIndex: match.matchIndex,
+      delivered: 0,
+      captures: 0,
+      noScoreSource: true,
+      terminalSummary: terminalSummaryWithRanks(match, ranks, resourceBump),
+    };
+  });
+
+/** 一张网格的分数（夹具口径：逐场名次积分之和 / 计划场数，分母不缩）。 */
+const scoreOfReadings = (
+  plan: TrialPlan,
+  readings: readonly TrialObservationLine[],
+): { totalPoints: number; averagePoints: number; countedMatches: number } => {
+  let total = 0;
+  for (const reading of readings) {
+    // 缺终局的那一场不补零：这份汇总只服务于「形状能读进去」，缺场会在读入端先被拒。
+    if (reading.terminalSummary === undefined) continue;
+    const match = plan.matches[reading.matchIndex]!;
+    const ranks = reading.terminalSummary.players
+      .toSorted((left, right) => left.seat - right.seat)
+      .map((player) => player.rank);
+    total += pointsOfRanks(ranks)[match.candidateSeat]!;
+  }
+  return {
+    totalPoints: total,
+    averagePoints: total / plan.matchesPerCandidate,
+    countedMatches: plan.matchesPerCandidate,
+  };
+};
+
+/**
  * 观测文件旁的网格汇总：执行器写的那一份形状（计划 + 候选摘要 + 网格分数 + 逐场身份）。
  *
- * 分数只填形状合法的值：生成侧不重算分数（那是 runner 与选拔的事），这里只验证它能被读进去。
+ * 分数由**这一批读数**算出来（夹具口径）：生成侧不重算分数（那是 runner 与选拔的事），
+ * 但桩写的这一份必须与它自己那 32 行观测自洽，否则选拔的逐场比对会（正确）拒掉它。
  */
-const gridSummaryOf = (options: TrialStubOptions): unknown => {
+const gridSummaryOf = (
+  options: TrialStubOptions,
+  readings: readonly TrialObservationLine[],
+): unknown => {
   const plan = options.plan;
   if (plan === undefined) throw new Error("试跑桩需要计划才能写网格汇总");
   return {
     version: plan.version,
     plan,
     scriptSha256: sha256Hex(readFileSync(options.artifactPath)),
-    score: {
-      totalPoints: 48,
-      averagePoints: 1.5,
-      countedMatches: plan.matchesPerCandidate,
-    },
+    score: scoreOfReadings(plan, readings),
     matches: plan.matches.map((match) => ({
       matchIndex: match.matchIndex,
       seed: match.seed,
@@ -906,10 +1005,11 @@ const writeGridEvidence = (
   readings?: readonly TrialObservationLine[],
 ): void => {
   if (options.plan === undefined) throw new Error("试跑桩需要计划才能写网格证据");
-  writeFileSync(options.observationsPath, observationJsonl(readings ?? gridReadings(options.plan)));
+  const rows = readings ?? gridReadings(options.plan);
+  writeFileSync(options.observationsPath, observationJsonl(rows));
   writeFileSync(
     `${options.observationsPath}${TRIAL_GRID_SUMMARY_SUFFIX}`,
-    JSON.stringify(gridSummaryOf(options)),
+    JSON.stringify(gridSummaryOf(options, rows)),
   );
 };
 
@@ -1307,7 +1407,7 @@ it.each(["换种子", "换图"])(
             if (options.plan === undefined) throw new Error("试跑桩需要计划");
             writeGridEvidence(options);
             // 汇总里的计划被换掉：换一个种子 / 换一张图（正文与 planSha256 一起换，形状仍合法）。
-            const summary = gridSummaryOf(options) as {
+            const summary = gridSummaryOf(options, gridReadings(options.plan)) as {
               plan: TrialPlan;
               matches: readonly unknown[];
             };
@@ -2150,31 +2250,58 @@ const canonicalSelectionFixture = (value: unknown): string => {
       .join(",")}}`;
   return JSON.stringify(value);
 };
-const selectedFixture = (
-  options: Parameters<import("./selection.js").SelectionProbe>[0],
-  winner = 1,
-) => {
+/** 选拔 probe 的入参（注入桩拿到的就是这一份：计划 + 三份候选的阶段证据路径）。 */
+type SelectionStubOptions = Parameters<import("./selection.js").SelectionProbe>[0];
+
+type StubGridRow = {
+  readonly matchIndex: number;
+  readonly terminalSummary: {
+    readonly players: readonly { readonly seat: number; readonly rank: number }[];
+  };
+};
+type StubGridSummary = {
+  readonly plan: TrialPlan;
+  readonly scriptSha256: string;
+  readonly score: {
+    readonly totalPoints: number;
+    readonly averagePoints: number;
+    readonly countedMatches: number;
+  };
+};
+
+/**
+ * 选拔记录（v2）：**从桩写下的证据**读出来，而不是凭空造一份。
+ *
+ * 生成管线的选拔记录必须与盘上的观测行、`.grid.json` 对得上——`--validate` 那一遍由真实 CLI
+ * 跑，它会把这份记录重新解释一遍再比。所以夹具照同一条路走：读候选的观测与汇总、按计划算逐场
+ * 摘要与积分、按均分定胜者。谁分高由**桩写下的名次**决定，fixture 不自己指定胜者。
+ */
+const gridSelectionFixture = (options: SelectionStubOptions) => {
+  const plan = options.expectedPlan;
   const candidates = options.candidates.map(
-    ({ stage, protocolRound, scriptSha256, sourceSha256 }) => {
+    ({ stage, protocolRound, scriptSha256, sourceSha256, observationsPath, gridSummaryPath }) => {
+      const rows = readFileSync(observationsPath, "utf8")
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as StubGridRow);
+      const summary = JSON.parse(readFileSync(gridSummaryPath, "utf8")) as StubGridSummary;
       const prior = options.candidates.find((entry) => entry.scriptSha256 === scriptSha256)!;
-      const points = prior.stage === winner ? 3 : 0;
-      const matches = options.expectedPlan.matches.map((match) => {
-        const rankings = [1, 2, 3];
-        rankings.splice(match.candidateSeat, 0, points === 3 ? 1 : 4);
-        if (points === 3)
-          for (let seat = 0; seat < 4; seat += 1)
-            if (seat !== match.candidateSeat) rankings[seat] = (rankings[seat] ?? 0) + 1;
+      const matches = plan.matches.map((match) => {
+        const row = rows.find((entry) => entry.matchIndex === match.matchIndex)!;
+        const ranks = [...row.terminalSummary.players]
+          .sort((left, right) => left.seat - right.seat)
+          .map((player) => player.rank);
         return {
           matchIndex: match.matchIndex,
           inputSha256: sha256Hex(
             canonicalSelectionFixture({
-              planSha256: options.expectedPlan.planSha256,
+              planSha256: plan.planSha256,
               scriptSha256,
               match,
             }),
           ),
-          result: { type: "result", rankings, reason: "timeout", territoryScores: [0, 0, 0, 0] },
-          candidatePoints: points,
+          observationSha256: sha256Hex(canonicalSelectionFixture(row)),
+          candidatePoints: pointsOfRanks(ranks)[match.candidateSeat]!,
         };
       });
       return {
@@ -2182,26 +2309,27 @@ const selectedFixture = (
         protocolRound,
         scriptSha256,
         sourceSha256,
+        score: summary.score,
         matches,
-        totalPoints: points * 12,
-        averagePoints: points,
-        countedMatches: 12,
         ...(prior.stage < stage ? { reusedFromStage: prior.stage } : {}),
       };
     },
   );
   const ranked = [...candidates].sort(
-    (a, b) => b.averagePoints - a.averagePoints || b.stage - a.stage,
+    (left, right) =>
+      right.score.averagePoints - left.score.averagePoints || right.stage - left.stage,
   );
   const chosen = ranked[0]!;
   const { stage, protocolRound, scriptSha256, sourceSha256 } = chosen;
   return {
-    version: 1,
-    plan: options.expectedPlan,
+    version: 2,
+    plan,
     candidates,
     selected: { stage, protocolRound, scriptSha256, sourceSha256 },
     reason:
-      chosen.averagePoints !== ranked[1]!.averagePoints ? "highest-average-points" : "later-stage",
+      chosen.score.averagePoints !== ranked[1]!.score.averagePoints
+        ? "highest-average-points"
+        : "later-stage",
   };
 };
 const selectionRoot = (): string => {
@@ -2230,22 +2358,31 @@ it.each([false, true])(
       {
         ...requestWith(root, stub, runId, (options) => {
           if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          // 前两个阶段四方并列（两次回喂的对差表因此稳定）；第三阶段候选全败，于是选拔按
+          // 「平均分 → 较晚阶段」选中 stage1——选拔不产生新判别依据，胜者由生成阶段的分数决定。
           // 每阶段把「资源点」抬一格：两次回喂的文本因此可区分，第二次的对差表还带着与上一阶段的同格变化。
-          const readings = gridReadings(options.plan).map((reading) => {
-            const terminalSummary = terminalSummaryFixture(
-              reading.terminalSummary!.seed,
-              "timeout",
-              reading.terminalSummary!.players.map(
-                (player) => player.player,
-              ) as unknown as readonly [string, string, string, string],
-            );
-            for (const player of terminalSummary.players) {
-              player.controlledResources += stage;
-              player.score.resources += stage;
-              player.territoryScore += stage;
-            }
-            return { ...reading, terminalSummary };
-          });
+          // 前两个阶段四方并列（领土 6 → 7）；第三个阶段候选全败（名次由领土分决定）。
+          const readings =
+            stage === 2
+              ? gridReadingsAtRank(options.plan, 4, stage)
+              : gridReadings(options.plan).map((reading) => ({
+                  ...reading,
+                  terminalSummary: (() => {
+                    const summary = terminalSummaryFixture(
+                      reading.terminalSummary!.seed,
+                      "timeout",
+                      reading.terminalSummary!.players.map(
+                        (player) => player.player,
+                      ) as unknown as readonly [string, string, string, string],
+                    );
+                    for (const player of summary.players) {
+                      player.controlledResources += stage;
+                      player.score.resources += stage;
+                      player.territoryScore += stage;
+                    }
+                    return summary;
+                  })(),
+                }));
           writeGridEvidence(options, readings);
           stage += 1;
           return { passed: true, stdout: "" };
@@ -2254,17 +2391,15 @@ it.each([false, true])(
         selectBestCandidate,
         selection: (options) => {
           expect(stub.calls).toHaveLength(3);
-          expect(options.expectedPlan.matches).toHaveLength(12);
-          expect([...new Set(options.expectedPlan.matches.map((match) => match.seed))]).toEqual([
-            401, 402, 403,
+          // 选拔用的计划就是生成阶段那张网格：32 场、每格一个种子、候选四个座位各坐一次。
+          expect(options.expectedPlan.matches).toHaveLength(32);
+          expect(options.expectedPlan.matches.map((match) => match.seed).slice(0, 3)).toEqual([
+            5000, 5001, 5002,
           ]);
           expect(
             [...new Set(options.expectedPlan.matches.map((match) => match.candidateSeat))].sort(),
           ).toEqual([0, 1, 2, 3]);
-          const selection = selectedFixture(options, 1);
-          for (const candidate of selection.candidates)
-            for (const match of candidate.matches) match.result.territoryScores = [987654, 0, 0, 0];
-          return selection;
+          return gridSelectionFixture(options);
         },
       },
       firstModelConfig(root),
@@ -2315,15 +2450,16 @@ it.each([false, true])(
       .map(
         (line) =>
           JSON.parse(line) as {
-            terminalSummary: { seed: number; players: { territoryScore: number }[] };
+            terminalSummary: { seed: number; players: { rank: number; territoryScore: number }[] };
           },
       );
     expect(finalReadings.map((reading) => reading.terminalSummary.seed)).toEqual(
       Array.from({ length: 32 }, (_, index) => 5000 + index),
     );
+    // 第三阶段候选全败：四方名次是 1/2/3/4 各一，领土分随名次递减（不是四方并列）。
     for (const reading of finalReadings)
-      expect(reading.terminalSummary.players.map((player) => player.territoryScore)).toEqual([
-        8, 8, 8, 8,
+      expect(reading.terminalSummary.players.map((player) => player.rank).sort()).toEqual([
+        1, 2, 3, 4,
       ]);
     if (outcome.kind !== "frozen") throw new Error("终局反馈未完成定版");
     expect(outcome.meta.optimization?.feedbackRounds).toBe(2);
@@ -2343,14 +2479,25 @@ it.each([0, 1, 2])(
     ];
     const stub = stubClient(sources.map((source) => reply(source)));
     const runId = `select-stage-${winner}`;
+    // 每阶段的名次不同：只有 `winner` 那一阶段候选全胜（其余全败）。选拔按生成阶段的分数定版，
+    // 所以「谁赢」由试跑证据决定，probe 只是把证据解释成记录。
+    let invocation = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, selectionTrial),
+        ...requestWith(root, stub, runId, (options) => {
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          writeGridEvidence(
+            options,
+            gridReadingsAtRank(options.plan, invocation === winner ? 1 : 4),
+          );
+          invocation += 1;
+          return { passed: true, stdout: "" };
+        }),
         scoreSourceFeedback: true,
         selectBestCandidate: true,
         selection: (options) => {
           expect(stub.calls).toHaveLength(3);
-          return selectedFixture(options, winner);
+          return gridSelectionFixture(options);
         },
       },
       firstModelConfig(root),
@@ -2359,6 +2506,7 @@ it.each([0, 1, 2])(
     expect(stub.calls).toHaveLength(3);
     if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
     expect(outcome.meta.selection?.selected.stage).toBe(winner);
+    expect(outcome.meta.selection?.reason).toBe("highest-average-points");
     expect(outcome.meta.optimization?.candidates[2]?.stage).toBe(2);
     expect(readFileSync(join(outcome.dir, "script.ts"))).toEqual(Buffer.from(sources[winner]!));
     for (const ext of ["ts", "js"])
@@ -2404,22 +2552,23 @@ it.each([
       scoreSourceFeedback: true,
       selectBestCandidate: true,
       selection: (options) => {
-        const selection = selectedFixture(options, failure === "legacy-stage-rule" ? -1 : 1);
+        const selection = gridSelectionFixture(options);
         if (failure === "legacy-stage-rule") {
-          const { stage, protocolRound, scriptSha256, sourceSha256 } = selection.candidates[0]!;
-          selection.selected = { stage, protocolRound, scriptSha256, sourceSha256 };
-          selection.reason = "earlier-stage";
+          // 新选拔结果不得使用历史决胜规则：v2 的形状里就没有这一栏。
+          Reflect.set(selection, "reason", "earlier-stage");
         }
         if (failure === "throw") throw new Error("credential provider-body PROMPT-SECRET");
         if (failure === "missing-match") selection.candidates[0]!.matches.pop();
         if (failure === "missing-terminal")
-          Reflect.deleteProperty(selection.candidates[0]!.matches[0]!, "result");
-        if (failure === "forged-score") selection.candidates[0]!.averagePoints = 3;
+          Reflect.deleteProperty(selection.candidates[0]!.matches[0]!, "observationSha256");
+        if (failure === "forged-score")
+          Reflect.set(selection.candidates[0]!.score, "averagePoints", 3);
         if (failure === "wrong-candidate") selection.candidates[0]!.sourceSha256 = "a".repeat(64);
         if (failure === "wrong-environment") {
+          // 记录里的计划与生成阶段的计划不同源（换一张图，摘要一起换；形状仍合法）。
           const body = {
             ...selection.plan,
-            mapSha256: "a".repeat(64),
+            maps: [{ ...selection.plan.maps[0]!, sha256: "c".repeat(64) }, selection.plan.maps[1]!],
           };
           Reflect.deleteProperty(body, "planSha256");
           selection.plan = { ...body, planSha256: sha256Hex(canonicalSelectionFixture(body)) };
@@ -2433,8 +2582,7 @@ it.each([
                 }),
               );
         }
-        if (failure === "mutate-plan")
-          Reflect.set(options.expectedPlan, "mapSha256", "a".repeat(64));
+        if (failure === "mutate-plan") Reflect.set(options.expectedPlan.matches[0]!, "seed", 999);
         if (failure === "mutate-ts") writeFileSync(options.candidates[1]!.sourcePath, "tampered");
         return selection;
       },
@@ -2469,7 +2617,7 @@ it("重复 JS 不合并三个 TS/阶段身份，同分冻结最终阶段的确�
       ...requestWith(root, stub, "select-duplicate", selectionTrial),
       scoreSourceFeedback: true,
       selectBestCandidate: true,
-      selection: (options) => selectedFixture(options, 2),
+      selection: (options) => gridSelectionFixture(options),
     },
     firstModelConfig(root),
   );
@@ -2539,61 +2687,46 @@ it("批次编排把选拔失败安全落盘，三个阶段与 TS 身份均保留
   expect(
     record.selectionFailure?.candidates.map((candidate) => candidate.sourceSha256),
   ).toHaveLength(3);
-  expect(record.selectionFailure?.plan.matches).toHaveLength(12);
+  // v2：失败旁证里带的是生成阶段那张网格计划（32 场），不是另一套 12 场的选拔计划。
+  expect(record.selectionFailure?.plan.matches).toHaveLength(32);
   expect(JSON.stringify(record)).not.toContain("SECRET-provider");
   expect(files.every((file) => !file.startsWith(".tmp-"))).toBe(true);
 });
 
-it("最高生成入口默认真实选拔子进程完成四座终局计分与冻结身份链", { timeout: 30000 }, async () => {
-  const root = mkRoot();
-  for (const name of ["apps", "maps"]) symlinkSync(join(repoRoot, name), join(root, name), "dir");
-  for (const name of [
-    "cell-a-melee-pressure",
-    "cell-b-expansion-economy",
-    "cell-c-claim-no-harvest",
-  ]) {
-    mkdirSync(join(root, "benchmarks", name), { recursive: true });
-    writeFileSync(join(root, "benchmarks", name, "script.js"), "function loop() {}\n");
-  }
-  const rules = JSON.parse(readFileSync(join(root, "rulesets", `${RULESET_VERSION}.json`), "utf8"));
-  writeFileSync(
-    join(root, "rulesets", `${RULESET_VERSION}.json`),
-    JSON.stringify({ ...rules, tickLimit: 4 }),
-  );
-  const sources = [
-    "type First = number;\nfunction loop() {}\n",
-    "type Middle = number;\nfunction loop() {}\n",
-    "type Final = number;\nfunction loop() {}\n",
-  ];
-  const stub = stubClient(sources.map((source) => reply(source)));
-  const outcome = await generateOneModel(
-    {
-      ...requestWith(root, stub, "real-selection", selectionTrial),
-      scoreSourceFeedback: true,
-      selectBestCandidate: true,
-    },
-    firstModelConfig(root),
-  );
-  expect(outcome.kind).toBe("frozen");
-  if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
-  expect(stub.calls).toHaveLength(3);
-  expect(
-    outcome.meta.selection?.candidates.map((candidate) => [
-      candidate.countedMatches,
-      candidate.averagePoints,
-    ]),
-  ).toEqual([
-    [12, 1.5],
-    [12, 1.5],
-    [12, 1.5],
-  ]);
-  expect(outcome.meta.selection?.selected.stage).toBe(2);
-  expect(outcome.meta.selection?.reason).toBe("later-stage");
-  expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(sources[2]);
-  expect(sha256Hex(readFileSync(join(outcome.dir, "script.js")))).toBe(
-    outcome.meta.selection?.selected.scriptSha256,
-  );
-});
+it(
+  "真实选拔子进程拒绝与安装面不同源的网格计划：整次失败、零发布、三阶段留证",
+  { timeout: 30_000 },
+  async () => {
+    // 安装面里没有四份陪练的冻结存档（`archive/` 不入库），选拔子进程无法把计划从 root + model
+    // 重建出来——这正是「计划同源」这条硬判据的失败路径：整次生成失败，不是候选不合格。
+    const root = selectionRoot();
+    const sources = [
+      "type First = number;\nfunction loop() {}\n",
+      "type Middle = number;\nfunction loop() {}\n",
+      "type Final = number;\nfunction loop() {}\n",
+    ];
+    const stub = stubClient(sources.map((source) => reply(source)));
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, "real-selection", selectionTrial),
+        scoreSourceFeedback: true,
+        selectBestCandidate: true,
+      },
+      firstModelConfig(root),
+    );
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") throw new Error("安装面缺陪练档时不得发布");
+    expect(stub.calls).toHaveLength(3);
+    expect(outcome.failure.classification).toBe("selection");
+    expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+    expect(existsSync(join(root, "archive", "alpha", "real-selection"))).toBe(false);
+    // 三阶段证据仍在（选拔失败不改写候选旁挂），消息里不出现路径与陪练档细节。
+    expect(
+      readdirSync(join(root, "archive", "alpha")).filter((name) => name.endsWith(".candidate.js")),
+    ).toHaveLength(3);
+    expect(JSON.stringify(outcome.failure.message)).not.toContain("/");
+  },
+);
 
 it("未完成第三阶段的传输失败不调用选拔救回旧候选，保留 01 未收敛末行", async () => {
   const root = selectionRoot();

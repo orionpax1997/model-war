@@ -1,3 +1,5 @@
+import { sha256Hex } from "./archive.js";
+import { canonicalText } from "./trial-grid.js";
 import {
   TRIAL_CANDIDATE_ID,
   TRIAL_GRID_MAP_NAMES,
@@ -23,10 +25,11 @@ export const fixtureScripts: readonly TrialPlanScript[] = [
 ] as const;
 
 /**
- * gen 侧测试用的评测网格计划夹具（**不产摘要、不读盘**）。
+ * gen 侧测试用的评测网格计划夹具（**不读盘**）。
  *
- * 场序与 runner 的派生规则同形（组合 → 座位轮转 → 地图），但本包不得 import runner，
- * 所以这里留一份纯数据构造：它只服务于「读观测/读汇总/回喂」这些消费端，不参与生产。
+ * 场序与 runner 的派生规则同形（组合 → 座位轮转 → 地图），摘要也按同一条规则现算
+ * （正文的规范序列化 sha256）：选拔的读入端会 `checkTrialPlan` 一遍，摘要凑合的计划在那一步
+ * 就会被拒——夹具得是**真计划**，否则测的就不是消费端而是夹具自己的缺陷。
  */
 export const gridPlanFixture = (
   scripts: readonly TrialPlanScript[] = fixtureScripts,
@@ -60,7 +63,7 @@ export const gridPlanFixture = (
       }
     }
   }
-  return {
+  const body = {
     version: TRIAL_PLAN_VERSION,
     ruleset: "v2",
     rulesetSha256: "9".repeat(64),
@@ -69,7 +72,7 @@ export const gridPlanFixture = (
     maps,
     matchesPerCandidate: matches.length,
     matches,
-    // 夹具的摘要只是一串 64 位十六进制（消费端不重建计划，摘要比对归 runner / 入口）。
-    planSha256: "0".repeat(64),
   };
+  // 摘要 = 正文的规范序列化 sha256（与 runner 的 `hashOf` 同一条规则、同一份写法）。
+  return { ...body, planSha256: sha256Hex(canonicalText(body)) };
 };
