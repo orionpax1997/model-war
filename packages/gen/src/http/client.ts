@@ -3,9 +3,9 @@
  *
  * ── 零厂商 SDK ──
  *
- * 只走 Node 内置的 `fetch` 与 `TextDecoder`。三家端点族的差异全在 `endpoints.ts` 的翻译层,
+ * 只走 Node 内置的 `fetch` 与 `TextDecoder`。四家端点族的差异全在 `endpoints.ts` 的翻译层,
  * 这里只管「拼 URL → 挂鉴权头 → POST → 按 content-type 把响应读回 → 按状态码分类失败」。
- * 引厂商 SDK / SSE 库会让依赖面随节点扩张,而本期真正需要的是三条稳定的 HTTP 形状。
+ * 引厂商 SDK / SSE 库会让依赖面随节点扩张,而本期真正需要的是四条稳定的 HTTP 形状。
  *
  * ── 为什么 chat-completions 走 SSE,而不是一次性 JSON ──
  *
@@ -48,8 +48,16 @@ import { endpointSpec, type StreamAccumulator } from "./endpoints.js";
  *
  * 这是 **gen 内部工程参数**:不进 `rulesets/*.json`(那管对局规则与数值),也不接 `models.yaml`
  * 的 per-model 旋钮——它与 `retry.ts` 的 `RETRY` 同性质,单一真源就是本常量。
+ *
+ * ── 为什么是 900 s 而不是 300 s ──
+ *
+ * 思考型模型在**出第一个字之前**什么都不发。Google `generate-content` 族实测:同一请求带
+ * `thinkingConfig.thinkingLevel = "high"` 时首帧要等 245 s(短提示、think 19k tokens)到
+ * 7 m 38 s(真实生成提示),而 `medium` / `low` 首帧只要 4–14 s。300 s 那条线恰好落在两者
+ * 中间,足以把一个“想得很久但活得好好的”请求判成死连接。空闲超时的语义是「多久没字节算死」,
+ * 思考期无字节不是死——所以放宽到 900 s,同时仍保留「流中途静默」这层保护。
  */
-export const DEFAULT_TIMEOUT_MS = 300_000;
+export const DEFAULT_TIMEOUT_MS = 900_000;
 
 /**
  * 自报家门:opencode go 要求客户端亮明身份,不用通用 SDK 的 User-Agent(见其 go 文档
@@ -182,6 +190,8 @@ type EventStreamRead = {
   readonly url: string;
   readonly accumulator: StreamAccumulator;
   readonly idle: IdleTimeout;
+  /** 端点族无收尾哨兵:EOF 即收尾(仍要求已读到停止标记,否则算截断)。见 `StreamingEndpoint`。 */
+  readonly endsOnStreamClose: boolean;
 };
 
 /**
@@ -194,7 +204,7 @@ type EventStreamRead = {
  * 中断**不挂 `status`**(与「连接都没建立起来」的超时同一形状),其余读失败挂已知的状态码。
  */
 const readEventStream = async (options: EventStreamRead): Promise<ModelResponse> => {
-  const { response, url, accumulator, idle } = options;
+  const { response, url, accumulator, idle, endsOnStreamClose } = options;
   const body = response.body;
   if (body === null) {
     throw new TransportError(`端点 ${url} 声明了 text/event-stream 却没有响应体`, {
@@ -254,13 +264,21 @@ const readEventStream = async (options: EventStreamRead): Promise<ModelResponse>
     await reader.cancel().catch(() => undefined);
   }
 
-  if (!sawDone) {
+  if (sawDone) {
+    return accumulator.result();
+  }
+
+  // 无哨兵的端点族(Google 系 `:streamGenerateContent?alt=sse`):上游在最后一帧后直接关连接。
+  // EOF 即收尾,**但**必须已读到停止标记——`finishReason === "unknown"` 说明候选从未收尾,
+  // 那是网关截断,与有哨兵的族同样判可重试。
+  const partial = accumulator.result();
+  if (!endsOnStreamClose || partial.finishReason === "unknown") {
     throw new TransportError(`端点 ${url} 的流在收尾之前结束(连接被中途切断)`, {
       retryable: true,
       status: response.status,
     });
   }
-  return accumulator.result();
+  return partial;
 };
 
 /**
@@ -276,7 +294,9 @@ export const createHttpModelClient = (
   const { authentication, anthropicVersion } = generationTransport(config);
   const spec = endpointSpec(config.endpointFamily);
   const streaming = spec.streaming;
-  const url = joinUrl(config.baseUrl, spec.path);
+  // 路径按配置求值(Google 系把模型名与流式动词写进路径)。声明了流式能力就发到流式路径:
+  // `buildBody` 也已经换成流式那一份,请求的两半必须指向同一条端点。
+  const url = joinUrl(config.baseUrl, (streaming?.path ?? spec.path)(config));
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
@@ -331,6 +351,7 @@ export const createHttpModelClient = (
             url,
             accumulator: streaming.createAccumulator(),
             idle,
+            endsOnStreamClose: streaming.endsOnStreamClose === true,
           });
         }
 

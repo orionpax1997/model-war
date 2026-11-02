@@ -36,6 +36,7 @@
 
 import { ARCHIVE_SELECTION_JSON_SCHEMA, type ArchiveSelection } from "./selection-plan.js";
 import { TRIAL_SEEDS } from "./trial-plan.js";
+import type { JsonValue } from "./index.js";
 
 /** 统一事实优化的跨进程政策；只有数据，没有运行时判定。 */
 export const OPTIMIZATION_VERSION = 1 as const;
@@ -50,6 +51,11 @@ export type ArchiveOptimizationCandidate = {
   readonly scriptFile: string;
   readonly observationsFile: string;
   readonly scriptSha256: string;
+  /**
+   * 这一阶段候选**实际发出**的生成参数（`generationParams()` 的返回值，原样落档）。
+   * 新档必写；旧档（本字段出现前冻结）没有它，读入侧按可选处理。
+   */
+  readonly params?: JsonValue;
 };
 
 export type ArchiveOptimization = {
@@ -242,6 +248,13 @@ export const ARCHIVE_META_JSON_SCHEMA = {
                 pattern: "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._-]*$",
               },
               scriptSha256: SHA256,
+              // 故意不进 `required`：本字段出现前冻结的档没有它，旧档要能继续装载。
+              // 新档的必写由生成侧（pipeline 的候选构造点）保证，不在 schema 里区分新旧。
+              params: {
+                type: "object",
+                description:
+                  "这一阶段候选实际发出的生成参数（端点原生形状，原样落档），供事后查证「当时发的是什么」。",
+              },
             },
           },
         },

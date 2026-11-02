@@ -960,6 +960,7 @@ it("所有有效候选固定两次事实回喂，编译修复不占优化轮，�
         scriptFile: `observed-${runId}-round-${String(protocolRound)}.jsonl.candidate.js`,
         observationsFile: `observed-${runId}-round-${String(protocolRound)}.jsonl`,
         scriptSha256: sha256Hex(candidateBytes[stage] ?? Buffer.alloc(0)),
+        params: { max_completion_tokens: 8192, reasoning_effort: "high" },
       })),
     });
     expect(candidateBytes).toHaveLength(3);
@@ -1472,6 +1473,7 @@ it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代�
       scriptFile: `observed-${runId}-round-1.jsonl.candidate.js`,
       observationsFile: `observed-${runId}-round-1.jsonl`,
       scriptSha256: sha256Hex(candidateJs),
+      params: {},
     },
   ]);
 });
@@ -1620,7 +1622,7 @@ it("opt-in 存档拒绝撞名时不发布最终观测，既有最终候选旁证
   expect(readFileSync(finalPath, "utf8")).toBe(previous);
 });
 
-it.each(["chat-completions", "messages", "responses"] as const)(
+it.each(["chat-completions", "messages", "responses", "generate-content"] as const)(
   "规范参数从配置到生成调用及归档保持一致，默认无额外探测：%s",
   async (family) => {
     const root = mkRoot();
@@ -1668,7 +1670,7 @@ it.each(["chat-completions", "messages", "responses"] as const)(
   },
 );
 
-it.each(["chat-completions", "messages", "responses"] as const)(
+it.each(["chat-completions", "messages", "responses", "generate-content"] as const)(
   "规范参数在截断、传输重试和编译修复中保持不变，用量分开记录：%s",
   async (family) => {
     const root = mkRoot();

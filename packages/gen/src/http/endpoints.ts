@@ -1,19 +1,21 @@
 /**
- * 三条端点族的方言翻译(hld §2.2.6)。
+ * 四条端点族的方言翻译(hld §2.2.6)。
  *
  * ── 为什么按「端点族」分,而不是按厂商分 ──
  *
- * 本期已开通的模型全落在三个**线协议**里:OpenAI 的 `/chat/completions`、Anthropic 的
- * `/messages`、OpenAI 的 `/responses`。按厂商再包一层只会让依赖面随节点扩张,而真正变的是
- * 「请求 body 怎么摆、响应怎么读回统一形状」——这正是本文件的一对函数
- * (`buildBody` / `parseResponse`)负责的翻译。HTTP 细节(鉴权、超时、状态码分类)留在 `client.ts`。
+ * 本期已开通的模型落在四个**线协议**里:OpenAI 的 `/chat/completions`、Anthropic 的
+ * `/messages`、OpenAI 的 `/responses`、Google 的 `:generateContent`。按厂商再包一层只会让
+ * 依赖面随节点扩张,而真正变的是「请求 body 怎么摆、响应怎么读回统一形状」——这正是本文件的
+ * 一对函数(`buildBody` / `parseResponse`)负责的翻译。HTTP 细节(鉴权、超时、状态码分类)留在 `client.ts`。
  *
  * ── 统一形状(端口 `ModelResponse`)──
  *
  * `text` / `finishReason` / `usage` / `stopDetails`。预算截断归一成 `"length"`:
- * Chat 的 `"length"`、Messages 的 `"max_tokens"` 与 Responses 的
- * `incomplete_details.reason: "max_output_tokens"`。其他 incomplete 不冒充预算截断，
- * 缺停止字段保持 `"unknown"`；原状态和原因单独保留。重试层只认 `"length"` 重发同一轮。
+ * Chat 的 `"length"`、Messages 的 `"max_tokens"`、Responses 的
+ * `incomplete_details.reason: "max_output_tokens"` 与 GenerateContent 的 `"MAX_TOKENS"`。
+ * 内容过滤类停止(Chat 的 `content_filter`、GenerateContent 的 `SAFETY` 等)同样有表,
+ * 但**不冒充**预算截断。缺停止字段保持 `"unknown"`;原状态和原因单独保留在 `stopDetails`。
+ * 重试层只认 `"length"` 重发同一轮。
  *
  * 解析全程用 `unknown` 收窄(`no-explicit-any` 是 error):端点返回的永远是外部输入,
  * 遇到缺字段就退到安全缺省,而不是抛"取属性时 undefined"的下游崩溃。
@@ -23,9 +25,14 @@ import type { ChatMessage, ModelParams, ModelResponse } from "../model-client.js
 import type { EndpointFamily, ModelConfig } from "../config.js";
 import { isRecord } from "../record.js";
 
-/** 一条端点族的翻译规则。`path` 相对 `baseUrl` 拼;`buildBody` 造请求体;`parseResponse` 读回统一形状。 */
+/**
+ * 一条端点族的翻译规则。`path` 相对 `baseUrl` 拼;`buildBody` 造请求体;`parseResponse` 读回统一形状。
+ *
+ * `path` 是按配置求值的函数而不是常量串:Google 系把模型名与流式动词都写进路径
+ * (`/models/<modelId>:generateContent`),路径本身就随模型变。
+ */
 export type EndpointSpec = {
-  readonly path: string;
+  readonly path: (config: ModelConfig) => string;
   readonly buildBody: (
     config: ModelConfig,
     messages: readonly ChatMessage[],
@@ -51,8 +58,8 @@ export type StreamAccumulator = {
  *
  * ── 为什么是可选字段,不是人人都有 ──
  *
- * 三族的 SSE 帧形状并不相同,而本期只有 `chat-completions` 走过真实流式验证面。给另两族写
- * 没被任何真实响应验证过的翻译,只会造出「看起来支持」的假象——留成可选字段,缺省即非流式,
+ * 四族的 SSE 帧形状并不相同,也不是每族都走过真实流式验证面。给没被任何真实响应验证过的
+ * 翻译写流式,只会造出「看起来支持」的假象——留成可选字段,缺省即非流式,
  * 声明它才是「这条端点族的流式读法被验证过」。
  *
  * - `buildBody` 造**带流式字段**的请求体(与非流式 `buildBody` 同源,只叠加 `stream` 之类);
@@ -62,6 +69,17 @@ export type StreamAccumulator = {
 export type StreamingEndpoint = {
   readonly buildBody: EndpointSpec["buildBody"];
   readonly createAccumulator: () => StreamAccumulator;
+  /**
+   * 可选的流式专用路径:Google 系把流式动词写在路径里(`:streamGenerateContent?alt=sse`),
+   * 不是请求体里的 `stream` 字段。缺省沿用非流式 `path`。
+   */
+  readonly path?: EndpointSpec["path"];
+  /**
+   * 这条族的流**没有收尾哨兵**:上游在最后一帧之后直接关连接(Google `:streamGenerateContent?alt=sse`)。
+   * 声明它,EOF 即视为正常收尾——但仍要求累积器已经读过停止标记(`finishReason` 不是 `"unknown"`),
+   * 否则与有哨兵的族一样按「网关截断」判可重试。
+   */
+  readonly endsOnStreamClose?: true;
 };
 
 /**
@@ -78,7 +96,7 @@ const stringField = (record: Record<string, unknown>, key: string): string | und
   return typeof value === "string" ? value : undefined;
 };
 
-/** 线上一条消息的形状:三家端点族的共同子集(`{ role, content }`)。 */
+/** 线上一条消息的形状:`{ role, content }`(`chat-completions` / `messages` / `responses` 三族共用)。 */
 const toWireMessage = (message: ChatMessage): Record<string, unknown> => ({
   role: message.role,
   content: message.content,
@@ -315,12 +333,153 @@ const parseResponses: EndpointSpec["parseResponse"] = (json) => {
   };
 };
 
+// ── generate-content(Google Gemini 系)────────────────────────────────
+
+/**
+ * Gemini 的 `finishReason` / `promptFeedback.blockReason` 归一。
+ *
+ * 预算截断是 `MAX_TOKENS → "length"`(重试层只认它);安全/内容类停止统一成 `content_filter`,
+ * 与 chat-completions 的同名词汇对齐,但**不**冒充预算截断。表外原值透传,原值另存 `stopDetails.reason`。
+ */
+const GENERATE_CONTENT_STOP_REASONS: Record<string, string> = {
+  STOP: "stop",
+  MAX_TOKENS: "length",
+  SAFETY: "content_filter",
+  RECITATION: "content_filter",
+  BLOCKLIST: "content_filter",
+  PROHIBITED_CONTENT: "content_filter",
+  SPII: "content_filter",
+  IMAGE_SAFETY: "content_filter",
+};
+
+/** 停止原因:候选的 `finishReason` 优先;整段被拒(无候选)时退到 `promptFeedback.blockReason`。 */
+const generateContentRawStop = (root: Record<string, unknown>): string | undefined =>
+  stringField(asRecord(asArray(root.candidates)[0]), "finishReason") ??
+  stringField(asRecord(root.promptFeedback), "blockReason");
+
+const normalizeGenerateContentStop = (rawStop: string | undefined): string =>
+  rawStop === undefined ? "unknown" : (GENERATE_CONTENT_STOP_REASONS[rawStop] ?? rawStop);
+
+const generateContentStopDetails = (
+  rawStop: string | undefined,
+): NonNullable<ModelResponse["stopDetails"]> => (rawStop === undefined ? {} : { reason: rawStop });
+
+/**
+ * 拼一个候选的正文。
+ *
+ * 推理段(`part.thought: true`)**不进产物**——与 chat 的 `reasoning_content`、messages 的
+ * `thinking_delta` 同一条纪律:半截思维链不进盘、不回喂。一个候选也可能带多段,按顺序拼。
+ */
+const generateContentText = (candidate: Record<string, unknown>): string => {
+  let text = "";
+  for (const part of asArray(asRecord(candidate.content).parts)) {
+    if (!isRecord(part) || part.thought === true) {
+      continue;
+    }
+    text += stringField(part, "text") ?? "";
+  }
+  return text;
+};
+
+/**
+ * `generationConfig` 的键是 Google 原生拼写(采样参数原样透传),只把 gen 的中立输出预算
+ * `max_output_tokens` 翻成 `maxOutputTokens`。
+ */
+const generateContentConfig = (params: ModelParams): Record<string, unknown> => {
+  const config: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    config[key === "max_output_tokens" ? "maxOutputTokens" : key] = value;
+  }
+  return config;
+};
+
+/**
+ * Google 的请求体形状:system 抽到顶层 `systemInstruction`,对话进 `contents`,角色只有
+ * `user` / `model`(没有 `assistant` / `system`),生成参数进 `generationConfig`。
+ *
+ * 同一角色的连续轮次合并成一条 `content` 的**多段**:协议要求 user/model 交替,而多轮回喂
+ * 可能连着发两条同角色消息——合并同义于顺序拼接,比让上游回 400 更接近本意。
+ */
+const generateContentBody: EndpointSpec["buildBody"] = (_config, messages, params) => {
+  const systemParts: string[] = [];
+  const contents: { role: string; parts: { text: string }[] }[] = [];
+  for (const message of messages) {
+    if (message.role === "system") {
+      systemParts.push(message.content);
+      continue;
+    }
+    const role = message.role === "assistant" ? "model" : "user";
+    const last = contents[contents.length - 1];
+    if (last !== undefined && last.role === role) {
+      last.parts.push({ text: message.content });
+    } else {
+      contents.push({ role, parts: [{ text: message.content }] });
+    }
+  }
+
+  const generationConfig = generateContentConfig(params);
+  return {
+    ...(systemParts.length === 0
+      ? {}
+      : { systemInstruction: { parts: [{ text: systemParts.join("\n\n") }] } }),
+    contents,
+    // 无参数时不发空对象:没有预算/采样意图就不该在请求里留下一个空壳。
+    ...(Object.keys(generationConfig).length === 0 ? {} : { generationConfig }),
+  };
+};
+
+/**
+ * 逐帧累积 Gemini 流:正文拼 `parts[].text`(跳过 `thought`),停止原因取最后一个非空值,
+ * usage 取最后一个非空 `usageMetadata`(累计式,最后一帧最全)。
+ *
+ * 这条族**既没有 `[DONE]` 也没有原生收尾事件**:上游在最后一帧后直接关连接。故不提供
+ * `done()`,由 `endsOnStreamClose` 告诉读流循环「EOF 即收尾」。
+ */
+const createGenerateContentAccumulator = (): StreamAccumulator => {
+  let text = "";
+  let rawStop: string | undefined;
+  let usage: unknown;
+  return {
+    push: (frame) => {
+      const root = asRecord(frame);
+      text += generateContentText(asRecord(asArray(root.candidates)[0]));
+
+      // 与 chat 一样只被「最后一个非空值」覆盖:上游可能在收尾前重发同一个停止原因。
+      const frameStop = generateContentRawStop(root);
+      if (frameStop !== undefined && frameStop.length > 0) {
+        rawStop = frameStop;
+      }
+
+      if (root.usageMetadata !== undefined && root.usageMetadata !== null) {
+        usage = root.usageMetadata;
+      }
+    },
+    result: () => ({
+      text,
+      finishReason: normalizeGenerateContentStop(rawStop),
+      usage,
+      stopDetails: generateContentStopDetails(rawStop),
+    }),
+  };
+};
+
+const parseGenerateContent: EndpointSpec["parseResponse"] = (json) => {
+  const root = asRecord(json);
+  const rawStop = generateContentRawStop(root);
+  return {
+    text: generateContentText(asRecord(asArray(root.candidates)[0])),
+    finishReason: normalizeGenerateContentStop(rawStop),
+    usage: root.usageMetadata,
+    stopDetails: generateContentStopDetails(rawStop),
+  };
+};
+
 /** 取一条端点族的翻译规则。新增一族才需要在这里动分支。 */
 export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
   switch (family) {
     case "chat-completions":
       return {
-        path: "/chat/completions",
+        path: () => "/chat/completions",
         buildBody: chatCompletionsBody,
         parseResponse: parseChatCompletions,
         streaming: {
@@ -330,7 +489,7 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
       };
     case "messages":
       return {
-        path: "/messages",
+        path: () => "/messages",
         buildBody: messagesBody,
         parseResponse: parseMessages,
         streaming: {
@@ -339,6 +498,23 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         },
       };
     case "responses":
-      return { path: "/responses", buildBody: responsesBody, parseResponse: parseResponses };
+      return {
+        path: () => "/responses",
+        buildBody: responsesBody,
+        parseResponse: parseResponses,
+      };
+    case "generate-content":
+      return {
+        path: (config) => `/models/${config.modelId}:generateContent`,
+        buildBody: generateContentBody,
+        parseResponse: parseGenerateContent,
+        streaming: {
+          // Google 把「流式」写进路径而不是 body;`alt=sse` 才把分块响应当 SSE 返回。
+          path: (config) => `/models/${config.modelId}:streamGenerateContent?alt=sse`,
+          buildBody: generateContentBody,
+          createAccumulator: createGenerateContentAccumulator,
+          endsOnStreamClose: true,
+        },
+      };
   }
 };

@@ -48,9 +48,19 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
     // 身份来自目录，不接受服务端模型名或任意证据字符串。
     configId,
     configIdMatches: evidence.configId === configId,
-    endpointFamily: enumOf(evidence.endpointFamily, ["chat-completions", "messages", "responses"]),
+    endpointFamily: enumOf(evidence.endpointFamily, [
+      "chat-completions",
+      "messages",
+      "responses",
+      "generate-content",
+    ]),
     endpoint: {
-      family: enumOf(endpoint.family, ["chat-completions", "messages", "responses"]),
+      family: enumOf(endpoint.family, [
+        "chat-completions",
+        "messages",
+        "responses",
+        "generate-content",
+      ]),
       ...supportOf(endpoint),
     },
     reasoning: {
@@ -62,6 +72,7 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
         "responses-effort",
         "adaptive-effort",
         "thinking-enabled",
+        "thinking-level",
       ]),
       budgetTokens: numberOf(reasoning.budgetTokens),
       ...supportOf(reasoning),

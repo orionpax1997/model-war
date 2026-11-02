@@ -36,6 +36,8 @@
 | [0018](./0018-generation-policy-and-candidate-selection.md) | 规范生成意图与完整候选选拔分开审计 | accepted | — |
 | [0019](./0019-terminal-match-facts-feedback.md) | 两次事实反馈纳入真实终局计分依据与四方结果 | accepted | — |
 | [0020](./0020-selection-tiebreak-compatibility.md) | 选拔决胜更新与历史身份兼容 | accepted | — |
+| [0021](./0021-google-generate-content-family.md) | Google 线协议作为第四个端点族,并承认无收尾哨兵的流 | accepted | — |
+| [0022](./0022-generate-content-thinking-level-and-params-evidence.md) | Google 族的推理控制用 `thinkingLevel`,候选的实际参数随存档落档 | accepted | 满足 ADR-0021 的重评条件 |
 
 ## 写一份新 ADR
 

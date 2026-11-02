@@ -13,11 +13,11 @@
  *
  * 两者都要逐轮落进 `meta.generationLog`(hld §2.2.6 的生成日志行),而且 `finishReason`
  * 还决定「这轮是不是被截断了、要不要重试同一轮」(`packages/gen/src/retry.ts`)。它们归端口的返回载荷所有,
- * 由真实适配器(`packages/gen/src/http/client.ts`)从三家端点族的响应里映射成**同一个形状**——
+ * 由真实适配器(`packages/gen/src/http/client.ts`)从四家端点族的响应里映射成**同一个形状**——
  * 截断一律归一成 `"length"`(OpenAI 本就是 `"length"`,Anthropic 的 `"max_tokens"` 由 08 映射)。
  */
 
-/** 一条消息的角色。三个取值与三家端点族的共同子集一致(真实适配器只做方言翻译,不扩取值域)。 */
+/** 一条消息的角色。三个取值与四家端点族的共同子集一致(真实适配器只做方言翻译,不扩取值域)。 */
 export type ChatRole = "system" | "user" | "assistant";
 
 export type ChatMessage = {

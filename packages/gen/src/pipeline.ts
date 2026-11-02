@@ -72,6 +72,7 @@ import {
   type ArchiveValidation,
   type FailureClassification,
   type FailureRecord,
+  type JsonValue,
 } from "@model-war/schema";
 
 import {
@@ -587,6 +588,10 @@ export const generateOneModel = async (
             scriptFile: basename(`${result.observationsPath}.candidate.js`),
             observationsFile: basename(result.observationsPath),
             scriptSha256: result.scriptSha256,
+            // 参数原样落档：日后查证「这份候选当时用什么参数生成的」不必翻四行 log，
+            // 也不必猜 mapping。与 `generationLog[].params` 同源（同一个 `params` 变量）。
+            // `JSON.parse(JSON.stringify(...))` 保证落档的是 JSON 值（不携带 undefined / 共享引用）。
+            params: JSON.parse(JSON.stringify(params)) as JsonValue,
           });
           selectionArtifacts.push({
             stage,

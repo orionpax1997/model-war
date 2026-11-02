@@ -10,19 +10,25 @@ export const policyFixture = (
     official: { status: "documented" as const, source: "offline-fixture/official-contract" },
     channel: { status: "accepted" as const, source: "offline-fixture/channel-contract" },
   };
+  // 先解出实际控制再全程使用:渠道证据必须跟**真正发出的控制**同档,
+  // 不能用参数原值(缺省时它是 undefined)。
+  const resolved: ReasoningControl =
+    control ??
+    (family === "chat-completions"
+      ? "chat-effort"
+      : family === "responses"
+        ? "responses-effort"
+        : // Google 族的 thinking 控制写作 generationConfig.thinkingConfig.thinkingLevel。
+          family === "generate-content"
+          ? "thinking-level"
+          : "adaptive-effort");
   return {
     endpoint: { family, ...evidence },
     reasoning: {
       intent: "high",
-      control:
-        control ??
-        (family === "chat-completions"
-          ? "chat-effort"
-          : family === "responses"
-            ? "responses-effort"
-            : "adaptive-effort"),
+      control: resolved,
       ...evidence,
-      ...(control === "unverified"
+      ...(resolved === "unverified"
         ? {
             channel: {
               status: "unverified" as const,
@@ -30,15 +36,17 @@ export const policyFixture = (
             },
           }
         : {}),
-      ...(control === "thinking-enabled" ? { budgetTokens: 2048 } : {}),
+      ...(resolved === "thinking-enabled" ? { budgetTokens: 2048 } : {}),
     },
     output: {
       field:
         family === "chat-completions"
           ? "max_completion_tokens"
-          : family === "responses"
+          : family === "generate-content"
             ? "max_output_tokens"
-            : "max_tokens",
+            : family === "responses"
+              ? "max_output_tokens"
+              : "max_tokens",
       maxTokens: 8192,
       includesReasoning: "yes",
       ...evidence,

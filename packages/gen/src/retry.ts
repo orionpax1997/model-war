@@ -5,7 +5,7 @@
  *
  * 「这一轮该不该重发」是一条**与厂商无关的判据**:429 / 5xx / 网络失败 / 超时都可能重发成功,
  * 其余 4xx 只是浪费。真实适配器(`packages/gen/src/http/client.ts`)只负责把 HTTP 方言翻译成
- * `TransportError{retryable}` 或 `ModelResponse`,退避策略收在这里一处;三个端点族共享同一套
+ * `TransportError{retryable}` 或 `ModelResponse`,退避策略收在这里一处;四个端点族共享同一套
  * 重试语义,不必各写一份。
  *
  * ── 截断为什么和传输错误共用一个预算 ──
@@ -59,7 +59,7 @@ const realSleep: RetrySleep = (ms) =>
     setTimeout(resolve, ms);
   });
 
-/** 端口把三家端点族的截断归一到 `"length"`(契约 §2.1):它是「重发同一轮」的判据。 */
+/** 端口把四家端点族的截断归一到 `"length"`(契约 §2.1):它是「重发同一轮」的判据。 */
 export const isTruncated = (response: ModelResponse): boolean => response.finishReason === "length";
 
 /** 重试耗尽 / 不可重试的收口形状。`pipeline.ts` 据它拼出 `transport` 分类的失败。 */

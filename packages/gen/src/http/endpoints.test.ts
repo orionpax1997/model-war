@@ -1,5 +1,5 @@
 /**
- * 三端点族的**纯翻译**单测:不经网络,只喂 `buildBody` / `parseResponse` 输入,断言请求体形状与
+ * 四端点族的**纯翻译**单测:不经网络,只喂 `buildBody` / `parseResponse` 输入,断言请求体形状与
  * 归一后的 `ModelResponse`。网络行为(鉴权头、状态码分类、超时)在 `client.test.ts` 用本地假端点覆盖。
  */
 
@@ -16,10 +16,19 @@ const config = (family: ModelConfig["endpointFamily"]): ModelConfig => ({
   credentialEnvVar: "TEST_KEY",
 });
 
-it("三条端点族的路径各自钉死", () => {
-  expect(endpointSpec("chat-completions").path).toBe("/chat/completions");
-  expect(endpointSpec("messages").path).toBe("/messages");
-  expect(endpointSpec("responses").path).toBe("/responses");
+/** Google 族的模型 id 直接进路径,用真实形状的 id 才能看见路径是不是拼对了。 */
+const geminiConfig: ModelConfig = { ...config("generate-content"), modelId: "gemini-4-argon" };
+
+it("四条端点族的路径各自钉死", () => {
+  expect(endpointSpec("chat-completions").path(config("chat-completions"))).toBe(
+    "/chat/completions",
+  );
+  expect(endpointSpec("messages").path(config("messages"))).toBe("/messages");
+  expect(endpointSpec("responses").path(config("responses"))).toBe("/responses");
+  // Google 把模型名写进路径,故路径是真源里的函数而不是常量串。
+  expect(endpointSpec("generate-content").path(geminiConfig)).toBe(
+    "/models/gemini-4-argon:generateContent",
+  );
 });
 
 it("chat-completions 请求体:model + messages(system 留在 messages 里)+ params 透传", () => {
@@ -185,10 +194,20 @@ const requireStreaming = (family: ModelConfig["endpointFamily"]) => {
   return streaming;
 };
 
-it("流式能力是可选字段:chat-completions / messages 声明,responses 缺省即非流式", () => {
+it("流式能力是可选字段:chat-completions / messages / generate-content 声明,responses 缺省即非流式", () => {
   expect(endpointSpec("chat-completions").streaming).toBeDefined();
   expect(endpointSpec("messages").streaming).toBeDefined();
+  expect(endpointSpec("generate-content").streaming).toBeDefined();
   expect(endpointSpec("responses").streaming).toBeUndefined();
+});
+
+it("generate-content 流式路径换动词并带 alt=sse;非流式路径不带", () => {
+  const streaming = requireStreaming("generate-content");
+  expect(streaming.path?.(geminiConfig)).toBe(
+    "/models/gemini-4-argon:streamGenerateContent?alt=sse",
+  );
+  // 无哨兵:上游最后一条数据帧后直接关连接。
+  expect(streaming.endsOnStreamClose).toBe(true);
 });
 
 it("chat-completions 流式请求体 = 非流式体 + stream:true + include_usage;params 同名键压不过本层", () => {
@@ -336,6 +355,117 @@ it("chat-completions 流累积器:一帧都没喂 / 空帧 → 与非流式缺�
   accumulator.push({ choices: [{ delta: {}, finish_reason: "" }] });
   accumulator.push("not an object");
   expect(accumulator.result()).toMatchObject({
+    text: "",
+    finishReason: "unknown",
+    usage: undefined,
+  });
+});
+
+// ── generate-content(Google Gemini 系)──────────────────────────────
+
+it("generate-content 请求体:system 抽到 systemInstruction,assistant 换名 model,参数进 generationConfig", () => {
+  const messages: ChatMessage[] = [
+    { role: "system", content: "第一条系统提示" },
+    { role: "system", content: "第二条系统提示" },
+    { role: "user", content: "契约" },
+    { role: "assistant", content: "上一轮回复" },
+    { role: "user", content: "诊断反馈" },
+  ];
+  expect(
+    endpointSpec("generate-content").buildBody(geminiConfig, messages, {
+      temperature: 0.5,
+      max_output_tokens: 4096,
+    }),
+  ).toEqual({
+    systemInstruction: { parts: [{ text: "第一条系统提示\n\n第二条系统提示" }] },
+    contents: [
+      { role: "user", parts: [{ text: "契约" }] },
+      { role: "model", parts: [{ text: "上一轮回复" }] },
+      { role: "user", parts: [{ text: "诊断反馈" }] },
+    ],
+    generationConfig: { temperature: 0.5, maxOutputTokens: 4096 },
+  });
+});
+
+it("generate-content 请求体:无 system / 无参数时不挂空壳;同角色连续轮次合并成多段", () => {
+  const body = endpointSpec("generate-content").buildBody(
+    geminiConfig,
+    [
+      { role: "user", content: "a" },
+      { role: "user", content: "b" },
+    ],
+    {},
+  );
+  expect(body).toEqual({ contents: [{ role: "user", parts: [{ text: "a" }, { text: "b" }] }] });
+  expect("systemInstruction" in body).toBe(false);
+  expect("generationConfig" in body).toBe(false);
+});
+
+it("generate-content 响应:拼 parts 正文、跳过 thought 段;MAX_TOKENS 归一 length;usageMetadata 原样保留", () => {
+  const response = endpointSpec("generate-content").parseResponse({
+    candidates: [
+      {
+        content: {
+          role: "model",
+          parts: [{ text: "先想", thought: true }, { text: "脚本" }, { text: "正文" }],
+        },
+        finishReason: "MAX_TOKENS",
+      },
+    ],
+    usageMetadata: { promptTokenCount: 17, candidatesTokenCount: 900, thoughtsTokenCount: 640 },
+  });
+  expect(response).toEqual({
+    text: "脚本正文",
+    finishReason: "length",
+    usage: { promptTokenCount: 17, candidatesTokenCount: 900, thoughtsTokenCount: 640 },
+    stopDetails: { reason: "MAX_TOKENS" },
+  });
+});
+
+it.each([
+  [{ candidates: [{ finishReason: "STOP" }] }, "stop", { reason: "STOP" }],
+  [{ candidates: [{ finishReason: "SAFETY" }] }, "content_filter", { reason: "SAFETY" }],
+  // 整段被拒时没有候选,只能读 promptFeedback.blockReason。
+  [
+    { promptFeedback: { blockReason: "PROHIBITED_CONTENT" } },
+    "content_filter",
+    { reason: "PROHIBITED_CONTENT" },
+  ],
+  [{ candidates: [{ finishReason: "OTHER" }] }, "OTHER", { reason: "OTHER" }],
+  [{}, "unknown", {}],
+] as const)("generate-content 停止原因归一并保留原值：%j", (body, finishReason, stopDetails) => {
+  expect(endpointSpec("generate-content").parseResponse(body)).toMatchObject({
+    text: "",
+    finishReason,
+    stopDetails,
+    usage: undefined,
+  });
+});
+
+it("generate-content 流累积器:无收尾哨兵,正文/停止原因/usage 与非流式同形", () => {
+  const streaming = requireStreaming("generate-content");
+  const accumulator = streaming.createAccumulator();
+  expect(accumulator.done).toBeUndefined();
+  accumulator.push({
+    candidates: [{ content: { role: "model", parts: [{ text: "先想", thought: true }] } }],
+  });
+  accumulator.push({ candidates: [{ content: { parts: [{ text: "脚本" }] } }] });
+  accumulator.push({
+    candidates: [{ content: { parts: [{ text: "正文" }] } }],
+    usageMetadata: { promptTokenCount: 17, candidatesTokenCount: 2 },
+  });
+  // 收尾帧可能不带正文,停止原因与全量 usage 都在它身上。
+  accumulator.push({
+    candidates: [{ content: { parts: [] }, finishReason: "STOP" }],
+    usageMetadata: { promptTokenCount: 17, candidatesTokenCount: 900, thoughtsTokenCount: 640 },
+  });
+  expect(accumulator.result()).toEqual({
+    text: "脚本正文",
+    finishReason: "stop",
+    usage: { promptTokenCount: 17, candidatesTokenCount: 900, thoughtsTokenCount: 640 },
+    stopDetails: { reason: "STOP" },
+  });
+  expect(streaming.createAccumulator().result()).toMatchObject({
     text: "",
     finishReason: "unknown",
     usage: undefined,

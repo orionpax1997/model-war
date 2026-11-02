@@ -96,7 +96,7 @@
 
 - prompt 模板是数据文件(`prompts/base.md`),判据文本**不复制**,真源仍是 `docs/rules-v2`。
 - 契约读入:每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘,不嵌入副本;目录名 / 文件缺失即报错退出。
-- 模型 API 客户端:gen 内定义 `ModelClient` 接口,真实实现 = OpenAI-compatible HTTP 客户端 + **三个端点族分支**(`chat-completions` / `messages` / `responses`),**不引厂商 SDK**。
+- 模型 API 客户端:gen 内定义 `ModelClient` 接口,真实实现 = HTTP 客户端 + **四个端点族分支**(`chat-completions` / `messages` / `responses` / `generate-content`),按**线协议**分族而不是按厂商分,**不引厂商 SDK**(取舍见 ADR-0021)。
 - 模型配置(`models.yaml`)只登记本季参赛集;凭证一律走环境变量。**新模型接入只改配置,不改代码**。
 - 重试与限流参数是 gen 内部常量,**不进 `rulesets/*.json`**——那是与厂商 API 打交道的工程参数,与对局规则无关。
 

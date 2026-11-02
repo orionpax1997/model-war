@@ -133,16 +133,25 @@ it("明确不支持是可见诊断，不降档、不改端点", () => {
   );
 });
 
-it.each(["chat-completions", "messages", "responses"] as const)(
+it.each(["chat-completions", "messages", "responses", "generate-content"] as const)(
   "能力映射与非法组合校验：%s",
   (family) => {
     const model = fixtureModel(family);
     expect(generationParams(model)).toEqual(
       family === "chat-completions"
         ? { reasoning_effort: "high", max_completion_tokens: 8192 }
-        : family === "responses"
-          ? { reasoning: { effort: "high" }, max_output_tokens: 8192 }
-          : { thinking: { type: "adaptive" }, output_config: { effort: "high" }, max_tokens: 8192 },
+        : family === "generate-content"
+          ? {
+              max_output_tokens: 8192,
+              thinkingConfig: { thinkingLevel: "high", includeThoughts: true },
+            }
+          : family === "responses"
+            ? { reasoning: { effort: "high" }, max_output_tokens: 8192 }
+            : {
+                thinking: { type: "adaptive" },
+                output_config: { effort: "high" },
+                max_tokens: 8192,
+              },
     );
     expect(() =>
       generationParams({
@@ -206,6 +215,23 @@ it("adaptive 中转扩展 forceAdaptiveThinking 显式声明，不污染默认�
     issues,
   );
   expect(issues.join()).toContain("forceAdaptiveThinking");
+});
+
+it("Google 族的三级思考档位写作 generationConfig.thinkingConfig，且不能溢到其他族", () => {
+  const model = fixtureModel("generate-content");
+  expect(generationParams(model)).toEqual({
+    max_output_tokens: 8192,
+    // `includeThoughts` 让思考增量成帧:没有它,长提示下网关会在静默期把连接掐掉。
+    thinkingConfig: { thinkingLevel: "high", includeThoughts: true },
+  });
+  for (const family of ["chat-completions", "messages", "responses"] as const) {
+    expect(() =>
+      generationParams({
+        ...fixtureModel(family),
+        generationPolicy: policyFixture(family, "thinking-level"),
+      }),
+    ).toThrow("不兼容");
+  }
 });
 
 it("开关式 thinking 保持自身语义，预算必须合法且不越输出上限", () => {
