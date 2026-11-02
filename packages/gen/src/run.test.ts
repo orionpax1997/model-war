@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,9 @@ import type { ModelClient } from "./model-client.js";
 import { generateAndFreeze, runGeneration } from "./run.js";
 import { fail, reply, stubClient, type StubClient } from "./stub-client.js";
 import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
+import { gridPlanFixture } from "./trial-plan.fixture.js";
+
+const sha256 = (bytes: Buffer | string): string => createHash("sha256").update(bytes).digest("hex");
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-run-`);
@@ -192,20 +196,33 @@ it("runGeneration 显式选项贯通：两次事实优化后第三个有效候�
     configPath: "models.yaml",
     createClient: () => stub,
     scoreSourceFeedback: true,
-    trial: ({ observationsPath }) => {
+    // 计划与观测都按注入桩来：真 `--plan` 要读本地冻结档案（`archive/` 不入库）。
+    trialPlan: () => gridPlanFixture(),
+    trial: ({ artifactPath, observationsPath, plan }) => {
+      if (plan === undefined) throw new Error("试跑桩需要计划");
+      const readings = plan.matches.map((match) => ({
+        matchIndex: match.matchIndex,
+        delivered: 0,
+        captures: 0,
+        noScoreSource: true,
+        terminalSummary: terminalSummaryFixture(match.seed, "timeout", match.seats),
+      }));
+      writeFileSync(observationsPath, readings.map((row) => JSON.stringify(row)).join("\n") + "\n");
       writeFileSync(
-        observationsPath,
-        [101, 202, 303]
-          .map((seed, matchIndex) =>
-            JSON.stringify({
-              matchIndex,
-              delivered: 0,
-              captures: 0,
-              noScoreSource: true,
-              terminalSummary: terminalSummaryFixture(seed),
-            }),
-          )
-          .join("\n") + "\n",
+        `${observationsPath}.grid.json`,
+        JSON.stringify({
+          version: plan.version,
+          plan,
+          // 汇总说的是这份候选脚本（执行器认编译产物字节）。
+          scriptSha256: sha256(readFileSync(artifactPath)),
+          matches: plan.matches.map((match) => ({
+            matchIndex: match.matchIndex,
+            seed: match.seed,
+            candidateSeat: match.candidateSeat,
+            map: match.map,
+            mapSha256: match.mapSha256,
+          })),
+        }),
       );
       return { passed: true, stdout: "" };
     },

@@ -1,7 +1,8 @@
 import {
-  TRIAL_PLAYER_IDS,
-  TRIAL_SEEDS,
+  TRIAL_CANDIDATE_ID,
   TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA,
+  type TrialPlan,
+  type TrialPlanMatch,
   type TrialTerminalPlayer,
   type TrialTerminalSummary,
   type TrialUnitTable,
@@ -14,6 +15,7 @@ const consistentPlayer = (
   summary: TrialTerminalSummary,
   player: TrialTerminalPlayer,
   seat: number,
+  expectedId: string,
 ): boolean => {
   const costTerms = [
     player.survivingUnits.worker * summary.unitCosts.worker,
@@ -28,7 +30,7 @@ const consistentPlayer = (
   const territory = bases + resources + units;
   return (
     player.seat === seat &&
-    player.player === TRIAL_PLAYER_IDS[seat] &&
+    player.player === expectedId &&
     [...costTerms, cost, bases, resources, units, territory].every(Number.isSafeInteger) &&
     player.survivingUnitCost === cost &&
     player.score.bases === bases &&
@@ -113,19 +115,46 @@ const playerOf = (value: TrialTerminalPlayer): TrialTerminalPlayer => ({
   eliminatedAtTick: value.eliminatedAtTick,
 });
 
-/** 优化试跑终局的公共读入边界；非法数据返回 null，缺失不能补成零分。 */
+/**
+ * 一个座位上的期望身份：候选恒叫 `candidate`，其余必须**是计划声明的对手 id**。
+ *
+ * 网格里席位由计划给（候选在四个座位各坐一次），所以身份不能靠「下标即身份」的常量表；
+ * 计划没声明的 id 一律不认（不许观测里冒出计划之外的对手）。
+ */
+const seatIdentityOf = (
+  plan: TrialPlan,
+  match: TrialPlanMatch,
+  seat: number,
+): string | undefined => {
+  const id = match.seats[seat];
+  if (id === undefined) return undefined;
+  if (id === TRIAL_CANDIDATE_ID) return id;
+  return plan.scripts.some((script) => script.id === id) ? id : undefined;
+};
+
+/**
+ * 优化试跑终局的公共读入边界；非法数据返回 null，缺失不能补成零分。
+ *
+ * 期望值由**计划**给（种子、四方席位身份），不再由常量表给：网格里同一份候选会在不同座位、
+ * 不同种子上各跑一次，常量表在这一步就会把合法观测拒掉。
+ */
 export const parseTrialTerminalSummary = (
   value: unknown,
-  matchIndex: number,
+  plan: TrialPlan,
+  match: TrialPlanMatch,
 ): TrialTerminalSummary | null => {
   if (!matchesSummary(value)) return null;
   // 仅在共享 JSON Schema 验证后恢复数据合同；公共出口始终显式逐字段重建。
   const summary = value as TrialTerminalSummary;
+  const seats = [0, 1, 2, 3].map((seat) => seatIdentityOf(plan, match, seat));
   if (
     summary.tick === 0 ||
-    !Number.isInteger(matchIndex) ||
-    summary.seed !== TRIAL_SEEDS[matchIndex] ||
-    !summary.players.every((player, seat) => consistentPlayer(summary, player, seat)) ||
+    !Number.isInteger(match.matchIndex) ||
+    summary.seed !== match.seed ||
+    seats.some((id) => id === undefined) ||
+    !summary.players.every((player, seat) =>
+      consistentPlayer(summary, player, seat, seats[seat]!),
+    ) ||
     !consistentRanks(summary)
   )
     return null;

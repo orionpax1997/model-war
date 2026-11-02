@@ -16,6 +16,13 @@ import {
   renderScoreSourceFeedback,
 } from "./observations.js";
 import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
+import { gridPlanFixture } from "./trial-plan.fixture.js";
+
+/** 网格计划的第一场：观测行里的种子/候选座位与终局四方身份都按它给期望。 */
+const plan = gridPlanFixture();
+const match = plan.matches[0]!;
+const summaryFixture = (seed: number = match.seed) =>
+  terminalSummaryFixture(seed, "timeout", match.seats);
 
 it("落在 archive/<slug>/ 下,与三件套目录、失败记录同一层(不在 <runId>/ 里)", () => {
   expect(observationsPathOf("/install", "alpha", "2026-01-01T00-00-00-000Z")).toBe(
@@ -49,8 +56,8 @@ const completeActionReading = () => ({
   actionFacts: {
     version: 1,
     scriptSha256: candidateHash,
-    seed: 101,
-    seat: 0,
+    seed: match.seed,
+    seat: match.candidateSeat,
     complete: true,
     observedTicks: 2,
     missingTicks: 0,
@@ -77,13 +84,13 @@ it("行动事实不能声称零个已观测执行tick却有已观测调用", () 
   reading.actionFacts.calls.harvest = 1;
   const path = join(actionScratch, "impossible-coverage.jsonl");
   writeFileSync(path, JSON.stringify(reading) + "\n");
-  expect(() => readTrialObservations(path, candidateHash)).toThrow("行动事实协议");
+  expect(() => readTrialObservations(path, candidateHash, plan)).toThrow("行动事实协议");
 });
 
 it.each<[string, Record<string, unknown>]>([
   ["其他候选hash", { scriptSha256: "b".repeat(64) }],
-  ["错误seed", { seed: 202 }],
-  ["错误座位", { seat: 1 }],
+  ["错误seed", { seed: match.seed + 1 }],
+  ["错误座位", { seat: (match.candidateSeat + 1) % 4 }],
   ["未知版本", { version: 2 }],
   ["额外诊断字段", { coordinates: [12, 34] }],
   ["负计数", { observedTicks: -1 }],
@@ -129,7 +136,7 @@ it.each<[string, Record<string, unknown>]>([
       actionFacts: { ...reading.actionFacts, ...overrides },
     }) + "\n",
   );
-  expect(() => readTrialObservations(path, candidateHash)).toThrow("行动事实协议");
+  expect(() => readTrialObservations(path, candidateHash, plan)).toThrow("行动事实协议");
 });
 
 it("不完整事实仍可读，但反馈不把未观测行动写成零或发送部分计数", () => {
@@ -139,9 +146,9 @@ it("不完整事实仍可读，但反馈不把未观测行动写成零或发送�
   reading.actionFacts.calls.harvest = 17;
   const path = join(actionScratch, "partial.jsonl");
   writeFileSync(path, JSON.stringify(reading) + "\n");
-  const readings = readTrialObservations(path, candidateHash);
+  const readings = readTrialObservations(path, candidateHash, plan);
   expect(readings).toHaveLength(1);
-  const feedback = renderScoreSourceFeedback(readings ?? []);
+  const feedback = renderScoreSourceFeedback(readings ?? [], plan);
   expect(feedback).toContain("行动事实不完整");
   expect(feedback).toContain("缺失 tick=1");
   expect(feedback).not.toContain("harvest：调用");
@@ -152,62 +159,64 @@ it("读取完整保留真实终局与行动身份，行动不完整不抹去已�
   const reading = completeActionReading();
   reading.actionFacts.complete = false;
   reading.actionFacts.missingTicks = 1;
-  const terminalSummary = terminalSummaryFixture();
+  const terminalSummary = summaryFixture();
   const path = join(actionScratch, "terminal-completed.jsonl");
   writeFileSync(path, JSON.stringify({ ...reading, terminalSummary }) + "\n");
-  const readings = readTrialObservations(path, candidateHash);
+  const readings = readTrialObservations(path, candidateHash, plan);
   expect(readings).toEqual([{ ...reading, terminalSummary }]);
-  const feedback = renderScoreSourceFeedback(readings ?? []);
+  const feedback = renderScoreSourceFeedback(readings ?? [], plan);
   expect(feedback).toContain("行动事实不完整");
-  expect(feedback).toContain("终局事实：seed=101，已执行 tick=1，结束原因=timeout");
+  expect(feedback).toContain(
+    `终局事实：seed=${String(match.seed)}，已执行 tick=1，结束原因=timeout`,
+  );
   expect(feedback.match(/领土分=6，名次=1，名次积分=1.5/g)).toHaveLength(4);
 });
 
 it.each<[string, unknown]>([
   ["null", null],
   ["部分摘要", { seed: 101 }],
-  ["与matchIndex/行动事实seed错配", terminalSummaryFixture(202)],
+  ["与计划给的seed错配", summaryFixture(match.seed + 1)],
   [
     "伪造计分",
     {
-      ...terminalSummaryFixture(),
+      ...summaryFixture(),
       players: [
-        { ...terminalSummaryFixture().players[0], territoryScore: 99 },
-        ...terminalSummaryFixture().players.slice(1),
+        { ...summaryFixture().players[0], territoryScore: 99 },
+        ...summaryFixture().players.slice(1),
       ],
     },
   ],
   [
     "伪造并列积分",
     {
-      ...terminalSummaryFixture(),
+      ...summaryFixture(),
       players: [
-        { ...terminalSummaryFixture().players[0], rankPoints: 3 },
-        ...terminalSummaryFixture().players.slice(1),
+        { ...summaryFixture().players[0], rankPoints: 3 },
+        ...summaryFixture().players.slice(1),
       ],
     },
   ],
-  ["上游原文", { ...terminalSummaryFixture(), providerRaw: "HOST_SECRET" }],
+  ["上游原文", { ...summaryFixture(), providerRaw: "HOST_SECRET" }],
   [
     "嵌套额外字段",
     {
-      ...terminalSummaryFixture(),
-      weights: { ...terminalSummaryFixture().weights, sourceText: "HOST_SECRET" },
+      ...summaryFixture(),
+      weights: { ...summaryFixture().weights, sourceText: "HOST_SECRET" },
     },
   ],
 ])("观测读取严格拒绝终局违约且不输出原文：%s", (_name, terminalSummary) => {
   const path = join(actionScratch, "terminal-invalid.jsonl");
   writeFileSync(path, JSON.stringify({ ...completeActionReading(), terminalSummary }) + "\n");
-  expect(() => readTrialObservations(path, candidateHash)).toThrow(/试跑观测协议/);
+  expect(() => readTrialObservations(path, candidateHash, plan)).toThrow(/试跑观测协议/);
   try {
-    readTrialObservations(path, candidateHash);
+    readTrialObservations(path, candidateHash, plan);
   } catch (error) {
     expect(String(error)).not.toContain("HOST_SECRET");
   }
 });
 
 it("反馈展示四方完整计分依据与真实淘汰残留，不推断策略或泄漏额外原文", () => {
-  const terminalSummary = terminalSummaryFixture();
+  const terminalSummary = summaryFixture();
   terminalSummary.tick = 10;
   Object.assign(terminalSummary.players[0], {
     alive: false,
@@ -225,9 +234,10 @@ it("反馈展示四方完整计分依据与真实淘汰残留，不推断策略�
     player.rank = 1;
     player.rankPoints = 2;
   }
-  const feedback = renderScoreSourceFeedback([
-    { matchIndex: 0, delivered: 0, captures: 0, noScoreSource: true, terminalSummary },
-  ]);
+  const feedback = renderScoreSourceFeedback(
+    [{ matchIndex: 0, delivered: 0, captures: 0, noScoreSource: true, terminalSummary }],
+    plan,
+  );
   expect(feedback).toContain("计分权重：基地=4，资源点=1，单位造价除数=6");
   expect(feedback).toContain(
     "单位造价：worker=4，melee=8，ranged=12，cavalry=16；名次积分表=3 / 2 / 1 / 0",
@@ -235,11 +245,7 @@ it("反馈展示四方完整计分依据与真实淘汰残留，不推断策略�
   expect(feedback).toContain(
     "座位=0，身份=candidate，控制基地=0，控制资源点=0，存活单位：worker=0，melee=0，ranged=0，cavalry=2；存活单位总造价=32，基地分=0，资源点分=0，单位分=5，领土分=5，名次=4，名次积分=0，存活=false，淘汰 tick=0",
   );
-  for (const [seat, player] of [
-    "cell-a-melee-pressure",
-    "cell-b-expansion-economy",
-    "cell-c-claim-no-harvest",
-  ].entries()) {
+  for (const [seat, player] of match.seats.slice(1).entries()) {
     expect(feedback).toContain(
       `座位=${seat + 1}，身份=${player}，控制基地=1，控制资源点=1，存活单位：worker=2，melee=0，ranged=0，cavalry=0；存活单位总造价=8，基地分=4，资源点分=1，单位分=1，领土分=6，名次=1，名次积分=2，存活=true，淘汰 tick=无`,
     );
@@ -251,11 +257,11 @@ it("旧观测终局缺失明确未知，反馈直接接收不可信摘要也不�
   const reading = { matchIndex: 0, delivered: 0, captures: 0, noScoreSource: true };
   const path = join(actionScratch, "terminal-legacy.jsonl");
   writeFileSync(path, JSON.stringify(reading) + "\n");
-  expect(readTrialObservations(path, candidateHash)).toEqual([reading]);
-  const invalid = terminalSummaryFixture();
+  expect(readTrialObservations(path, candidateHash, plan)).toEqual([reading]);
+  const invalid = summaryFixture();
   invalid.players[1].player = "HOST_SECRET";
   for (const value of [reading, { ...reading, terminalSummary: invalid }]) {
-    const feedback = renderScoreSourceFeedback([value]);
+    const feedback = renderScoreSourceFeedback([value], plan);
     expect(feedback).toContain("终局成绩未知");
     expect(feedback).not.toMatch(/领土分=|名次=|HOST_SECRET/);
   }

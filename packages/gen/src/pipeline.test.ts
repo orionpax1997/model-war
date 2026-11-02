@@ -30,8 +30,12 @@ import { fileURLToPath } from "node:url";
 import {
   RULESET_VERSION,
   SANDBOX_RUNTIME_HASH,
+  TRIAL_GRID_SUMMARY_SUFFIX,
+  type ActionErrorCounts,
   type ArchiveMeta,
   type TrialObservationLine,
+  type TrialPlan,
+  type TrialPlanMatch,
 } from "@model-war/schema";
 import { afterAll, expect, it, vi } from "vitest";
 
@@ -49,6 +53,7 @@ import { fail, replies, reply, stubClient, type StubCall, type StubClient } from
 import { TransportError } from "./transport-error.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
+import { gridPlanFixture } from "./trial-plan.fixture.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-gen-pipeline-`);
@@ -179,6 +184,9 @@ const requestWith = (
   createClient: () => stub,
   now: () => new Date("2026-01-01T00:00:00Z"),
   trial,
+  // 网格计划在这里是**纯数据夹具**：真子进程要读盘算摘要、还依赖本地冻结档案
+  // （`archive/` 不入库），由 `apps/cli` 的 `--plan` 用例与手工冒烟覆盖。
+  trialPlan: () => gridPlanFixture(),
 });
 
 it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退出码 0", async () => {
@@ -823,17 +831,65 @@ it("剥围栏接线:围栏包裹的合法脚本首轮直接冻结,落盘字节�
   expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(VALID_SCRIPT);
 });
 
-const terminalReadings = (delivered = 0, captures = 0): TrialObservationLine[] =>
-  [101, 202, 303].map((seed, matchIndex) => ({
-    matchIndex,
-    delivered,
-    captures,
-    noScoreSource: delivered === 0 && captures === 0,
-    terminalSummary: terminalSummaryFixture(seed),
-  }));
-
 const observationJsonl = (readings: readonly unknown[]): string =>
   readings.map((reading) => JSON.stringify(reading)).join("\n") + "\n";
+
+/** 试跑桩收到的入参（含本次生成共用的评测网格计划）。 */
+type TrialStubOptions = Parameters<NonNullable<GenerationRequest["trial"]>>[0];
+
+/**
+ * 桩要写的逐场读数：**每格一条**（场序、种子、候选座位与四方身份都来自计划）。
+ *
+ * 网格下观测行数 = 计划场数：桩如果只写三行，读入端会以「缺场」拒绝，所以这里按计划铺满。
+ */
+const gridReadings = (
+  plan: TrialPlan,
+  payload: (
+    match: TrialPlanMatch,
+    index: number,
+  ) => { readonly delivered?: number; readonly captures?: number } = () => ({}),
+): TrialObservationLine[] =>
+  plan.matches.map((match, index) => {
+    const { delivered = 0, captures = 0 } = payload(match, index);
+    return {
+      matchIndex: match.matchIndex,
+      delivered,
+      captures,
+      noScoreSource: delivered === 0 && captures === 0,
+      terminalSummary: terminalSummaryFixture(match.seed, "timeout", match.seats),
+    };
+  });
+
+/** 观测文件旁的网格汇总：执行器写的那一份形状（计划 + 候选摘要 + 逐场身份，不含分数）。 */
+const gridSummaryOf = (options: TrialStubOptions): unknown => {
+  const plan = options.plan;
+  if (plan === undefined) throw new Error("试跑桩需要计划才能写网格汇总");
+  return {
+    version: plan.version,
+    plan,
+    scriptSha256: sha256Hex(readFileSync(options.artifactPath)),
+    matches: plan.matches.map((match) => ({
+      matchIndex: match.matchIndex,
+      seed: match.seed,
+      candidateSeat: match.candidateSeat,
+      map: match.map,
+      mapSha256: match.mapSha256,
+    })),
+  };
+};
+
+/** 写观测 + 汇总（桩的常规出口：一次 invocation 的证据一次写完）。 */
+const writeGridEvidence = (
+  options: TrialStubOptions,
+  readings?: readonly TrialObservationLine[],
+): void => {
+  if (options.plan === undefined) throw new Error("试跑桩需要计划才能写网格证据");
+  writeFileSync(options.observationsPath, observationJsonl(readings ?? gridReadings(options.plan)));
+  writeFileSync(
+    `${options.observationsPath}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+    JSON.stringify(gridSummaryOf(options)),
+  );
+};
 
 it("所有有效候选固定两次事实回喂，编译修复不占优化轮，三候选可追溯", async () => {
   const root = mkRoot();
@@ -849,58 +905,59 @@ it("所有有效候选固定两次事实回喂，编译修复不占优化轮，�
   const candidateBytes: Buffer[] = [];
   const outcome = await generateOneModel(
     {
-      ...requestWith(root, stub, runId, ({ artifactPath, observationsPath }) => {
-        const bytes = readFileSync(artifactPath);
+      ...requestWith(root, stub, runId, (options) => {
+        const bytes = readFileSync(options.artifactPath);
         candidateBytes.push(bytes);
-        writeFileSync(
-          observationsPath,
-          observationJsonl(
-            [101, 202, 303].map((seed, matchIndex) => ({
-              matchIndex,
-              terminalSummary: terminalSummaryFixture(seed),
-              delivered: candidateBytes.length === 1 ? 0 : 7,
-              captures: candidateBytes.length === 1 ? 0 : 1,
-              noScoreSource: candidateBytes.length === 1,
-              actionFacts: {
-                version: 1,
-                scriptSha256: sha256Hex(bytes),
-                seed,
-                seat: 0,
-                complete: true,
-                observedTicks: 12,
-                missingTicks: 0,
-                calls: {
-                  move: 0,
-                  moveTo: 6,
-                  attack: 0,
-                  harvest: candidateBytes.length === 1 ? 2 : 8,
-                  transfer: 0,
-                  spawnUnit: 5,
-                },
-                errors: Object.fromEntries(
-                  ["move", "moveTo", "attack", "harvest", "transfer", "spawnUnit"].map((name) => [
-                    name,
-                    {
-                      ERR_NOT_OWNER: 0,
-                      ERR_INVALID_UNIT: 0,
-                      ERR_OUT_OF_RANGE: 0,
-                      ERR_NOT_ENOUGH_RESOURCES: name === "spawnUnit" ? 4 : 0,
-                      ERR_INVALID_TARGET: 0,
-                      ERR_INVALID_SITE: 0,
-                      ERR_BAD_ARGS: 0,
-                    },
-                  ]),
-                ),
-                effects: {
-                  movedSteps: 3,
-                  harvestedAmount: 2,
-                  deliveredAmount: 0,
-                  captureEvents: 0,
-                  productionOrdersStarted: 1,
-                },
+        if (options.plan === undefined) throw new Error("试跑桩需要计划");
+        // 每格一条：种子与候选座位都取自计划（网格里候选四个座位各坐一次）。
+        writeGridEvidence(
+          options,
+          gridReadings(options.plan, () => ({
+            delivered: candidateBytes.length === 1 ? 0 : 7,
+            captures: candidateBytes.length === 1 ? 0 : 1,
+          })).map((reading) => ({
+            ...reading,
+            actionFacts: {
+              version: 1,
+              scriptSha256: sha256Hex(bytes),
+              seed: reading.terminalSummary!.seed,
+              seat: reading.terminalSummary!.players.findIndex(
+                (player) => player.player === "candidate",
+              ) as 0 | 1 | 2 | 3,
+              complete: true,
+              observedTicks: 12,
+              missingTicks: 0,
+              calls: {
+                move: 0,
+                moveTo: 6,
+                attack: 0,
+                harvest: candidateBytes.length === 1 ? 2 : 8,
+                transfer: 0,
+                spawnUnit: 5,
               },
-            })),
-          ),
+              errors: Object.fromEntries(
+                ["move", "moveTo", "attack", "harvest", "transfer", "spawnUnit"].map((name) => [
+                  name,
+                  {
+                    ERR_NOT_OWNER: 0,
+                    ERR_INVALID_UNIT: 0,
+                    ERR_OUT_OF_RANGE: 0,
+                    ERR_NOT_ENOUGH_RESOURCES: name === "spawnUnit" ? 4 : 0,
+                    ERR_INVALID_TARGET: 0,
+                    ERR_INVALID_SITE: 0,
+                    ERR_BAD_ARGS: 0,
+                  },
+                ]),
+              ) as ActionErrorCounts,
+              effects: {
+                movedSteps: 3,
+                harvestedAmount: 2,
+                deliveredAmount: 0,
+                captureEvents: 0,
+                productionOrdersStarted: 1,
+              },
+            },
+          })),
         );
         return { passed: true, stdout: "" };
       }),
@@ -927,7 +984,10 @@ it("所有有效候选固定两次事实回喂，编译修复不占优化轮，�
     }
   }
   const feedback = callAt(stub, 1).messages[2]?.content ?? "";
-  expect(feedback).toContain("seed=101");
+  // 网格的 32 场逐场入反馈：种子来自计划（不是 101/202/303 三场）。
+  expect(feedback).toContain("试跑观测：本候选实际完成的 32 个对局。");
+  expect(feedback).toContain("seed=5000");
+  expect(feedback).toContain("seed=5031");
   expect(feedback).toContain("harvest：调用=2");
   expect(feedback).toContain("spawnUnit：调用=5");
   expect(feedback).toContain("ERR_NOT_ENOUGH_RESOURCES=4");
@@ -988,39 +1048,113 @@ it("所有有效候选固定两次事实回喂，编译修复不占优化轮，�
   }
 });
 
-it("初次候选缺少一场终局时停止，不请求第一次优化并保留本轮证据", async () => {
+it("初次候选少跑一场时停止，不请求第一次优化并保留本轮证据", async () => {
   const root = mkRoot();
   const runId = "terminal-initial-missing";
-  const observed = [101, 202].map((seed, matchIndex) => ({
-    matchIndex,
-    delivered: 0,
-    captures: 0,
-    noScoreSource: true,
-    terminalSummary: terminalSummaryFixture(seed),
-  }));
   const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  let written = "";
   await expect(
     generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(
-            observationsPath,
-            observed.map((row) => JSON.stringify(row)).join("\n") + "\n",
-          );
+        ...requestWith(root, stub, runId, (options) => {
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          // 计划里 32 格，桩只写前 31 格：缺的那一场必须被读入端拒绝（不补零、不缩分母）。
+          const readings = gridReadings(options.plan).slice(0, 31);
+          written = observationJsonl(readings);
+          writeGridEvidence(options, readings);
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
       },
       firstModelConfig(root),
     ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2）");
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要（计划 32 场，缺 matchIndex 31）/);
   expect(stub.calls).toHaveLength(1);
   expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
   expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
   expect(
     readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`), "utf8"),
-  ).toBe(observed.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  ).toBe(written);
 });
+
+it("三份候选都在整张网格上被评测：每个候选 32 行观测 + 一份网格汇总", async () => {
+  const root = mkRoot();
+  const runId = "grid-three-candidates";
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  const seen: { readonly rows: number; readonly planSha256: string }[] = [];
+  const outcome = await generateOneModel(
+    {
+      ...requestWith(root, stub, runId, (options) => {
+        if (options.plan === undefined) throw new Error("试跑桩需要计划");
+        writeGridEvidence(options);
+        seen.push({ rows: options.plan.matches.length, planSha256: options.plan.planSha256 });
+        return { passed: true, stdout: "" };
+      }),
+      scoreSourceFeedback: true,
+    },
+    firstModelConfig(root),
+  );
+  expect(outcome.kind).toBe("frozen");
+  // 三次有效候选各跑一次整张网格，且三次用的是**同一张**网格（计划摘要恒定）。
+  expect(seen).toHaveLength(3);
+  expect(seen.map((entry) => entry.rows)).toEqual([32, 32, 32]);
+  expect(new Set(seen.map((entry) => entry.planSha256)).size).toBe(1);
+  for (const round of [1, 2, 3]) {
+    const base = join(root, "archive", "alpha", `observed-${runId}-round-${round}.jsonl`);
+    expect(readFileSync(base, "utf8").trim().split("\n")).toHaveLength(32);
+    expect(existsSync(`${base}${TRIAL_GRID_SUMMARY_SUFFIX}`)).toBe(true);
+  }
+});
+
+it.each(["换种子", "换图"])(
+  "网格汇总与 expected plan 不同源（%s）即整批失败，不回喂也不冻结",
+  async (kind) => {
+    const root = mkRoot();
+    const runId = `grid-plan-mismatch-${kind}`;
+    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+    await expect(
+      generateOneModel(
+        {
+          ...requestWith(root, stub, runId, (options) => {
+            if (options.plan === undefined) throw new Error("试跑桩需要计划");
+            writeGridEvidence(options);
+            // 汇总里的计划被换掉：换一个种子 / 换一张图（正文与 planSha256 一起换，形状仍合法）。
+            const summary = gridSummaryOf(options) as {
+              plan: TrialPlan;
+              matches: readonly unknown[];
+            };
+            writeFileSync(
+              `${options.observationsPath}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+              JSON.stringify({
+                ...summary,
+                plan:
+                  kind === "换种子"
+                    ? {
+                        ...summary.plan,
+                        matches: summary.plan.matches.map((match, index) =>
+                          index === 0 ? { ...match, seed: 999 } : match,
+                        ),
+                      }
+                    : {
+                        ...summary.plan,
+                        maps: [
+                          { ...summary.plan.maps[0]!, name: "fortress-core" },
+                          summary.plan.maps[1]!,
+                        ],
+                      },
+              }),
+            );
+            return { passed: true, stdout: "" };
+          }),
+          scoreSourceFeedback: true,
+        },
+        firstModelConfig(root),
+      ),
+    ).rejects.toThrow(/expected plan 不同源/);
+    expect(stub.calls).toHaveLength(1);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  },
+);
 
 it("中间候选三行中缺终局摘要时停止，不请求第二次优化", async () => {
   const root = mkRoot();
@@ -1031,21 +1165,23 @@ it("中间候选三行中缺终局摘要时停止，不请求第二次优化", a
   await expect(
     generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        ...requestWith(root, stub, runId, (options) => {
           invocation += 1;
-          observedPaths.push(observationsPath);
-          const readings = terminalReadings();
-          if (invocation === 2) Reflect.deleteProperty(readings[1]!, "terminalSummary");
-          writeFileSync(observationsPath, observationJsonl(readings));
+          observedPaths.push(options.observationsPath);
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          const readings = gridReadings(options.plan);
+          // 第二次调用少一格终局：整张网格不完整即停止推进。
+          if (invocation === 2) Reflect.deleteProperty(readings[7]!, "terminalSummary");
+          writeGridEvidence(options, readings);
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
       },
       firstModelConfig(root),
     ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 1 未完成");
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要.*优化阶段 1 未完成/);
   expect(stub.calls).toHaveLength(2);
-  expect(callAt(stub, 1).messages[2]?.content).toContain("终局事实：seed=303");
+  expect(callAt(stub, 1).messages[2]?.content).toContain("终局事实：seed=5000");
   expect(observedPaths).toHaveLength(2);
   for (const path of observedPaths) {
     expect(existsSync(path)).toBe(true);
@@ -1064,11 +1200,12 @@ it("最终候选仅保存两场终局时拒绝冻结，不追加请求或执行�
   await expect(
     generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        ...requestWith(root, stub, runId, (options) => {
           invocation += 1;
-          const readings = terminalReadings();
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          const readings = gridReadings(options.plan);
           if (invocation === 3) readings.pop();
-          writeFileSync(observationsPath, observationJsonl(readings));
+          writeGridEvidence(options, readings);
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
@@ -1077,7 +1214,7 @@ it("最终候选仅保存两场终局时拒绝冻结，不追加请求或执行�
       },
       firstModelConfig(root),
     ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 2 未完成");
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要.*优化阶段 2 未完成/);
   expect(stub.calls).toHaveLength(3);
   expect(invocation).toBe(3);
   expect(selection).not.toHaveBeenCalled();
@@ -1086,7 +1223,7 @@ it("最终候选仅保存两场终局时拒绝冻结，不追加请求或执行�
   for (const round of [1, 2, 3]) {
     const path = join(root, "archive", "alpha", `observed-${runId}-round-${round}.jsonl`);
     expect(existsSync(`${path}.candidate.js`)).toBe(true);
-    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(round === 3 ? 2 : 3);
+    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(round === 3 ? 31 : 32);
   }
 });
 
@@ -1099,15 +1236,15 @@ it.each([undefined, "", " \n\n"])(
     await expect(
       generateOneModel(
         {
-          ...requestWith(root, stub, runId, ({ observationsPath }) => {
-            if (observed !== undefined) writeFileSync(observationsPath, observed);
+          ...requestWith(root, stub, runId, (options) => {
+            if (observed !== undefined) writeFileSync(options.observationsPath, observed);
             return { passed: true, stdout: "" };
           }),
           scoreSourceFeedback: true,
         },
         { ...firstModelConfig(root), protocolRounds: 1 },
       ),
-    ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2）");
+    ).rejects.toThrow(/缺少完整评测网格的有效终局摘要/);
     expect(stub.calls).toHaveLength(1);
     expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
     expect(
@@ -1133,9 +1270,12 @@ it.each([
     let trialCount = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        ...requestWith(root, stub, runId, (options) => {
           trialCount += 1;
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(1, 0)));
+          writeGridEvidence(
+            options,
+            gridReadings(options.plan!, () => ({ delivered: 1, captures: 0 })),
+          );
           return { passed: stage !== 2 || trialCount <= 2, stdout: "预算诊断\n" };
         }),
         scoreSourceFeedback: true,
@@ -1176,9 +1316,13 @@ it.each(["当前", "前阶段"])(
     await expect(
       generateOneModel(
         {
-          ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          ...requestWith(root, stub, runId, (options) => {
             invocation += 1;
-            writeFileSync(observationsPath, observationJsonl(terminalReadings(2, 0)));
+            const observationsPath = options.observationsPath;
+            writeGridEvidence(
+              options,
+              gridReadings(options.plan!, () => ({ delivered: 2, captures: 0 })),
+            );
             if (target === "当前" || invocation === 2) {
               const saved =
                 target === "当前"
@@ -1211,8 +1355,11 @@ it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或�
   try {
     const pending = generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(1, 0)));
+        ...requestWith(root, stub, runId, (options) => {
+          writeGridEvidence(
+            options,
+            gridReadings(options.plan!, () => ({ delivered: 1, captures: 0 })),
+          );
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
@@ -1243,36 +1390,39 @@ it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或�
   }
 });
 
-it.each(["候选JS", "观测JSONL"])("本轮%s已有证据时拒绝复用或覆盖，保留原证据", async (kind) => {
-  const root = mkRoot();
-  const runId = "feedback-evidence-collision";
-  const path = join(
-    root,
-    "archive",
-    "alpha",
-    `observed-${runId}-round-1.jsonl${kind === "候选JS" ? ".candidate.js" : ""}`,
-  );
-  mkdirSync(join(root, "archive", "alpha"), { recursive: true });
-  writeFileSync(path, "previous-evidence");
-  const stub = stubClient([reply(VALID_SCRIPT)]);
-  let trialInvoked = false;
-  await expect(
-    generateOneModel(
-      {
-        ...requestWith(root, stub, runId, () => {
-          trialInvoked = true;
-          return { passed: true, stdout: "" };
-        }),
-        scoreSourceFeedback: true,
-      },
-      { ...firstModelConfig(root), protocolRounds: 3 },
-    ),
-  ).rejects.toThrow();
-  expect(readFileSync(path, "utf8")).toBe("previous-evidence");
-  expect(trialInvoked).toBe(false);
-  expect(stub.calls).toHaveLength(1);
-  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
-});
+it.each(["候选JS", "观测JSONL", "网格汇总"])(
+  "本轮%s已有证据时拒绝复用或覆盖，保留原证据",
+  async (kind) => {
+    const root = mkRoot();
+    const runId = "feedback-evidence-collision";
+    const path = join(
+      root,
+      "archive",
+      "alpha",
+      `observed-${runId}-round-1.jsonl${kind === "候选JS" ? ".candidate.js" : kind === "网格汇总" ? TRIAL_GRID_SUMMARY_SUFFIX : ""}`,
+    );
+    mkdirSync(join(root, "archive", "alpha"), { recursive: true });
+    writeFileSync(path, "previous-evidence");
+    const stub = stubClient([reply(VALID_SCRIPT)]);
+    let trialInvoked = false;
+    await expect(
+      generateOneModel(
+        {
+          ...requestWith(root, stub, runId, () => {
+            trialInvoked = true;
+            return { passed: true, stdout: "" };
+          }),
+          scoreSourceFeedback: true,
+        },
+        { ...firstModelConfig(root), protocolRounds: 3 },
+      ),
+    ).rejects.toThrow();
+    expect(readFileSync(path, "utf8")).toBe("previous-evidence");
+    expect(trialInvoked).toBe(false);
+    expect(stub.calls).toHaveLength(1);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  },
+);
 
 it("试跑期间编译产物被更换时不能回喂错配事实或冻结", async () => {
   const root = mkRoot();
@@ -1309,15 +1459,15 @@ it("旧四栏观测在新优化流程失败安全，不回喂或冻结，原始�
   await expect(
     generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(observationsPath, observed);
+        ...requestWith(root, stub, runId, (options) => {
+          writeFileSync(options.observationsPath, observed);
           return { passed: true, stdout: "试跑通过" };
         }),
         scoreSourceFeedback: true,
       },
       firstModelConfig(root),
     ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 0 未完成");
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要.*优化阶段 0 未完成/);
   expect(stub.calls).toHaveLength(1);
   expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
   expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
@@ -1372,9 +1522,12 @@ it(
     let trialCount = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        ...requestWith(root, stub, runId, (options) => {
           trialCount += 1;
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(3, 0)));
+          writeGridEvidence(
+            options,
+            gridReadings(options.plan!, () => ({ delivered: 3, captures: 0 })),
+          );
           return { passed: trialCount !== 3, stdout: "预算诊断\n" };
         }),
         scoreSourceFeedback: true,
@@ -1416,9 +1569,9 @@ it("预算和编译修复不消费优化机会，三个全零有效候选后正�
   let trialInvocation = 0;
   const outcome = await generateOneModel(
     {
-      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      ...requestWith(root, stub, runId, (options) => {
         trialInvocation += 1;
-        writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        writeGridEvidence(options, gridReadings(options.plan!));
         return trialInvocation === 1
           ? { passed: false, stdout: budgetFeedback }
           : { passed: true, stdout: "" };
@@ -1446,9 +1599,9 @@ it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代�
   let invocation = 0;
   const outcome = await generateOneModel(
     {
-      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      ...requestWith(root, stub, runId, (options) => {
         invocation += 1;
-        writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        writeGridEvidence(options, gridReadings(options.plan!));
         return { passed: invocation === 1, stdout: invocation === 1 ? "" : feedback };
       }),
       scoreSourceFeedback: true,
@@ -1485,10 +1638,10 @@ it.each(["trial 抛错", "观测 JSON 损坏", "读盘失败"])(
     const runId = "feedback-infra";
     const stub = stubClient([reply(VALID_SCRIPT)]);
     const request = {
-      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      ...requestWith(root, stub, runId, (options) => {
         if (kind === "trial 抛错") throw new Error("试跑基础设施不可用");
-        if (kind === "观测 JSON 损坏") writeFileSync(observationsPath, "not-json\n");
-        else mkdirSync(observationsPath);
+        if (kind === "观测 JSON 损坏") writeFileSync(options.observationsPath, "not-json\n");
+        else mkdirSync(options.observationsPath);
         return { passed: true, stdout: "" };
       }),
       scoreSourceFeedback: true,
@@ -1506,9 +1659,9 @@ it("观测协议拒绝重复 matchIndex：抛出异常，不回喂、不冻结�
   const runId = "feedback-duplicate-index";
   const stub = stubClient([reply(VALID_SCRIPT)]);
   const request = {
-    ...requestWith(root, stub, runId, ({ observationsPath }) => {
+    ...requestWith(root, stub, runId, (options) => {
       writeFileSync(
-        observationsPath,
+        options.observationsPath,
         '{"matchIndex":0,"delivered":0,"captures":0,"noScoreSource":true}\n' +
           '{"matchIndex":0,"delivered":2,"captures":0,"noScoreSource":false}\n',
       );
@@ -1534,9 +1687,9 @@ it("观测协议拒绝额外键：抛出异常，不回喂、不冻结候选", a
   const runId = "feedback-extra-key";
   const stub = stubClient([reply(VALID_SCRIPT)]);
   const request = {
-    ...requestWith(root, stub, runId, ({ observationsPath }) => {
+    ...requestWith(root, stub, runId, (options) => {
       writeFileSync(
-        observationsPath,
+        options.observationsPath,
         '{"matchIndex":0,"delivered":2,"captures":0,"noScoreSource":false,"verdict":"passed"}\n',
       );
       return { passed: true, stdout: "" };
@@ -1561,14 +1714,16 @@ it("最终观测旁挂复制失败只警告，已通过候选仍返回 frozen �
   const runId = "feedback-copy-failure";
   const finalPath = join(root, "archive", "alpha", `observed-${runId}.jsonl`);
   mkdirSync(finalPath, { recursive: true });
-  const observed = observationJsonl(terminalReadings(2, 0));
   const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  let observed = "";
   const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   try {
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(observationsPath, observed);
+        ...requestWith(root, stub, runId, (options) => {
+          const readings = gridReadings(options.plan!, () => ({ delivered: 2, captures: 0 }));
+          observed = observationJsonl(readings);
+          writeGridEvidence(options, readings);
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
@@ -1606,8 +1761,8 @@ it("opt-in 存档拒绝撞名时不发布最终观测，既有最终候选旁证
         root,
         stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]),
         runId,
-        ({ observationsPath }) => {
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        (options) => {
+          writeGridEvidence(options, gridReadings(options.plan!));
           return { passed: true, stdout: "" };
         },
       ),
@@ -1857,8 +2012,8 @@ const selectionRoot = (): string => {
     symlinkSync(join(repoRoot, name), join(root, name), "dir");
   return root;
 };
-const selectionTrial: NonNullable<GenerationRequest["trial"]> = ({ observationsPath }) => {
-  writeFileSync(observationsPath, observationJsonl(terminalReadings()));
+const selectionTrial: NonNullable<GenerationRequest["trial"]> = (options) => {
+  writeGridEvidence(options);
   return { passed: true, stdout: "" };
 };
 
@@ -1875,20 +2030,25 @@ it.each([false, true])(
     let stage = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          const readings = [101, 202, 303].map((seed, matchIndex) => {
-            const terminalSummary = terminalSummaryFixture(seed);
+        ...requestWith(root, stub, runId, (options) => {
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          // 每阶段把「资源点」抬一格：两次回喂的文本因此可区分（同格变化是 05 的渲染，这里只看原料）。
+          const readings = gridReadings(options.plan).map((reading) => {
+            const terminalSummary = terminalSummaryFixture(
+              reading.terminalSummary!.seed,
+              "timeout",
+              reading.terminalSummary!.players.map(
+                (player) => player.player,
+              ) as unknown as readonly [string, string, string, string],
+            );
             for (const player of terminalSummary.players) {
               player.controlledResources += stage;
               player.score.resources += stage;
               player.territoryScore += stage;
             }
-            return { matchIndex, delivered: 0, captures: 0, noScoreSource: true, terminalSummary };
+            return { ...reading, terminalSummary };
           });
-          writeFileSync(
-            observationsPath,
-            readings.map((reading) => JSON.stringify(reading)).join("\n") + "\n",
-          );
+          writeGridEvidence(options, readings);
           stage += 1;
           return { passed: true, stdout: "" };
         }),
@@ -1917,23 +2077,23 @@ it.each([false, true])(
     const first = callAt(stub, 1).messages[2]?.content ?? "";
     const second = callAt(stub, 2).messages[4]?.content ?? "";
     for (const feedback of [first, second]) {
-      for (const seed of [101, 202, 303]) expect(feedback).toContain(`终局事实：seed=${seed}`);
-      expect(feedback.match(/结束原因=timeout/g)).toHaveLength(3);
-      for (const player of [
-        "candidate",
-        "cell-a-melee-pressure",
-        "cell-b-expansion-economy",
-        "cell-c-claim-no-harvest",
-      ])
-        expect(feedback.match(new RegExp(`身份=${player}，`, "g"))).toHaveLength(3);
+      // 网格：32 场逐场入反馈，种子与座位都由计划给（不是 101/202/303 × 0 号位）。
+      expect(feedback).toContain("试跑观测：本候选实际完成的 32 个对局。");
+      for (const seed of [5000, 5016, 5031]) expect(feedback).toContain(`终局事实：seed=${seed}`);
+      expect(feedback.match(/结束原因=timeout/g)).toHaveLength(32);
+      for (const player of ["top:alpha", "mid:beta", "last:gamma", "incumbent:delta"])
+        // 每份陪练在四种组合里各上场一次 × 8 格 = 24 行；候选自己的 32 行身份是 candidate。
+        expect(feedback.match(new RegExp(`身份=${player}，`, "g"))).toHaveLength(24);
+      expect(feedback.match(/身份=candidate，/g)).toHaveLength(32);
       expect(feedback).toContain("名次=1，名次积分=1.5");
       expect(feedback).not.toMatch(
         /请检查|建议|应该|坐标|987654|401|402|403|highest-average-points|candidatePoints/,
       );
     }
-    expect(first.match(/领土分=6，/g)).toHaveLength(12);
+    // 每阶段 32 场 × 四方 = 128 行领土分；阶段差只体现在资源点那一格上。
+    expect(first.match(/领土分=6，/g)).toHaveLength(128);
     expect(first).not.toContain("领土分=7，");
-    expect(second.match(/领土分=7，/g)).toHaveLength(12);
+    expect(second.match(/领土分=7，/g)).toHaveLength(128);
     expect(second).not.toContain("领土分=6，");
     expect(
       stub.calls
@@ -1951,7 +2111,9 @@ it.each([false, true])(
             terminalSummary: { seed: number; players: { territoryScore: number }[] };
           },
       );
-    expect(finalReadings.map((reading) => reading.terminalSummary.seed)).toEqual([101, 202, 303]);
+    expect(finalReadings.map((reading) => reading.terminalSummary.seed)).toEqual(
+      Array.from({ length: 32 }, (_, index) => 5000 + index),
+    );
     for (const reading of finalReadings)
       expect(reading.terminalSummary.players.map((player) => player.territoryScore)).toEqual([
         8, 8, 8, 8,
@@ -2149,6 +2311,7 @@ it("批次编排把选拔失败安全落盘，三个阶段与 TS 身份均保留
     configPath: "models.yaml",
     createClient: () => stub,
     trial: selectionTrial,
+    trialPlan: () => gridPlanFixture(),
     scoreSourceFeedback: true,
     selectBestCandidate: true,
     selection: () => {

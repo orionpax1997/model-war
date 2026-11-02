@@ -24,6 +24,8 @@
 
 export type SplitArgs = {
   readonly root: string | undefined;
+  /** `--model` 的值(模型 slug)。只由试跑入口读:在位陪练随模型而定。 */
+  readonly model: string | undefined;
   /** `--observations` 的值(观测文件落盘点)。只由试跑入口读;其余子命令摘到也不生效。 */
   readonly observationsPath: string | undefined;
   /** `--expected-plan` 的值(预期试跑计划文件)。只由试跑入口读;其余子命令摘到也不生效。 */
@@ -36,6 +38,7 @@ export type SplitArgs = {
 /** 带值的 flag 清单:登记一处,各子命令从这里认(本格之外的 argv 扫描一律不做)。 */
 const VALUED_FLAGS = {
   "--root": "root",
+  "--model": "model",
   "--observations": "observationsPath",
   "--expected-plan": "expectedPlanPath",
 } as const satisfies Record<string, keyof SplitArgs>;
@@ -75,6 +78,7 @@ export const splitArgs = (args: readonly string[]): SplitArgs => {
   }
   return {
     root: flags.get("root"),
+    model: flags.get("model"),
     observationsPath: flags.get("observationsPath"),
     expectedPlanPath: flags.get("expectedPlanPath"),
     planMode,

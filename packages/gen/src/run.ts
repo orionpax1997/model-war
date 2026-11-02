@@ -21,6 +21,7 @@ import { join, resolve } from "node:path";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs, type RuleDocs } from "./contract.js";
 import { writeFailureRecord } from "./failure.js";
+import type { TrialPlan } from "@model-war/schema";
 import type { SelectionProbe } from "./selection.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
@@ -47,9 +48,14 @@ export type GenerationRequest = {
   readonly selection?: SelectionProbe;
   /**
    * 冻结期试跑探针。缺席即走真子进程（`trial.ts`）；测试注入桩，保持单测毫秒级
-   * （真试跑跑三场完整对局，约十秒，只属于 e2e 与手工冒烟）。
+   * （真试跑跑整张 32 场网格，约一到两分钟，只属于 e2e 与手工冒烟）。
    */
   readonly trial?: TrialProbe;
+  /**
+   * 评测网格计划的搬运（`--plan` 那一次）。缺席即真子进程（`trial.ts` 的 `prepareTrialPlan`）；
+   * 测试注入桩，保持单测毫秒级且不依赖本地冻结档案（`archive/` 不入库）。
+   */
+  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
 };
 
 export type GenerationOptions = {
@@ -64,8 +70,13 @@ export type GenerationOptions = {
   readonly modelFilter?: string;
   /** 测试注入桩;缺省用真实 HTTP 客户端(`http/client.ts`,唯一允许联网的代码)。 */
   readonly createClient?: (config: ModelConfig) => ModelClient;
-  /** 测试注入桩;缺省跑真试跑子进程（三场完整对局，见 `trial.ts`）。 */
+  /** 测试注入桩;缺省跑真试跑子进程（整张 32 场网格，见 `trial.ts`）。 */
   readonly trial?: TrialProbe;
+  /**
+   * 评测网格计划的搬运（`--plan` 那一次）。缺席即真子进程（`trial.ts` 的 `prepareTrialPlan`）；
+   * 测试注入桩，保持单测毫秒级且不依赖本地冻结档案（`archive/` 不入库）。
+   */
+  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
 };
 
 const messageOf = (cause: unknown): string =>
@@ -138,6 +149,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
       : { selectBestCandidate: options.selectBestCandidate }),
     ...(options.selection === undefined ? {} : { selection: options.selection }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
+    ...(options.trialPlan === undefined ? {} : { trialPlan: options.trialPlan }),
     ...(options.scoreSourceFeedback === undefined
       ? {}
       : { scoreSourceFeedback: options.scoreSourceFeedback }),

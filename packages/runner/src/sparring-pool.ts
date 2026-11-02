@@ -46,6 +46,7 @@ import { join } from "node:path";
 import {
   TRIAL_SPARRING_LADDER,
   TRIAL_SPARRING_SUBSTITUTE,
+  TRIAL_SCRIPT_ID_SEPARATOR,
   TRIAL_SUBSTITUTE_SOURCE_SUFFIX,
   type TrialPlanScript,
   type TrialSparringIdentity,
@@ -67,7 +68,19 @@ const ROLE_LABELS: Record<TrialSparringLadderRole | "incumbent", string> = {
 };
 
 /** 计划里的来源指针写法：`archive:<slug>/<runId>`（代位时由调用处追加后缀）。 */
-export const sparringSourceOf = (id: string, runId: string): string => `archive:${id}/${runId}`;
+export const sparringSourceOf = (slug: string, runId: string): string => `archive:${slug}/${runId}`;
+
+/**
+ * 计划里的对手 id：**角色限定**的 `<role>:<slug>`。
+ *
+ * 候选模型自己可能就是榜首/中位/末位之一（给 `claude-opus-5-5` 生成时，在位脚本与榜首同 slug），
+ * 裸 slug 会让计划里两份脚本撞名。角色限定把「哪一份」与「谁」分开：同一 slug 允许按角色重复出现，
+ * 而 `role` 仍单列。座位表（`seats`）引用这个 id。
+ */
+export const sparringScriptIdOf = (
+  role: TrialSparringLadderRole | "incumbent",
+  slug: string,
+): string => `${role}${TRIAL_SCRIPT_ID_SEPARATOR}${slug}`;
 
 /** 盘上存档脚本的相对位置（相对安装根；拒绝理由里逐字引用这一串）。 */
 export const sparringScriptPathOf = (id: string, runId: string): string =>
@@ -140,36 +153,36 @@ const readScriptBytes = (path: string): ScriptRead => {
 /** 一份字节 → 装载结果（计划条目 + 源码）；摘要取自这同一份字节。 */
 const entryOf = (options: {
   readonly role: TrialSparringLadderRole | "incumbent";
-  readonly id: string;
+  readonly slug: string;
   readonly runId: string;
   readonly substitute: boolean;
   readonly bytes: Buffer;
 }): LoadedSparringScript => ({
   script: {
-    id: options.id,
+    id: sparringScriptIdOf(options.role, options.slug),
     role: options.role,
     source:
-      sparringSourceOf(options.id, options.runId) +
+      sparringSourceOf(options.slug, options.runId) +
       (options.substitute ? TRIAL_SUBSTITUTE_SOURCE_SUFFIX : ""),
     scriptSha256: sha256Hex(options.bytes),
   },
   code: options.bytes.toString("utf8"),
-  path: sparringScriptPathOf(options.id, options.runId),
+  path: sparringScriptPathOf(options.slug, options.runId),
 });
 
 /** 读一份钉死的存档脚本并比对摘要；不符即交回指名道姓的拒绝理由。 */
 const readPinnedScript = (options: {
   readonly root: string;
   readonly role: TrialSparringLadderRole | "incumbent";
-  readonly id: string;
+  readonly slug: string;
   readonly runId: string;
   readonly expectedSha256: string;
   readonly substitute: boolean;
 }):
   | { readonly ok: true; readonly script: LoadedSparringScript }
   | { readonly ok: false; readonly reason: string } => {
-  const path = sparringScriptPathOf(options.id, options.runId);
-  const where = `${ROLE_LABELS[options.role]}（${options.role}，${options.id}）`;
+  const path = sparringScriptPathOf(options.slug, options.runId);
+  const where = `${ROLE_LABELS[options.role]}（${options.role}，${options.slug}）`;
   const read = readScriptBytes(join(options.root, path));
   if (!read.ok) {
     return {
@@ -190,7 +203,7 @@ const readPinnedScript = (options: {
     ok: true,
     script: entryOf({
       role: options.role,
-      id: options.id,
+      slug: options.slug,
       runId: options.runId,
       substitute: options.substitute,
       bytes: read.bytes,
@@ -223,7 +236,7 @@ const resolveIncumbent = (options: {
       ok: true,
       script: entryOf({
         role: "incumbent",
-        id: options.model,
+        slug: options.model,
         runId,
         substitute: false,
         bytes: read.bytes,
@@ -235,7 +248,7 @@ const resolveIncumbent = (options: {
   const read = readPinnedScript({
     root: options.root,
     role: "incumbent",
-    id: substitute.id,
+    slug: substitute.id,
     runId: substitute.runId,
     expectedSha256: substitute.scriptSha256,
     substitute: true,
@@ -265,7 +278,7 @@ export const loadSparringPool = (options: LoadSparringPoolOptions): LoadSparring
     const read = readPinnedScript({
       root: options.root,
       role: identity.role,
-      id: identity.id,
+      slug: identity.id,
       runId: identity.runId,
       expectedSha256: identity.scriptSha256,
       substitute: false,

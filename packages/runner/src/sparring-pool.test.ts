@@ -78,11 +78,12 @@ it("成功装载：四份按 榜首→中位→末位→在位 交回，摘要�
     "last",
     "incumbent",
   ]);
+  // id 是**角色限定**的 `<role>:<slug>`：候选模型自己就是榜首/中位/末位之一时不撞名。
   expect(pool.scripts.map((entry) => entry.script.id)).toEqual([
-    "ladder-top",
-    "ladder-mid",
-    "ladder-last",
-    substitute.id,
+    "top:ladder-top",
+    "mid:ladder-mid",
+    "last:ladder-last",
+    `incumbent:${substitute.id}`,
   ]);
   expect(pool.scripts.map((entry) => entry.script.source)).toEqual([
     "archive:ladder-top/2026-10-01T00-00-00-001Z",
@@ -177,7 +178,7 @@ it("在位取该模型最近一次冻结存档：字典序最大的旁挂目录�
   if (!result.ok) return;
   const incumbent = result.pool.scripts[3]!.script;
   expect(incumbent.role).toBe("incumbent");
-  expect(incumbent.id).toBe(model);
+  expect(incumbent.id).toBe(`incumbent:${model}`);
   expect(incumbent.source).toBe(`archive:${model}/${latest}`);
   expect(incumbent.scriptSha256).toBe(latestSha);
   expect(result.pool.notes.join("\n")).toContain(latest);
@@ -199,7 +200,7 @@ it("该模型一份存档都没有：在位以代位档顶替并标注 #substitu
   if (!result.ok) return;
   const incumbent = result.pool.scripts[3]!;
   expect(incumbent.script).toEqual({
-    id: substitute.id,
+    id: `incumbent:${substitute.id}`,
     role: "incumbent",
     source: `archive:${substitute.id}/${substitute.runId}#substitute`,
     scriptSha256: substitute.scriptSha256,
@@ -221,7 +222,7 @@ it.skipIf(!realArchivePresent)(
     if (!result.ok) return;
     expect(result.pool.scripts.slice(0, 3).map((entry) => entry.script)).toEqual(
       TRIAL_SPARRING_LADDER.map((identity) => ({
-        id: identity.id,
+        id: `${identity.role}:${identity.id}`,
         role: identity.role,
         source: `archive:${identity.id}/${identity.runId}`,
         scriptSha256: identity.scriptSha256,
@@ -229,7 +230,7 @@ it.skipIf(!realArchivePresent)(
     );
     const incumbent = result.pool.scripts[3]!;
     const latest = latestArchiveRunId(repoRoot, "gpt-6.1-sol");
-    expect(incumbent.script.id).toBe("gpt-6.1-sol");
+    expect(incumbent.script.id).toBe("incumbent:gpt-6.1-sol");
     expect(incumbent.script.source).toBe(`archive:gpt-6.1-sol/${latest ?? ""}`);
     // 摘要 = 盘上字节的 sha256（复算认编译产物）。
     expect(incumbent.script.scriptSha256).toBe(

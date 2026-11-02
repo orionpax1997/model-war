@@ -103,8 +103,8 @@ export const renderTrialFeedback = (verdict: TrialVerdict, plan: TrialPlan): str
  *
  * 只观测的理由与口径见 `score-source.ts` 头注；升级为判定另票裁决。
  *
- * 留痕行数**可以少于场数**：首场触限后的早停会把后场整场省掉，于是那一局没有读数也没有留痕。
- * 早停是为了省 VM 时间而早有的，不动它——观测不影响结论，少几行读数不改变任何判定。
+ * 留痕行数通常等于场数：网格执行器不早停，触限之后的后场照样跑、照样有读数。
+ * 某一场作废且重跑仍作废时整轮 infra，这一轮不落盘（上一轮跑完的证据留在盘上）。
  */
 export const renderScoreSourceObservation = (
   matchIndex: number,

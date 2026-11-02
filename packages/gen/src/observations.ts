@@ -8,11 +8,11 @@ import {
   ACTION_API_NAMES,
   ACTION_ERROR_CODES,
   OBSERVATIONS_FILE_PREFIX,
-  TRIAL_CANDIDATE_SEAT,
   TRIAL_OBSERVATION_JSON_SCHEMA,
-  TRIAL_SEEDS,
   type TrialActionFacts,
   type TrialObservationLine,
+  type TrialPlan,
+  type TrialPlanMatch,
 } from "@model-war/schema";
 
 import { compileProtocolSchema } from "./protocol-schema.js";
@@ -36,16 +36,21 @@ export const observationsPathOf = (
     `${OBSERVATIONS_FILE_PREFIX}${runId}${round === undefined ? "" : `-round-${String(round)}`}.jsonl`,
   );
 
-/** 字段形状已由共享 JSON Schema 验证；这里只校验当前候选与跨字段关系。 */
+/**
+ * 字段形状已由共享 JSON Schema 验证；这里只校验当前候选与跨字段关系。
+ *
+ * 期望的种子与候选座位由**计划**给（`plan.matches[matchIndex]`），不由常量表给：网格里
+ * matchIndex ↔ 种子/座位是计划里的函数，不再是「下标即种子 / 候选恒 0 号位」。
+ */
 const validateActionIdentity = (
   facts: TrialActionFacts,
-  matchIndex: number,
+  match: TrialPlanMatch,
   scriptSha256: string,
 ): void => {
   if (
     facts.scriptSha256 !== scriptSha256 ||
-    facts.seed !== TRIAL_SEEDS[matchIndex] ||
-    facts.seat !== TRIAL_CANDIDATE_SEAT ||
+    facts.seed !== match.seed ||
+    facts.seat !== match.candidateSeat ||
     ACTION_API_NAMES.some((name) => {
       const totalErrors = ACTION_ERROR_CODES.reduce(
         (sum, code) => sum + facts.errors[name][code],
@@ -62,10 +67,23 @@ const validateActionIdentity = (
   }
 };
 
+/**
+ * 计划里的一场；`matchIndex` 不在计划里即协议违约（不许出现的场次）。
+ *
+ * 观测行不带地图（行形状与版本不变），地图身份由旁挂的 `.grid.json` 与计划对账。
+ * `where` 只进错误信息（文件名或「反馈渲染」），不影响判据。
+ */
+const matchOf = (plan: TrialPlan, matchIndex: number, where: string): TrialPlanMatch => {
+  const match = plan.matches.find((candidate) => candidate.matchIndex === matchIndex);
+  if (match === undefined) throw new Error(`试跑观测协议违约（计划里没有这一场）：${where}`);
+  return match;
+};
+
 /** 缺文件非致命；损坏、非法载荷、候选错配大声失败，不能变成策略反馈。 */
 export const readTrialObservations = (
   path: string,
   scriptSha256: string,
+  plan: TrialPlan,
 ): readonly TrialObservationLine[] | undefined => {
   let text: string;
   try {
@@ -86,10 +104,11 @@ export const readTrialObservations = (
       // 共享 Schema 校验后恢复类型；跨行与业务关系仍在这里检查。
       const reading = parsed as TrialObservationLine;
       const { matchIndex, delivered, captures, noScoreSource, actionFacts } = reading;
+      const match = matchOf(plan, matchIndex, path);
       const terminalSummary =
         reading.terminalSummary === undefined
           ? undefined
-          : parseTrialTerminalSummary(reading.terminalSummary, matchIndex);
+          : parseTrialTerminalSummary(reading.terminalSummary, plan, match);
       if (
         terminalSummary === null ||
         (terminalSummary !== undefined &&
@@ -108,7 +127,7 @@ export const readTrialObservations = (
         throw new Error(`试跑观测协议违约：${path}`);
       }
       matchIndexes.add(matchIndex);
-      if (actionFacts !== undefined) validateActionIdentity(actionFacts, matchIndex, scriptSha256);
+      if (actionFacts !== undefined) validateActionIdentity(actionFacts, match, scriptSha256);
       return {
         matchIndex,
         delivered,
@@ -138,8 +157,12 @@ const renderActions = (reading: TrialObservationLine): string => {
   );
 };
 
-const renderTerminal = (reading: TrialObservationLine): string => {
-  const summary = parseTrialTerminalSummary(reading.terminalSummary, reading.matchIndex);
+const renderTerminal = (reading: TrialObservationLine, plan: TrialPlan): string => {
+  const summary = parseTrialTerminalSummary(
+    reading.terminalSummary,
+    plan,
+    matchOf(plan, reading.matchIndex, "反馈渲染"),
+  );
   if (
     summary === null ||
     (reading.actionFacts !== undefined && summary.seed !== reading.actionFacts.seed)
@@ -159,12 +182,15 @@ const renderTerminal = (reading: TrialObservationLine): string => {
 };
 
 /** 只陈述本候选的白名单事实；不从读数推断原因或给策略建议。 */
-export const renderScoreSourceFeedback = (readings: readonly TrialObservationLine[]): string =>
+export const renderScoreSourceFeedback = (
+  readings: readonly TrialObservationLine[],
+  plan: TrialPlan,
+): string =>
   `试跑观测：本候选实际完成的 ${String(readings.length)} 个对局。\n` +
   readings
     .map(
       (reading) =>
-        `- 第 ${String(reading.matchIndex + 1)} 个对局：快照 delivered=${String(reading.delivered)}，captures=${String(reading.captures)}，noScoreSource=${String(reading.noScoreSource)}。\n${renderActions(reading)}\n${renderTerminal(reading)}`,
+        `- 第 ${String(reading.matchIndex + 1)} 个对局：快照 delivered=${String(reading.delivered)}，captures=${String(reading.captures)}，noScoreSource=${String(reading.noScoreSource)}。\n${renderActions(reading)}\n${renderTerminal(reading, plan)}`,
     )
     .join("\n") +
   "\n调用、即时错误返回与结算事实分别计量；undefined 返回不代表行动生效。movedSteps 是实际格移动次数，captureEvents 是占点事件次数，productionOrdersStarted 是开始订单数。快照读数不覆盖全部结算变化。终局 tick 是已执行 tick 数；淘汰 tick 为从零开始的编号。名次积分按并列占用名次区间均分；timeout 的第一名不代表胜利。这些观测不说明原因；依据既有契约返回完整脚本。";

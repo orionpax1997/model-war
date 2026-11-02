@@ -18,9 +18,15 @@
  *
  * ── 为什么现在就把形状定死 ──
  *
- * v1 只是**填得少**：3 场、单图、候选恒 0 号位、三份基准脚本。多座位多图多陪练（网格）
- * 只填内容，不再改这里的形状；`matchesPerCandidate` 与 `matches` 的长度随之变大，
- * `scripts` 从「三份基准」换成「四份陪练」，`version` 随之升号。
+ * v1 填得少（3 场、单图、候选恒 0 号位、三份基准脚本），v2 填满网格（32 场、两张图、
+ * 候选在四个座位各坐一次、四份存档陪练轮空一份）。两版**形状相同**：`version` 升号，
+ * `matchesPerCandidate` 与 `matches` 的长度随之变大，`scripts` 换成四份陪练、`maps` 变两张。
+ *
+ * ── 计划里的对手 id 是**角色限定**的 ──
+ *
+ * 候选模型自己可能就是榜首/中位/末位之一（给 `claude-opus-5-5` 生成时，在位脚本与榜首同 slug），
+ * 所以 id 不是裸 slug，而是 `<role>:<slug>`（`top:claude-opus-5-5` / `incumbent:claude-opus-5-5`）。
+ * `role` 仍单列；`seats` 引用角色限定 id。同一 slug 允许按角色重复出现。
  *
  * ── 版本怎么读 ──
  *
@@ -29,10 +35,10 @@
  * 「版本 1、无计划字段」，不迁移、不回填（见 runner 侧 `archiveTrialPlanOf`）。
  */
 
-/** 计划形状版本。v1 = 今天的三场单图试跑；网格化时升号，历史档按各自版本读。 */
-export const TRIAL_PLAN_VERSION = 1 as const;
+/** 计划形状版本。v1 = 三场单图试跑；v2 = 四陪练 × 四座位 × 两图的网格（32 场）。 */
+export const TRIAL_PLAN_VERSION = 2 as const;
 
-/** 陪练角色：v1 只有基准脚本（`benchmark`），网格起再加四份存档陪练。 */
+/** 陪练角色：`benchmark` 属 v1 的历史取值（三份基准脚本），网格只用后四种。 */
 export const TRIAL_SPARRING_ROLES = ["benchmark", "top", "mid", "last", "incumbent"] as const;
 export type TrialSparringRole = (typeof TRIAL_SPARRING_ROLES)[number];
 
@@ -41,7 +47,7 @@ export const TRIAL_CANDIDATE_ID = "candidate" as const;
 
 /** 计划里的一份对手（不含候选）。 */
 export type TrialPlanScript = {
-  /** v1：基准目录名；网格：陪练模型 slug。与 `role` 一起构成对手身份。 */
+  /** 角色限定的对手身份 `role:slug`（见文件头注）；`role` 仍单列。 */
   readonly id: string;
   readonly role: TrialSparringRole;
   /** 来源指针：`benchmark:<name>` / `archive:<slug>/<runId>`（网格起）。 */
@@ -60,7 +66,7 @@ export type TrialPlanSeat = 0 | 1 | 2 | 3;
 export type TrialPlanMatch = {
   /** 全局唯一且连续；观测行与结果都按它对齐。 */
   readonly matchIndex: number;
-  /** 轮空的是哪一份陪练；v1 恒 0（三份基准全上）。 */
+  /** 轮空的是哪一份陪练（0..3，对应 `scripts` 的下标）；v1 恒 0（三份基准全上）。 */
   readonly comboIndex: number;
   readonly seed: number;
   /** 每座位坐谁：脚本 id（候选固定叫 `candidate`）。 */
@@ -77,7 +83,7 @@ export type TrialPlan = {
   readonly ruleset: string;
   readonly rulesetSha256: string;
   readonly sandboxRuntimeHash: string;
-  /** 对手们（不含候选），顺序即 v1 的座位序。 */
+  /** 对手们（不含候选）；网格 v2 恒为四份陪练，顺序即角色序（榜首 → 中位 → 末位 → 在位）。 */
   readonly scripts: readonly TrialPlanScript[];
   readonly maps: readonly TrialPlanMap[];
   readonly matchesPerCandidate: number;
@@ -86,23 +92,20 @@ export type TrialPlan = {
 };
 
 /**
- * ── 以下为 v1 的构造默认值（历史三场试跑的形状） ──
+ * ── 历史（v1）取值：读旧观测与旧档时用，不参与 v2 网格的构造 ──
  *
- * 它们是**计划的默认内容**，不再是执行侧散落的常量：CLI 用它们造计划，执行器只读计划。
- * 网格化时这些取值会被计划的 v2 内容取代（种子改成每格一个固定值、地图变两张）。
+ * 网格（v2）的种子、地图、座位都由 `buildTrialPlan` 从事实派生（每格一个固定种子），
+ * 这三个常量仍被报告侧（读 v1 观测行）与选拔（单图）使用。
  */
 
-/** v1 固定种子：一场一个，三场对所有候选相同（可复现且公平）。 */
+/** v1 固定种子：一场一个，三场对所有候选相同（可复现且公平）。报告侧读旧行时用它。 */
 export const TRIAL_SEEDS = [101, 202, 303] as const;
 
 /** v1 候选固定座位。 */
 export const TRIAL_CANDIDATE_SEAT = 0 as const;
 
-/** v1 单图：赛季当前地图（三张地图同尺寸，"小"无差别）。 */
+/** v1 单图：赛季当前地图（选拔仍在用；三张地图同尺寸）。 */
 export const TRIAL_MAP_NAME = "corridor-split" as const;
-
-/** v1 场数：零容忍，K 场爆 1 次就打回。 */
-export const TRIAL_MATCHES_PER_CANDIDATE = TRIAL_SEEDS.length;
 
 /** v1 三份基准脚本的目录名；登记册真源在 `packages/tools/src/benchmarks/compile.ts`。 */
 export const TRIAL_BENCHMARK_IDS = [
@@ -111,7 +114,37 @@ export const TRIAL_BENCHMARK_IDS = [
   "cell-c-claim-no-harvest",
 ] as const;
 
-/** v1 四方身份：下标即座位（候选 0 号位 + 三个基准）。 */
+/**
+ * ── 评测网格（v2）的维度与固定取值 ──
+ *
+ * 网格 = 陪练组合 × 座位 × 地图，每个格子恰好一场；种子**不是维度**，每格一个固定值。
+ */
+
+/** 网格的两张地图（2026-11-02 拍定）：走廊窄口 + 开阔平原；`fortress-core` 暂不用。 */
+export const TRIAL_GRID_MAP_NAMES = ["corridor-split", "open-clash"] as const;
+
+/** 组合数 = 轮空一份陪练形成的四种组合（`C(4,3)`）。 */
+export const TRIAL_GRID_COMBO_COUNT = 4 as const;
+
+/** 座位数（四人对称）。 */
+export const TRIAL_GRID_SEAT_COUNT = 4 as const;
+
+/**
+ * 网格种子的起点：第 `matchIndex` 格的种子 = `TRIAL_GRID_SEED_BASE + matchIndex`。
+ *
+ * 避开 101/202/303（v1 试跑）与 401/402/403（选拔），以免新旧档在同一台机器上撞赛季隔离门。
+ * 种子与 `matchIndex` 一起进计划与 `planSha256`；执行器不得自己数第几场。
+ */
+export const TRIAL_GRID_SEED_BASE = 5000 as const;
+
+/** 网格场数：4 组合 × 4 座位 × 2 图 = 32。 */
+export const TRIAL_MATCHES_PER_CANDIDATE =
+  TRIAL_GRID_COMBO_COUNT * TRIAL_GRID_SEAT_COUNT * TRIAL_GRID_MAP_NAMES.length;
+
+/** 对手 id 的角色限定分隔符（`top:claude-opus-5-5`）；见文件头注。 */
+export const TRIAL_SCRIPT_ID_SEPARATOR = ":" as const;
+
+/** v1 四方身份：下标即座位（候选 0 号位 + 三个基准）。报告侧读旧观测时用它。 */
 export const TRIAL_PLAYER_IDS = [TRIAL_CANDIDATE_ID, ...TRIAL_BENCHMARK_IDS] as const;
 
 /**
@@ -142,7 +175,7 @@ export type TrialSparringLadderRole = Exclude<TrialSparringRole, "benchmark" | "
 /** 一份钉死的陪练身份：模型 slug + 冻结存档 + 期望内容摘要。 */
 export type TrialSparringIdentity = {
   readonly role: TrialSparringLadderRole;
-  /** 模型 slug，= `archive/` 下的一级目录名，也是计划里的对手 `id`。 */
+  /** 模型 slug，= `archive/` 下的一级目录名；计划里的对手 `id` 是它的角色限定写法。 */
   readonly id: string;
   /** 冻结存档的运行标识，= `archive/<id>/` 下的二级目录名。 */
   readonly runId: string;
@@ -186,3 +219,101 @@ export const TRIAL_SPARRING_ROLE_ORDER = ["top", "mid", "last", "incumbent"] as 
 
 /** 代位来源指针的后缀：`archive:<slug>/<runId>#substitute`（拼法在 runner 的 `sparring-pool.ts`）。 */
 export const TRIAL_SUBSTITUTE_SOURCE_SUFFIX = "#substitute" as const;
+
+/** sha256 摘要在计划与汇总里的统一形状。 */
+const SHA256_JSON_SCHEMA = { type: "string", pattern: "^[0-9a-f]{64}$" } as const;
+
+/** 座位号在 JSON 里的形状（四座恒满）。 */
+const SEAT_JSON_SCHEMA = { type: "integer", minimum: 0, maximum: 3 } as const;
+
+const PLAN_SCRIPT_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "role", "source", "scriptSha256"],
+  properties: {
+    id: { type: "string", minLength: 1 },
+    role: { enum: TRIAL_SPARRING_ROLES },
+    source: { type: "string", minLength: 1 },
+    scriptSha256: SHA256_JSON_SCHEMA,
+  },
+} as const;
+
+const PLAN_MAP_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "sha256"],
+  properties: {
+    name: { type: "string", minLength: 1 },
+    sha256: SHA256_JSON_SCHEMA,
+  },
+} as const;
+
+const PLAN_MATCH_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["matchIndex", "comboIndex", "seed", "seats", "candidateSeat", "map", "mapSha256"],
+  properties: {
+    matchIndex: { type: "integer", minimum: 0, maximum: TRIAL_MATCHES_PER_CANDIDATE - 1 },
+    comboIndex: { type: "integer", minimum: 0, maximum: TRIAL_GRID_COMBO_COUNT - 1 },
+    seed: { type: "integer", minimum: 0 },
+    seats: {
+      type: "array",
+      minItems: TRIAL_GRID_SEAT_COUNT,
+      maxItems: TRIAL_GRID_SEAT_COUNT,
+      items: { type: "string", minLength: 1 },
+    },
+    candidateSeat: SEAT_JSON_SCHEMA,
+    map: { type: "string", minLength: 1 },
+    mapSha256: SHA256_JSON_SCHEMA,
+  },
+} as const;
+
+/**
+ * 计划的**单份 JSON 形状**（TypeScript 是形状真源，此处手工对齐，ADR-0003）。
+ *
+ * 只管形状：座位/种子/地图/场序是否与事实自洽归 runner 的 `checkTrialPlan`（跨字段关系
+ * 不住在 JSON Schema 里，见 `archive-meta.ts` 头注）。
+ */
+export const TRIAL_PLAN_JSON_SCHEMA = {
+  $schema: "http://json-schema.org/draft-07/schema#",
+  title: "model-war 试跑计划",
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "version",
+    "ruleset",
+    "rulesetSha256",
+    "sandboxRuntimeHash",
+    "scripts",
+    "maps",
+    "matchesPerCandidate",
+    "matches",
+    "planSha256",
+  ],
+  properties: {
+    version: { const: TRIAL_PLAN_VERSION },
+    ruleset: { type: "string", minLength: 1 },
+    rulesetSha256: SHA256_JSON_SCHEMA,
+    sandboxRuntimeHash: SHA256_JSON_SCHEMA,
+    scripts: {
+      type: "array",
+      minItems: TRIAL_SPARRING_ROLE_ORDER.length,
+      maxItems: TRIAL_SPARRING_ROLE_ORDER.length,
+      items: PLAN_SCRIPT_JSON_SCHEMA,
+    },
+    maps: {
+      type: "array",
+      minItems: TRIAL_GRID_MAP_NAMES.length,
+      maxItems: TRIAL_GRID_MAP_NAMES.length,
+      items: PLAN_MAP_JSON_SCHEMA,
+    },
+    matchesPerCandidate: { const: TRIAL_MATCHES_PER_CANDIDATE },
+    matches: {
+      type: "array",
+      minItems: TRIAL_MATCHES_PER_CANDIDATE,
+      maxItems: TRIAL_MATCHES_PER_CANDIDATE,
+      items: PLAN_MATCH_JSON_SCHEMA,
+    },
+    planSha256: SHA256_JSON_SCHEMA,
+  },
+} as const;

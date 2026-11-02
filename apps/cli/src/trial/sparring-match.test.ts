@@ -1,5 +1,5 @@
 /**
- * 端到端：一份**冻结存档脚本**当对手，在真实引擎上跑通一场，产出观测行与完整终局事实。
+ * 端到端：四份**冻结存档脚本**当陪练，在真实引擎上跑通网格里的第一场，产出观测行与完整终局事实。
  *
  * ── 这一例要证明什么 ──
  *
@@ -115,14 +115,22 @@ it("候选 vs 存档脚本：真实引擎跑通一场，观测行与终局事实
     rulesetSha256: sha256(readFileSync(rulesetPath)),
     sandboxRuntimeHash: sha256(runtimeCode),
     scripts: sparringPoolScriptsOf(pool),
-    maps: [{ name: "corridor-split", sha256: mapSha256 }],
+    // 计划要求两张图（网格的两维之一）；这里只跑第一场，第二张图只进身份。
+    maps: [
+      { name: "corridor-split", sha256: mapSha256 },
+      {
+        name: "open-clash",
+        sha256: sha256(readFileSync(join(repoRoot, "maps", "open-clash.json"))),
+      },
+    ],
   });
   const match = plan.matches[0]!;
+  // 组合 0 轮空榜首那份：座位上是候选 + 中位 + 末位 + 在位（轮空谁由组合下标说）。
   expect(match.seats).toEqual([
     TRIAL_CANDIDATE_ID,
-    pool.scripts[0]!.script.id,
     pool.scripts[1]!.script.id,
     pool.scripts[2]!.script.id,
+    pool.scripts[3]!.script.id,
   ]);
 
   // ── 一场真对局：候选用仓库里另一份真基准脚本，三个对手是存档脚本 ──
@@ -184,9 +192,7 @@ it("候选 vs 存档脚本：真实引擎跑通一场，观测行与终局事实
   expect(terminal.players.map((player) => player.seat)).toEqual([0, 1, 2, 3]);
   expect(terminal.players.map((player) => player.player)).toEqual([
     "candidate",
-    pool.scripts[0]!.script.id,
-    pool.scripts[1]!.script.id,
-    pool.scripts[2]!.script.id,
+    ...match.seats.slice(1),
   ]);
   for (const player of terminal.players) {
     expect(Number.isInteger(player.territoryScore)).toBe(true);
@@ -210,7 +216,7 @@ it("候选 vs 存档脚本：真实引擎跑通一场，观测行与终局事实
       version: 1,
       scriptSha256: sha256(candidateCode),
       seed: match.seed,
-      seat: 0,
+      seat: match.candidateSeat,
       ...outcome.actionFacts,
     },
   };

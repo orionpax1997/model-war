@@ -1,10 +1,19 @@
 import { expect, it } from "vitest";
 import { parseTrialTerminalSummary } from "./terminal-summary.js";
+import { gridPlanFixture } from "./trial-plan.fixture.js";
 import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
 
+/** 网格计划的第一场：终局的种子与四方身份都由**计划**给，不再由常量表给。 */
+const plan = gridPlanFixture();
+const match = plan.matches[0]!;
+const summaryFixture = (
+  seed: number = match.seed,
+  reason?: Parameters<typeof terminalSummaryFixture>[1],
+) => terminalSummaryFixture(seed, reason, match.seats);
+
 it("公共读入接受01真实手算终态，并重建独立的白名单数据", () => {
-  const value = terminalSummaryFixture();
-  const parsed = parseTrialTerminalSummary(value, 0);
+  const value = summaryFixture();
+  const parsed = parseTrialTerminalSummary(value, plan, match);
   expect(parsed).toEqual(value);
   expect(parsed).not.toBe(value);
   expect(parsed?.players[0]).not.toBe(value.players[0]);
@@ -124,49 +133,50 @@ it.each<[string, (value: ReturnType<typeof terminalSummaryFixture>) => void]>([
     },
   ],
 ])("公共读入拒绝跨字段不一致：%s", (_name, corrupt) => {
-  const value = terminalSummaryFixture();
+  const value = summaryFixture();
   corrupt(value);
-  expect(parseTrialTerminalSummary(value, 0)).toBeNull();
+  expect(parseTrialTerminalSummary(value, plan, match)).toBeNull();
 });
 
-it("公共读入固定三seed、matchIndex整数与完整闭合schema，不容纳缺失或额外载荷", () => {
-  for (const [index, seed] of [101, 202, 303].entries()) {
-    expect(parseTrialTerminalSummary(terminalSummaryFixture(seed), index)).not.toBeNull();
-  }
-  for (const index of [-1, 0.5, 3, NaN])
-    expect(parseTrialTerminalSummary(terminalSummaryFixture(), index)).toBeNull();
+it("公共读入按计划给期望：换种子、换一场或额外载荷都拒", () => {
+  expect(parseTrialTerminalSummary(summaryFixture(), plan, match)).not.toBeNull();
+  // 种子是每场的参数（计划给），不是 101/202/303 的下标查表。
+  expect(parseTrialTerminalSummary(summaryFixture(match.seed + 1), plan, match)).toBeNull();
+  // 同一份终局不能挂到别的格子上：另一场的种子/座位不同。
+  expect(parseTrialTerminalSummary(summaryFixture(), plan, plan.matches[1]!)).toBeNull();
+  expect(parseTrialTerminalSummary(summaryFixture(), plan, plan.matches[3]!)).toBeNull();
   for (const value of [
     undefined,
     null,
     {},
-    { ...terminalSummaryFixture(), seed: 202 },
-    { ...terminalSummaryFixture(), providerRaw: "HOST_SECRET" },
+    { ...summaryFixture(), seed: 202 },
+    { ...summaryFixture(), providerRaw: "HOST_SECRET" },
     {
-      ...terminalSummaryFixture(),
-      weights: { ...terminalSummaryFixture().weights, extra: "HOST_SECRET" },
+      ...summaryFixture(),
+      weights: { ...summaryFixture().weights, extra: "HOST_SECRET" },
     },
     {
-      ...terminalSummaryFixture(),
-      unitCosts: { ...terminalSummaryFixture().unitCosts, extra: "HOST_SECRET" },
+      ...summaryFixture(),
+      unitCosts: { ...summaryFixture().unitCosts, extra: "HOST_SECRET" },
     },
-    { ...terminalSummaryFixture(), rankPoints: [3, 2, 1] },
-    { ...terminalSummaryFixture(), players: terminalSummaryFixture().players.slice(1) },
+    { ...summaryFixture(), rankPoints: [3, 2, 1] },
+    { ...summaryFixture(), players: summaryFixture().players.slice(1) },
   ])
-    expect(parseTrialTerminalSummary(value, 0)).toBeNull();
+    expect(parseTrialTerminalSummary(value, plan, match)).toBeNull();
 });
 
 it("拒绝四方仍存活、名次合法却伪称shortcut的终局", () => {
-  const s = terminalSummaryFixture(101, "shortcut");
+  const s = summaryFixture(match.seed, "shortcut");
   s.players[0].rankPoints = 3;
   for (const player of s.players.slice(1)) {
     player.rank = 2;
     player.rankPoints = 1;
   }
-  expect(parseTrialTerminalSummary(s, 0)).toBeNull();
+  expect(parseTrialTerminalSummary(s, plan, match)).toBeNull();
 });
 
 it.each([0, 1])("timeout不能有%s方存活，否则步5已提前结束", (aliveCount) => {
-  const s = terminalSummaryFixture();
+  const s = summaryFixture();
   for (const player of s.players) {
     const alive = player.seat < aliveCount;
     Object.assign(player, {
@@ -180,11 +190,11 @@ it.each([0, 1])("timeout不能有%s方存活，否则步5已提前结束", (aliv
       rankPoints: aliveCount === 1 ? (alive ? 3 : 1) : 1.5,
     });
   }
-  expect(parseTrialTerminalSummary(s, 0)).toBeNull();
+  expect(parseTrialTerminalSummary(s, plan, match)).toBeNull();
 });
 
 it("victory必须确实控制至少一个点位，不能由零控点残兵伪称全点位获胜", () => {
-  const s = terminalSummaryFixture(101, "victory");
+  const s = summaryFixture(match.seed, "victory");
   for (const player of s.players) {
     player.controlledBases = 0;
     player.controlledResources = 0;
@@ -194,13 +204,13 @@ it("victory必须确实控制至少一个点位，不能由零控点残兵伪称
     player.rank = player.seat === 0 ? 1 : 2;
     player.rankPoints = player.seat === 0 ? 3 : 1;
   }
-  expect(parseTrialTerminalSummary(s, 0)).toBeNull();
+  expect(parseTrialTerminalSummary(s, plan, match)).toBeNull();
 });
 
 it.each(["victory", "shortcut"] as const)(
   "%s胜者优先于更高残留单位分，非胜者无控点且并列占据2..4",
   (reason) => {
-    const s = terminalSummaryFixture(101, reason);
+    const s = summaryFixture(match.seed, reason);
     s.players[0].controlledResources = 0;
     s.players[0].score.resources = 0;
     s.players[0].territoryScore = 5;
@@ -219,12 +229,12 @@ it.each(["victory", "shortcut"] as const)(
         rankPoints: 1,
       });
     }
-    expect(parseTrialTerminalSummary(s, 0)).toEqual(s);
+    expect(parseTrialTerminalSummary(s, plan, match)).toEqual(s);
   },
 );
 
 it("timeout存活优先于淘汰残留单位分，并核对competition ranks [4,2,2,1]积分", () => {
-  const s = terminalSummaryFixture();
+  const s = summaryFixture();
   s.tick = 10;
   Object.assign(s.players[0], {
     alive: false,
@@ -249,13 +259,13 @@ it("timeout存活优先于淘汰残留单位分，并核对competition ranks [4,
       rankPoints: 1.5,
     });
   s.players[3].rankPoints = 3;
-  expect(parseTrialTerminalSummary(s, 0)).toEqual(s);
+  expect(parseTrialTerminalSummary(s, plan, match)).toEqual(s);
   s.players[0].rank = 2;
-  expect(parseTrialTerminalSummary(s, 0)).toBeNull();
+  expect(parseTrialTerminalSummary(s, plan, match)).toBeNull();
 });
 
 it("all-eliminated按淘汰时间降序而非残留分数排序，同tick并列", () => {
-  const s = terminalSummaryFixture(101, "all-eliminated");
+  const s = summaryFixture(match.seed, "all-eliminated");
   s.tick = 10;
   for (const p of s.players) {
     p.controlledBases = 0;
@@ -277,9 +287,9 @@ it("all-eliminated按淘汰时间降序而非残留分数排序，同tick并列"
   s.players[3].eliminatedAtTick = 9;
   s.players[3].rank = 1;
   s.players[3].rankPoints = 3;
-  expect(parseTrialTerminalSummary(s, 0)).toEqual(s);
+  expect(parseTrialTerminalSummary(s, plan, match)).toEqual(s);
   s.players[1].rank = 3;
-  expect(parseTrialTerminalSummary(s, 0)).toBeNull();
+  expect(parseTrialTerminalSummary(s, plan, match)).toBeNull();
 });
 
 it.each<[string, (value: ReturnType<typeof terminalSummaryFixture>) => void]>([
@@ -320,7 +330,7 @@ it.each<[string, (value: ReturnType<typeof terminalSummaryFixture>) => void]>([
     },
   ],
 ])("公共读入拒绝名次或原因不一致：%s", (_name, corrupt) => {
-  const s = terminalSummaryFixture();
+  const s = summaryFixture();
   corrupt(s);
-  expect(parseTrialTerminalSummary(s, 0)).toBeNull();
+  expect(parseTrialTerminalSummary(s, plan, match)).toBeNull();
 });

@@ -1,6 +1,6 @@
 /**
- * 子命令参数解析那一格（`--root` / `--observations` / `--expected-plan` 三个带值的 flag，
- * 与 `--plan` 这个不带值的开关）。
+ * 子命令参数解析那一格（`--root` / `--model` / `--observations` / `--expected-plan` 四个
+ * 带值的 flag，与 `--plan` 这个不带值的开关）。
  *
  * 断言对象只有**解析结果**：值被摘到哪、位置参数剩下什么。这格是纯函数，起 VM 起子进程
  * 都不合适，真实调用点（`match` / `verify` / 试跑入口）的行为由各自的 e2e 覆盖。
@@ -44,6 +44,19 @@ it("--observations：值被摘走，不混进位置参数", () => {
     planMode: false,
     positional: ["candidate.js"],
   });
+});
+
+it("--model：试跑入口的模型 slug，值被摘走，不混进位置参数", () => {
+  expect(splitArgs(["--plan", "--root", "/install", "--model", "gpt-6.1-sol"])).toEqual({
+    root: "/install",
+    model: "gpt-6.1-sol",
+    observationsPath: undefined,
+    expectedPlanPath: undefined,
+    planMode: true,
+    positional: [],
+  });
+  // 缺值同义于不给：下一条 flag 不会被吃成模型名。
+  expect(splitArgs(["--model", "--root", "/install"]).model).toBeUndefined();
 });
 
 it("两个 flag 都在时各归各家，互不串味", () => {

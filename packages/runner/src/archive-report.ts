@@ -28,6 +28,7 @@ import {
   type SelectionCandidateIdentity,
   FAILURE_RECORD_PREFIX,
   OBSERVATIONS_FILE_PREFIX,
+  TRIAL_CANDIDATE_SEAT,
   TRIAL_OBSERVATION_JSON_SCHEMA,
   TRIAL_SEEDS,
   type ArchiveOptimizationCandidate,
@@ -415,6 +416,9 @@ const observationsOf = (
         facts !== undefined &&
         (facts.complete !== (facts.missingTicks === 0) ||
           facts.seed !== TRIAL_SEEDS[matchIndex] ||
+          // 历史档（v1 观测）的候选恒坐 0 号位：观测行把座位放宽到 0..3 是给网格用的，
+          // 报告读的这批旧档仍按旧口径判归属。网格档的计划口径由报告 v2 那一票接。
+          facts.seat !== TRIAL_CANDIDATE_SEAT ||
           ACTION_API_NAMES.some(
             (name) =>
               (facts.observedTicks === 0 && facts.calls[name] > 0) ||
