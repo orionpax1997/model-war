@@ -10,9 +10,12 @@ import { expect, it } from "vitest";
 import {
   TRIAL_BENCHMARK_IDS,
   TRIAL_PLAN_VERSION,
+  TRIAL_SPARRING_LADDER,
   TRIAL_SPARRING_ROLES,
+  TRIAL_SPARRING_SUBSTITUTE,
   type JsonValue,
   type TrialPlan,
+  type TrialPlanScript,
 } from "@model-war/schema";
 
 import { hashOf } from "./canonical.js";
@@ -100,10 +103,9 @@ it("改任一事实字段 → planSha256 必变（含对手摘要、地图摘要
     { what: "rulesetSha256", input: { ...facts, rulesetSha256: "a".repeat(64) } },
     { what: "sandboxRuntimeHash", input: { ...facts, sandboxRuntimeHash: "b".repeat(64) } },
     { what: "scripts[1].id", input: { ...facts, scripts: scripts(1, { id: "another" }) } },
-    { what: "scripts[1].role", input: { ...facts, scripts: scripts(1, { role: "top" }) } },
     {
       what: "scripts[1].source",
-      input: { ...facts, scripts: scripts(1, { source: "archive:another/run" }) },
+      input: { ...facts, scripts: scripts(1, { source: "benchmark:another" }) },
     },
     {
       what: "scripts[1].scriptSha256",
@@ -124,7 +126,7 @@ it("改任一事实字段 → planSha256 必变（含对手摘要、地图摘要
     expect(digest, variant.what).not.toBe(plan.planSha256);
     digests.add(digest);
   }
-  // 九个字段各自落到不同的摘要，不是「一变全变、彼此不可分」。
+  // 八个字段各自落到不同的摘要，不是「一变全变、彼此不可分」。
   expect(digests.size).toBe(variants.length + 1);
 });
 
@@ -228,6 +230,118 @@ it("构造输入本身不合法：对手数、候选占位、重复 id、未知�
   expect(() => buildTrialPlan({ ...facts, rulesetSha256: "not-a-digest" })).toThrow(
     /rulesetSha256/,
   );
+});
+
+/** 四份陪练的事实（榜首/中位/末位 + 在位代位）：形状与 `loadSparringPool` 交回的一致。 */
+const sparringScripts: readonly TrialPlanScript[] = [
+  ...TRIAL_SPARRING_LADDER.map((identity) => ({
+    id: identity.id,
+    role: identity.role,
+    source: `archive:${identity.id}/${identity.runId}`,
+    scriptSha256: identity.scriptSha256,
+  })),
+  {
+    id: TRIAL_SPARRING_SUBSTITUTE.id,
+    role: "incumbent",
+    source: `archive:${TRIAL_SPARRING_SUBSTITUTE.id}/${TRIAL_SPARRING_SUBSTITUTE.runId}#substitute`,
+    scriptSha256: TRIAL_SPARRING_SUBSTITUTE.scriptSha256,
+  },
+];
+
+const sparringFacts: BuildTrialPlanInput = { ...facts, scripts: sparringScripts };
+
+it("四份陪练的计划：仍跑三场，座位只坐前三份；陪练身份（名字/摘要/来源）全进 planSha256", () => {
+  const sparringPlan = buildTrialPlan(sparringFacts);
+  expect(sparringPlan.version).toBe(TRIAL_PLAN_VERSION);
+  expect(sparringPlan.matchesPerCandidate).toBe(3);
+  expect(sparringPlan.matches.map((match) => match.seed)).toEqual([101, 202, 303]);
+  expect(sparringPlan.scripts.map((script) => script.role)).toEqual([
+    "top",
+    "mid",
+    "last",
+    "incumbent",
+  ]);
+  for (const match of sparringPlan.matches) {
+    expect(match.seats).toEqual([
+      "candidate",
+      sparringScripts[0]!.id,
+      sparringScripts[1]!.id,
+      sparringScripts[2]!.id,
+    ]);
+    expect(match.candidateSeat).toBe(0);
+  }
+  expect(() => checkTrialPlan(sparringPlan)).not.toThrow();
+
+  // 四份身份各自进摘要：换名字 / 换摘要 / 换来源（含代位标注）都换计划身份。
+  const patched = (index: number, patch: Partial<TrialPlanScript>): BuildTrialPlanInput => ({
+    ...sparringFacts,
+    scripts: sparringScripts.map((script, position) =>
+      position === index ? { ...script, ...patch } : script,
+    ),
+  });
+  const variants: readonly { readonly what: string; readonly input: BuildTrialPlanInput }[] = [
+    { what: "scripts[0].id", input: patched(0, { id: "another-model" }) },
+    { what: "scripts[1].scriptSha256", input: patched(1, { scriptSha256: "1".repeat(64) }) },
+    {
+      what: "scripts[2].source",
+      input: patched(2, { source: "archive:glm-5.3-flash/2026-10-14T00-00-00-000Z" }),
+    },
+    {
+      what: "scripts[3].source（去掉代位标注）",
+      input: patched(3, {
+        source: `archive:${TRIAL_SPARRING_SUBSTITUTE.id}/${TRIAL_SPARRING_SUBSTITUTE.runId}`,
+      }),
+    },
+  ];
+  const digests = new Set([sparringPlan.planSha256]);
+  for (const variant of variants) {
+    const digest = buildTrialPlan(variant.input).planSha256;
+    expect(digest, variant.what).not.toBe(sparringPlan.planSha256);
+    digests.add(digest);
+  }
+  expect(digests.size).toBe(variants.length + 1);
+  // 进了计划就能被指名：改一份摘要而不重算计划摘要，重建时指到那一份。
+  const tamperedSparring: TrialPlan = {
+    ...sparringPlan,
+    scripts: sparringPlan.scripts.map((script, index) =>
+      index === 1 ? { ...script, scriptSha256: "2".repeat(64) } : script,
+    ),
+  };
+  expect(() => checkTrialPlan(tamperedSparring)).toThrow(/planSha256/);
+  expect(
+    trialPlanMismatch(sparringPlan, buildTrialPlan(patched(1, { scriptSha256: "1".repeat(64) }))),
+  ).toMatch(/scripts\[1\]\.scriptSha256/);
+});
+
+it("对手清单只能是三份基准或四份陪练：半套、重复角色、角色与来源不配都指名拒绝", () => {
+  const bench = facts.scripts;
+  const [top, mid, last, incumbent] = sparringScripts as [
+    TrialPlanScript,
+    TrialPlanScript,
+    TrialPlanScript,
+    TrialPlanScript,
+  ];
+  expect(() => buildTrialPlan({ ...facts, scripts: [...bench, top] })).toThrow(
+    /四份陪练必须恰好是/,
+  );
+  expect(() =>
+    buildTrialPlan({ ...facts, scripts: [top, mid, last, { ...incumbent, role: "last" }] }),
+  ).toThrow(/四份陪练必须恰好是/);
+  expect(() => buildTrialPlan({ ...facts, scripts: [bench[0]!, bench[1]!, top] })).toThrow(
+    /三份对手必须都是基准脚本/,
+  );
+  expect(() =>
+    buildTrialPlan({
+      ...facts,
+      scripts: [bench[0]!, bench[1]!, { ...bench[2]!, source: "archive:a/b" }],
+    }),
+  ).toThrow(/scripts\[2\]\.source/);
+  expect(() =>
+    buildTrialPlan({
+      ...facts,
+      scripts: [top, mid, last, { ...incumbent, source: "benchmark:x" }],
+    }),
+  ).toThrow(/scripts\[3\]\.source/);
 });
 
 it("单场身份：同计划同候选脚本同场次相同；换一场或换候选脚本即变", () => {

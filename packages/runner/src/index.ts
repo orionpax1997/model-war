@@ -30,3 +30,6 @@ export * from "./archive-optimization.js";
 // `canonical.ts` 是 `planSha256` 的序列化真源，与选拔计划共用。
 export * from "./canonical.js";
 export * from "./trial-plan.js";
+
+// 陪练池：四份钉死的身份 → 盘上真实字节 + 现算的内容摘要（读盘，但不起 VM）。
+export * from "./sparring-pool.js";

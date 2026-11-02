@@ -113,3 +113,76 @@ export const TRIAL_BENCHMARK_IDS = [
 
 /** v1 四方身份：下标即座位（候选 0 号位 + 三个基准）。 */
 export const TRIAL_PLAYER_IDS = [TRIAL_CANDIDATE_ID, ...TRIAL_BENCHMARK_IDS] as const;
+
+/**
+ * ── 陪练池：四份**钉死**的身份（2026-11-02 拍定，不随榜单滚动重算） ──
+ *
+ * 名次来源：`runs/2026-11-02T04-53-46-815Z`（规则 v2、season-s2、840 局）。
+ *
+ * | 席位 | 模型 | 名次 / 赛季总分 |
+ * |---|---|---|
+ * | 榜首 `top` | claude-opus-5-5 | #1 / 915 |
+ * | 中位 `mid` | minimax-m3.1-flash | #6（10 席的中位）/ 456 |
+ * | 末位 `last` | glm-5.3-flash | #10 / 169.5 |
+ * | 在位代位 `incumbent` | muse-spark-1.3-contributor | #9 / 212.5（首次生成无存档时顶替） |
+ *
+ * 在位脚本（`incumbent`）**不在这张表里**：它是「正在被优化的那个模型自己最近一次冻结存档」，
+ * 名字随模型而定，由 `@model-war/runner` 的 `loadSparringPool` 读盘解析；该模型一份存档都没有时
+ * 用下面的代位档，并在来源指针上标 `#substitute`。
+ *
+ * 身份是**数据**，不是「按赛季名次自动挑」：榜单滚动不改这里。要换池子就改这份表并重算摘要——
+ * 计划摘要覆盖 `scriptSha256`，所以换一份脚本必然换计划身份（见 `packages/runner/src/trial-plan.ts`）。
+ * `scriptSha256` 是 `script.js` **字节**的 sha256（复算认编译产物，与存档 meta 的 `scriptSha256`
+ * 同一口径），由装载方现算并与这里比对，不符即拒绝。
+ */
+
+/** 榜单侧的三份钉死身份（在位那份不在此列，见上面 `TRIAL_SPARRING_LADDER` 的头注）。 */
+export type TrialSparringLadderRole = Exclude<TrialSparringRole, "benchmark" | "incumbent">;
+
+/** 一份钉死的陪练身份：模型 slug + 冻结存档 + 期望内容摘要。 */
+export type TrialSparringIdentity = {
+  readonly role: TrialSparringLadderRole;
+  /** 模型 slug，= `archive/` 下的一级目录名，也是计划里的对手 `id`。 */
+  readonly id: string;
+  /** 冻结存档的运行标识，= `archive/<id>/` 下的二级目录名。 */
+  readonly runId: string;
+  readonly scriptSha256: string;
+};
+
+/** 代位档身份：没有 `role`，用它时角色仍是在位（来源带 `#substitute`）。 */
+export type TrialSparringSubstituteIdentity = Omit<TrialSparringIdentity, "role">;
+
+/** 榜首 / 中位 / 末位三份钉死的身份（顺序即计划里 `scripts` 的前三位）。 */
+export const TRIAL_SPARRING_LADDER = [
+  {
+    role: "top",
+    id: "claude-opus-5-5",
+    runId: "2026-10-16T08-40-12-578Z",
+    scriptSha256: "899b957f894bf706c710e90fa84bfeaafccbdd82c3c3f75f8c296ad84deface7",
+  },
+  {
+    role: "mid",
+    id: "minimax-m3.1-flash",
+    runId: "2026-10-13T13-48-45-729Z",
+    scriptSha256: "c80854d390033017e0cb7ae6200726fdcb3caa7e5b7111b73830a2df53e907a7",
+  },
+  {
+    role: "last",
+    id: "glm-5.3-flash",
+    runId: "2026-10-13T22-30-50-602Z",
+    scriptSha256: "8dab28493d18f6d2fa4c14a65a9bfcdacbc267455a53741d3567bbc9c9e37e63",
+  },
+] as const satisfies readonly TrialSparringIdentity[];
+
+/** 在位代位档：模型首次生成、尚无任何冻结存档时顶替在位脚本的那一份。 */
+export const TRIAL_SPARRING_SUBSTITUTE = {
+  id: "muse-spark-1.3-contributor",
+  runId: "2026-10-13T12-34-16-218Z",
+  scriptSha256: "9558cb9aa659eccc37838fce8078bfdbde1a12465b5bc1ad16b1a8eca3f0a1c1",
+} as const satisfies TrialSparringSubstituteIdentity;
+
+/** 计划里四份陪练的顺序：榜首 → 中位 → 末位 → 在位（座位轮转按整组轮转，顺序即身份序）。 */
+export const TRIAL_SPARRING_ROLE_ORDER = ["top", "mid", "last", "incumbent"] as const;
+
+/** 代位来源指针的后缀：`archive:<slug>/<runId>#substitute`（拼法在 runner 的 `sparring-pool.ts`）。 */
+export const TRIAL_SUBSTITUTE_SOURCE_SUFFIX = "#substitute" as const;

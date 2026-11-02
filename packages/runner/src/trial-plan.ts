@@ -26,10 +26,12 @@
  */
 
 import {
+  TRIAL_BENCHMARK_IDS,
   TRIAL_CANDIDATE_ID,
   TRIAL_MATCHES_PER_CANDIDATE,
   TRIAL_PLAN_VERSION,
   TRIAL_SEEDS,
+  TRIAL_SPARRING_ROLE_ORDER,
   TRIAL_SPARRING_ROLES,
   type JsonValue,
   type TrialPlan,
@@ -49,6 +51,19 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const isSha256 = (value: unknown): value is string =>
   typeof value === "string" && SHA256.test(value);
 
+/** 计划的两种**对手清单**形态：三份基准（v1 默认）或四份陪练（存档池）。 */
+const BENCHMARK_SCRIPT_COUNT = TRIAL_BENCHMARK_IDS.length;
+const SPARRING_SCRIPT_COUNT = TRIAL_SPARRING_ROLE_ORDER.length;
+
+/** 角色与来源指针的对应关系（来源是角色的派生事实，不是自由文本）。 */
+const SOURCE_PREFIX_BY_ROLE = {
+  benchmark: "benchmark:",
+  top: "archive:",
+  mid: "archive:",
+  last: "archive:",
+  incumbent: "archive:",
+} as const satisfies Record<(typeof TRIAL_SPARRING_ROLES)[number], string>;
+
 const fail: (path: string, reason: string) => never = (path, reason) => {
   throw new Error(`试跑计划不合法：${path} ${reason}`);
 };
@@ -60,8 +75,14 @@ const checkFacts = (input: BuildTrialPlanInput): void => {
   if (!isSha256(input.rulesetSha256)) fail("rulesetSha256", "必须是 sha256 摘要");
   if (!isSha256(input.sandboxRuntimeHash)) fail("sandboxRuntimeHash", "必须是 sha256 摘要");
 
-  if (input.scripts.length !== TRIAL_SEEDS.length)
-    fail("scripts", `必须是 ${String(TRIAL_SEEDS.length)} 份对手`);
+  if (
+    input.scripts.length !== BENCHMARK_SCRIPT_COUNT &&
+    input.scripts.length !== SPARRING_SCRIPT_COUNT
+  )
+    fail(
+      "scripts",
+      `必须是 ${String(BENCHMARK_SCRIPT_COUNT)} 份基准或 ${String(SPARRING_SCRIPT_COUNT)} 份陪练`,
+    );
   input.scripts.forEach((script, index) => {
     const path = `scripts[${String(index)}]`;
     if (typeof script.id !== "string" || script.id.length === 0) fail(`${path}.id`, "必须非空");
@@ -71,10 +92,24 @@ const checkFacts = (input: BuildTrialPlanInput): void => {
       fail(`${path}.role`, `必须是 ${TRIAL_SPARRING_ROLES.join(" / ")} 之一`);
     if (typeof script.source !== "string" || script.source.length === 0)
       fail(`${path}.source`, "必须非空");
+    // 来源指针是角色的派生事实：基准只能来自 `benchmark:`，陪练只能来自 `archive:`。
+    const prefix = SOURCE_PREFIX_BY_ROLE[script.role];
+    if (!script.source.startsWith(prefix))
+      fail(`${path}.source`, `角色 ${script.role} 的来源必须以 ${prefix} 开头`);
     if (!isSha256(script.scriptSha256)) fail(`${path}.scriptSha256`, "必须是 sha256 摘要");
   });
   const ids = input.scripts.map((script) => script.id);
   if (new Set(ids).size !== ids.length) fail("scripts", "id 必须互异");
+  // 对手清单只有两种合法形态：三份基准，或四份陪练各一份。半套（如三份里混一份 top）不是计划。
+  const roles = new Set(input.scripts.map((script) => script.role));
+  if (input.scripts.length === BENCHMARK_SCRIPT_COUNT) {
+    if (roles.size !== 1 || !roles.has("benchmark"))
+      fail("scripts", `三份对手必须都是基准脚本（role benchmark）`);
+  } else {
+    const missing = TRIAL_SPARRING_ROLE_ORDER.filter((role) => !roles.has(role));
+    if (missing.length > 0 || roles.size !== SPARRING_SCRIPT_COUNT)
+      fail("scripts", `四份陪练必须恰好是 ${TRIAL_SPARRING_ROLE_ORDER.join(" / ")} 各一份`);
+  }
 
   if (input.maps.length !== 1) fail("maps", "v1 只有一张地图");
   const map = input.maps[0]!;
@@ -83,7 +118,12 @@ const checkFacts = (input: BuildTrialPlanInput): void => {
 };
 
 /**
- * 由事实造计划：v1 = 单图、三场、候选 0 号位、每场一个固定种子，座位 = 候选 + 三份基准。
+ * 由事实造计划：单图、三场、候选 0 号位、每场一个固定种子，座位 = 候选 + 对手清单的前三份。
+ *
+ * 对手清单有两种合法形态（见 `checkFacts`）：三份基准（v1 默认），或四份陪练
+ * （榜首/中位/末位/在位）。四份时**仍跑三场**，座位只坐前三份（榜首/中位/末位）：
+ * 在位那份先进身份（`scripts` 与摘要）不进座位——“轮空哪一份、每场坐哪”的网格轮转
+ * 是网格票的事，本函数只把对手清单变成可重建的计划身份。
  *
  * 场次在这里**派生**，不接受调用方传入（见文件头注「为什么场次是派生的」）。
  */
