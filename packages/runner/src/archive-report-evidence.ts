@@ -4,8 +4,6 @@ import {
   ACTION_EFFECT_NAMES,
   ACTION_ERROR_CODES,
   USAGE_ENUM_FIELDS,
-  TRIAL_PLAYER_IDS,
-  TRIAL_SEEDS,
   TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA,
   type TrialActionFacts,
   type TrialObservationLine,
@@ -202,10 +200,23 @@ const terminalSummarySchema = z.fromJSONSchema(
   JSON.parse(JSON.stringify(TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA)) as z.core.JSONSchema.JSONSchema,
 );
 
+/**
+ * 一场观测的**期待身份**：种子、候选座位与四个座位的选手 id。
+ *
+ * v1 历史档由旧表（三场单图、候选恒 0 号位、三份基准）给；v2 网格档逐场由计划给——
+ * 所以报告不再硬编码「候选恒坐 0 号位」，也不用同一个种子表去卡两版档。
+ */
+export type ObservationMatch = {
+  readonly seed: number;
+  readonly candidateSeat: number;
+  readonly seats: readonly [string, string, string, string];
+};
+
 const consistentPlayer = (
   summary: TrialTerminalSummary,
   player: TrialTerminalPlayer,
   seat: number,
+  expectedPlayer: string,
 ): boolean => {
   const costTerms = [
     player.survivingUnits.worker * summary.unitCosts.worker,
@@ -220,7 +231,7 @@ const consistentPlayer = (
   const territory = bases + resources + units;
   return (
     player.seat === seat &&
-    player.player === TRIAL_PLAYER_IDS[seat] &&
+    player.player === expectedPlayer &&
     [...costTerms, cost, bases, resources, units, territory].every(Number.isSafeInteger) &&
     player.survivingUnitCost === cost &&
     player.score.bases === bases &&
@@ -308,16 +319,18 @@ const playerOf = (value: TrialTerminalPlayer): TrialTerminalPlayer => ({
 /** 优化试跑终局的公共读入边界；非法数据返回 null，缺失不能补成零分。 */
 export const parseTerminalSummary = (
   value: unknown,
-  matchIndex: number,
+  expected: ObservationMatch,
 ): TrialTerminalSummary | null => {
   if (!terminalSummarySchema.safeParse(value).success) return null;
   // 仅在共享 JSON Schema 验证后恢复数据合同；公共出口始终显式逐字段重建。
   const summary = value as TrialTerminalSummary;
   if (
     summary.tick === 0 ||
-    !Number.isInteger(matchIndex) ||
-    summary.seed !== TRIAL_SEEDS[matchIndex] ||
-    !summary.players.every((player, seat) => consistentPlayer(summary, player, seat)) ||
+    !Number.isInteger(expected.seed) ||
+    summary.seed !== expected.seed ||
+    !summary.players.every((player, seat) =>
+      consistentPlayer(summary, player, seat, expected.seats[seat] ?? ""),
+    ) ||
     !consistentRanks(summary)
   )
     return null;
@@ -354,9 +367,10 @@ export type ReportObservationInput = Omit<TrialObservationLine, "terminalSummary
 /** 形状和行动归属验证后投影；终局使用报告独立的纯数据边界，不透传原观测对象。 */
 export const observationEvidenceOf = (
   value: ReportObservationInput,
+  expected: ObservationMatch,
 ): TrialObservationLine | null => {
   const summary = Object.hasOwn(value, "terminalSummary")
-    ? parseTerminalSummary(value.terminalSummary, value.matchIndex)
+    ? parseTerminalSummary(value.terminalSummary, expected)
     : undefined;
   if (summary === null) return null;
   const facts = value.actionFacts;

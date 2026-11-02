@@ -143,6 +143,13 @@ it.each([
       return { ...value, optimization: { ...value.optimization, trialSeeds: [101, 202, 303] } };
     },
   ],
+  [
+    "缺陪练身份",
+    () => {
+      const value = gridMetaOf() as { optimization: Record<string, unknown> };
+      return { ...value, optimization: { ...value.optimization, sparring: undefined } };
+    },
+  ],
 ])("v2 档形状缺项即被拒（%s）", (_label, build) => {
   expect(() => optimizationMetaOf(build())).toThrow(/优化存档元数据形状不合法/);
 });
