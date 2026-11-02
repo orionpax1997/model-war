@@ -190,6 +190,12 @@ it(
       })),
     );
 
+    // 分数由 runner 的同一套算术填（本文件不重算）：分母恒等于计划声明的场数。
+    expect(summary.score.countedMatches).toBe(plan.matchesPerCandidate);
+    expect(summary.score.totalPoints).toBeGreaterThanOrEqual(0);
+    expect(summary.score.totalPoints).toBeLessThanOrEqual(3 * plan.matchesPerCandidate);
+    expect(summary.score.averagePoints).toBe(summary.score.totalPoints / plan.matchesPerCandidate);
+
     // 落盘：观测一行一场、汇总就在观测文件旁边，读回来与写出去逐字一致。
     const observationsPath = join(scratch, "reduced", "observed-r1.jsonl");
     mkdirSync(join(scratch, "reduced"), { recursive: true });

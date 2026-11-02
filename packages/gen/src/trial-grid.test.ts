@@ -25,11 +25,12 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const plan = gridPlanFixture();
 const scriptSha256 = "a".repeat(64);
 
-/** 执行器会写出来的那一份汇总（计划的投影；分数不在这里）。 */
+/** 执行器会写出来的那一份汇总（计划的投影 + 网格分数）。 */
 const summaryOf = (overrides: Partial<TrialGridSummary> = {}): TrialGridSummary => ({
   version: 2,
   plan,
   scriptSha256,
+  score: { totalPoints: 48, averagePoints: 1.5, countedMatches: 32 },
   matches: plan.matches.map((match) => ({
     matchIndex: match.matchIndex,
     seed: match.seed,
@@ -133,8 +134,28 @@ it("缺文件、坏 JSON、缺字段、额外字段都拒（缺失不当成零�
   const { matches, ...withoutMatches } = summaryOf();
   void matches;
   expect(() => read(written(withoutMatches))).toThrow(/形状不合法/);
-  expect(() => read(written({ ...summaryOf(), score: { totalPoints: 0 } }))).toThrow(/形状不合法/);
+  expect(() => read(written({ ...summaryOf(), extra: true }))).toThrow(/形状不合法/);
   expect(() =>
     read(written({ ...summaryOf(), matches: summaryOf().matches.slice(0, 31) })),
   ).toThrow(/形状不合法/);
+});
+
+it("分数形状即契约：缺分数、分母不是计划场数、均分越界都拒", () => {
+  const { score, ...withoutScore } = summaryOf();
+  void score;
+  // 缺 `score` = 「没算过」：不得当成零分读进来（分数只有一种定义，不能靠缺失补）。
+  expect(() => read(written(withoutScore))).toThrow(/形状不合法/);
+  // 分母必须等于计划声明的场数：缩小分母的汇总在这里就写不出来。
+  expect(() => read(written({ ...summaryOf(), score: { ...score, countedMatches: 31 } }))).toThrow(
+    /形状不合法/,
+  );
+  expect(() => read(written({ ...summaryOf(), score: { ...score, averagePoints: 3.5 } }))).toThrow(
+    /形状不合法/,
+  );
+  expect(() => read(written({ ...summaryOf(), score: { ...score, totalPoints: 97 } }))).toThrow(
+    /形状不合法/,
+  );
+  expect(() => read(written({ ...summaryOf(), score: { ...score, totalPoints: -1 } }))).toThrow(
+    /形状不合法/,
+  );
 });

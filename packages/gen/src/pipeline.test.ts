@@ -860,7 +860,11 @@ const gridReadings = (
     };
   });
 
-/** 观测文件旁的网格汇总：执行器写的那一份形状（计划 + 候选摘要 + 逐场身份，不含分数）。 */
+/**
+ * 观测文件旁的网格汇总：执行器写的那一份形状（计划 + 候选摘要 + 网格分数 + 逐场身份）。
+ *
+ * 分数只填形状合法的值：生成侧不重算分数（那是 runner 与选拔的事），这里只验证它能被读进去。
+ */
 const gridSummaryOf = (options: TrialStubOptions): unknown => {
   const plan = options.plan;
   if (plan === undefined) throw new Error("试跑桩需要计划才能写网格汇总");
@@ -868,6 +872,11 @@ const gridSummaryOf = (options: TrialStubOptions): unknown => {
     version: plan.version,
     plan,
     scriptSha256: sha256Hex(readFileSync(options.artifactPath)),
+    score: {
+      totalPoints: 48,
+      averagePoints: 1.5,
+      countedMatches: plan.matchesPerCandidate,
+    },
     matches: plan.matches.map((match) => ({
       matchIndex: match.matchIndex,
       seed: match.seed,

@@ -62,6 +62,7 @@ import {
 
 import { canonicalJson, hashOf } from "./canonical.js";
 import { rotateSeats } from "./enumerate.js";
+import { scoreTrialGrid, type TrialGridReading } from "./trial-score.js";
 
 /** 构造计划所需的事实；座位 / 种子 / 场序由它们派生（见文件头注）。 */
 export type BuildTrialPlanInput = Pick<
@@ -248,14 +249,15 @@ export const checkTrialPlan = (plan: TrialPlan): void => {
 /**
  * 一张跑完的网格 → 汇总（观测文件旁的 `.grid.json`）。
  *
- * `readings` 只用来回答「这 32 个格子是不是都跑过了」：少一场、多一场、重复一场都直接拒绝，
- * **不缩分母、不补零**。汇总本身是计划的投影（`matches` 逐场抄场序、种子、候选座位、地图与
- * 地图摘要），所以它不能与计划分家；分数不在这里（另一票的口径）。
+ * `readings` 回答两件事：「这 32 个格子是不是都跑过了」（少一场、多一场、重复一场都直接拒绝，
+ * **不缩分母、不补零**）与「候选得多少分」（交给 `trial-score.ts`，算术只有那一处真源）。
+ * 汇总的 `matches` 是计划的投影（逐场抄场序、种子、候选座位、地图与地图摘要），所以它不能与
+ * 计划分家。
  */
 export const buildTrialGridSummary = (options: {
   readonly plan: TrialPlan;
   readonly scriptSha256: string;
-  readonly readings: readonly { readonly matchIndex: number }[];
+  readonly readings: readonly TrialGridReading[];
 }): TrialGridSummary => {
   const { plan, scriptSha256, readings } = options;
   if (!isSha256(scriptSha256)) fail("scriptSha256", "必须是 sha256 摘要");
@@ -273,6 +275,9 @@ export const buildTrialGridSummary = (options: {
     version: TRIAL_GRID_SUMMARY_VERSION,
     plan,
     scriptSha256,
+    // 分数紧跟在完整性判据之后算：到这里计划里每一场都有自己的读数了，
+    // 但「读数属于这一格吗」与「哪一场没有终局」仍由计分再判一次（缺场不缩分母）。
+    score: scoreTrialGrid(plan, readings),
     matches: plan.matches.map((match) => ({
       matchIndex: match.matchIndex,
       seed: match.seed,

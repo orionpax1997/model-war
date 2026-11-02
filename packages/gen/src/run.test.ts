@@ -215,6 +215,14 @@ it("runGeneration 显式选项贯通：两次事实优化后第三个有效候�
           plan,
           // 汇总说的是这份候选脚本（执行器认编译产物字节）。
           scriptSha256: sha256(readFileSync(artifactPath)),
+          // 桩写的终局是四方并列 rank 1（`terminalSummaryFixture` 的 timeout 口径）：
+          // 每场各得 (3+2+1+0)/4 = 1.5 名次积分 → 32 场共 48 分，均分仍是 1.5。
+          // 分母恒等于计划声明的场数，不因零交付而缩小（生成侧只验形状，不重算分数）。
+          score: {
+            totalPoints: 48,
+            averagePoints: 1.5,
+            countedMatches: plan.matchesPerCandidate,
+          },
           matches: plan.matches.map((match) => ({
             matchIndex: match.matchIndex,
             seed: match.seed,

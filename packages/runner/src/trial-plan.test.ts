@@ -21,6 +21,7 @@ import {
 } from "@model-war/schema";
 
 import { hashOf } from "./canonical.js";
+import { gridReadingsFixture } from "./trial-grid.fixture.js";
 import {
   archiveTrialPlanOf,
   buildTrialGridSummary,
@@ -337,7 +338,8 @@ it("构造输入本身不合法：陪练数、候选占位、重复 id、未知�
 });
 
 it("汇总 = 计划的投影：32 场齐才写，缺一场/多一场/重复一场即拒", () => {
-  const readings = plan.matches.map((match) => ({ matchIndex: match.matchIndex }));
+  // 每场都有终局事实（候选全胜）：汇总现在还要落分数，缺终局就没法算。
+  const readings = gridReadingsFixture(plan);
   const summary = buildTrialGridSummary({
     plan,
     scriptSha256: "a".repeat(64),
@@ -355,6 +357,12 @@ it("汇总 = 计划的投影：32 场齐才写，缺一场/多一场/重复一�
       mapSha256: match.mapSha256,
     })),
   );
+  // 候选每场都是第一名 → 32 × 3 = 96，分母恒等于计划声明的场数。
+  expect(summary.score).toEqual({
+    totalPoints: 96,
+    averagePoints: 3,
+    countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
+  });
   expect(() =>
     buildTrialGridSummary({ plan, scriptSha256: "a".repeat(64), readings: readings.slice(1) }),
   ).toThrow(/缺少计划里的第 0 场/);
@@ -362,7 +370,7 @@ it("汇总 = 计划的投影：32 场齐才写，缺一场/多一场/重复一�
     buildTrialGridSummary({
       plan,
       scriptSha256: "a".repeat(64),
-      readings: [...readings, { matchIndex: 32 }],
+      readings: [...readings, { matchIndex: TRIAL_MATCHES_PER_CANDIDATE }],
     }),
   ).toThrow(/多出计划之外的第 32 场/);
   expect(() =>

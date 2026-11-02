@@ -611,7 +611,8 @@ export const generateOneModel = async (
             );
           }
           // 旁挂的网格汇总必须与本次 expected plan 逐字相同：换图/换座位/换种子/换陪练即整批失败。
-          // 分数不在这里读（另一票的口径）；这一票只对身份与计划。
+          // 汇总里的 `score` 只过形状（分母恒等于计划声明的场数）：生成侧不重算分数，
+          // 复算与逐位比对落在选拔，落档落在存档。
           readTrialGridSummary({
             path: gridSummaryPathOf(result.observationsPath),
             expectedPlan: trialPlan,

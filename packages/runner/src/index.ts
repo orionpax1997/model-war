@@ -31,5 +31,9 @@ export * from "./archive-optimization.js";
 export * from "./canonical.js";
 export * from "./trial-plan.js";
 
+// 网格计分：一张跑满的网格 → 候选唯一的分数（平均名次积分，分母恒等于计划场数）。
+// 算术只有 `ranker.ts` 一处真源，本格只做「场次齐不齐」与「读数属不属于这一格」的把关。
+export * from "./trial-score.js";
+
 // 陪练池：四份钉死的身份 → 盘上真实字节 + 现算的内容摘要（读盘，但不起 VM）。
 export * from "./sparring-pool.js";

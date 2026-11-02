@@ -19,6 +19,7 @@ import {
   TRIAL_SPARRING_ROLE_ORDER,
   TRIAL_SPARRING_ROLES,
   type TrialGridMatch,
+  type TrialGridScore,
   type TrialGridSummary,
   type TrialPlan,
   type TrialPlanMatch,
@@ -48,6 +49,12 @@ export type SummaryMatchKeysMatchType = Assert<
   Equals<
     keyof TrialGridMatch,
     keyof typeof TRIAL_GRID_SUMMARY_JSON_SCHEMA.properties.matches.items.properties
+  >
+>;
+export type SummaryScoreKeysMatchType = Assert<
+  Equals<
+    keyof TrialGridScore,
+    keyof typeof TRIAL_GRID_SUMMARY_JSON_SCHEMA.properties.score.properties
   >
 >;
 
@@ -93,7 +100,7 @@ it("计划的嵌套形状同样闭合：脚本、地图、场次都不接受额�
   expect(items.scripts.items.properties.role).toEqual({ enum: TRIAL_SPARRING_ROLES });
 });
 
-it("网格汇总的形状：版本与计划同步、计划内联、逐场身份闭合且不含分数", () => {
+it("网格汇总的形状：版本与计划同步、计划内联、逐场身份闭合、分数分母恒等于场数", () => {
   expect(TRIAL_GRID_SUMMARY_VERSION).toBe(TRIAL_PLAN_VERSION);
   expect(TRIAL_GRID_SUMMARY_JSON_SCHEMA.required).toEqual(
     Object.keys(TRIAL_GRID_SUMMARY_JSON_SCHEMA.properties),
@@ -104,8 +111,13 @@ it("网格汇总的形状：版本与计划同步、计划内联、逐场身份�
   });
   // 计划原样内联：它的形状就是计划那一份（不另立一份会漂移的拷贝）。
   expect(TRIAL_GRID_SUMMARY_JSON_SCHEMA.properties.plan).toBe(TRIAL_PLAN_JSON_SCHEMA);
-  // 这一版不放分数：多一个 `score` 就会被 `additionalProperties: false` 拒。
-  expect(Object.keys(TRIAL_GRID_SUMMARY_JSON_SCHEMA.properties)).not.toContain("score");
+  // 分数：总分上界 = 场数 × 每场最高 3 分，均分上界仍是 3，分母恒等于场数。
+  const score = TRIAL_GRID_SUMMARY_JSON_SCHEMA.properties.score;
+  expect(score.additionalProperties).toBe(false);
+  expect(score.required).toEqual(Object.keys(score.properties));
+  expect(score.properties.totalPoints).toMatchObject({ maximum: 96 });
+  expect(score.properties.averagePoints).toMatchObject({ minimum: 0, maximum: 3 });
+  expect(score.properties.countedMatches).toEqual({ const: TRIAL_MATCHES_PER_CANDIDATE });
   expect(TRIAL_GRID_SUMMARY_JSON_SCHEMA.properties.matches).toMatchObject({
     minItems: TRIAL_MATCHES_PER_CANDIDATE,
     maxItems: TRIAL_MATCHES_PER_CANDIDATE,
