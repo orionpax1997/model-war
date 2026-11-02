@@ -40,3 +40,6 @@ stryker.log
 # 对局运行产物:体量随 tick 数线性增长,保留在本地。
 runs/**
 !runs/.gitkeep
+
+# 任务过程产物（spec / ticket），实现后随目录清理
+.scratch/

@@ -14,7 +14,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
-import { RULESET_VERSION, type Ruleset, type TrialObservationLine } from "@model-war/schema";
+import {
+  RULESET_VERSION,
+  TRIAL_BENCHMARK_IDS,
+  type JsonValue,
+  type Ruleset,
+  type TrialObservationLine,
+  type TrialPlan,
+} from "@model-war/schema";
+import { hashOf } from "@model-war/runner";
 import { validateTrialObservation } from "../validator.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -36,26 +44,22 @@ const install = (script: string, rules: Partial<Ruleset> = {}) => {
   const candidate = join(root, "candidate.js");
   const observations = join(root, "observations.jsonl");
   writeFileSync(candidate, script);
-  const run = (path = observations, nodeArgs: readonly string[] = []) =>
+  const invoke = (args: readonly string[], nodeArgs: readonly string[] = []) =>
     spawnSync(
       process.execPath,
-      [
-        ...nodeArgs,
-        join(repoRoot, "apps/cli/dist/trial/run-trial-script.js"),
-        candidate,
-        "--root",
-        root,
-        "--observations",
-        path,
-      ],
+      [...nodeArgs, join(repoRoot, "apps/cli/dist/trial/run-trial-script.js"), ...args],
       { encoding: "utf8", timeout: 30_000 },
     );
+  const run = (path = observations, nodeArgs: readonly string[] = []) =>
+    invoke([candidate, "--root", root, "--observations", path], nodeArgs);
+  /** `--plan`：只造计划并打印（不读候选、不跑对局）。 */
+  const plan = (nodeArgs: readonly string[] = []) => invoke(["--plan", "--root", root], nodeArgs);
   const rows = () =>
     readFileSync(observations, "utf8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as TrialObservationLine);
-  return { root, candidate, observations, run, rows };
+  return { root, candidate, observations, run, plan, invoke, rows };
 };
 
 it("真实候选 JS 在试跑入口绑定 hash/seed/seat，每场独立写入原 JSONL", { timeout: 30_000 }, () => {
@@ -303,4 +307,167 @@ it("宿主执行异常保持 infra，不发布未知终局也不覆盖旧完整 
   const fresh = join(fixture.root, "host-failure-unknown.jsonl");
   expect(fixture.run(fresh, ["--import", brokenWasm]).status).toBe(2);
   expect(existsSync(fresh)).toBe(false);
+});
+
+it(
+  "--plan 打印计划：单图三场、种子与摘要取自盘上字节，摘要可由正文复算，两次逐字相同",
+  { timeout: 30_000 },
+  () => {
+    const fixture = install("function loop() {}\n");
+    const first = fixture.plan();
+    expect(first.error).toBeUndefined();
+    expect(first.status, first.stderr).toBe(0);
+    const plan = JSON.parse(first.stdout) as TrialPlan;
+    expect(plan.version).toBe(1);
+    expect(plan.matchesPerCandidate).toBe(3);
+    expect(plan.matches.map((match) => match.seed)).toEqual([101, 202, 303]);
+    expect(plan.maps).toEqual([
+      {
+        name: "corridor-split",
+        sha256: createHash("sha256")
+          .update(readFileSync(join(repoRoot, "maps", "corridor-split.json")))
+          .digest("hex"),
+      },
+    ]);
+    expect(plan.scripts.map((script) => script.id)).toEqual([...TRIAL_BENCHMARK_IDS]);
+    expect(plan.scripts.map((script) => script.source)).toEqual(
+      TRIAL_BENCHMARK_IDS.map((name) => `benchmark:${name}`),
+    );
+    expect(plan.scripts.map((script) => script.scriptSha256)).toEqual(
+      TRIAL_BENCHMARK_IDS.map((name) =>
+        createHash("sha256")
+          .update(readFileSync(join(repoRoot, "benchmarks", name, "script.js")))
+          .digest("hex"),
+      ),
+    );
+    for (const match of plan.matches) {
+      expect(match.seats).toEqual(["candidate", ...TRIAL_BENCHMARK_IDS]);
+      expect(match.candidateSeat).toBe(0);
+      expect(match.map).toBe("corridor-split");
+    }
+    // 摘要只覆盖正文：把它剥掉再复算必须逐字相等。
+    const { planSha256, ...body } = plan;
+    expect(planSha256).toBe(hashOf(JSON.parse(JSON.stringify(body)) as JsonValue));
+    // 同一安装面两次打印逐字相同（计划是纯数据，不含时间戳或路径）。
+    expect(fixture.plan().stdout).toBe(first.stdout);
+  },
+);
+
+it(
+  "--expected-plan 与 --plan 输出逐字相等即照跑，观测与不带该参数完全一致",
+  { timeout: 60_000 },
+  () => {
+    // 只跑 4 个 tick：这条断言的是「计划相等就照跑、观测不变」，不是对局长度。
+    const fixture = install("function loop() {}\n", { tickLimit: 4 });
+    const printed = fixture.plan();
+    expect(printed.status, printed.stderr).toBe(0);
+    const planPath = join(fixture.root, "expected-plan.json");
+    writeFileSync(planPath, printed.stdout);
+    const baseline = fixture.run(join(fixture.root, "baseline.jsonl"));
+    expect(baseline.status, baseline.stderr).toBe(0);
+    const planned = fixture.invoke([
+      fixture.candidate,
+      "--root",
+      fixture.root,
+      "--observations",
+      join(fixture.root, "planned.jsonl"),
+      "--expected-plan",
+      planPath,
+    ]);
+    expect(planned.status, planned.stderr).toBe(0);
+    expect(planned.stdout).toBe(baseline.stdout);
+    expect(readFileSync(join(fixture.root, "planned.jsonl"), "utf8")).toBe(
+      readFileSync(join(fixture.root, "baseline.jsonl"), "utf8"),
+    );
+  },
+);
+
+/** 按「正文改了、摘要没重算」或「连摘要一起重算」两种手法重写计划文件。 */
+const rewritePlan = (plan: TrialPlan, patch: Partial<TrialPlan>, rehash: boolean): string => {
+  const merged = { ...plan, ...patch };
+  if (!rehash) return JSON.stringify(merged);
+  const { planSha256, ...body } = merged;
+  void planSha256;
+  return JSON.stringify({ ...body, planSha256: hashOf(body as unknown as JsonValue) });
+};
+
+it.each([
+  {
+    kind: "改种子（摘要没重算）",
+    patch: (plan: TrialPlan): Partial<TrialPlan> => ({
+      matches: plan.matches.map((match, index) => (index === 1 ? { ...match, seed: 999 } : match)),
+    }),
+    rehash: false,
+    reported: /matches\[1\]\.seed/,
+  },
+  {
+    kind: "改座位（摘要一起重算）",
+    patch: (plan: TrialPlan): Partial<TrialPlan> => ({
+      matches: plan.matches.map((match, index) =>
+        index === 0
+          ? {
+              ...match,
+              seats: [...match.seats].reverse() as unknown as TrialPlan["matches"][number]["seats"],
+            }
+          : match,
+      ),
+    }),
+    rehash: true,
+    reported: /matches\[0\]\.seats/,
+  },
+  {
+    kind: "换一份对手摘要（摘要一起重算）",
+    patch: (plan: TrialPlan): Partial<TrialPlan> => ({
+      scripts: plan.scripts.map((script, index) =>
+        index === 1 ? { ...script, scriptSha256: "e".repeat(64) } : script,
+      ),
+    }),
+    rehash: true,
+    reported: /scripts\[1\]\.scriptSha256/,
+  },
+])(
+  "计划被篡改（$kind）→ 退出 2、指名哪一处不符、不写观测",
+  { timeout: 30_000 },
+  ({ patch, rehash, reported }) => {
+    const fixture = install("function loop() {}\n");
+    const printed = fixture.plan();
+    expect(printed.status, printed.stderr).toBe(0);
+    const planPath = join(fixture.root, "tampered-plan.json");
+    writeFileSync(
+      planPath,
+      rewritePlan(
+        JSON.parse(printed.stdout) as TrialPlan,
+        patch(JSON.parse(printed.stdout) as TrialPlan),
+        rehash,
+      ),
+    );
+    const observations = join(fixture.root, "tampered.jsonl");
+    const ran = fixture.invoke([
+      fixture.candidate,
+      "--root",
+      fixture.root,
+      "--observations",
+      observations,
+      "--expected-plan",
+      planPath,
+    ]);
+    expect(ran.status, ran.stderr).toBe(2);
+    expect(ran.stdout).toBe("");
+    expect(ran.stderr).toMatch(reported);
+    expect(existsSync(observations)).toBe(false);
+  },
+);
+
+it("计划与观测对齐：观测行里的 seed / 候选座位就是计划里那几场", { timeout: 60_000 }, () => {
+  const fixture = install("function loop() {}\n", { tickLimit: 4 });
+  const plan = JSON.parse(fixture.plan().stdout) as TrialPlan;
+  expect(fixture.run().status).toBe(0);
+  const rows = fixture.rows();
+  expect(rows).toHaveLength(plan.matches.length);
+  for (const [index, row] of rows.entries()) {
+    expect(row.matchIndex).toBe(plan.matches[index]!.matchIndex);
+    expect(row.actionFacts?.seed).toBe(plan.matches[index]!.seed);
+    expect(row.actionFacts?.seat).toBe(plan.matches[index]!.candidateSeat);
+    expect(row.terminalSummary?.seed).toBe(plan.matches[index]!.seed);
+  }
 });

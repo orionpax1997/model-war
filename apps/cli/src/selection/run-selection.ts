@@ -1,8 +1,8 @@
 /** gen 私有子进程协议：--plan 固定环境，默认执行，--validate 完整复算。 */
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { TRIAL_BENCHMARK_IDS } from "@model-war/schema";
 import { loadTrial } from "../trial/load.js";
-import { TRIAL_OPPONENTS } from "../trial/trial.js";
 import { executeSelection, planForSelection, validatePreparedSelection } from "./selection.js";
 
 try {
@@ -13,7 +13,7 @@ try {
   let output: unknown;
   if (args.includes("--plan")) {
     output = planForSelection(
-      loadTrial(root, join(root, "benchmarks", TRIAL_OPPONENTS[0]!, "script.js")),
+      loadTrial(root, join(root, "benchmarks", TRIAL_BENCHMARK_IDS[0], "script.js")),
     );
   } else {
     const input: unknown = JSON.parse(readFileSync(0, "utf8"));

@@ -1,5 +1,6 @@
 /**
- * 子命令参数解析那一格（`--root` 与 `--observations` 两个带值的 flag）。
+ * 子命令参数解析那一格（`--root` / `--observations` / `--expected-plan` 三个带值的 flag，
+ * 与 `--plan` 这个不带值的开关）。
  *
  * 断言对象只有**解析结果**：值被摘到哪、位置参数剩下什么。这格是纯函数，起 VM 起子进程
  * 都不合适，真实调用点（`match` / `verify` / 试跑入口）的行为由各自的 e2e 覆盖。
@@ -13,12 +14,16 @@ it("--root：值被摘走，不混进位置参数（顺序无关）", () => {
   expect(splitArgs(["match", "--root", "/install", "input.json"])).toEqual({
     root: "/install",
     observationsPath: undefined,
+    expectedPlanPath: undefined,
+    planMode: false,
     positional: ["match", "input.json"],
   });
   // 顺序不该决定命令能不能跑：根写在后面同样摘得出来。
   expect(splitArgs(["input.json", "--root", "/install"])).toEqual({
     root: "/install",
     observationsPath: undefined,
+    expectedPlanPath: undefined,
+    planMode: false,
     positional: ["input.json"],
   });
 });
@@ -35,6 +40,8 @@ it("--observations：值被摘走，不混进位置参数", () => {
   ).toEqual({
     root: "/install",
     observationsPath: "/install/archive/alpha/observed-r1.jsonl",
+    expectedPlanPath: undefined,
+    planMode: false,
     positional: ["candidate.js"],
   });
 });
@@ -50,6 +57,8 @@ it("缺值 = 该 flag 不给（与不写同义），不把下一条吃成它的�
   expect(splitArgs(["candidate.js", "--observations"])).toEqual({
     root: undefined,
     observationsPath: undefined,
+    expectedPlanPath: undefined,
+    planMode: false,
     positional: ["candidate.js"],
   });
 });
@@ -60,6 +69,8 @@ it("值长得像 flag（下一条以 `-` 开头）→ 按缺值处理，不吃�
   expect(splitArgs(["--observations", "--root", "/install", "input.json"])).toEqual({
     root: "/install",
     observationsPath: undefined,
+    expectedPlanPath: undefined,
+    planMode: false,
     positional: ["input.json"],
   });
 });
@@ -75,6 +86,40 @@ it("不带值的 flag 不进位置参数（既有行为：`-x` 这类不是位�
   expect(splitArgs(["-x", "candidate.js"])).toEqual({
     root: undefined,
     observationsPath: undefined,
+    expectedPlanPath: undefined,
+    planMode: false,
     positional: ["candidate.js"],
   });
+});
+
+it("--plan 是不带值的开关：摘成 planMode，不吃掉后面的位置参数", () => {
+  const split = splitArgs(["--plan", "--root", "/install"]);
+  expect(split).toEqual({
+    root: "/install",
+    observationsPath: undefined,
+    expectedPlanPath: undefined,
+    planMode: true,
+    positional: [],
+  });
+  // 试跑入口的另一种排版（开关在前、候选在后）同样摘得干净。
+  expect(splitArgs(["candidate.js", "--plan"]).planMode).toBe(true);
+  expect(splitArgs(["candidate.js", "--plan"]).positional).toEqual(["candidate.js"]);
+});
+
+it("--expected-plan：值被摘走，与 --observations 各归各家", () => {
+  const split = splitArgs([
+    "candidate.js",
+    "--expected-plan",
+    "/tmp/plan.json",
+    "--observations",
+    "/tmp/obs.jsonl",
+  ]);
+  expect(split.expectedPlanPath).toBe("/tmp/plan.json");
+  expect(split.observationsPath).toBe("/tmp/obs.jsonl");
+  expect(split.planMode).toBe(false);
+  expect(split.positional).toEqual(["candidate.js"]);
+  // 缺值同样按不给处理，`--observations` 不会被当成它的值。
+  expect(splitArgs(["--expected-plan", "--observations", "/tmp/obs.jsonl"]).expectedPlanPath).toBe(
+    undefined,
+  );
 });

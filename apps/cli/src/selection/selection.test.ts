@@ -7,12 +7,12 @@ import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import {
   RULESET_VERSION,
+  TRIAL_BENCHMARK_IDS,
   type ArchiveSelection,
   type Ruleset,
   type SelectionPlan,
 } from "@model-war/schema";
 import { perMatchScores, validateSelection } from "@model-war/runner";
-import { TRIAL_OPPONENTS } from "../trial/trial.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-selection-"));
@@ -30,7 +30,7 @@ const fixture = (scripts: readonly string[], extra: Partial<Ruleset> = {}) => {
     join(root, "rulesets", `${RULESET_VERSION}.json`),
     JSON.stringify({ ...rules, tickLimit: 4, ...extra }),
   );
-  for (const opponent of TRIAL_OPPONENTS) {
+  for (const opponent of TRIAL_BENCHMARK_IDS) {
     mkdirSync(join(root, "benchmarks", opponent), { recursive: true });
     writeFileSync(join(root, "benchmarks", opponent, "script.js"), "function loop() {}\n");
   }

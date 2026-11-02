@@ -20,11 +20,15 @@
  */
 
 import { runMatch, type RunMatchParams } from "@model-war/engine";
-import type { TrialTerminalSummary } from "@model-war/schema";
+import {
+  TRIAL_CANDIDATE_SEAT,
+  type ReplaySeat,
+  type TrialTerminalSummary,
+} from "@model-war/schema";
 
 import { terminalSummaryOf } from "./terminal-summary.js";
 
-import { CANDIDATE_SEAT, type RecordedTrip } from "./trial.js";
+import type { RecordedTrip } from "./trial.js";
 import {
   createScoreSourceTracker,
   createActionFactsTracker,
@@ -110,10 +114,13 @@ export const runTrialMatch = (options: {
   readonly budget: RunMatchParams["budget"];
   readonly head: RunMatchParams["head"];
   readonly matchIndex: number;
+  /** 候选在本场坐哪：计划给（v1 恒 0）；缺省取 v1 默认座位。 */
+  readonly candidateSeat?: ReplaySeat;
 }): TrialMatchOutcome => {
+  const candidateSeat = options.candidateSeat ?? TRIAL_CANDIDATE_SEAT;
   const trips: RecordedTrip[] = [];
-  const tracker = createScoreSourceTracker(CANDIDATE_SEAT);
-  const actions = createActionFactsTracker(CANDIDATE_SEAT);
+  const tracker = createScoreSourceTracker(candidateSeat);
+  const actions = createActionFactsTracker(candidateSeat);
   const outcome = runMatch({
     ruleset: options.ruleset,
     map: options.map,
@@ -126,8 +133,8 @@ export const runTrialMatch = (options: {
         seat,
         options.matchIndex,
         trips,
-        seat === CANDIDATE_SEAT ? tracker.observe : null,
-        seat === CANDIDATE_SEAT ? actions.observeTick : null,
+        seat === candidateSeat ? tracker.observe : null,
+        seat === candidateSeat ? actions.observeTick : null,
       ),
     ),
     budget: options.budget,
@@ -143,7 +150,7 @@ export const runTrialMatch = (options: {
     trips,
     scoreSource,
     actionFacts,
-    terminalSummary: terminalSummaryOf(outcome, options),
+    terminalSummary: terminalSummaryOf(outcome, { ...options, candidateSeat }),
     fault: null,
   };
 };

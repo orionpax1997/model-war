@@ -27,6 +27,8 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
+import type { TrialPlan } from "@model-war/schema";
+
 export type TrialResult = {
   /** 退出码 0 = 通过；1 = 拦下（`stdout` 为回喂文本）。 */
   readonly passed: boolean;
@@ -49,6 +51,30 @@ export type TrialProbe = (options: {
 
 /** 试跑入口在安装根下的位置（`apps/cli` 的构建产物，调用约定见那份入口的头注）。 */
 const TRIAL_ENTRY = join("apps", "cli", "dist", "trial", "run-trial-script.js");
+
+/**
+ * 试跑计划的**搬运**：入口的 `--plan` 模式从安装根现算事实、打印计划的 canonical JSON。
+ *
+ * 本包不造计划——造它需要读盘算摘要（规则集 / 地图 / 对手脚本字节），而那条边会把
+ * 装载与执行链并进生成管线的 program（门禁禁止）。所以这里只 `spawnSync` 一次、
+ * 把 JSON 解析回来；计划**是什么、能不能由输入重建**由 runner 侧判断（本包不得 import runner）。
+ * 形状校验由存档落地那一侧补（计划进存档时配 JSON Schema）。
+ */
+export const prepareTrialPlan = (root: string): TrialPlan => {
+  const ran = spawnSync(process.execPath, [join(root, TRIAL_ENTRY), "--plan", "--root", root], {
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (ran.error !== undefined) throw ran.error;
+  const status = ran.status ?? -1;
+  if (status !== 0)
+    throw new Error(`试跑计划装载失败（码 ${String(status)}）：${ran.stderr ?? ""}`.trim());
+  try {
+    return JSON.parse(ran.stdout) as TrialPlan;
+  } catch {
+    throw new Error("试跑计划输出不完整");
+  }
+};
 
 /**
  * 跑一次试跑。`artifactPath` 是编译产物（`script.js`）的路径；

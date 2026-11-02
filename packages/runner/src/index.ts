@@ -25,3 +25,8 @@ export * from "./archive-report.js";
 
 export * from "./selection.js";
 export * from "./archive-optimization.js";
+
+// 试跑计划的构造、校验与单场身份摘要（纯数据 + hash，不起 VM）。
+// `canonical.ts` 是 `planSha256` 的序列化真源，与选拔计划共用。
+export * from "./canonical.js";
+export * from "./trial-plan.js";

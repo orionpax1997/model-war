@@ -13,12 +13,10 @@ import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
+import { buildTrialPlan, type BuildTrialPlanInput } from "@model-war/runner";
+import { TRIAL_BENCHMARK_IDS, TRIAL_CANDIDATE_SEAT } from "@model-war/schema";
+
 import {
-  CANDIDATE_SEAT,
-  TRIAL_MAP,
-  TRIAL_MATCH_COUNT,
-  TRIAL_OPPONENTS,
-  TRIAL_SEEDS,
   renderScoreSourceObservation,
   renderTrialFeedback,
   verdictOfTrips,
@@ -26,6 +24,21 @@ import {
 } from "./trial.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+
+/** v1 计划的构造事实（摘要取固定假值：判定与文案不需要真字节）。 */
+const v1Facts: BuildTrialPlanInput = {
+  ruleset: "v2",
+  rulesetSha256: "9".repeat(64),
+  sandboxRuntimeHash: "8".repeat(64),
+  scripts: TRIAL_BENCHMARK_IDS.map((id, index) => ({
+    id,
+    role: "benchmark",
+    source: `benchmark:${id}`,
+    scriptSha256: String(index + 1).repeat(64),
+  })),
+  maps: [{ name: "corridor-split", sha256: "f".repeat(64) }],
+};
+const plan = buildTrialPlan(v1Facts);
 
 const trip = (
   partial: Partial<RecordedTrip> & { readonly track: RecordedTrip["track"] },
@@ -38,29 +51,35 @@ const trip = (
   ...partial,
 });
 
-it("试跑常量：3 场、3 个互不相同的固定种子、赛季当前地图、3 个固定对手、候选固定 0 号位", () => {
-  expect(TRIAL_MATCH_COUNT).toBe(3);
-  expect(TRIAL_SEEDS).toHaveLength(3);
-  expect(new Set(TRIAL_SEEDS).size).toBe(3);
-  for (const seed of TRIAL_SEEDS) {
-    expect(Number.isInteger(seed)).toBe(true);
-    expect(seed).toBeGreaterThanOrEqual(0);
-  }
+it("v1 计划：3 场、3 个互不相同的固定种子、赛季当前地图、3 份基准、候选固定 0 号位", () => {
+  expect(plan.matches).toHaveLength(3);
+  expect(plan.matches.map((match) => match.seed)).toEqual([101, 202, 303]);
+  expect(new Set(plan.matches.map((match) => match.seed)).size).toBe(3);
   // 三张地图同为 64 格 28 点位，"小"无差别，固定取赛季当前地图 corridor-split。
-  expect(TRIAL_MAP).toBe("corridor-split");
-  expect(TRIAL_OPPONENTS).toEqual([
+  expect(plan.maps.map((map) => map.name)).toEqual(["corridor-split"]);
+  expect(plan.scripts.map((script) => script.id)).toEqual([
     "cell-a-melee-pressure",
     "cell-b-expansion-economy",
     "cell-c-claim-no-harvest",
   ]);
-  expect(CANDIDATE_SEAT).toBe(0);
+  expect(plan.scripts.every((script) => script.role === "benchmark")).toBe(true);
+  for (const match of plan.matches) {
+    expect(match.candidateSeat).toBe(TRIAL_CANDIDATE_SEAT);
+    expect(match.seats).toEqual([
+      "candidate",
+      "cell-a-melee-pressure",
+      "cell-b-expansion-economy",
+      "cell-c-claim-no-harvest",
+    ]);
+    expect(match.map).toBe("corridor-split");
+  }
 });
 
 it("对手登记漂移断言：benchmarks/ 下恰好是这三份对手的 script.js", () => {
   // 对手登记册的真源在 `packages/tools/src/benchmarks/compile.ts` 的 BENCHMARK_NAMES；
   // 这里不断言那份清单（跨包读源码是并行表示），只断言试跑自己的前提：
   // 点名的三份都在、且没有第四份——增减基准时这条会先红，提醒同步改试跑对手。
-  for (const name of TRIAL_OPPONENTS) {
+  for (const name of TRIAL_BENCHMARK_IDS) {
     expect(existsSync(join(repoRoot, "benchmarks", name, "script.js")), name).toBe(true);
   }
 });
@@ -68,10 +87,11 @@ it("对手登记漂移断言：benchmarks/ 下恰好是这三份对手的 script
 it("无触限 → 通过，反馈写明场数、地图与种子", () => {
   const verdict = verdictOfTrips([]);
   expect(verdict.passed).toBe(true);
-  const feedback = renderTrialFeedback(verdict);
+  const feedback = renderTrialFeedback(verdict, plan);
   expect(feedback).toContain("试跑通过");
-  expect(feedback).toContain(String(TRIAL_MATCH_COUNT));
-  expect(feedback).toContain(TRIAL_MAP);
+  expect(feedback).toContain("3 场");
+  expect(feedback).toContain("corridor-split");
+  expect(feedback).toContain("101 / 202 / 303");
 });
 
 it("候选座事件计数超限 → 拦，反馈写明第几场、第几 tick、哪项预算、读数/上限/超出", () => {
@@ -84,7 +104,7 @@ it("候选座事件计数超限 → 拦，反馈写明第几场、第几 tick、
   }
   expect(verdict.trip.matchIndex).toBe(1);
   expect(verdict.trip.tick).toBe(42);
-  const feedback = renderTrialFeedback(verdict);
+  const feedback = renderTrialFeedback(verdict, plan);
   expect(feedback).toContain("试跑未通过");
   expect(feedback).toContain("第 2 场");
   expect(feedback).toContain("第 42 tick");
@@ -99,7 +119,7 @@ it("候选座 API 计数超限 → 拦，反馈点名 API 调用计数", () => {
     trip({ matchIndex: 0, tick: 118, track: "apiCallTickLimit", value: 812, limit: 800 }),
   ]);
   expect(verdict.passed).toBe(false);
-  const feedback = renderTrialFeedback(verdict);
+  const feedback = renderTrialFeedback(verdict, plan);
   expect(feedback).toContain("试跑未通过");
   expect(feedback).toContain("第 1 场");
   expect(feedback).toContain("第 118 tick");
@@ -134,7 +154,7 @@ it("多场多触限 → 报首触（先到的场优先），反馈只讲第一�
     return;
   }
   expect(verdict.trip.matchIndex).toBe(2);
-  const feedback = renderTrialFeedback(verdict);
+  const feedback = renderTrialFeedback(verdict, plan);
   expect(feedback).toContain("第 3 场");
   expect(feedback).not.toContain("控制流事件计数");
 });

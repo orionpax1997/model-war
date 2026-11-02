@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import { afterAll, expect, it } from "vitest";
 
-import { runTrialScript } from "./trial.js";
+import { prepareTrialPlan, runTrialScript } from "./trial.js";
 
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-gen-trial-`);
 afterAll(() => rmSync(scratch, { force: true, recursive: true }));
@@ -92,4 +92,27 @@ it("观测路径由调用方给，不由封装自造（gen 那一侧才是路径
   runTrialScript({ root, artifactPath: artifact, observationsPath });
   const argv = JSON.parse(readFileSync(marker, "utf8")) as readonly string[];
   expect(argv[argv.length - 1]).toBe(observationsPath);
+});
+
+it("--plan 模式只转发 --plan --root 并把子进程打印的计划原样交回", () => {
+  const { root } = fakeRoot(
+    "process.stdout.write(JSON.stringify({ version: 1, planSha256: 'a'.repeat(64), argv: process.argv.slice(2) }));\n" +
+      "process.exitCode = 0;\n",
+  );
+  const plan = prepareTrialPlan(root) as unknown as {
+    readonly version: number;
+    readonly argv: readonly string[];
+  };
+  expect(plan.version).toBe(1);
+  // gen 不猜参数顺序：入口契约是「--plan 在前，--root <根> 在后」。
+  expect(plan.argv).toEqual(["--plan", "--root", root]);
+});
+
+it("--plan 模式失败：非 0 退出与坏 JSON 都大声失败，不交回半个计划", () => {
+  const failed = fakeRoot(
+    'process.stderr.write("试跑计划装载失败:读不到基准脚本\n");\nprocess.exitCode = 2;\n',
+  );
+  expect(() => prepareTrialPlan(failed.root)).toThrow(/2/);
+  const garbage = fakeRoot('process.stdout.write("not json");\nprocess.exitCode = 0;\n');
+  expect(() => prepareTrialPlan(garbage.root)).toThrow(/输出不完整/);
 });

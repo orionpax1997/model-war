@@ -12,6 +12,8 @@ import {
 } from "@model-war/runner";
 import {
   RULESET_VERSION,
+  TRIAL_BENCHMARK_IDS,
+  TRIAL_MAP_NAME,
   type ArchiveSelection,
   type SelectionCandidateIdentity,
   type SelectionPlan,
@@ -19,7 +21,6 @@ import {
 import { budgetOf, budgetTracksOf, headForMap } from "../match/assemble.js";
 import { measureSandboxRuntimeHash } from "../match/sandbox-runtime.js";
 import { loadTrial, type LoadedTrial } from "../trial/load.js";
-import { TRIAL_MAP, TRIAL_OPPONENTS } from "../trial/trial.js";
 
 const hash = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 export const planForSelection = (loaded: LoadedTrial): SelectionPlan =>
@@ -27,12 +28,12 @@ export const planForSelection = (loaded: LoadedTrial): SelectionPlan =>
     ruleset: RULESET_VERSION,
     rulesetSha256: loaded.rulesetSha256,
     sandboxRuntimeHash: measureSandboxRuntimeHash(),
-    map: TRIAL_MAP,
-    mapSha256: loaded.mapSha256,
+    map: TRIAL_MAP_NAME,
+    mapSha256: loaded.maps[0]!.sha256,
     baselines: [
-      { id: TRIAL_OPPONENTS[0]!, scriptSha256: hash(loaded.scripts[1]) },
-      { id: TRIAL_OPPONENTS[1]!, scriptSha256: hash(loaded.scripts[2]) },
-      { id: TRIAL_OPPONENTS[2]!, scriptSha256: hash(loaded.scripts[3]) },
+      { id: TRIAL_BENCHMARK_IDS[0], scriptSha256: loaded.opponents[0]!.script.scriptSha256 },
+      { id: TRIAL_BENCHMARK_IDS[1], scriptSha256: loaded.opponents[1]!.script.scriptSha256 },
+      { id: TRIAL_BENCHMARK_IDS[2], scriptSha256: loaded.opponents[2]!.script.scriptSha256 },
     ],
   });
 
@@ -144,7 +145,7 @@ export const executeSelection = async (options: {
       ["candidate", candidateCode],
       ...plan.baselines.map((entry, index): [string, string] => [
         entry.id,
-        loaded.scripts[index + 1]!,
+        loaded.opponents[index]!.code,
       ]),
     ]);
     const matches: SelectionCandidateEvidence["matches"][number][] = [];
@@ -171,10 +172,10 @@ export const executeSelection = async (options: {
             seat: seat as 0 | 1 | 2 | 3,
           })),
           ruleset: loaded.ruleset,
-          map: loaded.map,
+          map: loaded.maps[0]!.definition,
           seed: match.seed,
           budget,
-          head: headForMap(loaded.mapSha256),
+          head: headForMap(loaded.maps[0]!.sha256),
           sink: { write: () => {} },
         });
         if (outcome.status !== "completed") throw new Error("选拔对局缺少完整终局");

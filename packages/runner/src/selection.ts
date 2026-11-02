@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   ARCHIVE_SELECTION_JSON_SCHEMA,
@@ -6,31 +5,15 @@ import {
   SELECTION_SEEDS,
   SELECTION_MATCHES_PER_CANDIDATE,
   type ArchiveSelection,
-  type JsonValue,
   type SelectionPlan,
   type SelectionCandidate,
   type SelectionCandidateIdentity,
   type SelectionMatch,
   type SelectionMatchResult,
 } from "@model-war/schema";
+import { hashOf, same } from "./canonical.js";
 import { rotateSeats } from "./enumerate.js";
 import { perMatchScores, rankSeason } from "./ranker.js";
-
-/** 对象键排序、数组保序；不依赖 metadata 的书写键序。 */
-const canonicalJson = (value: JsonValue): string => {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const object = value as Readonly<Record<string, JsonValue>>;
-    return `{${Object.keys(object)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key]!)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-};
-const hashOf = (value: JsonValue): string =>
-  createHash("sha256").update(canonicalJson(value)).digest("hex");
-const same = (a: JsonValue, b: JsonValue): boolean => canonicalJson(a) === canonicalJson(b);
 
 export type BuildSelectionPlanInput = Pick<
   SelectionPlan,

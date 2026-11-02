@@ -1,5 +1,6 @@
 /**
- * 子命令参数解析的公共一格:摘取**带值的 flag**(`--root <值>`、`--observations <值>`)。
+ * 子命令参数解析的公共一格:摘取**带值的 flag**(`--root <值>`、`--observations <值>`、
+ * `--expected-plan <值>`)与**不带值的 flag**(`--plan`)。
  *
  * `match` 与 `verify` 都收 `[--root <仓库根>] <位置参数>`。摘取不能写成
  * `args.filter((arg) => !arg.startsWith("-"))`:`--root` 的**值**不以 `-` 开头,于是它会被当成
@@ -25,6 +26,10 @@ export type SplitArgs = {
   readonly root: string | undefined;
   /** `--observations` 的值(观测文件落盘点)。只由试跑入口读;其余子命令摘到也不生效。 */
   readonly observationsPath: string | undefined;
+  /** `--expected-plan` 的值(预期试跑计划文件)。只由试跑入口读;其余子命令摘到也不生效。 */
+  readonly expectedPlanPath: string | undefined;
+  /** `--plan` 出现即 true(试跑入口:只造计划并打印,不跑对局)。 */
+  readonly planMode: boolean;
   readonly positional: readonly string[];
 };
 
@@ -32,6 +37,12 @@ export type SplitArgs = {
 const VALUED_FLAGS = {
   "--root": "root",
   "--observations": "observationsPath",
+  "--expected-plan": "expectedPlanPath",
+} as const satisfies Record<string, keyof SplitArgs>;
+
+/** 不带值的 flag 清单:出现即 true(没有值要摘,也不会吃掉后面的位置参数)。 */
+const SWITCH_FLAGS = {
+  "--plan": "planMode",
 } as const satisfies Record<string, keyof SplitArgs>;
 
 /**
@@ -42,8 +53,13 @@ const VALUED_FLAGS = {
 export const splitArgs = (args: readonly string[]): SplitArgs => {
   const positional: string[] = [];
   const flags = new Map<string, string>();
+  let planMode = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+    if (arg !== undefined && Object.hasOwn(SWITCH_FLAGS, arg)) {
+      planMode = true;
+      continue;
+    }
     const field = arg === undefined ? undefined : VALUED_FLAGS[arg as keyof typeof VALUED_FLAGS];
     if (field !== undefined) {
       const value = args[index + 1];
@@ -60,6 +76,8 @@ export const splitArgs = (args: readonly string[]): SplitArgs => {
   return {
     root: flags.get("root"),
     observationsPath: flags.get("observationsPath"),
+    expectedPlanPath: flags.get("expectedPlanPath"),
+    planMode,
     positional,
   };
 };

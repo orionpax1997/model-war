@@ -60,7 +60,7 @@ export {
   type ScriptLintPhase,
   type ValidateResult,
 } from "./validate.js";
-export { runTrialScript, type TrialProbe, type TrialResult } from "./trial.js";
+export { prepareTrialPlan, runTrialScript, type TrialProbe, type TrialResult } from "./trial.js";
 export {
   ARCHIVE_META_NAME,
   STAGING_DIR_PREFIX,
