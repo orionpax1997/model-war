@@ -20,6 +20,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -2038,9 +2039,49 @@ it("最终观测旁挂复制失败只警告，已通过候选仍返回 frozen �
     expect(
       readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`), "utf8"),
     ).toBe(observed);
+    // 成对发布：观测那份没发出去，旁挂汇总也不许单独出现。
+    expect(existsSync(`${finalPath}${TRIAL_GRID_SUMMARY_SUFFIX}`)).toBe(false);
     expect(stderr).toHaveBeenCalledTimes(1);
     expect(stderr.mock.calls[0]?.[0]).toContain("警告");
     expect(stderr.mock.calls[0]?.[0]).toContain(finalPath);
+  } finally {
+    stderr.mockRestore();
+  }
+});
+
+it("成对发布：汇总那份失败时观测那份也不留，且不留临时文件", { timeout: 30_000 }, async () => {
+  const root = mkRoot();
+  const runId = "feedback-pair-failure";
+  const finalPath = join(root, "archive", "alpha", `observed-${runId}.jsonl`);
+  const finalSummaryPath = `${finalPath}${TRIAL_GRID_SUMMARY_SUFFIX}`;
+  // 汇总的落点被一个目录占着 → 复制到临时名没问题，rename 成真名必失败；
+  // 这时观测那份已经被 rename 成真名了，必须被撤回（否则就是半套）。
+  mkdirSync(finalSummaryPath, { recursive: true });
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  try {
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, (options) => {
+          writeGridEvidence(options, gridReadings(options.plan!));
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 3 },
+    );
+    // 发布只属旁证：失败不翻转已通过候选的结论。
+    expect(outcome.kind).toBe("frozen");
+    // 两份都不在：观测那份没有留下来，汇总那份仍是原来那个目录。
+    expect(existsSync(finalPath)).toBe(false);
+    expect(statSync(finalSummaryPath).isDirectory()).toBe(true);
+    // 临时文件也清干净（下一次生成不会在归档目录里捡到半截旁证）。
+    expect(
+      readdirSync(join(root, "archive", "alpha")).filter((name) => name.endsWith(".tmp")),
+    ).toEqual([]);
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr.mock.calls[0]?.[0]).toContain("警告");
+    expect(stderr.mock.calls[0]?.[0]).toContain(finalSummaryPath);
   } finally {
     stderr.mockRestore();
   }

@@ -44,7 +44,7 @@ import {
 } from "@model-war/schema";
 
 import { canonicalJson, hashOf, same } from "./canonical.js";
-import { perMatchScores } from "./ranker.js";
+import { competitiveRankingIssue, perMatchScores } from "./ranker.js";
 import { selectionReasonOf, compareSelectionCandidates } from "./selection-order.js";
 import { checkTrialPlan, trialMatchInputSha256 } from "./trial-plan.js";
 
@@ -138,10 +138,8 @@ const candidatePointsOf = (plan: TrialPlan, match: TrialPlanMatch, row: JsonValu
       fail(`第 ${String(match.matchIndex)} 场的名次必须是整数`);
     return rank;
   });
-  const sorted = [...ranks].sort((left, right) => left - right);
-  for (const [seat, rank] of sorted.entries())
-    if (rank !== (sorted[seat - 1] === rank ? sorted[seat - 1] : seat + 1))
-      fail(`第 ${String(match.matchIndex)} 场：名次 ${sorted.join("/")} 不是四座竞争排名`);
+  const issue = competitiveRankingIssue(ranks);
+  if (issue !== undefined) fail(`第 ${String(match.matchIndex)} 场：${issue}`);
   const standings = match.seats.map((player, seat) => ({ player, rank: ranks[seat]! }));
   return perMatchScores(String(match.matchIndex), standings)[match.candidateSeat]!;
 };

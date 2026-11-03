@@ -133,6 +133,25 @@ export const rankPointsIssue = (values: readonly unknown[]): string | undefined 
   return undefined;
 };
 
+/**
+ * 四座竞争排名判据:把一局里的名次排序后,第 i 个名次要么等于前一个(并列),要么等于 i+1(跳号)。
+ *
+ * 这是**一份**判据,三处消费端共用:网格计分(`trial-score.ts`)、选拔逐场复算
+ *(`selection-grid.ts`)与 v1 选拔(`selection.ts`)。三处各自拼过一遍同一条式子,改规则时
+ * 容易只改一处、让两条路径对「同一份读数说不说得通」给出不同答案。
+ *
+ * 返回**第一条**问题(调用方加上「第几场」的前缀再抛);合法返回 `undefined`。
+ */
+export const competitiveRankingIssue = (ranks: readonly number[]): string | undefined => {
+  if (ranks.length !== 4) return `名次必须是四方四座，实际 ${ranks.length} 个`;
+  const sorted = [...ranks].sort((left, right) => left - right);
+  for (const [seat, rank] of sorted.entries()) {
+    const expected = sorted[seat - 1] === rank ? sorted[seat - 1]! : seat + 1;
+    if (rank !== expected) return `名次 ${sorted.join("/")} 不是四座竞争排名`;
+  }
+  return undefined;
+};
+
 /** 校验并归一 `rankPoints`:长度必须为 4、每项必须是有限数。 */
 const normalizedRankPoints = (input: RankPoints | undefined): RankPoints => {
   const values = input ?? DEFAULT_RANK_POINTS;

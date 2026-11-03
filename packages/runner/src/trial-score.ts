@@ -33,7 +33,7 @@ import {
   type TrialTerminalSummary,
 } from "@model-war/schema";
 
-import { rankSeason, type RankedMatch } from "./ranker.js";
+import { competitiveRankingIssue, rankSeason, type RankedMatch } from "./ranker.js";
 
 export type { TrialGridScore };
 
@@ -45,22 +45,6 @@ export type TrialGridReading = {
 
 /** 拒绝的理由统一带上「哪一票的口径」前缀，便于从 gen / CLI 的报错里认出来源。 */
 const errorOf = (reason: string): Error => new Error(`试跑网格无法计分：${reason}`);
-
-/**
- * 四座竞争排名判据：排序后第 i 个名次要么等于前一个（并列），要么等于 i+1（跳号）。
- *
- * 与选拔 `selection.ts` 对 `ReplayResultLine.rankings` 的判据同一条规则（两处措辞各自独立，
- * 但判的是同一件事）；不合法时返回原因，合法返回 `undefined`。
- */
-const competitiveRankingIssue = (ranks: readonly number[]): string | undefined => {
-  if (ranks.length !== 4) return `名次必须是四方四座，实际 ${String(ranks.length)} 个`;
-  const sorted = [...ranks].sort((left, right) => left - right);
-  for (const [seat, rank] of sorted.entries()) {
-    const expected = sorted[seat - 1] === rank ? sorted[seat - 1]! : seat + 1;
-    if (rank !== expected) return `名次 ${sorted.join("/")} 不是四座竞争排名`;
-  }
-  return undefined;
-};
 
 /**
  * 一张跑满的网格 → 候选的分数。

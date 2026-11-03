@@ -15,7 +15,7 @@ import {
 } from "@model-war/schema";
 import { hashOf, same } from "./canonical.js";
 import { rotateSeats } from "./enumerate.js";
-import { perMatchScores, rankSeason } from "./ranker.js";
+import { competitiveRankingIssue, perMatchScores, rankSeason } from "./ranker.js";
 import { validateGridSelection } from "./selection-grid.js";
 import { compareSelectionCandidates, selectionReasonOf } from "./selection-order.js";
 
@@ -91,11 +91,8 @@ const scoreCandidate = (
     )
       throw new Error("选拔结果场次或 candidate/input hash 不一致");
     const rankings = reading.result.rankings;
-    const ranks = [...rankings].sort((a, b) => a - b);
-    if (
-      ranks.length !== 4 ||
-      ranks.some((rank, seat) => rank !== (ranks[seat - 1] === rank ? ranks[seat - 1] : seat + 1))
-    )
+    // 判据与网格计分、逐场复算同一处（`ranker.ts` 的 `competitiveRankingIssue`）。
+    if (rankings.length !== 4 || competitiveRankingIssue(rankings) !== undefined)
       throw new Error("选拔终局名次不符合四座竞争排名");
     return {
       matchId: String(match.matchIndex),

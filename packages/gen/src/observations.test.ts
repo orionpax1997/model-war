@@ -13,8 +13,10 @@ import {
   FAILURE_RECORD_PREFIX,
   TRIAL_BENCHMARK_IDS,
   TRIAL_PLAYER_IDS,
+  type TrialActionFacts,
   type TrialObservationLine,
   type TrialPlan,
+  type TrialPlanMatch,
   type TrialPlanScript,
   type TrialTerminalSummary,
 } from "@model-war/schema";
@@ -26,7 +28,7 @@ import {
   renderScoreSourceFeedback,
 } from "./observations.js";
 import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
-import { gridPlanFixture } from "./trial-plan.fixture.js";
+import { fixtureScripts, gridPlanFixture } from "./trial-plan.fixture.js";
 
 /** 网格计划的第一场：观测行里的种子/候选座位与终局四方身份都按它给期望。 */
 const plan = gridPlanFixture();
@@ -495,7 +497,9 @@ it("覆盖缺失单独说明、不补零：缺终局的格不给平均，逐场�
   // 全部缺终局：每格都写明「终局未知、未将缺失解释为零」，没有任何平均数字。
   const stripped = full.map(withoutTerminal);
   const unknown = renderScoreSourceFeedback(stripped, gridPlan);
-  expect(unknown).toContain("覆盖：计划 32 场，读数 32 场，终局可用 0 场；缺失一律不补零。");
+  expect(unknown).toContain(
+    "覆盖：计划 32 场，读数 32 场，终局可用 0 场；行动事实完整 0 场，缺失 32 场（#00 / #01 / #02 / #03 / #04 … 共 32 场），不完整 0 场；缺失一律不补零。",
+  );
   for (const cell of cellLines(unknown))
     expect(cell).toContain("终局未知，未将缺失解释为零，不报告平均名次与平均领土分");
   expect(unknown).not.toMatch(/平均名次 \d|平均领土分 \d|分差 \d/);
@@ -507,6 +511,111 @@ it("覆盖缺失单独说明、不补零：缺终局的格不给平均，逐场�
   // 全文不给因果结论与策略建议。
   for (const text of [feedback, unknown, noActions])
     expect(text).not.toMatch(/请检查|建议|应该|坐标|策略诊断|因为|导致/);
+});
+
+// ── 陪练池身份、代位与镜像标注（spec：反馈必须写明跟谁打、代位、字节相同）─────────
+
+it("反馈写明陪练池身份与代位：角色、role:slug、装载来源，代位时明写「本阶段以 X 代位」", () => {
+  // 生产口径的四份身份 + 在位代位（`source` 的 `#substitute` 后缀就是代位的唯一标记）。
+  const scripts = productionScripts.map((script, index) =>
+    index === 3 ? { ...script, source: `${script.source}#substitute` } : script,
+  );
+  const gridPlan = gridPlanFixture(scripts);
+  const feedback = renderScoreSourceFeedback(
+    gridReadingsOf(gridPlan, () => [93, 58, 14, 10]),
+    gridPlan,
+  );
+  expect(feedback).toContain("陪练池（本阶段的对手；每个组合轮空其中一份）：");
+  // 四份身份都要能被读出来（角色、id、来源），不是只写「四个对手」。
+  expect(feedback).toContain("  榜首 top:claude-opus-5-5 ← archive:claude-opus-5-5/r1");
+  expect(feedback).toContain("  中位 mid:minimax-m3.1-flash ← archive:minimax-m3.1-flash/r2");
+  expect(feedback).toContain("  末位 last:glm-5.3-flash ← archive:glm-5.3-flash/r3");
+  // 代位是来源而不是另一个角色：反馈据此明写代位，而且只说一次。
+  expect(feedback).toContain(
+    "  在位 incumbent:muse-spark-1.3-contributor ← archive:muse-spark-1.3-contributor/r4#substitute；本阶段以 muse-spark-1.3-contributor 代位",
+  );
+  expect(feedback.match(/本阶段以 .* 代位/g)).toHaveLength(1);
+
+  // 没代位的计划（来源不带后缀）不写代位，其余身份照列。
+  const ownIncumbent = fixtureScripts.map((script) => ({
+    ...script,
+    source: script.source.replace("#substitute", ""),
+  }));
+  const ownPlan = gridPlanFixture(ownIncumbent);
+  const own = renderScoreSourceFeedback(
+    gridReadingsOf(ownPlan, () => [93, 58, 14, 10]),
+    ownPlan,
+  );
+  expect(own).toContain("  在位 incumbent:delta ← archive:delta/r4");
+  expect(own).not.toContain("代位");
+});
+
+it("候选与某位陪练字节相同时逐场标注「本场对手与你字节相同」，轮空该份的场次不标", () => {
+  const gridPlan = gridPlanFixture();
+  const readings = gridReadingsOf(gridPlan, () => [93, 58, 14, 10]);
+  // 候选字节 = 夹具里 `last:gamma` 的摘要（`scripts[2]` 的摘要就是 "3" × 64）。
+  const mirrored = fixtureScripts[2]!.scriptSha256;
+  const feedback = renderScoreSourceFeedback(readings, gridPlan, undefined, mirrored);
+  const marked = matchLines(feedback).filter((line) => line.includes("本场对手与你字节相同"));
+  // 每次轮空一份（comboIndex = 2 的那一组共 8 场），其余 24 场都有 gamma 在场。
+  expect(marked).toHaveLength(24);
+  expect(marked.every((line) => !line.includes("组合2（"))).toBe(true);
+  // 逐场可辨：轮空 gamma 的那八场逐字不带这一句，别的场都带。
+  for (const line of matchLines(feedback)) {
+    expect(line.includes("本场对手与你字节相同")).toBe(!line.includes("组合2（"));
+  }
+  // 表头解释这句话怎么读（镜像局是确定性重演，照跑）。
+  expect(feedback).toContain(
+    "「本场对手与你字节相同」= 候选编译产物与该场某位对手的脚本摘要相同，镜像局照跑",
+  );
+  // 字节无从得知（未给候选摘要）就不标注：不拿名字或分数猜（表头那句解释不算逐场标注）。
+  expect(
+    matchLines(renderScoreSourceFeedback(readings, gridPlan)).some((line) =>
+      line.includes("本场对手与你字节相同"),
+    ),
+  ).toBe(false);
+});
+
+/** 一场的行动事实（与执行器写出的形状同构：seed / 座位按计划给）。 */
+const actionFactsAt = (each: TrialPlanMatch, complete = true): TrialActionFacts =>
+  ({
+    ...completeActionReading().actionFacts,
+    version: 1,
+    scriptSha256: candidateHash,
+    seed: each.seed,
+    seat: each.candidateSeat,
+    complete,
+    observedTicks: complete ? 5 : 3,
+    missingTicks: complete ? 0 : 2,
+  }) as TrialActionFacts;
+
+it("行动事实覆盖按全网格声明：完整/缺失/不完整的场数与被点名的场次，不只最差三场", () => {
+  const gridPlan = gridPlanFixture();
+  const base = gridReadingsOf(gridPlan, () => [93, 58, 14, 10]);
+  // #02 没有行动事实、#05 行动事实不完整，其余 30 场完整。
+  const readings = base.map((reading) => {
+    const each = gridPlan.matches[reading.matchIndex]!;
+    if (reading.matchIndex === 2) return reading;
+    return { ...reading, actionFacts: actionFactsAt(each, reading.matchIndex !== 5) };
+  });
+  const feedback = renderScoreSourceFeedback(readings, gridPlan);
+  expect(feedback).toContain(
+    "行动事实完整 30 场，缺失 1 场（#02），不完整 1 场（#05）；缺失一律不补零。",
+  );
+  // 被点名的缺口不在最差三场里（#03/#04/#11），所以这不是「只说了最差三场」。
+  expect(detailIndexes(feedback)).toEqual([3, 4, 11]);
+  // 缺失与不完整仍然照旧单独说明，不补零、不写成 0。
+  expect(feedback).toContain("行动事实缺失，未将缺失解释为零。");
+
+  // 缺口多时写数量 + 前几个：列表再长也不把反馈撑爆（体积上限另有用例）。
+  const manyMissing = base.map((reading) =>
+    reading.matchIndex < 8
+      ? reading
+      : { ...reading, actionFacts: actionFactsAt(gridPlan.matches[reading.matchIndex]!) },
+  );
+  expect(renderScoreSourceFeedback(manyMissing, gridPlan)).toContain(
+    "行动事实完整 24 场，缺失 8 场（#00 / #01 / #02 / #03 / #04 … 共 8 场），不完整 0 场；缺失一律不补零。",
+  );
 });
 
 /** 生产口径的四份陪练身份：role 限定的 slug 比夹具长，量体积要用接近真实的字串。 */
@@ -546,10 +655,19 @@ it("体积守上限：32 场的反馈不超过现有 3 场（3 547 字符）的�
   const first = renderScoreSourceFeedback(readings, gridPlan);
   // 带上一阶段的第二次回喂是对差表最长的一版（八格都要写 Δ），所以上限按它守。
   const second = renderScoreSourceFeedback(readings, gridPlan, readings);
+  // 最坏一版：候选字节恰好等于其中一份陪练（24 场逐行多一句镜像标注）。
+  const mirrored = renderScoreSourceFeedback(
+    readings,
+    gridPlan,
+    readings,
+    productionScripts[0]!.scriptSha256,
+  );
   expect(first.length).toBeLessThanOrEqual(FEEDBACK_CHAR_LIMIT);
   expect(second.length).toBeLessThanOrEqual(FEEDBACK_CHAR_LIMIT);
-  // 下界只防夹具退化成空文本：真跑出来的长度记在提交正文（6 676 / 6 820 字符）。
+  expect(mirrored.length).toBeLessThanOrEqual(FEEDBACK_CHAR_LIMIT);
+  // 下界只防夹具退化成空文本：真跑出来的长度记在提交正文（7 103 / 7 247 / 7 511 字符）。
   expect(second.length).toBeGreaterThan(first.length);
+  expect(mirrored.length).toBeGreaterThan(second.length);
   expect(first.length).toBeGreaterThan(3_000);
 });
 

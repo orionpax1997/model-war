@@ -5,17 +5,23 @@
  * ── 反馈为什么是三层而不是逐场展开 ──
  *
  * 网格一场候选就是一整张 32 场的表（4 陪练组合 × 4 座位 × 2 图），逐场展开会把每场四方全套
- * 计分依据都塞进 prompt——08 实测「三场」约 3.5 千字符，照搬 32 场就是约 25 千字符。所以回喂分三层：
+ * 计分依据都塞进 prompt——08 实测「三场」约 3.5 千字符，照搬 32 场就是约 25 千字符。所以回喂分三层
+ * （三层之前先给一行陪练池身份与一句覆盖声明）：
  *
+ * 0. **陪练池身份**：本阶段对的是哪四份（角色、`role:slug`、装载来源），以及有没有**代位**
+ *    （来源带 `#substitute` 时明写「本阶段以 X 代位」）。这一块不是第四层，它是「跟谁打」的
+ *    唯一出处（与那句覆盖声明一起站在三层之外）。
  * 1. **对差表**：按 `座位 × 地图` 聚合（网格 8 格），每格给平均名次、平均名次积分、平均领土分与
  *    第一名的分差、末位局数，并给出**与上一阶段同一格的变化**（Δ 平均名次积分 / Δ 分差）。
- * 2. **逐场一行**：图、候选座位、组合（该场轮空的是哪一份陪练）、候选名次、四方领土分、结束原因。
+ * 2. **逐场一行**：图、候选座位、组合（该场轮空的是哪一份陪练）、候选名次、四方领土分、结束原因；
+ *    候选与该场某位对手**字节相同**时逐场加一句「本场对手与你字节相同」（确定性镜像，照跑不回避）。
  * 3. **最差三场**：只对这三场展开原有的三栏明细（行动调用数与即时错误码、独立结算效果、终局事实）。
  *
- * ── 三层共同守的两条口径 ──
+ * ── 各层共同守的两条口径 ──
  *
  * - **缺失不补零**：行动事实缺失/不完整、终局未知都如实写「未知」，既不算作零分也不参与排序；
- *   覆盖缺失（读数少于计划场数）单独用一行说明。
+ *   覆盖缺失（读数少于计划场数、行动事实的缺失与不完整）单独用一行声明说明，而且是**全网格**
+ *   的账，不只最差三场。
  * - **只陈述事实**：不出现因果结论与策略建议，回喂文本里也没有「请检查 / 建议 / 应该」这类话。
  *
  * 渲染是**代码内拼接**（`prompts/` 只留给初次生成模板），文案本身不引模板文件。
@@ -27,11 +33,14 @@ import {
   ACTION_ERROR_CODES,
   OBSERVATIONS_FILE_PREFIX,
   TRIAL_OBSERVATION_JSON_SCHEMA,
+  TRIAL_SCRIPT_ID_SEPARATOR,
+  TRIAL_SUBSTITUTE_SOURCE_SUFFIX,
   type TrialActionFacts,
   type TrialObservationLine,
   type TrialPlan,
   type TrialPlanMatch,
   type TrialPlanSeat,
+  type TrialSparringRole,
   type TrialTerminalSummary,
 } from "@model-war/schema";
 
@@ -395,11 +404,66 @@ const sittingOutOf = (plan: TrialPlan, match: TrialPlanMatch): string | undefine
   // v1（三份基准全上、comboIndex 恒 0）没有轮空这一说，不能硬套网格的读法。
   plan.version === 1 ? undefined : plan.scripts[match.comboIndex]?.id;
 
+/** 陪练角色的中文讲法（与 `docs/gdd.md` 的排行榜口径一致；`benchmark` 只出现在 v1 计划里）。 */
+const ROLE_LABELS = {
+  benchmark: "基准",
+  top: "榜首",
+  mid: "中位",
+  last: "末位",
+  incumbent: "在位",
+} as const satisfies Readonly<Record<TrialSparringRole, string>>;
+
+/** `role:slug` → `slug`（分隔符的真源在 schema，不在这里另写一份）。 */
+const nameOfScript = (id: string): string =>
+  id.slice(id.indexOf(TRIAL_SCRIPT_ID_SEPARATOR) + TRIAL_SCRIPT_ID_SEPARATOR.length);
+
+/**
+ * 陪练池：本阶段的对手是什么身份、从哪份存档装载、有没有代位。
+ *
+ * 代位是**来源**（`source` 带 `#substitute` 后缀）而不是另一个角色（见 runner 的
+ * `sparring-pool.ts`），所以只读计划里已有的 `role` / `id` / `source`，不把身份在反馈里另存一份。
+ * 于是「本阶段以 X 代位」这句话能直接从计划重建（反馈文本可从观测与计划复现）。
+ */
+const renderSparringPool = (plan: TrialPlan): string => {
+  const rows = plan.scripts.map((script) => {
+    const substitute = script.source.endsWith(TRIAL_SUBSTITUTE_SOURCE_SUFFIX);
+    return `  ${ROLE_LABELS[script.role]} ${script.id} ← ${script.source}${
+      substitute ? `；本阶段以 ${nameOfScript(script.id)} 代位` : ""
+    }`;
+  });
+  return ["陪练池（本阶段的对手；每个组合轮空其中一份）：", ...rows].join("\n");
+};
+
+/**
+ * 与候选**字节相同**的对手 id：候选就是那一位的镜像，那些场次照跑（确定性镜像，不回避）。
+ *
+ * 候选自己的编译产物摘要不进计划（候选的身份是字节），所以由调用方给；给不出就不标注——
+ * 不猜、不拿「看起来一样」当字节相同。
+ */
+const mirroredScriptIds = (
+  plan: TrialPlan,
+  candidateScriptSha256: string | undefined,
+): ReadonlySet<string> =>
+  candidateScriptSha256 === undefined
+    ? new Set()
+    : new Set(
+        plan.scripts
+          .filter((script) => script.scriptSha256 === candidateScriptSha256)
+          .map((script) => script.id),
+      );
+
 /**
  * 第二层：逐场一行。列序在表头写死，行里只放值。终局未知的场次三列都写「未知」，
  * 不把缺失写成 0 分或 0 名，也不猜结束原因。
+ *
+ * 候选与该场某位对手字节相同时逐场加一句「本场对手与你字节相同」：镜像局是确定性重演，
+ * 照跑不回避，但读者必须能在**这一场**上认出来，而不是自己去对摘要。
  */
-const renderMatchList = (plan: TrialPlan, facts: readonly MatchFacts[]): string => {
+const renderMatchList = (
+  plan: TrialPlan,
+  facts: readonly MatchFacts[],
+  mirrored: ReadonlySet<string>,
+): string => {
   const rows = facts.map((fact) => {
     const sittingOut = sittingOutOf(plan, fact.match);
     const combo = `${String(fact.match.comboIndex)}（${sittingOut === undefined ? "无轮空" : `轮空 ${sittingOut}`}）`;
@@ -407,10 +471,11 @@ const renderMatchList = (plan: TrialPlan, facts: readonly MatchFacts[]): string 
       fact.kind === "observed"
         ? [String(fact.rank), fact.territories.join("/"), fact.summary.reason]
         : ["未知", "未知", "未知"];
-    return `  #${String(fact.match.matchIndex).padStart(2, "0")} | ${fact.match.map} | 座位${String(fact.match.candidateSeat)} | 组合${combo} | ${value.join(" | ")}`;
+    const mirror = fact.match.seats.some((id) => mirrored.has(id)) ? "｜本场对手与你字节相同" : "";
+    return `  #${String(fact.match.matchIndex).padStart(2, "0")} | ${fact.match.map} | 座位${String(fact.match.candidateSeat)} | 组合${combo} | ${value.join(" | ")}${mirror}`;
   });
   return [
-    "二、逐场一行（列序：场次 | 图 | 候选座位 | 组合（该场轮空的陪练） | 候选名次 | 四方领土分（按座位 0..3） | 结束原因）",
+    "二、逐场一行（列序：场次 | 图 | 候选座位 | 组合（该场轮空的陪练） | 候选名次 | 四方领土分（按座位 0..3） | 结束原因；「本场对手与你字节相同」= 候选编译产物与该场某位对手的脚本摘要相同，镜像局照跑）",
     ...rows,
   ].join("\n");
 };
@@ -464,23 +529,27 @@ const FEEDBACK_TRAILER =
   "调用、即时错误返回与结算事实分别计量；undefined 返回不代表行动生效。movedSteps 是实际格移动次数，captureEvents 是占点事件次数，productionOrdersStarted 是开始订单数。快照读数不覆盖全部结算变化。终局 tick 是已执行 tick 数；淘汰 tick 为从零开始的编号。名次积分按并列占用名次区间均分；timeout 的第一名不代表胜利。这些观测不说明原因；依据既有契约返回完整脚本。";
 
 /**
- * 三层反馈的入口：对差表 → 逐场一行 → 最差三场明细。
+ * 事实回喂的入口：陪练池身份与覆盖声明 → 对差表 → 逐场一行 → 最差三场明细。
  *
  * `previous` 是**上一阶段**同一张网格的读数（首轮没有上一阶段 → undefined，对差表写「无上一阶段」）。
+ * `candidateScriptSha256` 是本阶段候选的编译产物摘要：给了才能把「候选与某位对手字节相同」的
+ * 场次逐场标出来（阈值判定就是字节相等，不靠名字或分数猜）。
  * 只陈述本候选的白名单事实；不从读数推断原因或给策略建议。
  */
 export const renderScoreSourceFeedback = (
   readings: readonly TrialObservationLine[],
   plan: TrialPlan,
   previous?: readonly TrialObservationLine[],
+  candidateScriptSha256?: string,
 ): string => {
   const facts = factsOf(plan, readings);
   const earlier = previous === undefined ? undefined : factsOf(plan, previous);
   return [
     `试跑观测：本候选实际完成的 ${String(readings.length)} 个对局。`,
+    renderSparringPool(plan),
     coverageLine(plan, facts),
     renderDiffTable(plan, facts, earlier),
-    renderMatchList(plan, facts),
+    renderMatchList(plan, facts, mirroredScriptIds(plan, candidateScriptSha256)),
     renderWorst(facts),
     FEEDBACK_TRAILER,
   ].join("\n");
@@ -491,9 +560,37 @@ const SEATS = [0, 1, 2, 3] as const satisfies readonly TrialPlanSeat[];
 
 /** 只有这三场展开完整明细；三层里剩下两层每场只占一行（或一格）。 */
 const DETAIL_MATCHES = 3;
+/** matchIndex 列表：短就全列，长就列前五个并写明总数（体积上限下仍逐场可辨）。 */
+const indexList = (indexes: readonly number[]): string => {
+  const format = (values: readonly number[]): string =>
+    values.map((index) => `#${String(index).padStart(2, "0")}`).join(" / ");
+  return indexes.length <= 5
+    ? format(indexes)
+    : `${format(indexes.slice(0, 5))} … 共 ${String(indexes.length)} 场`;
+};
 
-/** 覆盖声明：读数少于计划场数时单独说一句，不把没跑到的场次当零分插进平均。 */
+/**
+ * 覆盖声明：读数少于计划场数时单独说一句，不把没跑到的场次当零分插进平均。
+ *
+ * 行动事实的覆盖也在这里说**全网格**的账：完整多少场、缺失多少场、不完整多少场，并在有缺口时
+ * 点名场次。否则「只有最差三场报告行动事实」会让其余场次的缺失看起来不存在（那正是把缺失
+ * 写成零）。
+ */
 const coverageLine = (plan: TrialPlan, facts: readonly MatchFacts[]): string => {
   const known = facts.filter((fact) => fact.kind === "observed").length;
-  return `覆盖：计划 ${String(plan.matches.length)} 场，读数 ${String(facts.filter((fact) => fact.reading !== undefined).length)} 场，终局可用 ${String(known)} 场；缺失一律不补零。`;
+  const readings = facts.filter((fact) => fact.reading !== undefined).length;
+  const actionOf = (fact: MatchFacts) => fact.reading?.actionFacts;
+  const missing = facts.filter((fact) => actionOf(fact) === undefined);
+  const partial = facts.filter((fact) => {
+    const actionFacts = actionOf(fact);
+    return actionFacts !== undefined && actionFacts.complete !== true;
+  });
+  const complete = facts.length - missing.length - partial.length;
+  const detailOf = (indexes: readonly MatchFacts[]): string =>
+    indexes.length === 0 ? "" : `（${indexList(indexes.map((fact) => fact.match.matchIndex))}）`;
+  return (
+    `覆盖：计划 ${String(plan.matches.length)} 场，读数 ${String(readings)} 场，终局可用 ${String(known)} 场；` +
+    `行动事实完整 ${String(complete)} 场，缺失 ${String(missing.length)} 场${detailOf(missing)}，` +
+    `不完整 ${String(partial.length)} 场${detailOf(partial)}；缺失一律不补零。`
+  );
 };

@@ -57,7 +57,9 @@
  * 的 blocking 判定已经把体积超限挡在提交前,故走到这里时迭代期也不会有 blocking 违规)。
  */
 
-import { constants, copyFileSync, existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+
+import { constants, copyFileSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 
 import { basename, join } from "node:path";
 
@@ -500,6 +502,52 @@ const messageOfFailure = (slug: string, result: RoundResult & { kind: "failed" }
 };
 
 /**
+ * 成对发布旁挂证据：观测与它旁挂的 `.grid.json` **要么都在、要么都不在**。
+ *
+ * 为什么不能逐份 `copyFileSync` 然后各管各的：两份是一件事的两个面（「这份最终候选跑了哪张
+ * 网格、得多少分」），只发观测会在兼容路径上留下一份没有计划的读数；只发汇总则留下一个说不清
+ * 谁跑过的分数。所以先全部复制到同目录的临时名，再依次 rename 成真名：任一步失败就把本次已
+ * 发布的那份与剩下所有临时文件都清掉，绝不留下半套。
+ *
+ * 失败不抛：发布只属**旁证**（候选已通过、存档已原子落盘），所以沿用「复制失败只警告」的语义，
+ * 一行一句地写 stderr。清理失败也不掩盖原始原因。
+ */
+const publishPairedEvidence = (
+  pairs: readonly (readonly [from: string, to: string])[],
+  warn: (message: string) => void,
+): void => {
+  const temporaries: string[] = [];
+  const published: string[] = [];
+  let target = pairs[0]?.[1] ?? "";
+  try {
+    for (const [from, to] of pairs) {
+      // 临时名取 `to` 的同目录兄弟：rename 不会跨设备，目标名也不会被别人的同名文件认领。
+      const temporary = `${to}.${randomUUID()}.tmp`;
+      copyFileSync(from, temporary, constants.COPYFILE_EXCL);
+      temporaries.push(temporary);
+    }
+    for (const [index, pair] of pairs.entries()) {
+      target = pair[1];
+      renameSync(temporaries[index]!, target);
+      published.push(target);
+    }
+  } catch (cause) {
+    // 已 rename 成真的那份也要撤回：留下它就是半套。
+    for (const path of [...temporaries, ...published]) {
+      try {
+        rmSync(path, { force: true });
+      } catch {
+        // 清理失败不抛，也不掩盖原始原因；下一次生成会重新写这两份。
+      }
+    }
+    const message = cause instanceof Error ? cause.message : String(cause);
+    warn(
+      `modelwar gen: 警告：最终试跑观测发布失败 ${target}（已撤回本次发布的全部旁证）：${message}\n`,
+    );
+  }
+};
+
+/**
  * 这次生成的优化旁证（v2）：整张计划与四份陪练身份入档，每个候选带网格分数与场数。
  *
  * 陪练身份**从计划的 `scripts` 搬**（不另写一份）：计划的这两栏是同一格事实，
@@ -729,7 +777,13 @@ export const generateOneModel = async (
           // 对照看观测读不到就不回喂：只给本阶段数字会让「差距在缩小还是扩大」变成猜的。
           if (earlier !== undefined && previousReadings === undefined)
             throw new Error("上一阶段观测读不到（无法给出与上一阶段同一格的变化），拒绝回喂");
-          feedback = renderScoreSourceFeedback(readings, trialPlan, previousReadings);
+          // 候选自己的字节摘要第四个交：反馈据此把「与某位对手字节相同」的场逐场标出来。
+          feedback = renderScoreSourceFeedback(
+            readings,
+            trialPlan,
+            previousReadings,
+            result.scriptSha256,
+          );
         } else {
           // 现场读编译产物字节算 sha256:复算认的是产物,不是内存里那份源文本。
           let scriptBytes = readFileSync(result.jsPath);
@@ -834,23 +888,17 @@ export const generateOneModel = async (
           committed = true;
           // 拒绝撞名时不发布：既有候选的最终观测不能被失败尝试覆盖。
           // 发布只属旁证：复制失败只警告，不改变已通过候选的结论。
-          // `.grid.json` 与观测同源，必须一起发布：只发观测会让「这份最终候选跑了哪张网格、
+          // `.grid.json` 与观测同源，必须**成对**发布：只发观测会让「这份最终候选跑了哪张网格、
           // 得多少分」在兼容路径上断掉（报告侧读最终档时只剩一份没有计划的观测）。
           if (readings !== undefined) {
             const summaryPath = gridSummaryPathOf(result.observationsPath);
-            for (const [from, to] of [
-              [result.observationsPath, observationsPath],
-              [summaryPath, gridSummaryPathOf(observationsPath)],
-            ] as const) {
-              try {
-                copyFileSync(from, to);
-              } catch (cause) {
-                const message = cause instanceof Error ? cause.message : String(cause);
-                process.stderr.write(
-                  `modelwar gen: 警告：最终试跑观测发布失败 ${to}: ${message}\n`,
-                );
-              }
-            }
+            publishPairedEvidence(
+              [
+                [result.observationsPath, observationsPath],
+                [summaryPath, gridSummaryPathOf(observationsPath)],
+              ],
+              (message) => process.stderr.write(message),
+            );
           }
           return { kind: "frozen", slug, runId, dir: commit.dir, meta };
         }

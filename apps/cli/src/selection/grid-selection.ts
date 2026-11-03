@@ -37,6 +37,7 @@ import {
   type JsonValue,
   type SelectionCandidateIdentity,
   type TrialGridScore,
+  type TrialGridSummary,
   type TrialObservationLine,
   type TrialPlan,
 } from "@model-war/schema";
@@ -58,6 +59,7 @@ import {
 import { gridSummaryPathOf, runTrialGrid } from "../trial/grid.js";
 import { loadTrialGrid, loadTrialGridInputs, trialPlanFactsOf } from "../trial/load.js";
 import { trialObservationLines } from "../trial/observations.js";
+import { validateTrialGridSummary, validateTrialObservation } from "../validator.js";
 import { readSelectionCandidateFiles, type SelectionCandidateFiles } from "./selection.js";
 
 /** 候选身份 + 四条盘上路径：两条产物、生成阶段的观测与它旁挂的网格汇总。 */
@@ -138,7 +140,17 @@ function throwEvidence(reason: string): never {
   throw new Error(`选拔网格证据不合法：${reason}`);
 }
 
-/** 观测文件 → 逐行（解析后的 JSON 值）。空文件与坏行都拒：没有观测就没有证据。 */
+/** 拒绝时的可读细节：派生验证器给的面向模型层诊断（含 JSON 指针），同类已合并。 */
+const reasonOf = (modelDiagnostics: readonly string[]): string =>
+  modelDiagnostics.length === 0 ? "形状不符" : modelDiagnostics.join("；");
+
+/**
+ * 观测文件 → 逐行（解析后的 JSON 值）。空文件与坏行都拒：没有观测就没有证据。
+ *
+ * 每行先过**从共享 JSON Schema 派生的验证器**（`validator.ts` 的 `validateTrialObservation`，
+ * ADR-0016），再交回原值：证据是外部数据，消费端不得靠裸 `JSON.parse` + 手写取字段当校验。
+ * 「这份读数属于这一格」仍归 runner 的 `verifyGridSelectionEvidence`（它按计划判种子/座位/身份）。
+ */
 const observationRowsOf = (path: string): readonly JsonValue[] => {
   let text: string;
   try {
@@ -149,19 +161,29 @@ const observationRowsOf = (path: string): readonly JsonValue[] => {
   const lines = text.split("\n").filter((line) => line.trim().length > 0);
   if (lines.length === 0) throwEvidence(`生成阶段的观测文件是空的：${path}`);
   return lines.map((line) => {
+    let parsed: JsonValue;
     try {
-      return JSON.parse(line) as JsonValue;
+      parsed = JSON.parse(line) as JsonValue;
     } catch {
       throwEvidence(`生成阶段的观测文件不是合法 JSONL：${path}`);
     }
+    const validated = validateTrialObservation(parsed);
+    if (!validated.ok)
+      throwEvidence(
+        `生成阶段的观测行不符合观测行 JSON Schema：${reasonOf(validated.modelDiagnostics)}`,
+      );
+    // 验证过的那一份原值就是证据本身（不重塑形状）：比对要吃的是盘上的字节。
+    return parsed;
   });
 };
 
 /**
  * 生成阶段的网格汇总 → 它的分数（并核对它说的就是这张网格、这份候选）。
  *
- * 生成侧不重算分数，选拔侧也不重算「生成阶段应该得多少分」：这一份分数就是排序依据，
- * 复算只负责证明它与重跑结果逐位相同。
+ * 读入先过**从共享 JSON Schema 派生的验证器**（`validator.ts` 的 `validateTrialGridSummary`，
+ * ADR-0016）：版本、整份计划、候选摘要、分数三元组与逐场身份的形状由 schema 负责；显式化之后
+ * 只剩跨字段的同源性判据。生成侧不重算分数，选拔侧也不重算「生成阶段应该得多少分」：这一份
+ * 分数就是排序依据，复算只负责证明它与重跑结果逐位相同。
  */
 const gridScoreOf = (options: {
   readonly artifact: GridSelectionArtifact;
@@ -174,19 +196,26 @@ const gridScoreOf = (options: {
   } catch {
     throwEvidence(`生成阶段的网格汇总读不到或不是合法 JSON：${artifact.gridSummaryPath}`);
   }
-  const summary = object(parsed);
-  if (summary["version"] !== TRIAL_GRID_SUMMARY_VERSION)
+  const validated = validateTrialGridSummary(parsed as JsonValue);
+  if (!validated.ok)
+    throwEvidence(
+      `生成阶段的网格汇总不符合汇总 JSON Schema：${reasonOf(validated.modelDiagnostics)}`,
+    );
+  const summary: TrialGridSummary = validated.summary;
+  if (summary.version !== TRIAL_GRID_SUMMARY_VERSION)
     throwEvidence(`网格汇总的版本不是 ${String(TRIAL_GRID_SUMMARY_VERSION)}`);
-  if (summary["scriptSha256"] !== artifact.scriptSha256)
+  if (summary.scriptSha256 !== artifact.scriptSha256)
     throwEvidence(`网格汇总说的是另一份候选脚本（摘要不符）：${artifact.gridSummaryPath}`);
-  const planMismatch = trialPlanMismatch(plan, summary["plan"] as TrialPlan);
+  const planMismatch = trialPlanMismatch(plan, summary.plan);
   if (planMismatch !== null)
     throwEvidence(
       `网格汇总里的计划与本次选拔计划不同源（换图/换座位/换种子/换陪练）：${planMismatch}`,
     );
-  if (!same(summary["matches"] as JsonValue, trialGridMatchesOf(plan) as unknown as JsonValue))
+  if (
+    !same(summary.matches as unknown as JsonValue, trialGridMatchesOf(plan) as unknown as JsonValue)
+  )
     throwEvidence("网格汇总的逐场身份与计划不一致");
-  return summary["score"] as TrialGridScore;
+  return summary.score;
 };
 
 const identityOf = ({

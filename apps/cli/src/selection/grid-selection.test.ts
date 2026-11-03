@@ -352,11 +352,52 @@ it("候选产物字节被换、观测文件读不到、汇总说的不是这张�
   rmSync(missing.candidates[2]!.observationsPath);
   await expect(execute(missing)).rejects.toThrow(/观测文件读不到/);
 
+  // 汇总里的计划换成**形状合法但与本次不同源**的一份：形状交派生验证器，同源交 `trialPlanMismatch`。
   const wrongPlan = fixture();
   const summaryPath = wrongPlan.candidates[0]!.gridSummaryPath;
-  const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as { plan: { maps: unknown[] } };
-  writeFileSync(summaryPath, JSON.stringify({ ...summary, plan: { ...summary.plan, maps: [] } }));
+  const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as {
+    plan: { matches: { seed: number }[] };
+  };
+  summary.plan.matches[5]!.seed = 999;
+  writeFileSync(summaryPath, JSON.stringify(summary));
   await expect(execute(wrongPlan)).rejects.toThrow(/不同源/);
+});
+
+it("生成阶段的证据先过共享 Schema 派生的验证器：缺字段 / 多字段的观测行与汇总都拒", async () => {
+  // 缺一个必填字段（`noScoreSource`）：手写取字段的旧读法会把它当成 undefined 继续往下跑。
+  const missingField = fixture();
+  const observationsPath = missingField.candidates[0]!.observationsPath;
+  const rows = readFileSync(observationsPath, "utf8").trim().split("\n");
+  const row = JSON.parse(rows[2]!) as Record<string, JsonValue>;
+  delete row["noScoreSource"];
+  rows[2] = JSON.stringify(row);
+  writeFileSync(observationsPath, `${rows.join("\n")}\n`);
+  await expect(execute(missingField)).rejects.toThrow(
+    /选拔网格证据不合法：生成阶段的观测行不符合观测行 JSON Schema/,
+  );
+
+  // 多出一个字段（伪造的 `verdict`）：同样是被形状拒，而不是被下游当作一条“有主见”的证据。
+  const forged = fixture();
+  const forgedPath = forged.candidates[1]!.observationsPath;
+  const forgedRows = readFileSync(forgedPath, "utf8").trim().split("\n");
+  forgedRows[7] = JSON.stringify({
+    ...(JSON.parse(forgedRows[7]!) as Record<string, JsonValue>),
+    verdict: "passed",
+  });
+  writeFileSync(forgedPath, `${forgedRows.join("\n")}\n`);
+  await expect(execute(forged)).rejects.toThrow(
+    /选拔网格证据不合法：生成阶段的观测行不符合观测行 JSON Schema/,
+  );
+
+  // 汇总缺一栏（`score`）：也不再用裸 JSON.parse 当证据用。
+  const brokenSummary = fixture();
+  const summaryPath = brokenSummary.candidates[2]!.gridSummaryPath;
+  const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, JsonValue>;
+  delete summary["score"];
+  writeFileSync(summaryPath, JSON.stringify(summary));
+  await expect(execute(brokenSummary)).rejects.toThrow(
+    /选拔网格证据不合法：生成阶段的网格汇总不符合汇总 JSON Schema/,
+  );
 });
 
 it("--validate 只校不跑：记录被改（逐场摘要 / 分数 / 胜者）都拒", async () => {

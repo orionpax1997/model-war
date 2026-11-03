@@ -16,7 +16,7 @@
  *    面向模型层是渲染后的短句,含 JSON 指针,并**对同类错误合并成一行**
  *    (生成管线的五轮迭代预算撑不撑得住,取决于这个合并)。
  *
- * 本文件的形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放 meta 行 / 回放末行 `result` / 观测行 / 试跑观测),走的是**同一个 Ajv 实例、
+ * 本文件的形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放 meta 行 / 回放末行 `result` / 观测行 / 试跑观测 / 网格汇总),走的是**同一个 Ajv 实例、
  * 同一套投影与合并渲染**。新增一种数据形状是「再加一个 `validateXxx` + 它的装载期断言」,
  * 不是新写一份校验器:真正的风险不是校验点少,而是日后有人为了让别的包也能校验而手写一份
  * 形状 if —— 那才是第二真源。
@@ -41,6 +41,7 @@ import {
   RULESET_VERSION,
   SPAWN_TICKS_COEFFICIENT,
   TRIAL_OBSERVATION_JSON_SCHEMA,
+  TRIAL_GRID_SUMMARY_JSON_SCHEMA,
   type ArchiveMeta,
   type JsonValue,
   type MapDefinition,
@@ -49,6 +50,7 @@ import {
   type ReplayMetaLine,
   type ReplayResultLine,
   type Ruleset,
+  type TrialGridSummary,
   type TrialObservationLine,
   type UnitStats,
 } from "@model-war/schema";
@@ -142,6 +144,10 @@ export type TrialObservationValidation =
   | { readonly ok: true; readonly observation: TrialObservationLine }
   | ValidationRejection;
 
+export type TrialGridSummaryValidation =
+  | { readonly ok: true; readonly summary: TrialGridSummary }
+  | ValidationRejection;
+
 // `allErrors: true` 是合并的前提:默认的 fail-fast 只报第一条错,
 // 面向模型层就退化成「每次回喂只修一个错」,五轮预算必被吃光。
 const ajv = new Ajv({ allErrors: true });
@@ -164,6 +170,9 @@ const checkReplayResultShape = ajv.compile(REPLAY_RESULT_LINE_JSON_SCHEMA as Sch
 const checkObservationShape = ajv.compile(OBSERVATION_LINE_JSON_SCHEMA as SchemaObject);
 const checkExceptionShape = ajv.compile(EXCEPTION_LINE_JSON_SCHEMA as SchemaObject);
 const checkTrialObservationShape = ajv.compile(TRIAL_OBSERVATION_JSON_SCHEMA as SchemaObject);
+// 网格汇总（`<观测文件>.grid.json`）：生成侧执行器写、选拔侧当证据读。读入端一律过同一份
+// 派生验证器，不在消费端手写形状 if（ADR-0016）。
+const checkTrialGridSummaryShape = ajv.compile(TRIAL_GRID_SUMMARY_JSON_SCHEMA as SchemaObject);
 
 const MAJOR_OF_VERSION = /^v([0-9]+)$/;
 
@@ -780,4 +789,19 @@ export const validateTrialObservation = (value: JsonValue): TrialObservationVali
   }
 
   return { ok: true, observation: value as TrialObservationLine };
+};
+
+/**
+ * 校验一份评测网格汇总（`<观测文件>.grid.json`）的形状。
+ *
+ * 形状的家在真源包 `packages/schema/src/trial-grid-summary.ts`：版本、整份计划、候选摘要、
+ * 分数三元组与逐场身份都在那份 JSON Schema 里。这里只做形状；「这份计划能否由安装面重建」
+ * 「逐场身份是否与计划一致」「分数与逐场观测是否对得上」归消费端的装载期断言。
+ */
+export const validateTrialGridSummary = (value: JsonValue): TrialGridSummaryValidation => {
+  if (!checkTrialGridSummaryShape(value)) {
+    return rejectionOf((checkTrialGridSummaryShape.errors ?? []).map(toMachineDiagnostic));
+  }
+
+  return { ok: true, summary: value as TrialGridSummary };
 };
