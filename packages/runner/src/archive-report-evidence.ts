@@ -142,9 +142,26 @@ export const stopEvidenceOf = (value: unknown) => {
     ]),
   };
 };
+/** 投影值只能是白名单里的数值 / 布尔 / 已知枚举；嵌套对象也走同一套。 */
+type ReportParamValue = number | string | boolean | ReportParamObject;
+interface ReportParamObject {
+  readonly [key: string]: ReportParamValue;
+}
+const EFFORTS = ["high", "medium", "low", "none", "minimal", "xhigh"] as const;
+/** Google 族的三级思考档位（ADR-0022 只生产 `high`，读旧档时按同一白名单判）。 */
+const THINKING_LEVELS = ["high", "medium", "low", "minimal"] as const;
+
+/**
+ * 生成参数的报告投影：**只披露白名单可判定的参数**（数值 / 布尔 / 已知枚举）。
+ *
+ * 两处同源共用它：`generationLog[].params`（逐轮）与 `optimization.candidates[].params`
+ * （存档里「这一阶段实际发出了什么」）。`params` 是端点原生形状、由模型配置手写而来，
+ * 所以它可能带自由文本（`stop` / `logit_bias` 的内容），也可能带本报告不认识的键——
+ * 前者的值、后者的键名都不透传（hld §8.3：归档报告不公开任意自由文本）。
+ */
 export const paramsOf = (value: unknown) => {
   const params = objectOf(value);
-  const projected: Record<string, number | string | Readonly<Record<string, number | string>>> = {};
+  const projected: Record<string, ReportParamValue> = {};
   for (const key of ["max_tokens", "max_completion_tokens", "max_output_tokens", "seed"]) {
     const number = numberOf(params[key]);
     if (number !== null) projected[key] = number;
@@ -153,24 +170,10 @@ export const paramsOf = (value: unknown) => {
     const number = params[key];
     if (typeof number === "number" && Number.isFinite(number)) projected[key] = number;
   }
-  const effort = enumOf(params.reasoning_effort, [
-    "high",
-    "medium",
-    "low",
-    "none",
-    "minimal",
-    "xhigh",
-  ]);
+  const effort = enumOf(params.reasoning_effort, EFFORTS);
   if (effort !== null) projected.reasoning_effort = effort;
   for (const key of ["reasoning", "output_config"]) {
-    const nestedEffort = enumOf(objectOf(params[key]).effort, [
-      "high",
-      "medium",
-      "low",
-      "none",
-      "minimal",
-      "xhigh",
-    ]);
+    const nestedEffort = enumOf(objectOf(params[key]).effort, EFFORTS);
     if (nestedEffort !== null) projected[key] = { effort: nestedEffort };
   }
   const thinking = objectOf(params.thinking);
@@ -179,9 +182,21 @@ export const paramsOf = (value: unknown) => {
     const budget = numberOf(thinking.budget_tokens);
     projected.thinking = { type, ...(budget === null ? {} : { budget_tokens: budget }) };
   }
+  // generate-content 族的思考档位与 adaptive 中转扩展：枚举与布尔，没有自由文本。
+  const thinkingConfig = objectOf(params.thinkingConfig);
+  const thinkingLevel = enumOf(thinkingConfig.thinkingLevel, THINKING_LEVELS);
+  const includeThoughts =
+    typeof thinkingConfig.includeThoughts === "boolean" ? thinkingConfig.includeThoughts : null;
+  if (thinkingLevel !== null || includeThoughts !== null)
+    projected.thinkingConfig = {
+      ...(thinkingLevel === null ? {} : { thinkingLevel }),
+      ...(includeThoughts === null ? {} : { includeThoughts }),
+    };
+  if (typeof params.forceAdaptiveThinking === "boolean")
+    projected.forceAdaptiveThinking = params.forceAdaptiveThinking;
   return {
     values: projected,
-    // stop/logit_bias 内容有自由文本，只披露是否配置；未知键不透传。
+    // stop/logit_bias 内容有自由文本，只披露是否配置；未知键连键名都不透传。
     samplingBiasConfigured: [
       "temperature",
       "top_p",

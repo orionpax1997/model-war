@@ -39,6 +39,7 @@ import {
   TRIAL_PLAYER_IDS,
   TRIAL_SEEDS,
   type ArchiveMeta,
+  type JsonValue,
   type ReplayResultLine,
   type SelectionPlan,
   type TrialActionFacts,
@@ -249,7 +250,11 @@ const writeGridArchive = (
 const gridMetaOf = (
   plan: TrialPlan,
   candidates: readonly GridCandidateFixture[],
-  options: { readonly omit?: "score" | "sparring" | "plan" } = {},
+  options: {
+    readonly omit?: "score" | "sparring" | "plan";
+    /** 每个候选实际发出的参数（端点原生形状，存档原值）；不给 = 旧档形状（无这栏）。 */
+    readonly candidateParams?: JsonValue;
+  } = {},
 ): ArchiveMeta => {
   const selection = buildArchiveGridSelection(
     plan,
@@ -302,6 +307,7 @@ const gridMetaOf = (
         scriptFile: `observed-r1-round-${String(candidate.stage + 1)}.jsonl.candidate.js`,
         observationsFile: `observed-r1-round-${String(candidate.stage + 1)}.jsonl`,
         scriptSha256: shaOf(candidate.product),
+        ...(options.candidateParams === undefined ? {} : { params: options.candidateParams }),
         score: {
           totalPoints: candidate.score * TRIAL_MATCHES_PER_CANDIDATE,
           averagePoints: candidate.score,
@@ -329,7 +335,10 @@ const gridMetaOf = (
 
 /** v2 网格档在盘上：返回 root 与计划（三个候选都由同一张计划跑出来）。 */
 const writeGridRoot = (
-  options: { readonly omit?: "score" | "sparring" | "plan" } = {},
+  options: {
+    readonly omit?: "score" | "sparring" | "plan";
+    readonly candidateParams?: JsonValue;
+  } = {},
 ): { readonly root: string; readonly plan: TrialPlan } => {
   const root = rootOf();
   const plan = trialGridPlanFixture();
@@ -343,7 +352,12 @@ const writeGridRoot = (
 };
 
 /** v1 历史档：三场单图试跑 + 12 场选拔（三份基准、种子 401–403、earlier-stage）。 */
-const writeLegacyRoot = (): { readonly root: string; readonly selectionPlan: SelectionPlan } => {
+const writeLegacyRoot = (
+  options: {
+    /** 旧档的候选参数（端点原生形状，可能带自由文本）；不给 = 这栏出现之前冻结的档。 */
+    readonly candidateParams?: JsonValue;
+  } = {},
+): { readonly root: string; readonly selectionPlan: SelectionPlan } => {
   const root = rootOf();
   const product = "function loop() {}";
   const sources = [
@@ -417,6 +431,7 @@ const writeLegacyRoot = (): { readonly root: string; readonly selectionPlan: Sel
         scriptFile: `observed-r1-round-${String(stage + 1)}.jsonl.candidate.js`,
         observationsFile: `observed-r1-round-${String(stage + 1)}.jsonl`,
         scriptSha256: shaOf(product),
+        ...(options.candidateParams === undefined ? {} : { params: options.candidateParams }),
       })),
     },
     selection,
@@ -533,6 +548,81 @@ it("v2 网格档：三类分数分列、陪练身份与计划指针、复用来�
   // JSON 里也不搬 32 场明文：组合摘要有，逐场座位表没有。
   expect(markdown).not.toContain(`"seats"`);
   expect(await readJson(root)).not.toContain(`"seats"`);
+});
+
+// 候选参数是端点原生形状（`generationParams()` 原样落档），可能带 `stop` / `logit_bias` 的自由文本。
+// hld §8.3：归档报告不公开任意自由文本——白名单取不到的就不进报告，取得到的照常披露。
+const FREE_TEXT = "SECRET-FREE-TEXT";
+const nativeParamsOf = (): JsonValue => ({
+  max_tokens: 8192,
+  temperature: 0.4,
+  reasoning_effort: "high",
+  thinking: { type: "enabled", budget_tokens: 2048, body: FREE_TEXT },
+  thinkingConfig: { thinkingLevel: "high", includeThoughts: true, note: FREE_TEXT },
+  forceAdaptiveThinking: true,
+  stop: [FREE_TEXT],
+  logit_bias: { [FREE_TEXT]: 100 },
+  [FREE_TEXT]: FREE_TEXT,
+});
+const projectedParamsOf = () => ({
+  values: {
+    max_tokens: 8192,
+    temperature: 0.4,
+    reasoning_effort: "high",
+    thinking: { type: "enabled", budget_tokens: 2048 },
+    thinkingConfig: { thinkingLevel: "high", includeThoughts: true },
+    forceAdaptiveThinking: true,
+  },
+  samplingBiasConfigured: true,
+});
+
+it("v2 候选参数走白名单投影：自由文本不进报告 JSON 与 markdown，数值/枚举照常披露", async () => {
+  const { root } = writeGridRoot({ candidateParams: nativeParamsOf() });
+  const [report] = readArchiveReports(root);
+  expect(report?.initialCandidate?.params).toEqual(projectedParamsOf());
+  for (const candidate of [
+    report?.initialCandidate,
+    ...(report?.intermediateCandidates ?? []),
+    report?.finalCandidate,
+  ]) {
+    if (candidate === null || candidate === undefined) continue;
+    expect(JSON.stringify(candidate)).not.toContain(FREE_TEXT);
+  }
+  const json = await readJson(root);
+  expect(json).not.toContain(FREE_TEXT);
+  // 白名单内的数值/布尔/枚举不能被一起砍掉：报告仍能回答「当时发的是什么」。
+  expect(json).toContain(`"params": {`);
+  expect(json).toContain(`"max_tokens": 8192`);
+  expect(json).toContain(`"thinkingLevel": "high"`);
+  expect(json).not.toContain(`"stop"`);
+  expect(json).not.toContain(`"logit_bias"`);
+  const markdown = await readMarkdown(root);
+  expect(markdown).not.toContain(FREE_TEXT);
+  expect(markdown).toContain(
+    `实际参数（白名单投影）：{"max_tokens":8192,"temperature":0.4,"reasoning_effort":"high","thinking":{"type":"enabled","budget_tokens":2048},"thinkingConfig":{"thinkingLevel":"high","includeThoughts":true},"forceAdaptiveThinking":true}；采样偏置已配置=true`,
+  );
+});
+
+it("v1 历史档的旧形状参数同样只披露白名单值，缺这栅就不写", async () => {
+  const absent = writeLegacyRoot();
+  const absentReport = readArchiveReports(absent.root)[0];
+  // 这栅出现之前冻结的档：不追填、不补空对象。
+  expect(absentReport?.initialCandidate?.params).toBeUndefined();
+  const absentJson = JSON.parse(await readJson(absent.root)) as {
+    readonly initialCandidate: Record<string, unknown> | null;
+  }[];
+  expect(absentJson[0]?.initialCandidate).not.toBeNull();
+  expect(Object.hasOwn(absentJson[0]!.initialCandidate!, "params")).toBe(false);
+  expect(await readMarkdown(absent.root)).toContain("- 实际参数：旧档未记录（不追填）");
+
+  const withParams = writeLegacyRoot({ candidateParams: nativeParamsOf() });
+  const [report] = readArchiveReports(withParams.root);
+  expect(report?.initialCandidate?.params).toEqual(projectedParamsOf());
+  const json = await readJson(withParams.root);
+  expect(json).not.toContain(FREE_TEXT);
+  expect(json).toContain(`"max_tokens": 8192`);
+  const markdown = await readMarkdown(withParams.root);
+  expect(markdown).not.toContain(FREE_TEXT);
 });
 
 it.each(["score", "sparring", "plan"] as const)(

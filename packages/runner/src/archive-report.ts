@@ -387,7 +387,15 @@ export type ReportLegacySelectionPlan = {
   readonly baselines: readonly { readonly id: string; readonly scriptSha256: string }[];
 };
 
-export type ReportCandidate = ArchiveOptimizationCandidate & {
+/**
+ * 一个候选一行。
+ *
+ * `params` **不是**存档里那份端点原生参数，而是与逐轮日志同一套白名单投影（见 `paramsOf`）：
+ * 存档原值只能断定数值 / 布尔 / 已知枚举那几格，`stop` / `logit_bias` 的内容与白名单外的键
+ * 不进报告（hld §8.3）。旧档没有这栏就不写，不追填。
+ */
+export type ReportCandidate = Omit<ArchiveOptimizationCandidate, "params"> & {
+  readonly params?: ReturnType<typeof paramsOf>;
   readonly scriptSource: string;
   readonly scriptState: "verified" | "missing" | "unreadable" | "mismatch";
   readonly actualScriptSha256: string | null;
@@ -1023,7 +1031,8 @@ const candidateReportOf = (
     ...(descriptor.reusedFromStage === undefined
       ? {}
       : { reusedFromStage: descriptor.reusedFromStage }),
-    ...(descriptor.params === undefined ? {} : { params: descriptor.params }),
+    // 存档里的端点原生参数只过白名单投影再进报告：原值含自由文本（`stop` / `logit_bias`）。
+    ...(descriptor.params === undefined ? {} : { params: paramsOf(descriptor.params) }),
     scriptSource,
     scriptState,
     actualScriptSha256,
@@ -1738,6 +1747,12 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         "",
         `- JS 来源：${escape(candidate.scriptSource)}；状态：${candidate.scriptState}`,
         `- scriptSha256=${candidate.scriptSha256}；实际 hash=${candidate.actualScriptSha256 ?? "null"}`,
+        // 参数只写白名单投影（与逐轮同一套）：原值含 `stop` / `logit_bias` 的自由文本，不回显。
+        ...(candidate.params === undefined
+          ? ["- 实际参数：旧档未记录（不追填）"]
+          : [
+              `- 实际参数（白名单投影）：${escape(JSON.stringify(candidate.params.values))}；采样偏置已配置=${candidate.params.samplingBiasConfigured}`,
+            ]),
         `- 观测状态：${candidate.observations.state}；来源：${escape(candidate.observations.source)}`,
         `- 实际场数 ${candidate.observations.observedMatches ?? "null"}；noScoreSource ${candidate.observations.noScoreSource ?? "null"}`,
         ...renderFacts(candidate.observations),
