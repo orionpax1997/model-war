@@ -1,5 +1,5 @@
 /**
- * `runMatch`:一条命令跑完一整场空转对局(本票的第一道闸门,hld §2.2.6 脊柱)。
+ * `runMatch`:一条命令跑完一整场空转对局(hld §2.2.6 脊柱的第一道闸门)。
  *
  * 读的是**入库的真源**:`rulesets/v1.json` 与 `maps/open-clash.json`。不用手搓夹具的理由:
  * 真源取值与引擎读法一旦分叉(某个键改名、某张图少一个座位的主基地),手搓的夹具照样绿,
@@ -24,7 +24,7 @@ const read = (relative: string): string =>
 const RULESET = JSON.parse(read("rulesets/v1.json")) as Ruleset;
 const MAP = JSON.parse(read("maps/open-clash.json")) as MapDefinition;
 
-/** 空策略:什么都不交回,于是世界空转——本票要的正是这一局。 */
+/** 空策略:什么都不交回,于是世界空转——这里要的正是这一局。 */
 const idle = (): StubStrategy => () => [];
 
 /** 四个座位的空桩执行器。 */

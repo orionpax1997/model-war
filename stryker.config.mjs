@@ -50,7 +50,7 @@ const config = {
   disableTypeChecks: true,
 
   // 不把用不上的东西复制进沙箱(node_modules/.git/*.tsbuildinfo 是 Stryker 内置忽略项)。
-  ignorePatterns: [".git", ".scratch", "archive", "docs", "**/*.md"],
+  ignorePatterns: [".git", "archive", "docs", "**/*.md"],
 
   // ── 与 TypeScript 7 的接口错位,及其绕法 ──────────────────────────────
   // Stryker 10.0.0 的 `TSConfigPreprocessor` 调 `ts.parseConfigFileTextToJson` /

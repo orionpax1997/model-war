@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: partially superseded
+partially_superseded_by: ADR-0024, ADR-0025
 ---
 
 # 两次事实反馈纳入真实终局计分依据与四方结果
@@ -10,4 +11,4 @@ status: accepted
 
 接受额外输入上下文、终局旁证存储与读取校验成本,换取可核对的比赛结果。摘要仅来自真实完成的对局,权重与单位造价取当局 ruleset,积分复用既有排名器;不确定墙钟超时、执行故障或缺失终局不能伪造零分或完整结果。旧观测缺少终局事实时继续可读并标为未知,不追填历史。终局采集和计分投影留在 CLI,gen 只接收 schema 的纯数据摘要;保持包边界与公开出口白名单,不放宽 result 符号门禁。
 
-术语归根 [CONTEXT](../../CONTEXT.md);需求与验收归 [srs FR-5/FR-6/FR-8/NFR-2](../srs.md),规则及事实边界归 [gdd §3.1/§3.3](../gdd.md),循环、独立选拔、数据与安全投影归 [hld §6.2/§6.3/§7.4](../hld.md)。参数取值真源仍为 `rulesets/*.json`,本文不另立配置。
+术语归根 [CONTEXT](../../CONTEXT.md);规则及事实边界归 [gdd §3.1/§3.3](../gdd.md),循环、独立选拔、数据与安全投影归 [hld §6.2/§6.3/§7.4](../hld.md)。参数取值真源仍为 `rulesets/*.json`,本文不另立配置。

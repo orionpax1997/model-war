@@ -1,5 +1,5 @@
 /**
- * engine 包的**导出面**(hld《模块的深度》:「调用方要学的东西少于它拿到的能力」)。
+ * engine 包的**导出面**(hld §3.1:「调用方要学的东西少于它拿到的能力」)。
  *
  * 外部缝**唯一**是 `runMatch`。先钉「恰好只有 runMatch」(正向),再钉「内部符号一个都不在」
  * (反向):两向同在,一个内部缝漏出去、或多导出一个平行入口,都会当场红。
@@ -43,7 +43,7 @@ it("处理器与写出路径的内部符号一个都不在导出面上", () => {
 
 it("六个 intent 只有一个实现,不构成缝,所以不导出", () => {
   // 把六个 intent 做成带公开接口的独立包或从 index 再导出,都是把不可替换的东西说成可替换。
-  // 本票不导出它们;02b 接 `runMatch` 时也不该导出(它收的是冻结脚本,不是 intent)。
+  // 这里不导出它们;`runMatch` 层也不该导出(它收的是冻结脚本,不是 intent)。
   const exported = Object.keys(engine);
   for (const symbol of ["INTENT_KINDS", "Intent", "check", "run"]) {
     expect(exported).not.toContain(symbol);

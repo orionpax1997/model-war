@@ -1,3 +1,7 @@
+---
+status: accepted
+---
+
 # 规则文档的表格由真源包生成,而它的真源时点在规则落库那一格
 
 `docs/rules-vN/` 两份文档的**表格部分**(API 表、常量表、`ERR_*` 表、数值表)改由真源包与 `rulesets/vN.json` 生成,散文段(机制、语义、示例)仍手写;为此给生成物加一种**区块形态**——真源产出 `{ marker, content }`,漂移检查按 marker 把工作树文件里对应的区块抽出来逐字节比,区块外的散文不比。配套的一条时点决定:**沙箱注入 API 符号表由规则落库这一格回填**,不再等沙箱执行器——终稿 API 面是那一格的交付物,等一个下游格子来定上游的名字,同源就只剩一句人话。
@@ -21,7 +25,7 @@
 
 ---
 
-> **销账(2026-10,票 03)**:上面 Consequences 第二条那笔账已销。
+> **销账(2026-10)**:上面 Consequences 第二条那笔账已销。
 > `packages/schema/src/script-surface.ts` 的头注随类型面回填一并改掉,那张符号表不再自己写签名
 > (15 条 `signature` 已删除,签名改由 `packages/schema/script-api/index.d.ts` 投影,见
 > [ADR-0006](./0006-script-api-type-surface-lands-in-engine.md))。

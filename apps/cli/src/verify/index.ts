@@ -1,5 +1,5 @@
 /**
- * `modelwar verify <replay.jsonl> [--root <仓库根>]` 的处理器(hld §9;NFR-2 的复算链)。
+ * `modelwar verify <replay.jsonl> [--root <仓库根>]` 的处理器(hld §9;复算链)。
  *
  * ── 它做什么 ──
  *

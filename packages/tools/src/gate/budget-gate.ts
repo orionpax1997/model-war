@@ -4,8 +4,8 @@
  * ── 它断言什么,不断言什么 ──
  *
  * 只承担**结构性**断言:已定稿的预算键满足它们各自的形状约束(事件计数上限是中断粒度的
- * 整数倍(票 05),内存两键的夹逼与软阈下界(票 06),体积上限 ≥ 基准产物最大值与
- * 硬超时 ≥ 20 × 软限(票 07)),以及中断粒度这个常量与它在文档里的三处副本逐字一致。它
+ * 整数倍、内存两键的夹逼与软阈下界、体积上限 ≥ 基准产物最大值与硬超时 ≥ 20 × 软限,
+ * 取值规则见 hld §5.3),以及中断粒度这个常量与它在文档里的三处副本逐字一致。它
  * **不做**「取值是否贴边」这类结论性判断——那是动态失配断言(默认 `test` 项目)的活。重活
  * (真引擎失配)留在那边。
  *
@@ -42,8 +42,13 @@ export const BUDGET_KEYS = [
   "scriptSizeLimit",
 ] as const;
 
-/** `docs/hld.md` 里「中断粒度」副本的期望处数(§5.0 表 + §5.0 预算可复现段 + §5.3 机制表)。 */
-export const HLD_GRANULARITY_COPIES = 3;
+/**
+ * `docs/hld.md` 里「中断粒度」副本的期望处数。
+ *
+ * **一处**:沙箱行为表(§5.0)是该常量的唯一文档副本。此前同一事实抄在三处(表 + 预算段 + 机制表),
+ * 抄得越多越容易与引擎常量分叉,且门禁只能数份数、修不了语义——文档收口后按「一个事实一个家」留一处。
+ */
+export const HLD_GRANULARITY_COPIES = 1;
 
 export type BudgetGateInput = {
   /** `rulesets/v1.json` 解析出来的取值(只用到预算键那几项)。 */
@@ -122,7 +127,7 @@ const granularityCopiesIn = (source: string): readonly number[] =>
 /**
  * 跑一次结构门禁,收集全部不通过项;空 `violations` 即通过。
  *
- * 结构上只对**已定稿**的预算键做形状断言;未定键整段跳过(它们的轨本就未启用)。票 07 要加的
+ * 结构上只对**已定稿**的预算键做形状断言;未定键整段跳过(它们的轨本就未启用)。要加的
  * 硬下界/夹逼(体积上限、墙钟)在这里追加一段即可,不必改上面的骨架。
  */
 export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
@@ -196,7 +201,7 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
     }
   }
 
-  // 结构断言 #1(票 05):eventTickLimit 必须是中断粒度的整数倍——它的有效分辨率是一整格,
+  // 结构断言 #1:eventTickLimit 必须是中断粒度的整数倍——它的有效分辨率是一整格,
   // 小于一格的取值彼此等价。
   if (states.get("eventTickLimit") === "final" && granularity !== null) {
     const limit = input.budgetValues.eventTickLimit;
@@ -214,7 +219,7 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
     }
   }
 
-  // 结构断言 #2(票 06):内存两键的夹逼与软阈下界。
+  // 结构断言 #2:内存两键的夹逼与软阈下界。
   //
   // 两个「未定」不是一件事,写在这里以区别于「值域约束」:**分配上限未定 = VM 不设任何上限;
   // 判罚线未定 = 该轨不启用**。两种「无保护」的形态不同,键落定后才各归其位。
@@ -272,7 +277,7 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
     }
   }
 
-  // 结构断言 #3(票 07):体积上限 ≥ 基准产物最大值——它是唯一能封「直线代码不计量」盲区的键,
+  // 结构断言 #3:体积上限 ≥ 基准产物最大值——它是唯一能封「直线代码不计量」盲区的键,
   // 且 `check:selfproof` 在占位期拿这个最大值当地板值;终值低于它会红在一条**不在默认链上**的
   // 门禁里(只会在有人手跑时才发现),所以这条下界必须由本门禁带着。
   if (states.get("scriptSizeLimit") === "final") {
@@ -293,7 +298,7 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
     }
   }
 
-  // 结构断言 #4(票 07):硬超时 ≥ 20 × 软限——硬超时是成本兜底(触发即整场作废并重跑),
+  // 结构断言 #4:硬超时 ≥ 20 × 软限——硬超时是成本兜底(触发即整场作废并重跑),
   // 软限只观测。这条关系防止「盲目放大」(成本失控)与「宁小勿大」(把偶发负载当判据)两种相反的错误。
   if (
     states.get("wallClockSoftLimit") === "final" &&

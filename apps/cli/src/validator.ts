@@ -1,5 +1,5 @@
 /**
- * 读入端校验器:本仓库**唯一**一份 ajv 校验(spec《校验器:落在 CLI 应用》)。
+ * 读入端校验器:本仓库**唯一**一份 ajv 校验。
  *
  * 为什么落在这儿而不落回真源包:真源包交付 JSON Schema **数据**,不交付校验器——
  * 它受包依赖规则约束,不能依赖 ajv(hld §3.2)。而 ajv 只需要一个宿主:CLI 是唯一用户面,
@@ -8,7 +8,7 @@
  * 三条纪律,改代码前先读:
  *
  * 1. **纯函数**。签名是「一段 JSON 值 → 接受 / 带诊断拒绝」,不碰文件系统、不碰 CLI 退出码。
- *    接受 / 拒绝的断言落在本文件导出的函数上(spec《Testing Decisions》副缝);
+ *    接受 / 拒绝的断言落在本文件导出的函数上(副缝);
  *    `map-lint` 的地图校验断言也落在这里,不去测子命令的退出码。
  * 2. **不新增任何 CLI 子命令**(hld §9 的六条不动)。真正的风险不是校验点少,而是日后有人
  *    为了让别的包也能校验而手写一份形状 if —— 那才是第二真源。
@@ -16,7 +16,7 @@
  *    面向模型层是渲染后的短句,含 JSON 指针,并**对同类错误合并成一行**
  *    (生成管线的五轮迭代预算撑不撑得住,取决于这个合并)。
  *
- * 本文件的形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放 meta 行 / 回放末行 `result` / 观测行 / 试跑观测),走的是**同一个 Ajv 实例、
+ * 本文件的形状(地图 / 规则集 / 存档 meta / 对局输入 / 回放 meta 行 / 回放末行 `result` / 观测行 / 试跑观测 / 网格汇总),走的是**同一个 Ajv 实例、
  * 同一套投影与合并渲染**。新增一种数据形状是「再加一个 `validateXxx` + 它的装载期断言」,
  * 不是新写一份校验器:真正的风险不是校验点少,而是日后有人为了让别的包也能校验而手写一份
  * 形状 if —— 那才是第二真源。
@@ -41,6 +41,7 @@ import {
   RULESET_VERSION,
   SPAWN_TICKS_COEFFICIENT,
   TRIAL_OBSERVATION_JSON_SCHEMA,
+  TRIAL_GRID_SUMMARY_JSON_SCHEMA,
   type ArchiveMeta,
   type JsonValue,
   type MapDefinition,
@@ -49,6 +50,7 @@ import {
   type ReplayMetaLine,
   type ReplayResultLine,
   type Ruleset,
+  type TrialGridSummary,
   type TrialObservationLine,
   type UnitStats,
 } from "@model-war/schema";
@@ -97,7 +99,7 @@ export const SHA256_MISMATCH_KEYWORD = "sha256-mismatch";
 
 /**
  * 存档缺档(hld §7.4 的三件套 `script.ts` / `script.js` / `meta.json` 不全,或某个座位
- * 根本没有那份存档)。**不跳过、不补默认值**(FR-6 AC2),故它与「哈希不符」分开报:
+ * 根本没有那份存档)。**不跳过、不补默认值**,故它与「哈希不符」分开报:
  * 缺的是东西,不对的是东西,给模型的建议不同。
  */
 export const ARCHIVE_FILES_INCOMPLETE_KEYWORD = "archive-files-incomplete";
@@ -142,6 +144,10 @@ export type TrialObservationValidation =
   | { readonly ok: true; readonly observation: TrialObservationLine }
   | ValidationRejection;
 
+export type TrialGridSummaryValidation =
+  | { readonly ok: true; readonly summary: TrialGridSummary }
+  | ValidationRejection;
+
 // `allErrors: true` 是合并的前提:默认的 fail-fast 只报第一条错,
 // 面向模型层就退化成「每次回喂只修一个错」,五轮预算必被吃光。
 const ajv = new Ajv({ allErrors: true });
@@ -164,6 +170,9 @@ const checkReplayResultShape = ajv.compile(REPLAY_RESULT_LINE_JSON_SCHEMA as Sch
 const checkObservationShape = ajv.compile(OBSERVATION_LINE_JSON_SCHEMA as SchemaObject);
 const checkExceptionShape = ajv.compile(EXCEPTION_LINE_JSON_SCHEMA as SchemaObject);
 const checkTrialObservationShape = ajv.compile(TRIAL_OBSERVATION_JSON_SCHEMA as SchemaObject);
+// 网格汇总（`<观测文件>.grid.json`）：生成侧执行器写、选拔侧当证据读。读入端一律过同一份
+// 派生验证器，不在消费端手写形状 if（ADR-0016）。
+const checkTrialGridSummaryShape = ajv.compile(TRIAL_GRID_SUMMARY_JSON_SCHEMA as SchemaObject);
 
 const MAJOR_OF_VERSION = /^v([0-9]+)$/;
 
@@ -323,7 +332,7 @@ export const validateMap = (value: JsonValue): MapValidation => {
 export type RulesetProvenance = {
   /** 取值文件名,例如 `v1.json`。 */
   readonly rulesetFileName: string;
-  /** 规则文档目录名,例如 `rules-v1`。 */
+  /** 规则文档目录名,例如 `rules-v2`。 */
   readonly rulesDocDirName: string;
 };
 
@@ -435,7 +444,7 @@ export const validateRuleset = (
  * 存档目录那一侧的事实。**纯函数不读盘**,所以「三件套在不在」「文件内容哈希是多少」
  * 是装载方的活,判它们与记录值是否一致是本函数的活——分界与 `RulesetProvenance` 同一条。
  *
- * 为什么三件套的「在不在」也要交进来:FR-6 AC2 明写「缺档报错退出,不跳过」,而
+ * 为什么三件套的「在不在」也要交进来:hld §7.4 明写「缺档报错退出,不跳过」,而
  * 「缺档」压根不在 `meta.json` 的内容里(内容齐了,目录里少一个文件一样是缺档)。
  * 把它做成必填参数而不是可选开关,是与版本判据同一个理由:可选等于留一个
  * 「跳过检查」的静默后门。
@@ -600,13 +609,13 @@ export type MeasuredArchive = {
  * 对局输入那一侧的事实。`measuredArchives` 与 `input.json` 里的 `archives` **同序**,
  * 元素为 `null` 表示那个座位的存档缺档(读不到 `script.js` / `meta.json`)。
  *
- * 为什么实测哈希是必填而不是可选:「哈希不符即拒」是复算链的地基(NFR-2),
+ * 为什么实测哈希是必填而不是可选:「哈希不符即拒」是复算链的地基,
  * 留一个「没传就跳过」的后门,这条地基就只剩一半。
  */
 export type MatchInputProvenance = {
   /** 取值文件名,例如 `v1.json`。与 `input.json` 里声明的 `ruleset` 一起构成三处一致的另两处。 */
   readonly rulesetFileName: string;
-  /** 规则文档目录名,例如 `rules-v1`。 */
+  /** 规则文档目录名,例如 `rules-v2`。 */
   readonly rulesDocDirName: string;
   /** 四个座位各自的实测文件哈希,下标即座位号。 */
   readonly measuredArchives: readonly (MeasuredArchive | null)[];
@@ -675,7 +684,7 @@ const matchInputDiagnostics = (
  * 校验一份对局输入 `input.json`。**纯函数**,与前三个校验器同一条缝。
  *
  * **它不认赛季配置**:赛季配置归 hld §8,那份文件由 runner 在物化时读,不进这一份。
- * 理由写在 `packages/schema/src/match-input.ts` 的头注里(一句话版:FR-7 AC3 要的是
+ * 理由写在 `packages/schema/src/match-input.ts` 的头注里(一句话版:要的是
  * 「每个对局可凭它复算」,而复算一件对局不需要参赛名单与并发度)。
  */
 export const validateMatchInput = (
@@ -780,4 +789,19 @@ export const validateTrialObservation = (value: JsonValue): TrialObservationVali
   }
 
   return { ok: true, observation: value as TrialObservationLine };
+};
+
+/**
+ * 校验一份评测网格汇总（`<观测文件>.grid.json`）的形状。
+ *
+ * 形状的家在真源包 `packages/schema/src/trial-grid-summary.ts`：版本、整份计划、候选摘要、
+ * 分数三元组与逐场身份都在那份 JSON Schema 里。这里只做形状；「这份计划能否由安装面重建」
+ * 「逐场身份是否与计划一致」「分数与逐场观测是否对得上」归消费端的装载期断言。
+ */
+export const validateTrialGridSummary = (value: JsonValue): TrialGridSummaryValidation => {
+  if (!checkTrialGridSummaryShape(value)) {
+    return rejectionOf((checkTrialGridSummaryShape.errors ?? []).map(toMachineDiagnostic));
+  }
+
+  return { ok: true, summary: value as TrialGridSummary };
 };

@@ -4,7 +4,7 @@
  *
  * **为什么是 oxc-parser 而不是 oxlint 的 JS 插件**:hld §2.2.3 最初把 `no-float-literal`
  * 写成 oxlint 的 JS 插件,而 oxlint 自己的配置 schema 给该字段的说明是「JS plugins are in
- * alpha and not subject to semver」。禁浮点是一票否决级的约束(hld §1 确定性可复算、NFR-1),
+ * alpha and not subject to semver」。禁浮点是一票否决级的约束(hld §1 确定性可复算),
  * 不能挂在一条上游声明「不遵循 semver」的扩展通道上——升一次 oxlint 就可能整条门禁消失。
  * oxc-parser 是同一家上游的稳定 API,本包选它作为替代。
  *

@@ -4,7 +4,7 @@
  * ── 顺序是裁决,不是实现细节 ──────────────────────────────────────────────────
  * 固定顺序:**语法失败 → 禁列 → 桥前缀 → 模块系统 → 脚本入口 → 体积**。
  * 禁列排在最前不是随意排的:禁列表里有 `Math.random`,而 `Math` 在内置全局白名单里;
- * 按白名单先判就会把 `Math.random` 放行(spec《规则清单与判定链》)。往本文件里插一级时
+ * 按白名单先判就会把 `Math.random` 放行。往本文件里插一级时
  * **按它在表里的位置插,不要按实现方便的顺序插**。
  *
  * ── 上下文为什么长这样 ────────────────────────────────────────────────────────
@@ -14,7 +14,7 @@
  *
  * ── 解析失败独占结果 ──────────────────────────────────────────────────────────
  * 解析不过时只产出一条 `syntax-error`,一条规则违规都不报:解析器失败时返回的是一棵**残缺的树**,
- * 在残树上跑规则只会得到不可复现的结论(spec《违规输出》)。顺带说明为什么只留**第一条**诊断:
+ * 在残树上跑规则只会得到不可复现的结论(hld §6.2)。顺带说明为什么只留**第一条**诊断:
  * 一棵残树上通常会连着报好几个错误,而面向模型层要改的只有最靠前的那个;
  * 其余那些是同一个笔误的回声,并成一条比逐条列出更省迭代预算。
  */
@@ -37,8 +37,8 @@ import {
 
 /**
  * 六级判定链,按裁决排定。**六个槽位已齐,注释占位机制就此收工**——占位服务的是
- * 「后面几张票还没写」的那段时间(免得这里引用一个还不存在的导出,那会让 `tsc -b` 直接红,
- * 后面的票无路可走)。六级都落地之后它只会让后来者误以为还有槽位没填,于是连同它那行
+ * 「后面几级还没写」的那段时间(免得这里引用一个还不存在的导出,那会让 `tsc -b` 直接红,
+ * 后面的规则无路可走)。六级都落地之后它只会让后来者误以为还有槽位没填,于是连同它那行
  * 「下面 N 级的槽位」一并删掉:新加一级直接**插在表里它该在的那一格**,顺序不许改。
  *
  * 每一格的白盒断言在 `pipeline.test.ts`(禁列 / 桥前缀 / 模块系统 / 脚本入口各一条,体积那条在
@@ -46,11 +46,11 @@ import {
  * 各级的形状(`ScriptLintStage` 与它吃的上下文)归 `rules/script-lint.ts`,不在本文件。
  */
 export const SCRIPT_LINT_STAGES: readonly ScriptLintStage[] = [
-  forbiddenGlobalStage, // 禁列:标识符链整条命中禁列表(票 01)
-  hostBridgeStage, // 桥前缀:任何标识符链的根带宿主桥前缀(票 03)
-  moduleSystemStage, // 模块系统:export / import / import() / require / 动态 eval(票 02)
+  forbiddenGlobalStage, // 禁列:标识符链整条命中禁列表
+  hostBridgeStage, // 桥前缀:任何标识符链的根带宿主桥前缀
+  moduleSystemStage, // 模块系统:export / import / import() / require / 动态 eval
   scriptEntryStage, // 脚本入口:顶层没有可被引擎取到的 `loop` 函数
-  scriptSizeStage, // 体积:字节数超过 maxBytes,iteration 只提示、freeze 拦(票 04)
+  scriptSizeStage, // 体积:字节数超过 maxBytes,iteration 只提示、freeze 拦
 ];
 
 export type ValidateScriptOptions = {
@@ -70,7 +70,7 @@ export type ValidateScriptOptions = {
  * 判定链的对外缝:一段编译后的产物源码 → 一组**全序稳定**的违规(空数组 = 放行)。
  *
  * 输出顺序按 `compareViolations`:先按行列、再按规则类别名。生成管线要 diff 两轮迭代的结果,
- * 顺序不确定就 diff 不出来(spec《违规输出》)。
+ * 顺序不确定就 diff 不出来(hld §6.2)。
  */
 export const validateScriptSource = (
   source: string,

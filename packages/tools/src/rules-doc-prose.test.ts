@@ -77,8 +77,8 @@ it("收窄门禁:更长的标识符里含有键名不算命中", () => {
   expect(handCopiedValuesIn(withValueTable("结算器读 myTickLimitOf = 600 去做什么。"))).toEqual([]);
 });
 
-it("两份契约文档与四份设计文档的正文现在没有手抄的第二份取值", () => {
-  // 扫的集合是显式列出来的,不是「扫到谁算谁」:少列一份就是少一个家(两份契约文档是模型真读的,
+it("四份契约文档与设计文档的正文现在没有手抄的第二份取值", () => {
+  // 扫的集合是显式列出来的,不是「扫到谁算谁」:少列一份就是少一个家(四份契约文档是模型真读的,
   // 收窄门禁先前只盯了 rules.md 一份,api.md 的散文是同一类风险)。gdd 不在集合里,理由见模块头注。
   for (const doc of PROSE_SCANNED_DOCS) {
     const file = fileURLToPath(new URL(doc.href, import.meta.url));
@@ -90,8 +90,11 @@ it("两份契约文档与四份设计文档的正文现在没有手抄的第二�
   }
 });
 
-it("扫的集合里确实有那两份契约文档(别把最要紧的一份从名单里改没了)", () => {
+it("扫的集合里确实有那四份契约文档(别把最要紧的一份从名单里改没了)", () => {
   const labels = PROSE_SCANNED_DOCS.map((doc) => doc.label);
   expect(labels).toContain("docs/rules-v1/rules.md");
   expect(labels).toContain("docs/rules-v1/api.md");
+  // 当前 active 的那一版同样在集合里:模型真读的是它。
+  expect(labels).toContain("docs/rules-v2/rules.md");
+  expect(labels).toContain("docs/rules-v2/api.md");
 });

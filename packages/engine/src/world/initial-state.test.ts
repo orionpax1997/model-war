@@ -4,7 +4,7 @@
  * 契约要求 `getObjectById(id: number): Unit | Site | null`(`docs/rules-v1/api.md`,
  * 类型面真源同在),一个 id 查出来要么是单位要么是点位。而点位号来自地图、单位号来自
  * `nextId`,所以 `createInitialState` 必须把 `nextId` 抬到所有地图号之上。这条不变量活了
- * 四张票没人发现,后果却是真对局里开局 8 个单位一个都打不到(同号点位把它们遮住)。
+ * 很久没人发现,后果却是真对局里开局 8 个单位一个都打不到(同号点位把它们遮住)。
  *
  * 读的是**入库真源**:`rulesets/v1.json` 与三张 `maps/*.json`。手搓夹具会在真源取值分叉时照样绿。
  */

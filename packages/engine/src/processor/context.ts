@@ -57,17 +57,17 @@ export type TickContext = {
    * 步 0 的**故障位**。目前只有一种:墙钟硬超时(`uncertain-timeout`)。
    *
    * 它在步 0 置上后,`processTick` 的 reduce **短路**——后续步不再跑、本 tick 不写回放行。
-   * 这是「作废而非判罚」(spec《双重计数与墙钟》)在结算管线里的落点:故障不是一条读数,
+   * 这是「作废而非判罚」(hld §5.3)在结算管线里的落点:故障不是一条读数,
    * 不影响状态判断,故它必须让本 tick 停下,而不是带着半个状态继续走完八步。
    */
   readonly fault: RunnerFault | null;
   /** 步 0 之后:各座位交回的 intents,按 `playerIndex 0..3` 串行排列。 */
   readonly drained: readonly DrainedIntents[];
-  /** 步 1 之后:分组、定序并**带上座位**的 intent(校验的落点;本票只留移动两条)。 */
+  /** 步 1 之后:分组、定序并**带上座位**的 intent(校验的落点;本模块只留移动两条)。 */
   readonly intents: readonly IssuedIntent[];
   readonly state: GameState;
   /**
-   * 寻路调用量,下标即座位(票 04)。
+   * 寻路调用量,下标即座位(hld §4.7)。
    *
    * 这是给预算层的**账**,不是罚:hld §4.7 要求寻路计入脚本 API 调用预算,而本层不实现预算判罚
    * (§5.3:判据锚定 host 侧可测量量,预算层落地时把它并进 `apiCallTickLimit` 的记账)。

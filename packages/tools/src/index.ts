@@ -54,7 +54,7 @@ export { ALLOWED_MATH_MEMBERS, BUILTIN_GLOBAL_NAMES, isAllowedMathMember } from 
 
 // 参赛脚本可见面的名表读取点:宿主桥前缀 / 禁列全局名 / 沙箱注入 API 符号表。
 // 这里只有读取形态的封装,没有任何规则——禁 export/import、禁 `__*`、禁列、脚本体积上限
-// 全属 D(体积上限是数值,取值在规则集文件里,不在名单内)。
+// 全属规则层(体积上限是数值,取值在规则集文件里,不在名单内)。
 export {
   FORBIDDEN_GLOBAL_NAMES,
   HOST_BRIDGE_PREFIX,
@@ -64,7 +64,7 @@ export {
   isSandboxInjectedSymbol,
 } from "./script-surface.ts";
 
-// ── 参赛脚本静态校验器(D)─────────────────────────────────────────────
+// ── 参赛脚本静态校验器─────────────────────────────────────────────
 // 判定链与违规形状是对外的那一半:生成管线可以 spawn 入口(退出码 + stdout),
 // 也可以直接把这段当库用(结构化违规数组)。规则本身是纯函数,入口那一层薄壳不重复实现它。
 export type {

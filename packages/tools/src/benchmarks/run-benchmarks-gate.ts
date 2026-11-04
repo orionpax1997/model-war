@@ -111,7 +111,7 @@ for (const name of BENCHMARK_NAMES) {
     callable = false;
   }
 
-  // ④ 诊断只有那三类,而「名字未声明」那一项已经归零——类型面已回填(票 03),它必须一直是 0。
+  // ④ 诊断只有那三类,而「名字未声明」那一项已经归零——类型面已回填,它必须一直是 0。
   for (const diagnostic of compiled.diagnostics.filter((d) => d.cls === "unexpected")) {
     console.error(`✗ ${name}:非预期诊断 ${diagnostic.line}`);
     failed = true;

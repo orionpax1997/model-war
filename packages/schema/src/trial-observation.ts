@@ -82,7 +82,8 @@ export type TrialActionFacts = {
   readonly version: 1;
   readonly scriptSha256: string;
   readonly seed: number;
-  readonly seat: 0;
+  /** 候选在本场坐哪（`0..3`）。座位是每场的参数，不是候选身份；期望值由计划给。 */
+  readonly seat: ReplaySeat;
   /** 当且仅当 missingTicks 为零；缺失 tick 不补零。 */
   readonly complete: boolean;
   readonly observedTicks: number;
@@ -101,7 +102,7 @@ export type TrialUnitTable = {
   readonly cavalry: number;
 };
 
-/** 四方按 seat 顺序记录；候选身份恒为 candidate，基准为实际脚本目录名。 */
+/** 四方按 seat 顺序记录；候选身份恒为 `candidate`，其余是本场座位上的脚本 id（计划给）。 */
 export type TrialTerminalPlayer = {
   readonly seat: ReplaySeat;
   readonly player: string;
@@ -188,7 +189,9 @@ const TERMINAL_PLAYER_JSON_SCHEMA = {
   ],
   properties: {
     seat: { type: "integer", minimum: 0, maximum: 3 },
-    player: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z0-9][a-z0-9-]*$" },
+    // 身份是计划里的脚本 id（角色限定，如 `top:claude-opus-5-5`）或 `candidate`；
+    // 模型 slug 自带 `.`（`minimax-m3.1-flash`），角色限定用 `:`，故字符集含 `.` 与 `:`。
+    player: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z0-9][a-z0-9:.-]*$" },
     controlledBases: COUNT_JSON_SCHEMA,
     controlledResources: COUNT_JSON_SCHEMA,
     survivingUnits: UNIT_TABLE_JSON_SCHEMA,
@@ -284,7 +287,7 @@ export const TRIAL_OBSERVATION_JSON_SCHEMA = {
         version: { const: 1 },
         scriptSha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
         seed: COUNT_JSON_SCHEMA,
-        seat: { const: 0 },
+        seat: { type: "integer", minimum: 0, maximum: 3 },
         complete: { type: "boolean" },
         observedTicks: COUNT_JSON_SCHEMA,
         missingTicks: COUNT_JSON_SCHEMA,

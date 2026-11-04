@@ -78,8 +78,7 @@ const EXPECTED_KEYS: readonly string[] = [
 
 const EXPECTED_FINAL_KEYS: readonly string[] = [
   ...EXPECTED_KEYS.slice(0, 13),
-  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键,票 07 落墙钟两键与体积键):
-  // 票 07 之后八键全部定稿,未定键集为空。
+  // 预算键分批落定稿(计数与异常三键、内存两键、墙钟两键与体积键):八键全部定稿,未定键集为空。
   "exceptionTickLimit",
   "eventTickLimit",
   "apiCallTickLimit",
@@ -125,7 +124,7 @@ it("内存软阈不入键清单(它是派生展示项,入表不入 schema)", () 
 
 // ── 「未定值」是判别式的,不是一个标志位 ───────────────────────────────────
 
-it("票 07 收口:未定键集为空,21 键全部定稿;占位常量的语义仍保留", () => {
+it("未定键集为空,21 键全部定稿;占位常量的语义仍保留", () => {
   expect(UNDETERMINED_VALUE).toBe(0);
   expect(EXPECTED_UNDETERMINED_KEYS).toEqual([]);
   expect(keysWith("undetermined")).toEqual([]);
@@ -141,12 +140,12 @@ it("票 07 收口:未定键集为空,21 键全部定稿;占位常量的语义仍
 it("键清单区分「未定的值」与「一个真的 0」:同一个取值,渲染不同", () => {
   // 判据只能来自键自己身上那个 `state`,不能来自「值是不是 0」——
   // 否则标定完成后某个预算上限恰好是 0,文档就会开始骗人。
-  // 票 07 之后未定键集为空,但这条区分仍是判据本身:`initialResources` 是真的 0(下界 0)。
+  // 未定键集为空,但这条区分仍是判据本身:`initialResources` 是真的 0(下界 0)。
   const realZero = RULESET_KEY_CATALOG.initialResources;
   expect(realZero.calibration.state).toBe("final");
   // 下界是 0:取值 0 在它身上合法,合法的 0 不构成「未定」的证据。
   expect(realZero.schema).toMatchObject({ minimum: 0 });
-  // `scriptSizeLimit` 曾是「未定值」的样本,票 07 落定后它 now final——这正是「状态可变、判据是状态」的证据:
+  // `scriptSizeLimit` 曾是「未定值」的样本,落定后它 now final——这正是「状态可变、判据是状态」的证据:
   // 同一个键,标定状态改了,面向模型的渲染就跟着改。
   expect(RULESET_KEY_CATALOG.scriptSizeLimit.calibration).toEqual({ state: "final" });
   // 两态判别联合仍然在,`UNDETERMINED_VALUE`(占位)仍取 0;它与一个真的 0 是两个概念。

@@ -1,5 +1,5 @@
 /**
- * 验收:入库的 runtime bundle 产物**真的能被真 VM 载入**(票 04)。
+ * 验收:入库的 runtime bundle 产物**真的能被真 VM 载入**。
  *
  * ── 这条与 `run-runtime-drift-gate.ts` 的分工 ──
  * 门禁判的是**字节**:现打一次 == 入库产物、入库 sha256 == 常量、产物不含模块语法。它不建 VM。

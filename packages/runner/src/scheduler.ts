@@ -1,10 +1,10 @@
 /**
- * 赛季调度器:并发子进程池 + 退出码驱动的异常重跑/剔除(hld §8.1 / §8.3 / §9,票 06 → 07)
- * + 断点续跑(票 13):同 `outputDir` + 同配置再跑,已完成局跳过 spawn。
+ * 赛季调度器:并发子进程池 + 退出码驱动的异常重跑/剔除(hld §8.1 / §8.3 / §9)
+ * + 断点续跑:同 `outputDir` + 同配置再跑,已完成局跳过 spawn。
  *
- * ── 这一票把「串行」换成「并发池」 ────────────────────────────────────────
+ * ── 为什么是「并发池」而不是串行 ────────────────────────────────────────
  *
- * 票 06 走通了端到端窄路(物化 → spawn → 读末行 → 写报告)。票 07 把那条 `for … await` 换成
+ * 端到端窄路是串行的(物化 → spawn → 读末行 → 写报告)。这里把那条 `for … await` 换成
  * **信号量池**:并发上限 = `season.concurrency ?? min(cpus().length, 8)`,每局一个
  * `modelwar match <input.json> --root <root>` 子进程,各自写进自己的 `<matchDir>`,互不干扰。
  * 池完成顺序不确定 ⇒ 写盘前**按 `(comboIndex, mapIndex, seedIndex)` 排序**,保证并发度 1 与 N
@@ -44,7 +44,7 @@
  *
  * 赛季声明单一 `ruleset`;启动即逐参赛者读 `archive/<slug>/<runId>/meta.json` 的 `ruleset`
  * 字段,任一与赛季声明不一致 → stderr 报错 + 退出码 1,不在同一份报告里分版本分节
- * (spec《规则版本隔离(前置拒绝,非分组)》,复用 FR-10 AC2 的拒跑口径)。
+ * (hld §8.1)。
  *
  * **这里只比对 `meta.ruleset` 这一个字段**:完整校验(逐座位哈希、缺档、规则集三处一致、
  * 沙箱 runtime hash)仍由 `modelwar match` 子进程的装载段(退 1)承担——那是 `validateArchiveMeta`
@@ -66,6 +66,7 @@ import { cpus } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { parseReplay, readLinesOf } from "@model-war/replay";
 import {
+  OPTIMIZATION_GRID_VERSION,
   TRIAL_SEEDS,
   type JsonValue,
   type MatchInput,
@@ -73,6 +74,7 @@ import {
   type MatchInputArchives,
 } from "@model-war/schema";
 import { optimizationMetaOf } from "./archive-optimization.js";
+import { selectionSeedsOf } from "./selection.js";
 import { enumerateMatchUps, slugOf, type MatchUp } from "./enumerate.js";
 import { DEFAULT_RANK_POINTS, perMatchScores, rankSeason, type MatchStanding } from "./ranker.js";
 import type { MatchIssue, MatchIssueReason, SeasonMatchReport, SeasonReport } from "./reporter.js";
@@ -310,8 +312,8 @@ const standingsInMatch = (
 /**
  * 读回放末行的 `result`,只取名次与终局原因。
  *
- * 经 `@model-war/replay` 的 `parseReplay` 读入(与渲染器、NFR-2 复算链同一条读入端,spec《回放
- * 读入端(最小面)》);空回放 / 坏行由 `parseReplay` 抛 `ReplayReadError`,末行不是 `result`
+ * 经 `@model-war/replay` 的 `parseReplay` 读入(与渲染器、复算链同一条读入端);空回放 / 坏行
+ * 由 `parseReplay` 抛 `ReplayReadError`,末行不是 `result`
  * 则在此报错——不静默取个空结果。
  */
 const readResult = (
@@ -501,15 +503,25 @@ export const scheduleSeason = async (
   // 完整计划在任何物化、spawn 或 resume 之前检查；不替换用户选择的种子。
   // 比较按 `seed % 2^31` 归一化（`101 + 2^31` 与 `101` 同一随机源初态，原始值直比会漏检）。
   // 无 `optimization` 字段的纯旧档名册沿用旧行为（test-plan legacy 行：不改旧种子行为）；
-  // 名册一旦含有 opt-in 归档，即按「固定默认 ∪ 该档记录」集合检查（schema 现把记录值固定为 TRIAL_SEEDS，union 是防未来放宽不断 gate）。
+  // 名册一旦含有 opt-in 归档，即按「固定默认 ∪ 该档记录」集合检查（union 是防未来放宽不断 gate）。
+  //
+  // 种子读哪一栏**按优化档版本分派**：v1 档读 `trialSeeds`（三场单图试跑的固定三值），
+  // v2 档读网格计划里的逐场种子（`plan.matches[].seed`，每格一个）。v2 档没有 `trialSeeds`，
+  // 从它读种子会读到 `undefined` 而静默放行——那正是 hld §8.1「不静默替换种子」要防的事。
   for (const archivePath of season.participants) {
     const meta = optimizationMetaOf(JSON.parse(readText(join(root, archivePath, META_NAME))));
-    const trialSeeds = meta?.optimization?.trialSeeds;
-    if (trialSeeds === undefined) continue;
+    const optimization = meta?.optimization;
+    if (optimization === undefined) continue;
+    const recordedSeeds =
+      optimization.version === OPTIMIZATION_GRID_VERSION
+        ? optimization.plan.matches.map((match) => match.seed)
+        : optimization.trialSeeds;
     const forbidden = new Set(
-      [...TRIAL_SEEDS, ...trialSeeds, ...(meta?.selection?.plan.seeds ?? [])].map(
-        (seed) => seed % SEED_STREAM_MODULUS,
-      ),
+      [
+        ...TRIAL_SEEDS,
+        ...recordedSeeds,
+        ...(meta?.selection === undefined ? [] : selectionSeedsOf(meta.selection)),
+      ].map((seed) => seed % SEED_STREAM_MODULUS),
     );
     const conflicts = matchUps.filter((match) => forbidden.has(match.seed % SEED_STREAM_MODULUS));
     if (conflicts.length > 0) {
@@ -662,7 +674,7 @@ export const scheduleSeason = async (
     matches,
     standings,
     // 校验失败名单:扫 archive/<slug>/failed-*.json,只留本季未参赛的 slug
-    // (本季已参赛 slug 的历史失败记录不计;票 09 收窄口径,票 12)。
+    // (本季已参赛 slug 的历史失败记录不计——口径见 hld §8.3)。
     validationFailures: readFailureRecords(
       root,
       new Set(season.participants.map((archiveRef) => slugOf(archiveRef))),
@@ -670,7 +682,7 @@ export const scheduleSeason = async (
     matchIssues,
   };
   writeReportJson(join(outputDir, "report.json"), report);
-  // 人类面产物:每局一篇 narrative/<对局>.md + 一份 report.md(票 09)。
+  // 人类面产物:每局一篇 narrative/<对局>.md + 一份 report.md(hld §8.3)。
   writeReportArtifacts(outputDir, report);
   return EXIT_OK;
 };

@@ -255,32 +255,35 @@ pause "继续"
 
 # ── Stage 3 · 契约体量:上下文够不够得有尺子 ───────────────────────────────
 stage "契约体量:读两份契约到底要多少 token"
+# 契约目录名由版本常量拼(hld §7.1:常量 / docs/rules-vN 目录名 / rulesets/vN.json 三处一致),
+# 与 packages/gen/src/contract.ts 同一口径。拼不出来或读不到就停——不猜版本,也不回落任何草稿。
+RULESET_VERSION="$(sed -n 's/^export const RULESET_VERSION: RulesetVersion = "\(v[0-9][0-9]*\)";$/\1/p' packages/schema/src/index.ts)"
+CONTRACT_DIR="docs/rules-${RULESET_VERSION}"
+if [[ -z "$RULESET_VERSION" ]]; then
+  warn "读不到 packages/schema/src/index.ts 里的 RULESET_VERSION —— 契约体量无从量起。"
+  warn "脚本不再猜版本、也不回落任何草稿:先让版本常量可读再重跑。"
+  exit 1
+fi
 CONTRACT_FILES=()
-for f in docs/rules-v1/rules.md docs/rules-v1/api.md; do
+for f in "$CONTRACT_DIR/rules.md" "$CONTRACT_DIR/api.md"; do
   [[ -f "$f" ]] && CONTRACT_FILES+=("$f")
 done
-CONTRACT_SOURCE="终稿(docs/rules-v1)"
-if (( ${#CONTRACT_FILES[@]} == 0 )); then
-  CONTRACT_SOURCE="草案回落(.scratch/rules-calibration/draft)"
-  for f in .scratch/rules-calibration/draft/rules.md .scratch/rules-calibration/draft/api.md; do
-    [[ -f "$f" ]] && CONTRACT_FILES+=("$f")
-  done
-fi
 CONTRACT_BYTES=0
 for f in "${CONTRACT_FILES[@]}"; do
   sz=$(wc -c <"$f" | tr -d ' ')
   CONTRACT_BYTES=$((CONTRACT_BYTES + sz))
   note "$(printf '%-56s %7d B' "$f" "$sz")"
 done
-if (( ${#CONTRACT_FILES[@]} == 0 )); then
-  warn "两份契约一份都没找到 —— Stage 6 的上下文判定没有尺子,结论不成立。"
-  SKIPPED+=("契约体量:docs/rules-v1/rules.md 与 api.md 都不存在(节点 E 未落库)")
+if (( ${#CONTRACT_FILES[@]} != 2 )); then
+  warn "终稿契约不齐:$CONTRACT_DIR 下 rules.md 与 api.md 应各一份,实际找到 ${#CONTRACT_FILES[@]} 份。"
+  warn "Stage 3/6 的上下文判定没有尺子,结论不成立 —— 先让契约落库并提交再重跑本脚本。"
+  exit 1
 fi
+CONTRACT_SOURCE="终稿($CONTRACT_DIR)"
 # 粗估:中文 UTF-8 约 2.5~3 B/token,英文约 4 B/token;取 2.5 保守侧。
 CONTRACT_TOKENS=$((CONTRACT_BYTES / 5 * 2 + 1))   # 中英混排按 ~2.5 B/token
 say  "合计 $CONTRACT_BYTES B,粗估 ≈ $CONTRACT_TOKENS tokens(按 2.5 B/token,故意往高估)。"
 note "来源:$CONTRACT_SOURCE"
-warn "这两份文档归节点 E。E 落库后重跑 Stage 3/6,拿终稿数字再看一次。"
 pause "继续"
 
 # ── Stage 4 · 建 key 并落 .env ─────────────────────────────────────────────
@@ -352,13 +355,9 @@ note "选型不在本活范围内(归节点 I 的 research)——这里只出事
   printf '照下面填完 models.yaml 就删掉本文件。密钥不在这里,在 .env 的 `COMMAND_CODE_API_KEY`。\n\n'
   printf '## 契约体量\n\n'
   printf -- '- 来源:%s\n' "$CONTRACT_SOURCE"
-  if (( ${#CONTRACT_FILES[@]} > 0 )); then
-    for f in "${CONTRACT_FILES[@]}"; do
-      printf -- '- `%s`:%s B\n' "$f" "$(wc -c <"$f" | tr -d ' ')"
-    done
-  else
-    printf -- '- (两份契约都不在盘上;节点 E 未落库)\n'
-  fi
+  for f in "${CONTRACT_FILES[@]}"; do
+    printf -- '- `%s`:%s B\n' "$f" "$(wc -c <"$f" | tr -d ' ')"
+  done
   printf -- '- 合计:%s B ≈ %s tokens(按 2.5 B/token 往高估)\n' "$CONTRACT_BYTES" "$CONTRACT_TOKENS"
   printf -- '- 判尺:× 10 余量 = ≥ %s tokens(余量留给模板、≤5 轮回喂的校验错误与模型自身输出)\n\n' "$NEEDED"
   printf '## 模型上下文判定表\n\n'

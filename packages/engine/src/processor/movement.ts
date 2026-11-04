@@ -28,7 +28,7 @@ import { moveTargetOf, moveVerdict, unitById } from "./intent-verdicts.js";
 // 本模块再导出它一次,是因为步 2 的移动竞争裁决一直从 `./movement.js` 取它。
 export { unitById };
 
-/** 两条移动意图。其余四条不是移动(归 05–09),本票只交付这两条。 */
+/** 两条移动意图。其余四条不是移动(归占领/采集/战斗/生产那几格),本模块只交付这两条。 */
 export type MoveIntent = Extract<Intent, { kind: "move" | "moveTo" }>;
 
 /** 判别 `move` / `moveTo`。收窄判别式,不靠 `as`。 */

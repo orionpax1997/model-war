@@ -7,12 +7,12 @@ import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import {
   RULESET_VERSION,
-  type ArchiveSelection,
+  TRIAL_BENCHMARK_IDS,
+  type ArchiveSelectionV1,
   type Ruleset,
   type SelectionPlan,
 } from "@model-war/schema";
 import { perMatchScores, validateSelection } from "@model-war/runner";
-import { TRIAL_OPPONENTS } from "../trial/trial.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-selection-"));
@@ -30,7 +30,7 @@ const fixture = (scripts: readonly string[], extra: Partial<Ruleset> = {}) => {
     join(root, "rulesets", `${RULESET_VERSION}.json`),
     JSON.stringify({ ...rules, tickLimit: 4, ...extra }),
   );
-  for (const opponent of TRIAL_OPPONENTS) {
+  for (const opponent of TRIAL_BENCHMARK_IDS) {
     mkdirSync(join(root, "benchmarks", opponent), { recursive: true });
     writeFileSync(join(root, "benchmarks", opponent, "script.js"), "function loop() {}\n");
   }
@@ -78,7 +78,7 @@ it(
     const f = fixture(["function loop() {}\n", "function loop() {}\n", "function loop() {}\n"]);
     const ran = f.run([], f);
     expect(ran.status, ran.stderr).toBe(0);
-    const selection: ArchiveSelection = JSON.parse(ran.stdout);
+    const selection: ArchiveSelectionV1 = JSON.parse(ran.stdout);
     expect(selection.plan.matches.map((match) => match.candidateSeat)).toEqual([
       0, 3, 2, 1, 0, 3, 2, 1, 0, 3, 2, 1,
     ]);
@@ -116,7 +116,7 @@ it(
     const valid = f.run(["--validate"], { ...f, selection });
     expect(valid.status, valid.stderr).toBe(0);
     const { stage, protocolRound, scriptSha256, sourceSha256 } = selection.candidates[0]!;
-    const legacy: ArchiveSelection = {
+    const legacy: ArchiveSelectionV1 = {
       ...selection,
       selected: { stage, protocolRound, scriptSha256, sourceSha256 },
       reason: "earlier-stage",
@@ -141,7 +141,7 @@ it("真实候选正常三振淘汰保留十二场终局，四座积分均为零�
   ]);
   const ran = f.run([], f);
   expect(ran.status, ran.stderr).toBe(0);
-  const selection: ArchiveSelection = JSON.parse(ran.stdout);
+  const selection: ArchiveSelectionV1 = JSON.parse(ran.stdout);
   const candidate = selection.candidates[0]!;
   expect(candidate.matches).toHaveLength(12);
   expect(candidate.totalPoints).toBe(0);

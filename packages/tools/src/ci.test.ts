@@ -2,7 +2,7 @@
  * 流水线冒烟验证:`.github/workflows/*.yml` 必须只调命名脚本,且两条链的成员与规格一致。
  *
  * ── 断言对象是「yaml 里的事实」,不是某段实现 ──
- * 票 07 的验收是「改错即红的冒烟验证」。这里只做两件事:把真实 workflow 文本喂给
+ * 这一层的验收是「改错即红的冒烟验证」。这里只做两件事:把真实 workflow 文本喂给
  * `ci-workflows.ts` 的纯函数,断言它对每个 `run:` 步的判决为「干净」;再把「主链成员」
  * 「夜间硬门禁」「夜间观测项」这三份清单与 workflow 文本对齐。
  *
@@ -50,7 +50,7 @@ const NIGHTLY_HARD_GATES = [
   "check:budget-recheck",
 ] as const;
 
-/** 夜间观测项:只落盘不设红线,红不阻断(ADR-0010、spec §7)。 */
+/** 夜间观测项:只落盘不设红线,红不阻断(ADR-0010、hld §2.2.7)。 */
 const NIGHTLY_OBSERVATIONS = ["mutate", "scan"] as const;
 
 const sorted = (values: readonly string[]): readonly string[] => [...values].sort();

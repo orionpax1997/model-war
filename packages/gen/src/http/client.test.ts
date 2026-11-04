@@ -758,3 +758,79 @@ it("规范客户端先诊断非法参数或能力组合，不读取凭证、不�
   ).rejects.toThrow("请求参数与规范政策不一致");
   expect(fetchStub).not.toHaveBeenCalled();
 });
+
+it("generate-content:POST /models/<id>:streamGenerateContent?alt=sse,无 [DONE] 也按正常收尾", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, {
+      candidates: [{ content: { role: "model", parts: [{ text: "先想", thought: true }] } }],
+    });
+    sseFrame(res, { candidates: [{ content: { parts: [{ text: "脚本" }] } }] });
+    sseFrame(res, { candidates: [{ content: { parts: [{ text: "正文" }] } }] });
+    // 收尾帧只带停止原因与全量读数;之后上游直接关连接,没有 `data: [DONE]`。
+    sseFrame(res, {
+      candidates: [{ content: { parts: [] }, finishReason: "STOP" }],
+      usageMetadata: {
+        promptTokenCount: 17800,
+        candidatesTokenCount: 900,
+        thoughtsTokenCount: 640,
+        totalTokenCount: 19340,
+      },
+    });
+    res.end();
+  });
+  const model = { ...config("generate-content", ep.baseUrl), modelId: "gemini-4-argon" };
+  const client = createHttpModelClient(model);
+
+  const response = await client.send(
+    [
+      { role: "system", content: "你是脚本作者" },
+      user("契约"),
+      { role: "assistant", content: "上一轮回复" },
+      user("诊断反馈"),
+    ],
+    { max_output_tokens: 4096, temperature: 0.5 },
+  );
+
+  const request = ep.requests[0];
+  expect(request?.method).toBe("POST");
+  expect(request?.path).toBe("/models/gemini-4-argon:streamGenerateContent?alt=sse");
+  expect(request?.authorization).toBe(`Bearer ${TEST_KEY_VALUE}`);
+  expect(request?.userAgent).toBe("modelwar-gen");
+  expect(request?.apiKey).toBeUndefined();
+  expect(request?.body).toEqual({
+    systemInstruction: { parts: [{ text: "你是脚本作者" }] },
+    contents: [
+      { role: "user", parts: [{ text: "契约" }] },
+      { role: "model", parts: [{ text: "上一轮回复" }] },
+      { role: "user", parts: [{ text: "诊断反馈" }] },
+    ],
+    generationConfig: { maxOutputTokens: 4096, temperature: 0.5 },
+  });
+  expect(response).toMatchObject({
+    text: "脚本正文",
+    finishReason: "stop",
+    usage: {
+      promptTokenCount: 17800,
+      candidatesTokenCount: 900,
+      thoughtsTokenCount: 640,
+      totalTokenCount: 19340,
+    },
+    stopDetails: { reason: "STOP" },
+  });
+});
+
+it("generate-content:关了连接却没读到停止标记 → 仍判网关截断(retryable)", async () => {
+  const ep = await endpoint((_captured, res) => {
+    openSse(res);
+    sseFrame(res, { candidates: [{ content: { parts: [{ text: "半截" }] } }] });
+    // 没有 finishReason、也没有 usageMetadata 就 EOF:无哨兵的族不能把「没读完」当成功。
+    res.end();
+  });
+  const model = { ...config("generate-content", ep.baseUrl), modelId: "gemini-4-argon" };
+
+  const error = await expectTransportError(createHttpModelClient(model).send([user("hi")], {}));
+
+  expect(error.retryable).toBe(true);
+  expect(error.message).toContain("收尾之前结束");
+});

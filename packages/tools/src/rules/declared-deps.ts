@@ -126,7 +126,7 @@ const specifiersOf = (node: AstNode): readonly string[] => {
  *
  * 说明符取不到名字的情况(动态 `import(someVariable)`)按**不报**处理:门禁断言的是「声明即依赖」,
  * 而取不到名字时能给出的判断是「我看不见」而不是「它没声明」。这个洞的代价有限且已知:
- * 本包的运行时代码里没有任何一处动态 import,且 D 的静态校验器本就禁动态 import(hld §6.2 模块系统一栏)。
+ * 本包的运行时代码里没有任何一处动态 import,且静态校验器本就禁动态 import(hld §6.2 模块系统一栏)。
  *
  * ── 一处刻意划在范围外的形态:`require.resolve("pkg")` ──
  * 它只解析不加载,而本包里唯一的用法(`toolchain-coupling.ts` 读根 devDependency 的 package.json)

@@ -6,8 +6,8 @@
  *
  * 校验器入口的对外契约只有三样:**退出码 = 放行/拦、stdout = 面向模型的文本、参数**。
  * 直接 `import` 它的库会把它的源码并进生成管线的 program(它以源码形态由 Node 的类型擦除
- * 执行);给它补一个 `bin` 会把内部校验动作塞进用户面。所以生成管线只经子进程消费它,
- * 与 spec《调用的形状:子进程 + 退出码》一致。
+ * 执行);给它补一个 `bin` 会把内部校验动作塞进用户面。所以生成管线(`packages/gen/src/pipeline.ts`)
+ * 只经子进程消费它,调用形状就是**子进程 + 退出码 + stdout**。
  *
  * ── 体积上限的取值来源 ──
  *
@@ -33,7 +33,7 @@ export type ScriptLintPhase = "iteration" | "freeze";
 export type ValidateResult = {
   /** 退出码 0 = 放行(含只有非 blocking 提示);非 0 = 拦。 */
   readonly passed: boolean;
-  /** 校验器 stdout,**面向模型的文本**——唯一允许回喂给模型的内容(票 04 消费)。 */
+  /** 校验器 stdout,**面向模型的文本**——唯一允许回喂给模型的内容(`packages/gen/src/pipeline.ts` 消费)。 */
   readonly stdout: string;
   /**
    * 校验条目(`meta.validation.errors` 的来源)。**放行且只有非 blocking 提示时,这里是那些提示条目**,

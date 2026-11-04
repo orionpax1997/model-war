@@ -6,17 +6,16 @@
 不由人记。产物是怎么跑出来的见 §4。
 
 > **口径(本轮重写):这三份是本轮(`§5`/`§9` 已落库的终稿契约)的读数,与另外两批都不可互比。**
-> ① 上一轮 `.scratch/rules-landing/blind/` 三舱跑的是**同一份终稿契约、但 §5/§9 落库之前**的那一版
+> ① 上一轮三舱跑的是**同一份终稿契约、但 §5/§9 落库之前**的那一版
 > (占领整节是占位,三舱各自猜机制;那份「站相邻」脚本在真规则下 `captures` 恒 0)。契约散文补了
 > 两节,读数因此另起一代,不能拿上一轮三舱当本轮的基线或对照。
-> ② 旧四舱(`.scratch/rules-calibration/`)跑的是**草案契约**、交付名 `script.v1.js`,契约形态
+> ② 旧四舱跑的是**草案契约**、交付名 `script.v1.js`,契约形态
 > (座位自认、错误判别、占领机制)、移动层与错误处理三层都变过。
-> 因此本轮三份的读数**不可与旧四舱的读数互比**,也不可与上一轮 rules-landing 三舱互比——
+> 因此本轮三份的读数**不可与旧四舱的读数互比**,也不可与上一轮三舱互比——
 > 旧四舱的胜负、交付量、经济死亡 tick 等一切数字都不能拿来当本轮的基线或对照。
 > 可以互比的只有两件事:**模型档位**(本轮两模型档 `deepseek-v4.1-flash` / `MiniMax-M3` 未换)与
-> **隔离舱脚本形态**(同一份脚本,只改了投放文档与交付名)。三批之间逐条变的理由,见本轮判读
-> `.scratch/contract-closure/verdict-2026-10-07.md` 与上一轮判读
-> `.scratch/rules-landing/blind/verdict-2026-10-04.md` §6。
+> **隔离舱脚本形态**(同一份脚本,只改了投放文档与交付名)。三批之间逐条变的理由就是上面 ①② 两条
+> 与 §3 的重跑规则,没有第三份判读可查。
 
 ## 1. 说明表
 
@@ -38,12 +37,11 @@
 - **体积是分列记录的**:脚本体积上限(`scriptSizeLimit`)的取值要以这三份的最大值为下限,
   所以两个数各自单列一栏,而不是合成一个「大小」。当前最大值是产物侧的 7579 字节(cell-b)。
 
-**静态校验结果那一栏的口径**:契约静态校验器是 `.scratch/contract-closure/blind/static-check.ts`
-(复用的一次性校验器,零违规 err 0 / warn 0),判的是能静态判的四层:
+**静态校验结果那一栏的口径**:判它的是入库的契约静态校验器
+(`packages/tools/src/validate/run-validate-script.ts` 的冻结相,零违规 err 0 / warn 0),判的是能静态判的四层:
 语法与入口形态、可见面白名单反转、禁列(`Date` / `Math.random` / `performance` /
-`queueMicrotask` / `__*` 宿主桥)、全整数。**反向对照**也重跑了一遍:`blind/reverse-control/` 里
-故意写坏的脚本被同一条命令判红(一次性校验器 **22 err / +2 warn**;freeze 判定链
-`run-validate-script.ts` **退出码 1、3 类 8 处**),确认门禁没被放宽。**两件契约静态校验器判不了的**
+`queueMicrotask` / `__*` 宿主桥)、全整数。**反向对照**也跑了一遍:故意写坏的脚本被同一条命令判红
+(freeze 判定链 `run-validate-script.ts` **退出码 1、3 类 8 处**),确认门禁没被放宽。**两件契约静态校验器判不了的**
 另记:类型面(已回填,见 §4)与「每单位每 tick 单意图」(运行期语义,靠人读,三份都过)。
 
 ## 2. C 舱那个标签为什么这么写
@@ -66,7 +64,7 @@
    猜「站相邻」的旧 c 舱形成对照)。
 
 第 4 条同时是本轮相对上一轮的信息量:上一轮 §5 空着,三舱各自猜机制(两种互斥版本);
-本轮 §5 落库,三舱都按同一条写。**契约缺口已补的证据在 `.scratch/contract-closure/verdict-2026-10-07.md` §3**,
+本轮 §5 落库,三舱都按同一条写。**契约缺口已补的证据就是落库的 `docs/rules-v2/rules.md` §5 / §9 本身**,
 不在这一栏里。
 
 ## 3. 契约版本与重跑规则
@@ -79,8 +77,7 @@
   都会让读数失去可比性(抬头那条口径就是这件事的实证)。看重的是契约**内容**的变化、不是版本号本身:散文修订不升版(ADR 0008),但读数一样会变。
 - 保留旧脚本冒充新版本的基准,等于把不可互比的读数接上可比的口径,比没有基准更坏。
 - 所以新版本落地时:三份脚本**重新盲写一轮**、重新落库、重新出这张表;
-  旧的三份连同它们的产物移出本目录(它们的证据仍在 `.scratch/rules-landing/blind/` 与
-  `archive/` 侧,`archive/` 的冻结脚本永远入库,不会因为移出基准目录而消失)。
+  旧的三份连同它们的产物移出本目录,不留第二份副本(冻结历史的家是 `git` 本身)。
 - 判读与「不可互比」那条口径必须跟着重写一遍,不许沿用。
 
 **v2 豁免记**:v1→v2 只改了两个预算终值(`eventTickLimit` 10000→50000、`apiCallTickLimit`
@@ -99,10 +96,10 @@ pnpm run bench:build        # 把三份产物按 tsconfig.scripts.json 重编译
 pnpm run check:bench        # 门禁:重编译结果必须与入库产物逐字节一致(挂在全量门禁 check 末尾)
 ```
 
-产物用的是仓库根那份 `tsconfig.scripts.json`(票 06),由它派生一份**只覆盖 `files` 与 `outDir`**
+产物用的是仓库根那份 `tsconfig.scripts.json`,由它派生一份**只覆盖 `files` 与 `outDir`**
 的运行配置;编译在系统临时目录里做,所以「模块解析面被清空」在产物这件事上是真的。
 
-**类型面已回填**(`packages/schema/script-api/index.d.ts`,归 F),所以「API 名字拼错」这类错误在
+**类型面已回填**(`packages/schema/script-api/index.d.ts`),所以「API 名字拼错」这类错误在
 编译期就红——三份的「名字未声明」诊断已**全部归零**。`tsconfig.scripts.json` 刻意不设
 `noEmitOnError`,`tsc` 在还有诊断的情形下照常 emit,那份产物就是门禁与生成管线将来真正加载的东西。
 本轮 `pnpm run bench:build` 的退出码与诊断读数:
@@ -124,29 +121,38 @@ B 退出码 2(只余 24 条 `possibly-undefined`),产物的可信度由 `check:b
   回填。真源包对这类东西有一条明令:**半截字段比没有更坏**——半截字段会让人以为形状已定稿,
   而回填是「加字段」不是「改字段」。所以这里一个存档 meta 文件都不写,本表里也不给半截字段,
   只在这个位置记着它由哪一格回填。
-- **标定环的采集探针**(`farmer.js` / `farmer.calibration-v1.js`):它不是参赛脚本,
-  是标定环的测量工具。按既有先例不进基准目录、不计入基准证据。
-- **某模型的零产出存档**(`xiaomi/mimo-v2.6-pro` 的 7 次):失败记录不是基准。
-  它随图保留在 `.scratch/` 侧,不进本目录。
+- **标定环的采集探针**(`farmer.js` / `farmer.calibration-v1.js`):它们不是参赛脚本,
+  是标定环的测量工具。按既有先例不进基准目录、不计入基准证据;当前在库的那一份在
+  `packages/tools/selfproof/stub/probes/farmer.js`(自证门禁的夹具闸门就用它)。
+- **某模型的零产出存档**(`xiaomi/mimo-v2.6-pro` 的 7 次):失败记录不是基准,不进本目录。
 
 以上三条由 `packages/tools/src/benchmarks.test.ts` 机器断言:本目录逐字只有三份脚本的
 `script.ts` + `script.js` 与这份说明表,多出任何文件即红。
 
-## 6. 复现本轮盲写
+## 6. 重做一轮盲写的口径(隔离舱本身不入库)
+
+三舱是在**一次性隔离舱**里盲写的:模型只看得到契约面与交付名,不看仓库、不看本轮任何读数。
+隔离舱脚本与舱内日志都是过程证据,不入库也不留路径;要重做一轮,可照下面这张参数表重建:
+
+| 参数 | 取值 |
+| --- | --- |
+| 投放文档 | `docs/rules-v2/rules.md` 与 `api.md`(终稿契约,两份都投) |
+| 舱内交付名 | `script.v1.ts` |
+| 模型参数 | 带 provider 前缀(`commandcode/…` / `minimax-cn/…`),`--thinking high`,单流 |
+| 契约回喂 | 0 轮(编译面回喂至多 1 轮,见 §1 的 C 舱备注) |
+| 落库校验 | 入库的契约静态校验器冻结相,逐份产物过一遍 |
 
 ```bash
-# 隔离舱脚本是本轮副本(与 rules-landing 原件同体例,改了 NODE_DIR / pi 挂载 / collect 白名单)
-./.scratch/contract-closure/blind/blind-run.sh setup cell-a A
-./.scratch/contract-closure/blind/blind-run.sh run  cell-a commandcode/deepseek/deepseek-v4.1-flash
-./.scratch/contract-closure/blind/blind-run.sh collect cell-a      # b/c 同理
-# 模型参数带 provider 前缀(如 commandcode/… 与 minimax-cn/…),三舱的 --thinking 都是 high
-
-node .scratch/contract-closure/blind/static-check.ts cell-a cell-b cell-c
-node .scratch/contract-closure/blind/static-check.ts reverse-control
+# 入库的静态校验器就是判据本身(退出码 0 = 放行);--max-bytes 取三份产物的最大值
+pnpm run build
+for cell in cell-a-melee-pressure cell-b-expansion-economy cell-c-claim-no-harvest; do
+  node packages/tools/src/validate/run-validate-script.ts \
+    "benchmarks/$cell/script.js" --max-bytes 7579 --phase freeze
+done
 ```
 
-判读全文:`.scratch/contract-closure/verdict-2026-10-07.md`(本轮)。真引擎 10 局读数:
-`.scratch/contract-closure/replay-matrix.md`。
+判读结论已经写在这份说明表的抬头与 §2 里;逐次读数不随图入库——它们是那一轮的产物,
+重做一轮就换一代,拿旧读数当基线正是抬头 ①② 两条要防的事。
 
 ## 7. 机器防线:契约自证门禁
 
@@ -167,4 +173,6 @@ node .scratch/contract-closure/blind/static-check.ts reverse-control
 补法与残余偏差记在 `packages/tools/src/selfproof/contract-compat.ts`——桩一行未改,
 补法也不静默:换契约版本时**判据不变、门禁仍绿是正常的,而四问的取值会全部变**,
 本目录这张表里的静态校验结果与本节的读数都不是回归基线。
-完整报告(口径、逐臂读数、区分度矩阵)见 `.scratch/rules-landing/selfproof/report.md`。
+完整报告(口径、逐臂读数、区分度矩阵)由同一条命令现场生成:`pnpm run check:selfproof` 默认只打印,
+加 `node packages/tools/src/selfproof/run-selfproof-gate.ts --out=reports/selfproof` 则把
+`report.md` / `summary.json` / `matches.json` 落进 `reports/`(该目录不入库,与变异 / 扫描报告同一处置)。

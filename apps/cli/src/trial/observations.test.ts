@@ -3,7 +3,7 @@
  *
  * 落盘的那一侧在 `apps/cli/src/trial/run-trial-script.ts`，它把 `--observations` 给的路径
  * 与每一场的读数交给本文件；这里断言的是「写出来的字节长什么样」与「写盘失败不抛」。
- * 试跑真跑三场那一侧由 `gen-cli` e2e 覆盖（真 VM + 真引擎）。
+ * 试跑真跑整张网格那一侧由 `grid.test.ts`（缩小网格、真 VM + 真引擎）与 `gen-cli` e2e 覆盖。
  */
 
 import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";

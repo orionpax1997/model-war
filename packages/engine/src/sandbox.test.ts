@@ -1,5 +1,5 @@
 /**
- * 真沙箱路径的集成验收(票 03)。
+ * 真沙箱路径的集成验收。
  *
  * 它与 `determinism.test.ts` 的四条用例**同口径**(那里跑桩策略,这里跑真 QuickJS VM):
  * 十次重跑逐 tick `stateHash` 全等、十列不是常量、回放可复算、反向自证。
@@ -51,8 +51,8 @@ const head = {
   runner: "quickjs",
   timezoneOffset: "+00:00",
   mapHash: "e".repeat(64),
-  // 真值(quickjs-wasi 版本、bundle 字节 hash、冻随机填充)由票 04 从入库产物与包 manifest 读；
-  // 本票只跑通真沙箱这条路，meta 读数列的值不参与 stateHash 比对。
+  // 真值(quickjs-wasi 版本、bundle 字节 hash、冻随机填充)由入库产物与包 manifest 读(meta 行的
+  // 形状见 hld §7.5);这里只跑通真沙箱这条路，meta 读数列的值不参与 stateHash 比对。
   quickjsWasiVersion: "3.6.2",
   sandboxRuntimeHash: "f".repeat(64),
   wasiClock: String(WASI_CLOCK_MS),

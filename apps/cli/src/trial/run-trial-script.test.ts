@@ -1,4 +1,20 @@
-/** 既有 trial 子进程 seam：真实 QuickJS/安装面，直接观察退出码与 JSONL，无网络调用。 */
+/**
+ * 试跑入口（子进程）的**协议面**：参数、计划打印、`--expected-plan` 比对与退出码。
+ *
+ * ── 这里不跑整张网格 ──
+ *
+ * 整张网格是 32 场真对局（实测约 90 秒），那是门禁/慢速测试的量级。执行器本身的形状（每格一行
+ * 观测、不早停、汇总与计划逐字一致）由 `grid.test.ts` 用**缩小网格**在进程内覆盖；这里只钉
+ * 「入口这一层」：缺参数怎么退、`--plan` 打印什么、预期计划不符时退出 2 并指名哪一处、以及
+ * 什么都不写（不覆盖既有证据）。
+ *
+ * ── 为什么 `--plan` 那两条要 `skipIf` ──
+ *
+ * 造计划要把四份陪练解析到 `archive/<slug>/<runId>/script.js` 并比对**钉死的内容摘要**。
+ * 夹具造不出「摘要刚好等于钉死值」的字节（那正是摘要的意义），所以这两条只在本地有真存档时跑；
+ * 计划的形状与摘要覆盖由 `packages/runner/src/trial-plan.test.ts` 无盘覆盖。
+ */
+
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -13,294 +29,193 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import { afterAll, expect, it } from "vitest";
-import { RULESET_VERSION, type Ruleset, type TrialObservationLine } from "@model-war/schema";
-import { validateTrialObservation } from "../validator.js";
+import {
+  RULESET_VERSION,
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_GRID_SEED_BASE,
+  TRIAL_MATCHES_PER_CANDIDATE,
+  TRIAL_SPARRING_LADDER,
+  type JsonValue,
+  type TrialPlan,
+} from "@model-war/schema";
+import { hashOf } from "@model-war/runner";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
-const scratch = mkdtempSync(join(tmpdir(), "modelwar-trial-action-facts-"));
+const scratch = mkdtempSync(join(tmpdir(), "modelwar-trial-entry-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
-const install = (script: string, rules: Partial<Ruleset> = {}) => {
+
+const archivePresent = TRIAL_SPARRING_LADDER.every((identity) =>
+  existsSync(join(repoRoot, "archive", identity.id, identity.runId, "script.js")),
+);
+
+const invoke = (args: readonly string[]) =>
+  spawnSync(
+    process.execPath,
+    [join(repoRoot, "apps/cli/dist/trial/run-trial-script.js"), ...args],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+
+/** 一个**没有归档陪练**的安装面：四份陪练缺档，装载必须指名失败而不是静默降级。 */
+const installWithoutSparring = (): string => {
   const root = mkdtempSync(join(scratch, "root-"));
-  for (const name of ["packages", "node_modules", "maps", "benchmarks"]) {
+  for (const name of ["packages", "node_modules", "maps", "apps"]) {
     symlinkSync(join(repoRoot, name), join(root, name), "dir");
   }
   mkdirSync(join(root, "rulesets"));
-  const original = JSON.parse(
-    readFileSync(join(repoRoot, "rulesets", `${RULESET_VERSION}.json`), "utf8"),
-  ) as Ruleset;
   writeFileSync(
     join(root, "rulesets", `${RULESET_VERSION}.json`),
-    JSON.stringify({ ...original, ...rules }),
+    readFileSync(join(repoRoot, "rulesets", `${RULESET_VERSION}.json`)),
   );
-  const candidate = join(root, "candidate.js");
-  const observations = join(root, "observations.jsonl");
-  writeFileSync(candidate, script);
-  const run = (path = observations, nodeArgs: readonly string[] = []) =>
-    spawnSync(
-      process.execPath,
-      [
-        ...nodeArgs,
-        join(repoRoot, "apps/cli/dist/trial/run-trial-script.js"),
-        candidate,
-        "--root",
-        root,
-        "--observations",
-        path,
-      ],
-      { encoding: "utf8", timeout: 30_000 },
-    );
-  const rows = () =>
-    readFileSync(observations, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as TrialObservationLine);
-  return { root, candidate, observations, run, rows };
+  return root;
 };
 
-it("真实候选 JS 在试跑入口绑定 hash/seed/seat，每场独立写入原 JSONL", { timeout: 30_000 }, () => {
-  const script =
-    "// 实际加载的候选字节\nfunction loop() { move(999999, 1, 0); spawnUnit(999999, 'worker'); }\n";
-  const fixture = install(script);
-  const result = fixture.run();
+const MODEL = "gpt-6.1-sol";
+
+it("缺 --model 即退出 2 并给出用法：在位陪练随模型而定，不能猜", () => {
+  const result = invoke(["--plan", "--root", repoRoot]);
   expect(result.error).toBeUndefined();
-  expect(result.status, result.stderr).toBe(0);
-  const rows = fixture.rows();
-  expect(rows).toHaveLength(3);
-  expect(rows.map((row) => row.actionFacts)).toEqual([
-    expect.objectContaining({
-      version: 1,
-      scriptSha256: createHash("sha256").update(script).digest("hex"),
-      seed: 101,
-      seat: 0,
-    }),
-    expect.objectContaining({
-      version: 1,
-      scriptSha256: createHash("sha256").update(script).digest("hex"),
-      seed: 202,
-      seat: 0,
-    }),
-    expect.objectContaining({
-      version: 1,
-      scriptSha256: createHash("sha256").update(script).digest("hex"),
-      seed: 303,
-      seat: 0,
-    }),
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("缺 --model");
+  expect(result.stderr).toContain("--model");
+});
+
+it("缺候选产物即退出 2 并给出用法", () => {
+  const result = invoke(["--root", repoRoot, "--model", MODEL]);
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("缺候选产物参数");
+});
+
+it("陪练缺档即退出 2 并指名是哪一份：装载失败不是计划、也不跑任何一场", () => {
+  const root = installWithoutSparring();
+  const result = invoke(["--plan", "--root", root, "--model", "brand-new-model"]);
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(2);
+  expect(result.stdout).toBe("");
+  // 指名到「哪一份、哪个路径」：榜首（top）那一份的存档脚本读不到。
+  expect(result.stderr).toContain("陪练池装载失败");
+  expect(result.stderr).toContain("top");
+  expect(result.stderr).toContain("script.js");
+
+  const observations = join(scratch, "never.jsonl");
+  const ran = invoke([
+    join(root, "candidate.js"),
+    "--root",
+    root,
+    "--model",
+    "brand-new-model",
+    "--observations",
+    observations,
   ]);
-  for (const [matchIndex, row] of rows.entries()) {
-    const facts = row.actionFacts;
-    if (facts === undefined) throw new Error("缺行动事实");
-    expect(row.matchIndex).toBe(matchIndex);
-    expect(facts.complete).toBe(true);
-    expect(facts.missingTicks).toBe(0);
-    expect(facts.observedTicks).toBeGreaterThan(0);
-    expect(facts.calls).toEqual({
-      move: facts.observedTicks,
-      moveTo: 0,
-      attack: 0,
-      harvest: 0,
-      transfer: 0,
-      spawnUnit: facts.observedTicks,
-    });
-    expect(facts.errors.move.ERR_INVALID_UNIT).toBe(facts.observedTicks);
-    expect(facts.errors.spawnUnit.ERR_INVALID_SITE).toBe(facts.observedTicks);
-    expect(facts.effects).toEqual({
-      movedSteps: 0,
-      harvestedAmount: 0,
-      deliveredAmount: 0,
-      captureEvents: 0,
-      productionOrdersStarted: 0,
-    });
-  }
+  expect(ran.status, ran.stderr).toBe(2);
+  expect(existsSync(observations)).toBe(false);
 });
 
-it(
-  "真实 API 超限早停只写已完成的第一场，有 payload 的触限 tick 仍计 observed",
-  { timeout: 30_000 },
+it.skipIf(!archivePresent)(
+  "--plan 打印网格计划：32 场、两张图、四份角色限定陪练、摘要可由正文复算，两次逐字相同",
+  { timeout: 60_000 },
   () => {
-    const fixture = install(
-      "function loop() { for (var i = 0; i < 801; i++) move(999999, 1, 0); }\n",
+    const first = invoke(["--plan", "--root", repoRoot, "--model", MODEL]);
+    expect(first.error).toBeUndefined();
+    expect(first.status, first.stderr).toBe(0);
+    const plan = JSON.parse(first.stdout) as TrialPlan;
+    expect(plan.version).toBe(2);
+    expect(plan.matches).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
+    expect(plan.matchesPerCandidate).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+    expect(plan.matches.map((match) => match.seed)).toEqual(
+      Array.from({ length: 32 }, (_, index) => TRIAL_GRID_SEED_BASE + index),
     );
-    const result = fixture.run();
-    expect(result.error).toBeUndefined();
-    expect(result.status, result.stderr).toBe(1);
-    const rows = fixture.rows();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      matchIndex: 0,
-      actionFacts: {
-        seed: 101,
-        seat: 0,
-        complete: true,
-        observedTicks: 3,
-        missingTicks: 0,
-        calls: { move: 2403 },
-        errors: { move: { ERR_INVALID_UNIT: 2403 } },
-        effects: { movedSteps: 0 },
-      },
-    });
-  },
-);
-
-it("JSONL 写盘失败仍按原预算结论退出并留 stderr，不把旁证失败判给候选", { timeout: 30_000 }, () => {
-  const fixture = install("function loop() {}\n", { tickLimit: 4 });
-  const result = fixture.run(join(fixture.root, "missing-directory", "observations.jsonl"));
-  expect(result.error).toBeUndefined();
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stderr).toContain("观测文件写盘失败");
-});
-
-it(
-  "timeout attempt 的已采事实丢弃，同种子重跑的 JSONL 与有效单次完全相等",
-  { timeout: 30_000 },
-  () => {
-    const script =
-      "function loop() { move(999999, 1, 0); if (getTick() === 1) { for (var i = 0; i < 120000; i++) { var x = i % 7; } } }\n";
-    // 只对测试安装面调高事件阈值以抵达墙钟抽样点，生产规则/赛季完全不变。
-    const fixture = install(script, { tickLimit: 4, eventTickLimit: 500000 });
-    const baseline = fixture.run();
-    expect(baseline.status, baseline.stderr).toBe(0);
-    const validRows = fixture.rows();
-    const clock = join(fixture.root, "one-time-timeout.mjs");
-    // tick0 四席各读一次 tickStart；tick1 候选在第六次读钟抽样时跨过硬超时。
-    // 仅替换宿主时钟边界，仍执行真实 QuickJS/runner/引擎与正式 CLI 重跑逻辑。
-    writeFileSync(
-      clock,
-      "let calls = 0; Object.defineProperty(performance, 'now', { value: () => ++calls < 6 ? 0 : 2000 });\n",
-    );
-    const reran = fixture.run(fixture.observations, ["--import", clock]);
-    expect(reran.status, reran.stderr).toBe(0);
-    expect(reran.stderr.match(/同一种子重跑一次/g)).toHaveLength(1);
-    expect(fixture.rows()).toEqual(validRows);
-  },
-);
-
-it(
-  "两次 timeout 仍是 infra，当前 invocation 不发布行动事实，也不覆盖旧完整文件",
-  { timeout: 30_000 },
-  () => {
-    const script =
-      "function loop() { move(999999, 1, 0); if (getTick() === 1) { for (var i = 0; i < 120000; i++) { var x = i % 7; } } }\n";
-    const fixture = install(script, { tickLimit: 4, eventTickLimit: 500000 });
-    const baseline = fixture.run();
-    expect(baseline.status, baseline.stderr).toBe(0);
-    const previous = readFileSync(fixture.observations, "utf8");
-    const clock = join(fixture.root, "repeated-timeout.mjs");
-    writeFileSync(
-      clock,
-      "let calls = 0; Object.defineProperty(performance, 'now', { value: () => ++calls * 2000 });\n",
-    );
-    const failed = fixture.run(fixture.observations, ["--import", clock]);
-    expect(failed.status, failed.stderr).toBe(2);
-    expect(failed.stdout).toBe("");
-    expect(failed.stderr).toContain("两次作废");
-    expect(readFileSync(fixture.observations, "utf8")).toBe(previous);
-    const fresh = join(fixture.root, "never-published.jsonl");
-    expect(fixture.run(fresh, ["--import", clock]).status).toBe(2);
-    expect(existsSync(fresh)).toBe(false);
-  },
-);
-
-it.each([
-  {
-    kind: "未吞异常",
-    script: "function loop() { move(999999, 1, 0); throw new Error('guest'); }\n",
-    status: 0,
-    rows: 3,
-  },
-  {
-    kind: "事件截停",
-    script: "function loop() { move(999999, 1, 0); while (true) {} }\n",
-    status: 1,
-    rows: 1,
-  },
-])(
-  "真实 $kind 没有 drain payload：missing 如实计数，不补已尝试动作零值为完整事实",
-  { timeout: 30_000 },
-  ({ script, status, rows }) => {
-    const fixture = install(script, { tickLimit: 4 });
-    const result = fixture.run();
-    expect(result.status, result.stderr).toBe(status);
-    const observed = fixture.rows();
-    expect(observed).toHaveLength(rows);
-    for (const row of observed) {
-      expect(validateTrialObservation(row).ok).toBe(true);
-      expect(row.terminalSummary?.players[0]).toMatchObject({
-        controlledBases: 0,
-        controlledResources: 0,
-        survivingUnits: { worker: 2, melee: 0, ranged: 0, cavalry: 0 },
-        survivingUnitCost: 8,
-        territoryScore: 1,
-        rank: 4,
-        rankPoints: 0,
-        alive: false,
-        eliminatedAtTick: 2,
-      });
-      expect(row.actionFacts).toMatchObject({
-        complete: false,
-        observedTicks: 0,
-        missingTicks: 3,
-        calls: { move: 0 },
-        errors: { move: { ERR_INVALID_UNIT: 0 } },
-      });
+    // 地图摘要取自盘上字节（两张都读，顺序固定）。
+    expect(plan.maps.map((map) => map.name)).toEqual([...TRIAL_GRID_MAP_NAMES]);
+    for (const map of plan.maps) {
+      expect(map.sha256).toBe(
+        createHash("sha256")
+          .update(readFileSync(join(repoRoot, "maps", `${map.name}.json`)))
+          .digest("hex"),
+      );
     }
+    // 四份陪练：角色限定 id、存档来源、摘要取自同一份字节。
+    expect(plan.scripts.map((script) => script.role)).toEqual(["top", "mid", "last", "incumbent"]);
+    for (const script of plan.scripts) {
+      expect(script.id.startsWith(`${script.role}:`)).toBe(true);
+      expect(script.source.startsWith("archive:")).toBe(true);
+      expect(script.scriptSha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+    // 候选四个座位各 8 场；每张图 16 场。
+    const seats = new Map<number, number>();
+    const maps = new Map<string, number>();
+    for (const match of plan.matches) {
+      seats.set(match.candidateSeat, (seats.get(match.candidateSeat) ?? 0) + 1);
+      maps.set(match.map, (maps.get(match.map) ?? 0) + 1);
+    }
+    expect([...seats.values()]).toEqual([8, 8, 8, 8]);
+    expect([...maps.values()]).toEqual([16, 16]);
+    // 摘要只覆盖正文：剥掉它再复算必须逐字相等；同一次安装面两次打印逐字相同。
+    const { planSha256, ...body } = plan;
+    expect(planSha256).toBe(hashOf(JSON.parse(JSON.stringify(body)) as JsonValue));
+    const second = invoke(["--plan", "--root", repoRoot, "--model", MODEL]);
+    expect(second.stdout).toBe(first.stdout);
   },
 );
 
-it("真实固定 seed 试跑将 completed 四方终局计分贯通 readings 和 JSONL", { timeout: 30_000 }, () => {
-  const fixture = install("function loop() {}\n", { tickLimit: 1 });
-  const result = fixture.run();
-  expect(result.error).toBeUndefined();
-  expect(result.status, result.stderr).toBe(0);
-  const rows = fixture.rows();
-  for (const row of rows) expect(validateTrialObservation(row).ok).toBe(true);
-  expect(rows.map((row) => row.terminalSummary)).toEqual(
-    [101, 202, 303].map((seed) => ({
-      version: 1,
-      seed,
-      tick: 1,
-      reason: "timeout",
-      weights: { baseScore: 4, resourceScore: 1, unitCostDivisor: 6 },
-      unitCosts: { worker: 4, melee: 8, ranged: 12, cavalry: 16 },
-      rankPoints: [3, 2, 1, 0],
-      players: [
-        "candidate",
-        "cell-a-melee-pressure",
-        "cell-b-expansion-economy",
-        "cell-c-claim-no-harvest",
-      ].map((player, seat) => ({
-        seat,
-        player,
-        controlledBases: 1,
-        controlledResources: 1,
-        survivingUnits: { worker: 2, melee: 0, ranged: 0, cavalry: 0 },
-        survivingUnitCost: 8,
-        score: { bases: 4, resources: 1, units: 1 },
-        territoryScore: 6,
-        rank: 1,
-        rankPoints: 1.5,
-        alive: true,
-        eliminatedAtTick: null,
-      })),
-    })),
-  );
-});
+it.skipIf(!archivePresent)(
+  "--expected-plan 与现场事实不符 → 退出 2、指名具体路径、一个字都不写",
+  { timeout: 60_000 },
+  () => {
+    const printed = invoke(["--plan", "--root", repoRoot, "--model", MODEL]);
+    expect(printed.status, printed.stderr).toBe(0);
+    const plan = JSON.parse(printed.stdout) as TrialPlan;
+    const candidatePath = join(scratch, "candidate.js");
+    writeFileSync(candidatePath, "function loop() {}\n");
 
-it("宿主执行异常保持 infra，不发布未知终局也不覆盖旧完整 JSONL", { timeout: 30_000 }, () => {
-  const fixture = install("function loop() {}\n", { tickLimit: 1 });
-  expect(fixture.run().status).toBe(0);
-  const previous = readFileSync(fixture.observations, "utf8");
-  const brokenWasm = join(fixture.root, "broken-wasm.mjs");
-  writeFileSync(
-    brokenWasm,
-    "WebAssembly.compile = async () => { throw new Error('host-wasm-failure'); };\n",
-  );
-  const failed = fixture.run(fixture.observations, ["--import", brokenWasm]);
-  expect(failed.status).toBe(2);
-  expect(failed.stdout).toBe("");
-  expect(failed.stderr).toContain("试跑执行失败:host-wasm-failure");
-  expect(readFileSync(fixture.observations, "utf8")).toBe(previous);
-  const fresh = join(fixture.root, "host-failure-unknown.jsonl");
-  expect(fixture.run(fresh, ["--import", brokenWasm]).status).toBe(2);
-  expect(existsSync(fresh)).toBe(false);
-});
+    const observations = join(scratch, "tampered.jsonl");
+    const tampered: TrialPlan = {
+      ...plan,
+      matches: plan.matches.map((match, index) => (index === 1 ? { ...match, seed: 999 } : match)),
+    };
+    const planPath = join(scratch, "tampered-plan.json");
+    writeFileSync(planPath, JSON.stringify(tampered));
+    const ran = invoke([
+      candidatePath,
+      "--root",
+      repoRoot,
+      "--model",
+      MODEL,
+      "--observations",
+      observations,
+      "--expected-plan",
+      planPath,
+    ]);
+    expect(ran.status, ran.stderr).toBe(2);
+    expect(ran.stdout).toBe("");
+    expect(ran.stderr).toMatch(/matches\[1\]\.seed/);
+    expect(existsSync(observations)).toBe(false);
+    expect(existsSync(`${observations}.grid.json`)).toBe(false);
+
+    // 连摘要一起重算也不行：场次由事实派生，改了就重建不出来。
+    const { planSha256, ...body } = tampered;
+    void planSha256;
+    const rehashedPath = join(scratch, "rehashed-plan.json");
+    writeFileSync(
+      rehashedPath,
+      JSON.stringify({ ...body, planSha256: hashOf(JSON.parse(JSON.stringify(body))) }),
+    );
+    const rehashed = invoke([
+      candidatePath,
+      "--root",
+      repoRoot,
+      "--model",
+      MODEL,
+      "--observations",
+      observations,
+      "--expected-plan",
+      rehashedPath,
+    ]);
+    expect(rehashed.status, rehashed.stderr).toBe(2);
+    expect(rehashed.stderr).toMatch(/matches\[1\]\.seed/);
+    expect(existsSync(observations)).toBe(false);
+  },
+);

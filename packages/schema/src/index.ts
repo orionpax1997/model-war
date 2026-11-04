@@ -2,7 +2,7 @@
  * schema 包:类型、常量、参数 key 清单与 JSON Schema 的唯一真源(hld §2.2.5)。
  * 约束:本包无运行时代码(hld §3.2),不依赖任何包。
  *
- * **本文件是对外唯一入口**(spec《真源包的导出面》):包里按域分文件,
+ * **本文件是对外唯一入口**:包里按域分文件,
  * 公共面一律从这里再导出。做成多入口等于对外承诺,将来想收窄就晚了(ADR-0003)。
  * 因此域文件之间也只经本文件互相看见(仅类型 import,编译后不留痕)。
  */
@@ -94,6 +94,8 @@ export * from "./ruleset-keys.js";
 // 冻结期试跑的逐对局观测与文件前缀，gen 回喂与报告读取共享同一真源。
 export * from "./trial-observation.js";
 export * from "./trial-plan.js";
+// 评测网格的每候选汇总（观测文件旁挂的 `.grid.json`）：身份与计划，不含分数。
+export * from "./trial-grid-summary.js";
 
 export * from "./selection-plan.js";
 

@@ -1,5 +1,5 @@
 /**
- * 采集、交付与经济死亡(票 07;gdd §5《经济与生产》、`docs/rules-v1/rules.md` §4.1–§4.3)。
+ * 采集、交付与经济死亡(gdd §5《经济与生产》、`docs/rules-v1/rules.md` §4.1–§4.3)。
  * **这一节就是这台经济机器的家**。
  *
  * ── 为什么是「只读视图 + `check()` + 纯函数产出候选变更」而不是就地写状态 ──
@@ -22,7 +22,7 @@
  * 而 `worker.cost` / `harvestRate` / `carryLimit` 三个参数都挂在 `worker` 这一条线上。
  * 这不是含糊过去:它是一处**契约面缺口**——规则集缺「能否采集」这一栏,兵种名到能力的映射
  * 目前只能由代码承载(先例:`ruleset-loader` 的 `statsOf` 把兵种名映射到属性线)。补这一栏归
- * 契约面那一轮(票 12 记下)。**别去改规则集**:本轮不改生成物。
+ * 契约面那一轮。**别去改规则集**:本轮不改生成物。
  *
  * ── 「相邻」的口径 ──
  *
@@ -58,7 +58,7 @@ import {
 export type HarvestIntent = Extract<Intent, { kind: "harvest" }>;
 export type TransferIntent = Extract<Intent, { kind: "transfer" }>;
 
-/** 判别 `harvest`。其余五条不是采集(归 04/06/08/09),本票只交付这一条。 */
+/** 判别 `harvest`。其余五条不是采集(归移动/生产/战斗/终局那几格),本模块只交付这一条。 */
 export const isHarvestIntent = (intent: Intent): intent is HarvestIntent =>
   intent.kind === "harvest";
 
@@ -123,7 +123,7 @@ export const checkHarvest = (
  *   (那是判据 6 已经挡掉的另一支,见 `checkHarvest`);
  * - `remaining`:矿里还剩多少——有限储量的硬上限,取量不能超过余量。
  *
- * 取量是**全部为整数**的三项取最小,结果仍是整数(NFR-1)。
+ * 取量是**全部为整数**的三项取最小,结果仍是整数(hld §4.6)。
  */
 export const harvestChangeOf = (
   view: EconomyView,

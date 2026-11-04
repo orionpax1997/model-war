@@ -1,15 +1,14 @@
 /**
- * 终局:领土分与名次的算法(`outcome.ts`)与四段判据的接线(步 5 / 步 7 / 步 0),票 09。
+ * 终局:领土分与名次的算法(`outcome.ts`)与四段判据的接线(步 5 / 步 7 / 步 0)(gdd §3.1)。
  *
  * ── 这份文件钉住三件事 ──
  *
- * 1. **名次四条**(gdd《胜利与淘汰》):胜者第 1;存活层排在已淘汰层之前;层内存活者按领土分降序、
+ * 1. **名次四条**(`docs/rules-v2/rules.md` §7.3):胜者第 1;存活层排在已淘汰层之前;层内存活者按领土分降序、
  *    已淘汰者按淘汰时间倒序;仍相同则并列同名次(名次数字按并列人数跳过)。
  * 2. **四段判据与顺序**:淘汰(缺一不算)→ 回归中立 → 全点位 → 捷径兜底(含第四态 all-eliminated)。
  * 3. **两处接线**:淘汰方不再被调用(状态保留)、步 7 写 timeout。
  *
- * 每条用例的注释写明「改什么会让它红」——尤其那几处反例与 `.scratch/engine-core/issues/09-…` 的
- * 反例表一一对应。
+ * 每条用例的注释写明「改什么会让它红」——那几处反例各自对应本条判据的一个被拒方案。
  */
 
 import { expect, it } from "vitest";
@@ -124,7 +123,7 @@ const capturingSink = (): { readonly lines: string[]; readonly sink: TickSink } 
 const run = (state: GameState) =>
   processTick(state, [idleRunner(), idleRunner(), idleRunner(), idleRunner()], RULESET_VIEW, SINK);
 
-// ── 领土分(gdd《胜利与淘汰》的那条公式)────────────────────────────────────────
+// ── 领土分(docs/rules-v2/rules.md §7 的那条公式)────────────────────────────────────────
 
 it("领土分 = baseScore×基地数 + resourceScore×资源点数 + ⌊Σ存活单位造价 / unitCostDivisor⌋", () => {
   const state = makeState({
@@ -262,7 +261,7 @@ it("b) 回归中立会破坏「全点位」,由捷径条款接住——顺序反
     sites: [site(10, "resource", 1), site(11, "resource", 1), site(12, "resource", 1)],
   });
   const result = run(state);
-  // 反例(票面那条):把 b) 与 c) 调换,座位 1(已出局)会被判成「控制全部点位」的胜者 → reason 变 victory、
+  // 反例(把 b) 与 c) 调换):座位 1(已出局)会被判成「控制全部点位」的胜者 → reason 变 victory、
   // 名次首名变座位 1,下面两条一起红。
   expect(result.state.outcome?.reason).toBe("shortcut");
   expect(result.state.outcome?.rankings[0]).toBe(1);

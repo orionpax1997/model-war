@@ -1,5 +1,5 @@
 /**
- * 校验器的自测——spec《Testing Decisions》的**副缝**:断言对象是「一段 JSON 值 → 接受 / 带诊断拒绝」,
+ * 校验器的自测——**副缝**:断言对象是「一段 JSON 值 → 接受 / 带诊断拒绝」,
  * 这是一个纯函数,不碰文件系统、不碰 CLI 退出码。`map-lint` 的地图校验断言也落在这里,
  * 不去测子命令的退出码。
  *
@@ -45,6 +45,12 @@ import type {
   TrialObservationLine,
   UnitStats,
 } from "@model-war/schema";
+import {
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_SPARRING_LADDER,
+  TRIAL_SPARRING_SUBSTITUTE,
+} from "@model-war/schema";
+import { buildTrialPlan } from "@model-war/runner";
 import { expect, it } from "vitest";
 
 import {
@@ -934,9 +940,98 @@ it("优化存档在 match 读入端拒绝阶段倒序，不能只校验字段形
   expect(validateArchiveMeta(value, GOOD_META_PROVENANCE).ok).toBe(false);
 });
 
+/**
+ * v2（评测网格）优化档：计划 + 四份陪练身份 + 每候选的网格分数与场数。
+ *
+ * 计划用 runner 的 `buildTrialPlan` 现造（同一张 32 场网格），不手抄一份场次表——
+ * 抄一份就等于给「网格长什么样」留了第二个家。
+ */
+const GRID_SCRIPTS = [
+  ...TRIAL_SPARRING_LADDER.map((identity) => ({
+    id: `${identity.role}:${identity.id}`,
+    role: identity.role,
+    source: `archive:${identity.id}/${identity.runId}`,
+    scriptSha256: identity.scriptSha256,
+  })),
+  {
+    id: `incumbent:${TRIAL_SPARRING_SUBSTITUTE.id}`,
+    role: "incumbent" as const,
+    source: `archive:${TRIAL_SPARRING_SUBSTITUTE.id}/${TRIAL_SPARRING_SUBSTITUTE.runId}#substitute`,
+    scriptSha256: TRIAL_SPARRING_SUBSTITUTE.scriptSha256,
+  },
+];
+
+const GOOD_GRID_META: ArchiveMeta = {
+  ...GOOD_META,
+  protocolRounds: 3,
+  prompts: ["initial", "optimization1", "optimization2"],
+  optimization: {
+    version: 2,
+    feedbackRounds: 2,
+    plan: buildTrialPlan({
+      ruleset: RULESET_VERSION,
+      rulesetSha256: "9".repeat(64),
+      sandboxRuntimeHash: GOOD_META.sandboxRuntimeHash,
+      scripts: GRID_SCRIPTS,
+      maps: [
+        { name: TRIAL_GRID_MAP_NAMES[0], sha256: HASH.map },
+        { name: TRIAL_GRID_MAP_NAMES[1], sha256: HASH.meta0 },
+      ],
+    }),
+    sparring: GRID_SCRIPTS,
+    candidates: [0, 1, 2].map((stage) => ({
+      stage: stage === 0 ? 0 : stage === 1 ? 1 : 2,
+      protocolRound: stage + 1,
+      scriptFile: `observed-run-round-${String(stage + 1)}.jsonl.candidate.js`,
+      observationsFile: `observed-run-round-${String(stage + 1)}.jsonl`,
+      scriptSha256: GOOD_META.scriptSha256,
+      score: { totalPoints: 48, averagePoints: 1.5, countedMatches: 32 },
+      matchCount: 32,
+      // 同字节：后两阶段复用第 0 阶段的网格（v2 装载判据要求同字节必须复用）。
+      ...(stage === 0 ? {} : { reusedFromStage: 0 as const }),
+    })),
+  },
+};
+
+it("v2 网格档：计划、陪练身份、分数与场数齐即被接受（v1 历史档同时仍被接受）", () => {
+  expect(validateArchiveMeta(GOOD_GRID_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  // 同一份 schema 里两个分支并存：v1 档照旧通过，不是「升到 v2 就把旧档拒了」。
+  expect(validateArchiveMeta(GOOD_OPTIMIZATION_META, GOOD_META_PROVENANCE).ok).toBe(true);
+});
+
+it("v2 网格档：缺候选分数 / 多带 trialSeeds 即被拒（版本分派写在 schema 里）", () => {
+  const missingScore = structuredClone(GOOD_GRID_META) as unknown as {
+    optimization: { candidates: Record<string, unknown>[] };
+  };
+  Reflect.deleteProperty(missingScore.optimization.candidates[1]!, "score");
+  const rejected = rejectMeta(JSON.parse(JSON.stringify(missingScore)) as JsonValue);
+  expect(metaKeywords(rejected)).toContain("required");
+  expect(metaPointers(rejected)).toContain("/optimization/candidates/1/score");
+
+  // v2 不再写 `trialSeeds`（种子逐场落在计划里）：写了就是第二个家。
+  const withSeeds = structuredClone(GOOD_GRID_META) as unknown as {
+    optimization: Record<string, unknown>;
+  };
+  withSeeds.optimization["trialSeeds"] = [101, 202, 303];
+  expect(metaKeywords(rejectMeta(JSON.parse(JSON.stringify(withSeeds)) as JsonValue))).toContain(
+    "additionalProperties",
+  );
+});
+
+it("v2 网格档：计划与档的规则集/运行时不一致、或计划被改过即被拒（跨字段关系）", () => {
+  const tampered = structuredClone(GOOD_GRID_META) as unknown as {
+    optimization: { plan: { matches: { seed: number }[] } };
+  };
+  tampered.optimization.plan.matches[0]!.seed += 1;
+  const result = rejectMeta(JSON.parse(JSON.stringify(tampered)) as JsonValue);
+  expect(result.machineDiagnostics.some((diagnostic) => diagnostic.message.includes("不符"))).toBe(
+    true,
+  );
+});
+
 it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有可选 optimization 与 selection", () => {
   // 名单是**抄 hld 的措辞**抄下来的,不是抄 schema 的:抄 schema 的话,少一项时两边一起少,
-  // 这条断言就恒真了。逐项对照的是 hld.md:714-715 的十一项。
+  // 这条断言就恒真了。逐项对照的是 hld.md §7.4 的十一项。
   const required = [...ARCHIVE_META_JSON_SCHEMA.required];
   expect(required).toEqual([
     "model",
@@ -959,7 +1054,7 @@ it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有�
 });
 
 it("input schema 的必填键集合就是 hld §7.4 那一栏的五项,且与 properties 一一对应", () => {
-  // hld.md:721 逐项:4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash。
+  // hld.md §7.4 逐项:4 × 存档路径 + 地图 + 种子 + ruleset 版本 + 各文件 hash。
   // 「各文件 hash」落在 archives 元素内(两格)与 mapSha256 一格,合计五项。
   const required = [...MATCH_INPUT_JSON_SCHEMA.required];
   expect(required).toEqual(["archives", "map", "mapSha256", "seed", "ruleset"]);
@@ -1023,7 +1118,7 @@ it("meta:产物哈希与实测不符即被拒(记录值改与实测值改两个�
   expect(metaKeywords(measured)).toEqual([SHA256_MISMATCH_KEYWORD]);
   expect(metaPointers(measured)).toEqual(["/scriptSha256"]);
 
-  // sandbox-runtime 同理:换一副沙箱跑同一条脚本,结果不保证一致(FR-3),故它也是必检项。
+  // sandbox-runtime 同理:换一副沙箱跑同一条脚本,结果不保证一致,故它也是必检项。
   const runtime = rejectMeta(badMeta(GOOD_META, { sandboxRuntimeHash: HASH.script0 }));
   expect(metaPointers(runtime)).toEqual(["/sandboxRuntimeHash"]);
   expect(metaKeywords(runtime)).toEqual([SHA256_MISMATCH_KEYWORD]);
@@ -1197,7 +1292,8 @@ it("input:规则集那几项在,赛季那几项不在(一份对局只认自己�
     "seed",
   ]);
   // 「不在」:hld §8 的赛季配置(参赛名单 / 地图池 / 种子数 / 并发度 / 名次分)逐个塞进去都被拒。
-  // 塞进去的后果是那份文件长成第二个 season.yaml,而 FR-7 AC3 要的是「凭它复算这一盘」。
+  // 塞进去的后果是那份文件长成第二个 season.yaml,而对局输入要的是「凭它复算这一盘」
+  // (理由写在 `packages/schema/src/match-input.ts` 的头注里)。
   for (const [key, value] of [
     ["season", "2026-autumn"],
     ["seasonConfig", {}],

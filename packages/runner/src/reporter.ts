@@ -1,10 +1,10 @@
 /**
- * reporter:赛季报告的形状与序列化(hld §3.1 的 `runner:reporter`;票 08)。
+ * reporter:赛季报告的形状与序列化(hld §3.1 的 `runner:reporter`)。
  *
  * ── `report.json` 从「每局结果列表」升级成「可复算的排名数据」 ────────────────
  *
- * 票 06 写出一份最小 `report.json`(每局的输入引用 + 名次 + 问题清单)。票 08 就地扩展成
- * **可凭它 + 存档 + 种子独立重算排名**(NFR-2)的产物:
+ * 最早是一份最小 `report.json`(每局的输入引用 + 名次 + 问题清单),就地扩展成
+ * **可凭它 + 存档 + 种子独立重算排名**(hld §8.2)的产物:
  *   - 每局:`matchId` / `inputPath`(仓库根相对)/ `comboId` / `mapIndex` / `seedIndex` /
  *     `map` / `seed` / `seats`(4 条存档引用,下标 = `playerIndex`)/ `rankings`(下标 = 座位)/
  *     `reason` / `perMatchScores`(每座位得分);
@@ -16,13 +16,13 @@
  * 计,报告侧不另算一遍。剔除的局改记在 `matchIssues`(带 `excludedFromRanking: true` +
  * 退出码 + 重跑次数),不静默丢弃。
  *
- * ── 两份「失败」分两节,绝不合并(hld §8.4 / spec《报告》) ────────────────────
+ * ── 两份「失败」分两节,绝不合并(hld §8.4 / hld §8.3) ────────────────────
  *
  *   - `validationFailures`:gen 侧 `archive/<slug>/failed-<runId>.json`(模型没拿到参赛资格);
  *   - `matchIssues`:§8.4 的崩溃 / 超时 / 内存披露(参赛了但被剔除或需披露)。
- * 处置不同,合并会误导读者。失败名单由 `readFailureRecords` 扫盘填充(票 09)。
+ * 处置不同,合并会误导读者。失败名单由 `readFailureRecords` 扫盘填充。
  *
- * ── 人类面产物:report.md + narrative/<对局>.md(票 09) ────────────────────────
+ * ── 人类面产物:report.md + narrative/<对局>.md ────────────────────────────
  *
  * `renderReportMarkdown` 把 `report.json` 的形状 + 代表性叙事摘要渲染成给人读的 Markdown
  * (排名表 / 代表性对局叙事 / 两份失败名单 / 规则版本标注);`renderNarrative` 把回放的
@@ -42,7 +42,7 @@
  * `readFailureRecords` / `writeReportArtifacts`)落盘或读盘。依赖方向到 `@model-war/schema` /
  * `@model-war/replay` 与 `./ranker.js`,不 import engine / gen(hld §3.2 的拓扑里 `runner → replay`
  * 是一条合法边)。**读回放一律走 `@model-war/replay` 的 `parseReplay` / `readLinesOf`**
- * (spec《回放读入端(最小面)》:叙事战报与 NFR-2 复算链读同一处),不再就地实现第二条行读取。
+ * (hld §7.5:叙事战报与复算链读同一处),不再就地实现第二条行读取。
  */
 
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -60,7 +60,7 @@ import {
 import type { RankedEntry, RankPoints } from "./ranker.js";
 
 /**
- * 一局入报告的最小集:凭它 + 存档 + 种子即可独立重算这局的名次与得分(NFR-2)。
+ * 一局入报告的最小集:凭它 + 存档 + 种子即可独立重算这局的名次与得分(hld §8.2)。
  *
  * `seats` / `rankings` / `perMatchScores` 三栏**同序**:下标即座位号(即 `playerIndex`)。
  */
@@ -128,7 +128,7 @@ export type MatchIssue = {
 };
 
 /**
- * `report.json` 的完整形状(NFR-2 的可复算性全押在这里)。
+ * `report.json` 的完整形状(可复算性全押在这里,hld §8.2)。
  *
  * `matches` 只含成功局(码 0);被剔除的失败局见 `matchIssues`(不在此、不计入均分分母)。
  */
@@ -145,7 +145,7 @@ export type SeasonReport = {
   readonly matches: readonly SeasonMatchReport[];
   /** `rankSeason` 的输出原样:每模型赛季总分 / 有效局数 / 对局均分 / 排名。 */
   readonly standings: readonly RankedEntry[];
-  /** gen 侧 `failed-<runId>.json` 的机器可读字段(校验失败名单;票 09 读盘填充)。 */
+  /** gen 侧 `failed-<runId>.json` 的机器可读字段(校验失败名单;由 `readFailureRecords` 读盘填充)。 */
   readonly validationFailures: readonly FailureRecord[];
   /** §8.4 的崩溃 / 超时 / 内存披露(对局问题清单)。 */
   readonly matchIssues: readonly MatchIssue[];
@@ -173,7 +173,7 @@ const writeTextFile = (filePath: string, text: string): void => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 叙事战报:narrative/<对局>.md(票 09;只消费 events)
+// 叙事战报:narrative/<对局>.md(只消费 events)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const messageOf = (cause: unknown): string =>
@@ -351,7 +351,7 @@ const tryParseReplay = (filePath: string): readonly ReplayLine[] | undefined => 
  * 被剔除出排名的一局的叙事战报(纯函数)。
  *
  * 有可用回放(哪怕是崩溃前写下的部分 tick 行)就把时间线附上;没有则说明本局被排除的原因与
- * 退出码。**每一局都有一篇 `narrative/<对局>.md`**(spec《报告》),故这个退化分支不是可选项。
+ * 退出码。**每一局都有一篇 `narrative/<对局>.md`**(hld §8.3),故这个退化分支不是可选项。
  */
 export const renderExcludedNarrative = (
   issue: MatchIssue,
@@ -373,7 +373,7 @@ export const renderExcludedNarrative = (
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// report.md:排名 + 代表性叙事 + 两份失败名单 + 规则版本标注(票 09)
+// report.md:排名 + 代表性叙事 + 两份失败名单 + 规则版本标注
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** report.md 的输入:报告本身 + 已选好的代表性对局(带摘要),只引用 `narrative/<对局>.md`。 */
@@ -569,7 +569,7 @@ export const readFailureRecords = (
 /**
  * 落 human-facing 的两个产物:每局一篇 `narrative/<对局>.md` + 一份 `report.md`。
  *
- * 叙事**每局都生成**(spec《报告》):成功局走 `parseReplay` 读回放(坏回放原样上抛);被剔除
+ * 叙事**每局都生成**(hld §8.3):成功局走 `parseReplay` 读回放(坏回放原样上抛);被剔除
  * 出排名的失败局即使没写出回放,也写一篇说明「本局被排除 + 原因」的叙事(shell 见
  * `renderExcludedNarrative`)。`report.md` 只引用代表性几篇。
  */

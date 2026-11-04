@@ -60,8 +60,8 @@ it("只写必填五项也合法,可选字段缺席(不是 undefined 键)", () =>
   expect(Object.hasOwn(model as object, "params")).toBe(false);
 });
 
-it("三条端点族都认", () => {
-  const families = ["chat-completions", "messages", "responses"] as const;
+it("四条端点族都认", () => {
+  const families = ["chat-completions", "messages", "responses", "generate-content"] as const;
   const text = [
     "models:",
     ...families.map((family, index) =>

@@ -20,6 +20,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -30,8 +31,13 @@ import { fileURLToPath } from "node:url";
 import {
   RULESET_VERSION,
   SANDBOX_RUNTIME_HASH,
+  TRIAL_GRID_SUMMARY_SUFFIX,
+  type ActionErrorCounts,
   type ArchiveMeta,
   type TrialObservationLine,
+  type TrialPlan,
+  type TrialPlanMatch,
+  type TrialTerminalSummary,
 } from "@model-war/schema";
 import { afterAll, expect, it, vi } from "vitest";
 
@@ -49,6 +55,7 @@ import { fail, replies, reply, stubClient, type StubCall, type StubClient } from
 import { TransportError } from "./transport-error.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
+import { gridPlanFixture } from "./trial-plan.fixture.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-gen-pipeline-`);
@@ -61,6 +68,19 @@ const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return
 const BLOCKING_SCRIPT = `function loop() {\n  return Date.now();\n}\nloop();\n`;
 /** 过不了 tsc(引用未定义名 `missingName` → TS2304)的脚本——驱动 `kind: "tsc"` 那一栏。 */
 const TSC_FAIL_SCRIPT = `function loop() {\n  return missingName;\n}\n`;
+/**
+ * N 份**字节各不相同**的合法候选。
+ *
+ * 拿它替掉「每次都回同一个 `VALID_SCRIPT`」的用法：同字节候选会走网格复用（不重跑、不调用
+ * 试跑桩），而那些用例要的恰恰是「每份候选都真的跑一次网格」。复用本身另有专门的用例。
+ */
+const distinctScripts = (count: number, from = 2): readonly string[] =>
+  Array.from(
+    { length: count },
+    // 从 2 起数：`VALID_SCRIPT` 用的就是 `ticks += 1`，不能与它撞字节（撞了就走复用）。
+    (_, index) =>
+      `var ticks = 0;\nfunction loop() {\n  ticks += ${String(from + index)};\n  return ticks;\n}\n`,
+  );
 /** `models.yaml` 文本;`protocolRounds` 给了才写那一行(缺省 = gen 内部默认 5)。 */
 const modelsYaml = (protocolRounds?: number): string =>
   [
@@ -179,6 +199,9 @@ const requestWith = (
   createClient: () => stub,
   now: () => new Date("2026-01-01T00:00:00Z"),
   trial,
+  // 网格计划在这里是**纯数据夹具**：真子进程要读盘算摘要、还依赖本地冻结档案
+  // （`archive/` 不入库），由 `apps/cli` 的 `--plan` 用例与手工冒烟覆盖。
+  trialPlan: () => gridPlanFixture(),
 });
 
 it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退出码 0", async () => {
@@ -252,8 +275,8 @@ it("冻结期体积超限:不建目标目录、无半截三件套、退出码非
   const slugDir = join(root, "archive", "alpha");
   expect(existsSync(slugDir)).toBe(true);
   // 「目录存在 ⇔ 三件套完整」:失败后连一个 runId 目录、一个 .tmp-* 残留都不该有。
-  // 票 05 起,编排层还会在这里落一条 `failed-<runId>.json` 失败记录(旁证),所以
-  // 只断言「除失败记录外再无他物」,而不是空目录。
+  // 编排层还会在这里落一条 `failed-<runId>.json` 失败记录(旁证,写盘见
+  // `packages/gen/src/failure.ts`),所以只断言「除失败记录外再无他物」,而不是空目录。
   expect(readdirSync(slugDir)).toEqual([expect.stringMatching(/^failed-.*\.json$/)]);
 });
 
@@ -457,7 +480,7 @@ it("protocolRounds 缺省 = 5:每轮失败 → 桩恰好被调 5 次,失败链�
   expect(outcome.failure.generationLog).toHaveLength(5);
 });
 
-// ───────────────────────── 票 06:传输韧性(退避重试不消耗协议轮数) ─────────────────────────
+// ───────────────────────── 传输韧性(退避重试不消耗协议轮数) ─────────────────────────
 //
 // 传输失败(429 / 5xx / 超时)与截断(`finishReason=length`)都退避重发**同一轮**:桩多被调几次,
 // 但 `protocolRounds` / `prompts` / `generationLog` 只数**已收敛的轮次**。退避用假定时器推进,不真等。
@@ -530,7 +553,7 @@ it("传输韧性:5xx 直到耗尽——重试 maxRetries 次后 transport 失败
     expect(outcome.failure.generationLog).toEqual([]);
     expect(outcome.failure.diagnostics.join("\n")).toContain("503");
     expect(outcome.failure.message).toContain("传输失败");
-    // 失败只返回结构,不建存档(写盘归票 05),也不留半截 / 临时目录。
+    // 失败只返回结构,不建存档(写盘归 `packages/gen/src/failure.ts`),也不留半截 / 临时目录。
     expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
     expect(readdirSync(join(root, "archive", "alpha"))).toEqual([]);
   } finally {
@@ -823,49 +846,210 @@ it("剥围栏接线:围栏包裹的合法脚本首轮直接冻结,落盘字节�
   expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(VALID_SCRIPT);
 });
 
-const terminalReadings = (delivered = 0, captures = 0): TrialObservationLine[] =>
-  [101, 202, 303].map((seed, matchIndex) => ({
-    matchIndex,
-    delivered,
-    captures,
-    noScoreSource: delivered === 0 && captures === 0,
-    terminalSummary: terminalSummaryFixture(seed),
-  }));
-
 const observationJsonl = (readings: readonly unknown[]): string =>
   readings.map((reading) => JSON.stringify(reading)).join("\n") + "\n";
 
-it("所有有效候选固定两次事实回喂，编译修复不占优化轮，三候选可追溯", async () => {
-  const root = mkRoot();
-  const runId = "production-action-facts";
-  const revised = "function loop() { return 9; }\n";
-  const final = "function loop() { return 10; }\n";
-  const stub = stubClient([
-    reply(VALID_SCRIPT),
-    reply(TSC_FAIL_SCRIPT),
-    reply(revised),
-    reply(final),
-  ]);
-  const candidateBytes: Buffer[] = [];
-  const outcome = await generateOneModel(
-    {
-      ...requestWith(root, stub, runId, ({ artifactPath, observationsPath }) => {
-        const bytes = readFileSync(artifactPath);
-        candidateBytes.push(bytes);
-        writeFileSync(
-          observationsPath,
-          observationJsonl(
-            [101, 202, 303].map((seed, matchIndex) => ({
-              matchIndex,
-              terminalSummary: terminalSummaryFixture(seed),
+/** 试跑桩收到的入参（含本次生成共用的评测网格计划）。 */
+type TrialStubOptions = Parameters<NonNullable<GenerationRequest["trial"]>>[0];
+
+/**
+ * 桩要写的逐场读数：**每格一条**（场序、种子、候选座位与四方身份都来自计划）。
+ *
+ * 网格下观测行数 = 计划场数：桩如果只写三行，读入端会以「缺场」拒绝，所以这里按计划铺满。
+ */
+const gridReadings = (
+  plan: TrialPlan,
+  payload: (
+    match: TrialPlanMatch,
+    index: number,
+  ) => { readonly delivered?: number; readonly captures?: number } = () => ({}),
+): TrialObservationLine[] =>
+  plan.matches.map((match, index) => {
+    const { delivered = 0, captures = 0 } = payload(match, index);
+    return {
+      matchIndex: match.matchIndex,
+      delivered,
+      captures,
+      noScoreSource: delivered === 0 && captures === 0,
+      terminalSummary: terminalSummaryFixture(match.seed, "timeout", match.seats),
+    };
+  });
+
+/**
+ * 名次 → 每座位的名次积分（并列占名次区间均分）。
+ *
+ * 这是**夹具**的算术，只为让桩写下的汇总分数与它自己那 32 行观测自洽：真正计分的唯一真源在
+ * runner（选拔子进程会把它重算一遍，与这里不一致就会被逐场比对拒掉）。
+ */
+const pointsOfRanks = (ranks: readonly number[]): readonly number[] => {
+  const table = [3, 2, 1, 0] as const;
+  const points = Array.from<number>({ length: ranks.length }).fill(0);
+  const sorted = [...ranks].sort((left, right) => left - right);
+  for (let cursor = 0; cursor < sorted.length; cursor += 1) {
+    const rank = sorted[cursor]!;
+    let last = cursor;
+    while (last + 1 < sorted.length && sorted[last + 1] === rank) last += 1;
+    const tied = last - cursor + 1;
+    let sum = 0;
+    for (let offset = 0; offset < tied; offset += 1) sum += table[rank - 1 + offset] ?? 0;
+    for (const [seat, value] of ranks.entries()) if (value === rank) points[seat] = sum / tied;
+    cursor = last;
+  }
+  return points;
+};
+
+/**
+ * 一份**自洽**的终局：名次由领土分高低决定，名次积分按并列区间均分。
+ *
+ * gen 的观测读入端会自己按「层 → 领土分」推出名次并核对 `rankPoints`（`terminal-summary.ts`），
+ * 所以夹具不能只改 `rank` 一栏——领土分与积分必须跟着名次一起造，否则那份观测根本不是引擎能
+ * 产出的东西。`resourceBump` 用来在阶段之间抬同一位资源（回喂文本的「同格变化」靠它区分）。
+ */
+const terminalSummaryWithRanks = (
+  match: TrialPlanMatch,
+  ranks: readonly number[],
+  resourceBump = 0,
+): TrialTerminalSummary => {
+  const summary = terminalSummaryFixture(match.seed, "timeout", match.seats);
+  const table = [3, 2, 1, 0] as const;
+  const players = summary.players.map((player, seat) => {
+    const rank = ranks[seat] ?? 1;
+    const tied = ranks.filter((value) => value === rank).length;
+    let total = 0;
+    for (let offset = 0; offset < tied; offset += 1) total += table[rank - 1 + offset] ?? 0;
+    // 名次越高资源越多 → 领土分越高（基地 4 + 资源 + 单位 1）。
+    const controlledResources = 4 - rank + resourceBump;
+    return {
+      ...player,
+      controlledResources,
+      territoryScore: 4 + controlledResources + 1,
+      score: { ...player.score, resources: controlledResources * summary.weights.resourceScore },
+      rank,
+      rankPoints: total / tied,
+    };
+  });
+  return { ...summary, players: players as unknown as TrialTerminalSummary["players"] };
+};
+
+/** 一张网格的读数（四方名次按座位序给定）：候选在每场拿第 `rank` 名，其余按名次补满。 */
+const gridReadingsAtRank = (
+  plan: TrialPlan,
+  rank: number,
+  resourceBump = 0,
+): TrialObservationLine[] =>
+  plan.matches.map((match) => {
+    const rest = [1, 2, 3, 4].filter((value) => value !== rank);
+    const ranks = match.seats.map((_, seat) =>
+      seat === match.candidateSeat ? rank : (rest.shift() ?? rank),
+    );
+    return {
+      matchIndex: match.matchIndex,
+      delivered: 0,
+      captures: 0,
+      noScoreSource: true,
+      terminalSummary: terminalSummaryWithRanks(match, ranks, resourceBump),
+    };
+  });
+
+/** 一张网格的分数（夹具口径：逐场名次积分之和 / 计划场数，分母不缩）。 */
+const scoreOfReadings = (
+  plan: TrialPlan,
+  readings: readonly TrialObservationLine[],
+): { totalPoints: number; averagePoints: number; countedMatches: number } => {
+  let total = 0;
+  for (const reading of readings) {
+    // 缺终局的那一场不补零：这份汇总只服务于「形状能读进去」，缺场会在读入端先被拒。
+    if (reading.terminalSummary === undefined) continue;
+    const match = plan.matches[reading.matchIndex]!;
+    const ranks = reading.terminalSummary.players
+      .toSorted((left, right) => left.seat - right.seat)
+      .map((player) => player.rank);
+    total += pointsOfRanks(ranks)[match.candidateSeat]!;
+  }
+  return {
+    totalPoints: total,
+    averagePoints: total / plan.matchesPerCandidate,
+    countedMatches: plan.matchesPerCandidate,
+  };
+};
+
+/**
+ * 观测文件旁的网格汇总：执行器写的那一份形状（计划 + 候选摘要 + 网格分数 + 逐场身份）。
+ *
+ * 分数由**这一批读数**算出来（夹具口径）：生成侧不重算分数（那是 runner 与选拔的事），
+ * 但桩写的这一份必须与它自己那 32 行观测自洽，否则选拔的逐场比对会（正确）拒掉它。
+ */
+const gridSummaryOf = (
+  options: TrialStubOptions,
+  readings: readonly TrialObservationLine[],
+): unknown => {
+  const plan = options.plan;
+  if (plan === undefined) throw new Error("试跑桩需要计划才能写网格汇总");
+  return {
+    version: plan.version,
+    plan,
+    scriptSha256: sha256Hex(readFileSync(options.artifactPath)),
+    score: scoreOfReadings(plan, readings),
+    matches: plan.matches.map((match) => ({
+      matchIndex: match.matchIndex,
+      seed: match.seed,
+      candidateSeat: match.candidateSeat,
+      map: match.map,
+      mapSha256: match.mapSha256,
+    })),
+  };
+};
+
+/** 写观测 + 汇总（桩的常规出口：一次 invocation 的证据一次写完）。 */
+const writeGridEvidence = (
+  options: TrialStubOptions,
+  readings?: readonly TrialObservationLine[],
+): void => {
+  if (options.plan === undefined) throw new Error("试跑桩需要计划才能写网格证据");
+  const rows = readings ?? gridReadings(options.plan);
+  writeFileSync(options.observationsPath, observationJsonl(rows));
+  writeFileSync(
+    `${options.observationsPath}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+    JSON.stringify(gridSummaryOf(options, rows)),
+  );
+};
+
+it(
+  "所有有效候选固定两次事实回喂，编译修复不占优化轮，三候选可追溯",
+  { timeout: 30_000 },
+  async () => {
+    const root = mkRoot();
+    const runId = "production-action-facts";
+    const revised = "function loop() { return 9; }\n";
+    const final = "function loop() { return 10; }\n";
+    const stub = stubClient([
+      reply(VALID_SCRIPT),
+      reply(TSC_FAIL_SCRIPT),
+      reply(revised),
+      reply(final),
+    ]);
+    const candidateBytes: Buffer[] = [];
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, (options) => {
+          const bytes = readFileSync(options.artifactPath);
+          candidateBytes.push(bytes);
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          // 每格一条：种子与候选座位都取自计划（网格里候选四个座位各坐一次）。
+          writeGridEvidence(
+            options,
+            gridReadings(options.plan, () => ({
               delivered: candidateBytes.length === 1 ? 0 : 7,
               captures: candidateBytes.length === 1 ? 0 : 1,
-              noScoreSource: candidateBytes.length === 1,
+            })).map((reading) => ({
+              ...reading,
               actionFacts: {
                 version: 1,
                 scriptSha256: sha256Hex(bytes),
-                seed,
-                seat: 0,
+                seed: reading.terminalSummary!.seed,
+                seat: reading.terminalSummary!.players.findIndex(
+                  (player) => player.player === "candidate",
+                ) as 0 | 1 | 2 | 3,
                 complete: true,
                 observedTicks: 12,
                 missingTicks: 0,
@@ -890,7 +1074,7 @@ it("所有有效候选固定两次事实回喂，编译修复不占优化轮，�
                       ERR_BAD_ARGS: 0,
                     },
                   ]),
-                ),
+                ) as ActionErrorCounts,
                 effects: {
                   movedSteps: 3,
                   harvestedAmount: 2,
@@ -900,151 +1084,394 @@ it("所有有效候选固定两次事实回喂，编译修复不占优化轮，�
                 },
               },
             })),
-          ),
-        );
-        return { passed: true, stdout: "" };
-      }),
-      scoreSourceFeedback: true,
-    },
-    {
-      ...firstModelConfig(root),
-      protocolRounds: 5,
-      generationPolicy: policyFixture("chat-completions"),
-    },
-  );
-  expect(outcome.kind).toBe("frozen");
-  expect(stub.calls).toHaveLength(4);
-  for (const call of stub.calls) {
-    expect(call.params).toEqual({ reasoning_effort: "high", max_completion_tokens: 8192 });
-  }
-  if (outcome.kind === "frozen") {
-    for (const log of parsedLog(outcome.meta)) {
-      expect(log.params).toEqual(stub.calls[0]?.params);
-      expect(log.requestEvidence).toMatchObject({
-        configId: "alpha",
-        backendIdentity: "unverified",
-      });
-    }
-  }
-  const feedback = callAt(stub, 1).messages[2]?.content ?? "";
-  expect(feedback).toContain("seed=101");
-  expect(feedback).toContain("harvest：调用=2");
-  expect(feedback).toContain("spawnUnit：调用=5");
-  expect(feedback).toContain("ERR_NOT_ENOUGH_RESOURCES=4");
-  expect(feedback).toContain("harvestedAmount=2");
-  expect(feedback).toContain("productionOrdersStarted=1");
-  expect(feedback).not.toContain(sha256Hex(candidateBytes[0] ?? Buffer.alloc(0)));
-  expect(feedback).not.toMatch(/请检查|阈值|坐标|目标切换|成功次数/);
-  expect(callAt(stub, 2).messages[4]?.content).toContain("TS2304");
-  expect(
-    readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`)),
-  ).toEqual(candidateBytes[0]);
-  expect(
-    readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl.candidate.js`)),
-  ).toEqual(candidateBytes[1]);
-  expect(
-    existsSync(join(root, "archive", "alpha", `observed-${runId}-round-2.jsonl.candidate.js`)),
-  ).toBe(false);
-  if (outcome.kind === "frozen") {
-    expect(callAt(stub, 3).messages[6]?.content).toContain("harvest：调用=8");
-    expect(callAt(stub, 3).messages[6]?.content).toContain("delivered=7，captures=1");
-    expect(callAt(stub, 3).messages[6]?.content).not.toContain("均为零");
-    expect(outcome.meta.protocolRounds).toBe(4);
-    expect(outcome.meta).toHaveProperty("optimization", {
-      version: 1,
-      feedbackRounds: 2,
-      trialSeeds: [101, 202, 303],
-      candidates: [1, 3, 4].map((protocolRound, stage) => ({
-        stage,
-        protocolRound,
-        scriptFile: `observed-${runId}-round-${String(protocolRound)}.jsonl.candidate.js`,
-        observationsFile: `observed-${runId}-round-${String(protocolRound)}.jsonl`,
-        scriptSha256: sha256Hex(candidateBytes[stage] ?? Buffer.alloc(0)),
-      })),
-    });
-    expect(candidateBytes).toHaveLength(3);
-    expect(outcome.meta.scriptSha256).toBe(sha256Hex(candidateBytes[2] ?? Buffer.alloc(0)));
-    expect(readFileSync(join(outcome.dir, "script.js"))).toEqual(candidateBytes[2]);
-    expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(final);
-    expect(
-      readFileSync(
-        join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.ts`),
-        "utf8",
-      ),
-    ).toBe(VALID_SCRIPT);
-    expect(
-      readFileSync(
-        join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl.candidate.ts`),
-        "utf8",
-      ),
-    ).toBe(revised);
-    expect(
-      readFileSync(
-        join(root, "archive", "alpha", `observed-${runId}-round-4.jsonl.candidate.ts`),
-        "utf8",
-      ),
-    ).toBe(final);
-  }
-});
-
-it("初次候选缺少一场终局时停止，不请求第一次优化并保留本轮证据", async () => {
-  const root = mkRoot();
-  const runId = "terminal-initial-missing";
-  const observed = [101, 202].map((seed, matchIndex) => ({
-    matchIndex,
-    delivered: 0,
-    captures: 0,
-    noScoreSource: true,
-    terminalSummary: terminalSummaryFixture(seed),
-  }));
-  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
-  await expect(
-    generateOneModel(
-      {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(
-            observationsPath,
-            observed.map((row) => JSON.stringify(row)).join("\n") + "\n",
           );
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
       },
-      firstModelConfig(root),
-    ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2）");
-  expect(stub.calls).toHaveLength(1);
-  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
-  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
-  expect(
-    readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`), "utf8"),
-  ).toBe(observed.map((row) => JSON.stringify(row)).join("\n") + "\n");
-});
+      {
+        ...firstModelConfig(root),
+        protocolRounds: 5,
+        generationPolicy: policyFixture("chat-completions"),
+      },
+    );
+    expect(outcome.kind).toBe("frozen");
+    expect(stub.calls).toHaveLength(4);
+    for (const call of stub.calls) {
+      expect(call.params).toEqual({ reasoning_effort: "high", max_completion_tokens: 8192 });
+    }
+    if (outcome.kind === "frozen") {
+      for (const log of parsedLog(outcome.meta)) {
+        expect(log.params).toEqual(stub.calls[0]?.params);
+        expect(log.requestEvidence).toMatchObject({
+          configId: "alpha",
+          backendIdentity: "unverified",
+        });
+      }
+    }
+    const feedback = callAt(stub, 1).messages[2]?.content ?? "";
+    // 三层结构：对差表按座位 × 地图聚合（8 格）、逐场一行 = 计划场数（32 行）、只展开最差三场。
+    expect(feedback).toContain("试跑观测：本候选实际完成的 32 个对局。");
+    expect(feedback.match(/^  座位\d \/ .+：4 局，/gm)).toHaveLength(8);
+    expect(feedback.match(/^  #\d{2} \| .+ \| timeout$/gm)).toHaveLength(32);
+    expect(feedback.match(/^- 第 \d+ 个对局：/gm)).toHaveLength(3);
+    // 首轮没有上一阶段：八格都写明，而不是留空或按 0 算。
+    expect(feedback.match(/无上一阶段/g)).toHaveLength(8);
+    // 最差三场的明细仍是原来的三栏（四方全并列时按场次定序）。
+    expect(feedback).toContain("终局事实：seed=5000");
+    expect(feedback).toContain("harvest：调用=2");
+    expect(feedback).toContain("spawnUnit：调用=5");
+    expect(feedback).toContain("ERR_NOT_ENOUGH_RESOURCES=4");
+    expect(feedback).toContain("harvestedAmount=2");
+    expect(feedback).toContain("productionOrdersStarted=1");
+    expect(feedback).not.toContain(sha256Hex(candidateBytes[0] ?? Buffer.alloc(0)));
+    expect(feedback).not.toMatch(/请检查|阈值|坐标|目标切换|成功次数/);
+    expect(callAt(stub, 2).messages[4]?.content).toContain("TS2304");
+    expect(
+      readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`)),
+    ).toEqual(candidateBytes[0]);
+    expect(
+      readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl.candidate.js`)),
+    ).toEqual(candidateBytes[1]);
+    expect(
+      existsSync(join(root, "archive", "alpha", `observed-${runId}-round-2.jsonl.candidate.js`)),
+    ).toBe(false);
+    if (outcome.kind === "frozen") {
+      expect(callAt(stub, 3).messages[6]?.content).toContain("harvest：调用=8");
+      expect(callAt(stub, 3).messages[6]?.content).toContain("delivered=7，captures=1");
+      expect(callAt(stub, 3).messages[6]?.content).not.toContain("均为零");
+      expect(outcome.meta.protocolRounds).toBe(4);
+      // v2：计划整份入档、四份陪练身份入档、每个候选带网格分数与场数（分数逐字来自 `.grid.json`）。
+      const plan = gridPlanFixture();
+      expect(outcome.meta).toHaveProperty("optimization", {
+        version: 2,
+        feedbackRounds: 2,
+        plan,
+        sparring: plan.scripts.map(({ id, role, source, scriptSha256 }) => ({
+          id,
+          role,
+          source,
+          scriptSha256,
+        })),
+        candidates: [1, 3, 4].map((protocolRound, stage) => ({
+          stage,
+          protocolRound,
+          scriptFile: `observed-${runId}-round-${String(protocolRound)}.jsonl.candidate.js`,
+          observationsFile: `observed-${runId}-round-${String(protocolRound)}.jsonl`,
+          scriptSha256: sha256Hex(candidateBytes[stage] ?? Buffer.alloc(0)),
+          params: { max_completion_tokens: 8192, reasoning_effort: "high" },
+          // 桩把这三份写得字节各异，所以三次都真正跑了网格：没有复用来源，也没有 `trialSeeds`。
+          score: { totalPoints: 48, averagePoints: 1.5, countedMatches: plan.matchesPerCandidate },
+          matchCount: plan.matchesPerCandidate,
+        })),
+      });
+      expect(outcome.meta.optimization).not.toHaveProperty("trialSeeds");
+      expect(candidateBytes).toHaveLength(3);
+      expect(outcome.meta.scriptSha256).toBe(sha256Hex(candidateBytes[2] ?? Buffer.alloc(0)));
+      expect(readFileSync(join(outcome.dir, "script.js"))).toEqual(candidateBytes[2]);
+      expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(final);
+      expect(
+        readFileSync(
+          join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.ts`),
+          "utf8",
+        ),
+      ).toBe(VALID_SCRIPT);
+      expect(
+        readFileSync(
+          join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl.candidate.ts`),
+          "utf8",
+        ),
+      ).toBe(revised);
+      expect(
+        readFileSync(
+          join(root, "archive", "alpha", `observed-${runId}-round-4.jsonl.candidate.ts`),
+          "utf8",
+        ),
+      ).toBe(final);
+    }
+  },
+);
 
-it("中间候选三行中缺终局摘要时停止，不请求第二次优化", async () => {
+it("初次候选少跑一场时停止，不请求第一次优化并保留本轮证据", async () => {
   const root = mkRoot();
-  const runId = "terminal-middle-partial";
+  const runId = "terminal-initial-missing";
   const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
-  let invocation = 0;
-  const observedPaths: string[] = [];
+  let written = "";
   await expect(
     generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          invocation += 1;
-          observedPaths.push(observationsPath);
-          const readings = terminalReadings();
-          if (invocation === 2) Reflect.deleteProperty(readings[1]!, "terminalSummary");
-          writeFileSync(observationsPath, observationJsonl(readings));
+        ...requestWith(root, stub, runId, (options) => {
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          // 计划里 32 格，桩只写前 31 格：缺的那一场必须被读入端拒绝（不补零、不缩分母）。
+          const readings = gridReadings(options.plan).slice(0, 31);
+          written = observationJsonl(readings);
+          writeGridEvidence(options, readings);
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
       },
       firstModelConfig(root),
     ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 1 未完成");
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要（计划 32 场，缺 matchIndex 31）/);
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  expect(
+    readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`), "utf8"),
+  ).toBe(written);
+});
+
+it(
+  "三份候选都在整张网格上被评测：每个候选 32 行观测 + 一份网格汇总",
+  { timeout: 30_000 },
+  async () => {
+    const root = mkRoot();
+    const runId = "grid-three-candidates";
+    // 三份字节各异的候选：同字节会走复用，那就不是「三份都跑」了（复用另有专门用例）。
+    const stub = stubClient(distinctScripts(3).map((source) => reply(source)));
+    const seen: { readonly rows: number; readonly planSha256: string }[] = [];
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, (options) => {
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          writeGridEvidence(options);
+          seen.push({ rows: options.plan.matches.length, planSha256: options.plan.planSha256 });
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      firstModelConfig(root),
+    );
+    expect(outcome.kind).toBe("frozen");
+    // 三次有效候选各跑一次整张网格，且三次用的是**同一张**网格（计划摘要恒定）。
+    expect(seen).toHaveLength(3);
+    expect(seen.map((entry) => entry.rows)).toEqual([32, 32, 32]);
+    expect(new Set(seen.map((entry) => entry.planSha256)).size).toBe(1);
+    for (const round of [1, 2, 3]) {
+      const base = join(root, "archive", "alpha", `observed-${runId}-round-${round}.jsonl`);
+      expect(readFileSync(base, "utf8").trim().split("\n")).toHaveLength(32);
+      expect(existsSync(`${base}${TRIAL_GRID_SUMMARY_SUFFIX}`)).toBe(true);
+    }
+    // 成绩与反馈同源：每个候选记录里的分数就是它那一轮 `.grid.json` 里的分数。
+    if (outcome.kind !== "frozen") return;
+    const optimization = outcome.meta.optimization;
+    expect(optimization?.version).toBe(2);
+    for (const [stage, candidate] of (optimization?.candidates ?? []).entries()) {
+      const summary = JSON.parse(
+        readFileSync(
+          join(
+            root,
+            "archive",
+            "alpha",
+            `observed-${runId}-round-${String(stage + 1)}.jsonl${TRIAL_GRID_SUMMARY_SUFFIX}`,
+          ),
+          "utf8",
+        ),
+      ) as { score: unknown };
+      expect(candidate.score).toEqual(summary.score);
+      expect(candidate.matchCount).toBe(32);
+      expect(candidate).not.toHaveProperty("reusedFromStage");
+    }
+  },
+);
+
+it(
+  "同字节候选复用先前网格：不重跑、逐场逐字节一致、复用来源落档",
+  { timeout: 30_000 },
+  async () => {
+    const root = mkRoot();
+    const runId = "grid-reuse-same-bytes";
+    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+    const invocations: string[] = [];
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, (options) => {
+          invocations.push(options.observationsPath);
+          writeGridEvidence(options);
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      firstModelConfig(root),
+    );
+    expect(outcome.kind).toBe("frozen");
+    // 三份候选字节完全相同 → 网格只跑了一次（后两阶段复用第 0 阶段的那一份）。
+    expect(invocations).toHaveLength(1);
+    if (outcome.kind !== "frozen") return;
+    const candidates = outcome.meta.optimization?.candidates ?? [];
+    expect(candidates.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+    expect(candidates.map((candidate) => candidate.reusedFromStage)).toEqual([undefined, 0, 0]);
+    // 成绩与反馈同源：复用阶段的分数不是另算的，而是与来源逐位相同。
+    expect(new Set(candidates.map((candidate) => JSON.stringify(candidate.score))).size).toBe(1);
+    const roundOf = (round: number): string =>
+      join(root, "archive", "alpha", `observed-${runId}-round-${String(round)}.jsonl`);
+    const source = readFileSync(roundOf(1), "utf8");
+    const sourceSummary = readFileSync(`${roundOf(1)}${TRIAL_GRID_SUMMARY_SUFFIX}`, "utf8");
+    for (const round of [2, 3]) {
+      // 每个阶段仍独占自己的观测与汇总，内容与来源逐字节相同（复用结果必须与来源完全一致）。
+      expect(readFileSync(roundOf(round), "utf8")).toBe(source);
+      expect(readFileSync(`${roundOf(round)}${TRIAL_GRID_SUMMARY_SUFFIX}`, "utf8")).toBe(
+        sourceSummary,
+      );
+      expect(existsSync(`${roundOf(round)}.candidate.js`)).toBe(true);
+      expect(existsSync(`${roundOf(round)}.candidate.ts`)).toBe(true);
+    }
+  },
+);
+
+it.each(["观测", "汇总"])(
+  "复用前来源%s被改动即整批失败，不留半份存档",
+  { timeout: 30_000 },
+  async (target) => {
+    const root = mkRoot();
+    const runId = `grid-reuse-tampered-${target}`;
+    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+    const sourcePath = join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`);
+    let clients = 0;
+    await expect(
+      generateOneModel(
+        {
+          ...requestWith(root, stub, runId, (options) => {
+            writeGridEvidence(options);
+            return { passed: true, stdout: "" };
+          }),
+          scoreSourceFeedback: true,
+          // 第二轮开始前改掉第 0 阶段的来源证据：复用只认「收录时的字节」。
+          createClient: () => {
+            clients += 1;
+            if (clients === 2)
+              writeFileSync(
+                target === "观测" ? sourcePath : `${sourcePath}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+                target === "观测" ? "{}\n" : JSON.stringify({ tampered: true }),
+              );
+            return stub;
+          },
+        },
+        firstModelConfig(root),
+      ),
+    ).rejects.toThrow(new RegExp(`复用来源的网格${target}已被改动`));
+    expect(clients).toBe(2);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+    expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
+  },
+);
+
+it(
+  "最终候选在生成阶段即持有网格分数，最终观测连同网格汇总一起发布",
+  { timeout: 30_000 },
+  async () => {
+    const root = mkRoot();
+    const runId = "grid-final-scored";
+    const stub = stubClient(distinctScripts(3).map((source) => reply(source)));
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, (options) => {
+          writeGridEvidence(options);
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      firstModelConfig(root),
+    );
+    expect(outcome.kind).toBe("frozen");
+    if (outcome.kind !== "frozen") return;
+    const final = outcome.meta.optimization?.candidates[2];
+    const roundThree = join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl`);
+    const summary = JSON.parse(
+      readFileSync(`${roundThree}${TRIAL_GRID_SUMMARY_SUFFIX}`, "utf8"),
+    ) as {
+      score: unknown;
+    };
+    // 生成阶段就有分数：不靠选拔从零开始测，也不靠报告侧补算。
+    expect(final?.score).toEqual(summary.score);
+    expect(final?.matchCount).toBe(32);
+    // 最终发布的是「观测 + 汇总」一对：只发观测会让兼容路径上丢了这张网格的身份与分数。
+    const published = join(root, "archive", "alpha", `observed-${runId}.jsonl`);
+    expect(readFileSync(published, "utf8")).toBe(readFileSync(roundThree, "utf8"));
+    expect(readFileSync(`${published}${TRIAL_GRID_SUMMARY_SUFFIX}`, "utf8")).toBe(
+      readFileSync(`${roundThree}${TRIAL_GRID_SUMMARY_SUFFIX}`, "utf8"),
+    );
+  },
+);
+
+it.each(["换种子", "换图"])(
+  "网格汇总与 expected plan 不同源（%s）即整批失败，不回喂也不冻结",
+  { timeout: 30_000 },
+  async (kind) => {
+    const root = mkRoot();
+    const runId = `grid-plan-mismatch-${kind}`;
+    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+    await expect(
+      generateOneModel(
+        {
+          ...requestWith(root, stub, runId, (options) => {
+            if (options.plan === undefined) throw new Error("试跑桩需要计划");
+            writeGridEvidence(options);
+            // 汇总里的计划被换掉：换一个种子 / 换一张图（正文与 planSha256 一起换，形状仍合法）。
+            const summary = gridSummaryOf(options, gridReadings(options.plan)) as {
+              plan: TrialPlan;
+              matches: readonly unknown[];
+            };
+            writeFileSync(
+              `${options.observationsPath}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+              JSON.stringify({
+                ...summary,
+                plan:
+                  kind === "换种子"
+                    ? {
+                        ...summary.plan,
+                        matches: summary.plan.matches.map((match, index) =>
+                          index === 0 ? { ...match, seed: 999 } : match,
+                        ),
+                      }
+                    : {
+                        ...summary.plan,
+                        maps: [
+                          { ...summary.plan.maps[0]!, name: "fortress-core" },
+                          summary.plan.maps[1]!,
+                        ],
+                      },
+              }),
+            );
+            return { passed: true, stdout: "" };
+          }),
+          scoreSourceFeedback: true,
+        },
+        firstModelConfig(root),
+      ),
+    ).rejects.toThrow(/expected plan 不同源/);
+    expect(stub.calls).toHaveLength(1);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  },
+);
+
+it("中间候选三行中缺终局摘要时停止，不请求第二次优化", { timeout: 30_000 }, async () => {
+  const root = mkRoot();
+  const runId = "terminal-middle-partial";
+  // 字节各异：同字节会复用上一阶段的网格，那就不会有「第二次调用」。
+  const stub = stubClient(distinctScripts(3).map((source) => reply(source)));
+  let invocation = 0;
+  const observedPaths: string[] = [];
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, (options) => {
+          invocation += 1;
+          observedPaths.push(options.observationsPath);
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          const readings = gridReadings(options.plan);
+          // 第二次调用少一格终局：整张网格不完整即停止推进。
+          if (invocation === 2) Reflect.deleteProperty(readings[7]!, "terminalSummary");
+          writeGridEvidence(options, readings);
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      firstModelConfig(root),
+    ),
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要.*优化阶段 1 未完成/);
   expect(stub.calls).toHaveLength(2);
-  expect(callAt(stub, 1).messages[2]?.content).toContain("终局事实：seed=303");
+  expect(callAt(stub, 1).messages[2]?.content).toContain("终局事实：seed=5000");
   expect(observedPaths).toHaveLength(2);
   for (const path of observedPaths) {
     expect(existsSync(path)).toBe(true);
@@ -1057,17 +1484,19 @@ it("中间候选三行中缺终局摘要时停止，不请求第二次优化", a
 it("最终候选仅保存两场终局时拒绝冻结，不追加请求或执行选拔", { timeout: 30_000 }, async () => {
   const root = selectionRoot();
   const runId = "terminal-final-partial";
-  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  // 字节各异：同字节会复用上一阶段的网格，第三次就不会真的跑网格。
+  const stub = stubClient(distinctScripts(3).map((source) => reply(source)));
   let invocation = 0;
   const selection = vi.fn();
   await expect(
     generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        ...requestWith(root, stub, runId, (options) => {
           invocation += 1;
-          const readings = terminalReadings();
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          const readings = gridReadings(options.plan);
           if (invocation === 3) readings.pop();
-          writeFileSync(observationsPath, observationJsonl(readings));
+          writeGridEvidence(options, readings);
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
@@ -1076,7 +1505,7 @@ it("最终候选仅保存两场终局时拒绝冻结，不追加请求或执行�
       },
       firstModelConfig(root),
     ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 2 未完成");
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要.*优化阶段 2 未完成/);
   expect(stub.calls).toHaveLength(3);
   expect(invocation).toBe(3);
   expect(selection).not.toHaveBeenCalled();
@@ -1085,7 +1514,7 @@ it("最终候选仅保存两场终局时拒绝冻结，不追加请求或执行�
   for (const round of [1, 2, 3]) {
     const path = join(root, "archive", "alpha", `observed-${runId}-round-${round}.jsonl`);
     expect(existsSync(`${path}.candidate.js`)).toBe(true);
-    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(round === 3 ? 2 : 3);
+    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(round === 3 ? 31 : 32);
   }
 });
 
@@ -1098,15 +1527,15 @@ it.each([undefined, "", " \n\n"])(
     await expect(
       generateOneModel(
         {
-          ...requestWith(root, stub, runId, ({ observationsPath }) => {
-            if (observed !== undefined) writeFileSync(observationsPath, observed);
+          ...requestWith(root, stub, runId, (options) => {
+            if (observed !== undefined) writeFileSync(options.observationsPath, observed);
             return { passed: true, stdout: "" };
           }),
           scoreSourceFeedback: true,
         },
         { ...firstModelConfig(root), protocolRounds: 1 },
       ),
-    ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2）");
+    ).rejects.toThrow(/缺少完整评测网格的有效终局摘要/);
     expect(stub.calls).toHaveLength(1);
     expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
     expect(
@@ -1116,25 +1545,31 @@ it.each([undefined, "", " \n\n"])(
 );
 
 it.each([
-  { stage: 0, source: TSC_FAIL_SCRIPT, classification: "tsc", configuredRounds: 1 },
-  { stage: 1, source: BLOCKING_SCRIPT, classification: "contract", configuredRounds: 2 },
-  { stage: 2, source: VALID_SCRIPT, classification: "contract", configuredRounds: 9 },
+  { stage: 0, sources: [TSC_FAIL_SCRIPT], classification: "tsc", configuredRounds: 1 },
+  { stage: 1, sources: [BLOCKING_SCRIPT], classification: "contract", configuredRounds: 2 },
+  // 阶段 2 的修复响应要**字节各异**：同字节会被网格复用判为「已经跑过」，就不会再触限。
+  { stage: 2, sources: distinctScripts(5, 100), classification: "contract", configuredRounds: 9 },
 ])(
   "优化阶段 $stage 不受逐模型上限 $configuredRounds 影响，统一用尽五次响应即失败",
   { timeout: 15_000 },
-  async ({ stage, source, classification, configuredRounds }) => {
+  async ({ stage, sources, classification, configuredRounds }) => {
     const root = mkRoot();
     const runId = `repair-exhausted-${String(stage)}`;
     const stub = stubClient([
-      ...Array.from({ length: stage }, () => reply(VALID_SCRIPT)),
-      ...Array.from({ length: 5 }, () => reply(source)),
+      // 前 stage 个阶段的候选也**字节各异**：同字节会被网格复用（不调用试跑桩），
+      // 那样 `trialCount <= 2` 这条「前两阶段通过」的判据就不再成立。
+      ...distinctScripts(stage).map((source) => reply(source)),
+      ...Array.from({ length: 5 }, (_, index) => reply(sources[index] ?? sources[0]!)),
     ]);
     let trialCount = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        ...requestWith(root, stub, runId, (options) => {
           trialCount += 1;
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(1, 0)));
+          writeGridEvidence(
+            options,
+            gridReadings(options.plan!, () => ({ delivered: 1, captures: 0 })),
+          );
           return { passed: stage !== 2 || trialCount <= 2, stdout: "预算诊断\n" };
         }),
         scoreSourceFeedback: true,
@@ -1170,14 +1605,19 @@ it.each(["当前", "前阶段"])(
   async (target) => {
     const root = mkRoot();
     const runId = "feedback-sidecar-mutation";
-    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+    // 字节各异：本轮要真的走到第二次网格执行（复用会跳过它，桩就不会被调用）。
+    const stub = stubClient(distinctScripts(3).map((source) => reply(source)));
     let invocation = 0;
     await expect(
       generateOneModel(
         {
-          ...requestWith(root, stub, runId, ({ observationsPath }) => {
+          ...requestWith(root, stub, runId, (options) => {
             invocation += 1;
-            writeFileSync(observationsPath, observationJsonl(terminalReadings(2, 0)));
+            const observationsPath = options.observationsPath;
+            writeGridEvidence(
+              options,
+              gridReadings(options.plan!, () => ({ delivered: 2, captures: 0 })),
+            );
             if (target === "当前" || invocation === 2) {
               const saved =
                 target === "当前"
@@ -1210,8 +1650,11 @@ it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或�
   try {
     const pending = generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(1, 0)));
+        ...requestWith(root, stub, runId, (options) => {
+          writeGridEvidence(
+            options,
+            gridReadings(options.plan!, () => ({ delivered: 1, captures: 0 })),
+          );
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
@@ -1242,36 +1685,39 @@ it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或�
   }
 });
 
-it.each(["候选JS", "观测JSONL"])("本轮%s已有证据时拒绝复用或覆盖，保留原证据", async (kind) => {
-  const root = mkRoot();
-  const runId = "feedback-evidence-collision";
-  const path = join(
-    root,
-    "archive",
-    "alpha",
-    `observed-${runId}-round-1.jsonl${kind === "候选JS" ? ".candidate.js" : ""}`,
-  );
-  mkdirSync(join(root, "archive", "alpha"), { recursive: true });
-  writeFileSync(path, "previous-evidence");
-  const stub = stubClient([reply(VALID_SCRIPT)]);
-  let trialInvoked = false;
-  await expect(
-    generateOneModel(
-      {
-        ...requestWith(root, stub, runId, () => {
-          trialInvoked = true;
-          return { passed: true, stdout: "" };
-        }),
-        scoreSourceFeedback: true,
-      },
-      { ...firstModelConfig(root), protocolRounds: 3 },
-    ),
-  ).rejects.toThrow();
-  expect(readFileSync(path, "utf8")).toBe("previous-evidence");
-  expect(trialInvoked).toBe(false);
-  expect(stub.calls).toHaveLength(1);
-  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
-});
+it.each(["候选JS", "观测JSONL", "网格汇总"])(
+  "本轮%s已有证据时拒绝复用或覆盖，保留原证据",
+  async (kind) => {
+    const root = mkRoot();
+    const runId = "feedback-evidence-collision";
+    const path = join(
+      root,
+      "archive",
+      "alpha",
+      `observed-${runId}-round-1.jsonl${kind === "候选JS" ? ".candidate.js" : kind === "网格汇总" ? TRIAL_GRID_SUMMARY_SUFFIX : ""}`,
+    );
+    mkdirSync(join(root, "archive", "alpha"), { recursive: true });
+    writeFileSync(path, "previous-evidence");
+    const stub = stubClient([reply(VALID_SCRIPT)]);
+    let trialInvoked = false;
+    await expect(
+      generateOneModel(
+        {
+          ...requestWith(root, stub, runId, () => {
+            trialInvoked = true;
+            return { passed: true, stdout: "" };
+          }),
+          scoreSourceFeedback: true,
+        },
+        { ...firstModelConfig(root), protocolRounds: 3 },
+      ),
+    ).rejects.toThrow();
+    expect(readFileSync(path, "utf8")).toBe("previous-evidence");
+    expect(trialInvoked).toBe(false);
+    expect(stub.calls).toHaveLength(1);
+    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+  },
+);
 
 it("试跑期间编译产物被更换时不能回喂错配事实或冻结", async () => {
   const root = mkRoot();
@@ -1308,15 +1754,15 @@ it("旧四栏观测在新优化流程失败安全，不回喂或冻结，原始�
   await expect(
     generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(observationsPath, observed);
+        ...requestWith(root, stub, runId, (options) => {
+          writeFileSync(options.observationsPath, observed);
           return { passed: true, stdout: "试跑通过" };
         }),
         scoreSourceFeedback: true,
       },
       firstModelConfig(root),
     ),
-  ).rejects.toThrow("缺少完整三场有效终局摘要（matchIndex 0/1/2），优化阶段 0 未完成");
+  ).rejects.toThrow(/缺少完整评测网格的有效终局摘要.*优化阶段 0 未完成/);
   expect(stub.calls).toHaveLength(1);
   expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
   expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
@@ -1371,9 +1817,12 @@ it(
     let trialCount = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
+        ...requestWith(root, stub, runId, (options) => {
           trialCount += 1;
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(3, 0)));
+          writeGridEvidence(
+            options,
+            gridReadings(options.plan!, () => ({ delivered: 3, captures: 0 })),
+          );
           return { passed: trialCount !== 3, stdout: "预算诊断\n" };
         }),
         scoreSourceFeedback: true,
@@ -1415,9 +1864,9 @@ it("预算和编译修复不消费优化机会，三个全零有效候选后正�
   let trialInvocation = 0;
   const outcome = await generateOneModel(
     {
-      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      ...requestWith(root, stub, runId, (options) => {
         trialInvocation += 1;
-        writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        writeGridEvidence(options, gridReadings(options.plan!));
         return trialInvocation === 1
           ? { passed: false, stdout: budgetFeedback }
           : { passed: true, stdout: "" };
@@ -1437,17 +1886,18 @@ it("预算和编译修复不消费优化机会，三个全零有效候选后正�
   expect(outcome.meta.generationLog).toHaveLength(5);
 });
 
-it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代预算反馈", async () => {
+it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代预算反馈", { timeout: 30_000 }, async () => {
   const root = mkRoot();
   const runId = "feedback-budget-after";
-  const stub = stubClient(Array.from({ length: 6 }, () => reply(VALID_SCRIPT)));
+  // 字节各异：同字节会复用第 0 阶段的网格（判为已通过），就轮不到「本阶段预算再次触限」。
+  const stub = stubClient(distinctScripts(6).map((source) => reply(source)));
   const feedback = "试跑未通过：预算超限。\n";
   let invocation = 0;
   const outcome = await generateOneModel(
     {
-      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      ...requestWith(root, stub, runId, (options) => {
         invocation += 1;
-        writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        writeGridEvidence(options, gridReadings(options.plan!));
         return { passed: invocation === 1, stdout: invocation === 1 ? "" : feedback };
       }),
       scoreSourceFeedback: true,
@@ -1461,7 +1911,7 @@ it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代�
   expect(outcome.failure.diagnostics).toEqual([feedback.trim()]);
   expect(callAt(stub, 2).messages[4]?.content).toBe(feedback);
   expect(existsSync(join(root, "archive", "alpha", `observed-${runId}.jsonl`))).toBe(false);
-  // 中途失败携带已验证候选描述（报告 FR-8 AC5 的已有候选披露）。
+  // 中途失败携带已验证候选描述（报告的已有候选披露）。
   const candidateJs = readFileSync(
     join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl.candidate.js`),
   );
@@ -1472,6 +1922,10 @@ it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代�
       scriptFile: `observed-${runId}-round-1.jsonl.candidate.js`,
       observationsFile: `observed-${runId}-round-1.jsonl`,
       scriptSha256: sha256Hex(candidateJs),
+      params: {},
+      // v2：中途失败也带着这个候选的网格分数与场数（报告侧据此披露已有阶段）。
+      score: { totalPoints: 48, averagePoints: 1.5, countedMatches: 32 },
+      matchCount: 32,
     },
   ]);
 });
@@ -1483,10 +1937,10 @@ it.each(["trial 抛错", "观测 JSON 损坏", "读盘失败"])(
     const runId = "feedback-infra";
     const stub = stubClient([reply(VALID_SCRIPT)]);
     const request = {
-      ...requestWith(root, stub, runId, ({ observationsPath }) => {
+      ...requestWith(root, stub, runId, (options) => {
         if (kind === "trial 抛错") throw new Error("试跑基础设施不可用");
-        if (kind === "观测 JSON 损坏") writeFileSync(observationsPath, "not-json\n");
-        else mkdirSync(observationsPath);
+        if (kind === "观测 JSON 损坏") writeFileSync(options.observationsPath, "not-json\n");
+        else mkdirSync(options.observationsPath);
         return { passed: true, stdout: "" };
       }),
       scoreSourceFeedback: true,
@@ -1504,9 +1958,9 @@ it("观测协议拒绝重复 matchIndex：抛出异常，不回喂、不冻结�
   const runId = "feedback-duplicate-index";
   const stub = stubClient([reply(VALID_SCRIPT)]);
   const request = {
-    ...requestWith(root, stub, runId, ({ observationsPath }) => {
+    ...requestWith(root, stub, runId, (options) => {
       writeFileSync(
-        observationsPath,
+        options.observationsPath,
         '{"matchIndex":0,"delivered":0,"captures":0,"noScoreSource":true}\n' +
           '{"matchIndex":0,"delivered":2,"captures":0,"noScoreSource":false}\n',
       );
@@ -1532,9 +1986,9 @@ it("观测协议拒绝额外键：抛出异常，不回喂、不冻结候选", a
   const runId = "feedback-extra-key";
   const stub = stubClient([reply(VALID_SCRIPT)]);
   const request = {
-    ...requestWith(root, stub, runId, ({ observationsPath }) => {
+    ...requestWith(root, stub, runId, (options) => {
       writeFileSync(
-        observationsPath,
+        options.observationsPath,
         '{"matchIndex":0,"delivered":2,"captures":0,"noScoreSource":false,"verdict":"passed"}\n',
       );
       return { passed: true, stdout: "" };
@@ -1559,14 +2013,16 @@ it("最终观测旁挂复制失败只警告，已通过候选仍返回 frozen �
   const runId = "feedback-copy-failure";
   const finalPath = join(root, "archive", "alpha", `observed-${runId}.jsonl`);
   mkdirSync(finalPath, { recursive: true });
-  const observed = observationJsonl(terminalReadings(2, 0));
   const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  let observed = "";
   const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   try {
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          writeFileSync(observationsPath, observed);
+        ...requestWith(root, stub, runId, (options) => {
+          const readings = gridReadings(options.plan!, () => ({ delivered: 2, captures: 0 }));
+          observed = observationJsonl(readings);
+          writeGridEvidence(options, readings);
           return { passed: true, stdout: "" };
         }),
         scoreSourceFeedback: true,
@@ -1583,9 +2039,49 @@ it("最终观测旁挂复制失败只警告，已通过候选仍返回 frozen �
     expect(
       readFileSync(join(root, "archive", "alpha", `observed-${runId}-round-1.jsonl`), "utf8"),
     ).toBe(observed);
+    // 成对发布：观测那份没发出去，旁挂汇总也不许单独出现。
+    expect(existsSync(`${finalPath}${TRIAL_GRID_SUMMARY_SUFFIX}`)).toBe(false);
     expect(stderr).toHaveBeenCalledTimes(1);
     expect(stderr.mock.calls[0]?.[0]).toContain("警告");
     expect(stderr.mock.calls[0]?.[0]).toContain(finalPath);
+  } finally {
+    stderr.mockRestore();
+  }
+});
+
+it("成对发布：汇总那份失败时观测那份也不留，且不留临时文件", { timeout: 30_000 }, async () => {
+  const root = mkRoot();
+  const runId = "feedback-pair-failure";
+  const finalPath = join(root, "archive", "alpha", `observed-${runId}.jsonl`);
+  const finalSummaryPath = `${finalPath}${TRIAL_GRID_SUMMARY_SUFFIX}`;
+  // 汇总的落点被一个目录占着 → 复制到临时名没问题，rename 成真名必失败；
+  // 这时观测那份已经被 rename 成真名了，必须被撤回（否则就是半套）。
+  mkdirSync(finalSummaryPath, { recursive: true });
+  const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
+  const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  try {
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, runId, (options) => {
+          writeGridEvidence(options, gridReadings(options.plan!));
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 3 },
+    );
+    // 发布只属旁证：失败不翻转已通过候选的结论。
+    expect(outcome.kind).toBe("frozen");
+    // 两份都不在：观测那份没有留下来，汇总那份仍是原来那个目录。
+    expect(existsSync(finalPath)).toBe(false);
+    expect(statSync(finalSummaryPath).isDirectory()).toBe(true);
+    // 临时文件也清干净（下一次生成不会在归档目录里捡到半截旁证）。
+    expect(
+      readdirSync(join(root, "archive", "alpha")).filter((name) => name.endsWith(".tmp")),
+    ).toEqual([]);
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr.mock.calls[0]?.[0]).toContain("警告");
+    expect(stderr.mock.calls[0]?.[0]).toContain(finalSummaryPath);
   } finally {
     stderr.mockRestore();
   }
@@ -1604,8 +2100,8 @@ it("opt-in 存档拒绝撞名时不发布最终观测，既有最终候选旁证
         root,
         stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]),
         runId,
-        ({ observationsPath }) => {
-          writeFileSync(observationsPath, observationJsonl(terminalReadings(0, 0)));
+        (options) => {
+          writeGridEvidence(options, gridReadings(options.plan!));
           return { passed: true, stdout: "" };
         },
       ),
@@ -1620,7 +2116,7 @@ it("opt-in 存档拒绝撞名时不发布最终观测，既有最终候选旁证
   expect(readFileSync(finalPath, "utf8")).toBe(previous);
 });
 
-it.each(["chat-completions", "messages", "responses"] as const)(
+it.each(["chat-completions", "messages", "responses", "generate-content"] as const)(
   "规范参数从配置到生成调用及归档保持一致，默认无额外探测：%s",
   async (family) => {
     const root = mkRoot();
@@ -1668,7 +2164,7 @@ it.each(["chat-completions", "messages", "responses"] as const)(
   },
 );
 
-it.each(["chat-completions", "messages", "responses"] as const)(
+it.each(["chat-completions", "messages", "responses", "generate-content"] as const)(
   "规范参数在截断、传输重试和编译修复中保持不变，用量分开记录：%s",
   async (family) => {
     const root = mkRoot();
@@ -1795,31 +2291,58 @@ const canonicalSelectionFixture = (value: unknown): string => {
       .join(",")}}`;
   return JSON.stringify(value);
 };
-const selectedFixture = (
-  options: Parameters<import("./selection.js").SelectionProbe>[0],
-  winner = 1,
-) => {
+/** 选拔 probe 的入参（注入桩拿到的就是这一份：计划 + 三份候选的阶段证据路径）。 */
+type SelectionStubOptions = Parameters<import("./selection.js").SelectionProbe>[0];
+
+type StubGridRow = {
+  readonly matchIndex: number;
+  readonly terminalSummary: {
+    readonly players: readonly { readonly seat: number; readonly rank: number }[];
+  };
+};
+type StubGridSummary = {
+  readonly plan: TrialPlan;
+  readonly scriptSha256: string;
+  readonly score: {
+    readonly totalPoints: number;
+    readonly averagePoints: number;
+    readonly countedMatches: number;
+  };
+};
+
+/**
+ * 选拔记录（v2）：**从桩写下的证据**读出来，而不是凭空造一份。
+ *
+ * 生成管线的选拔记录必须与盘上的观测行、`.grid.json` 对得上——`--validate` 那一遍由真实 CLI
+ * 跑，它会把这份记录重新解释一遍再比。所以夹具照同一条路走：读候选的观测与汇总、按计划算逐场
+ * 摘要与积分、按均分定胜者。谁分高由**桩写下的名次**决定，fixture 不自己指定胜者。
+ */
+const gridSelectionFixture = (options: SelectionStubOptions) => {
+  const plan = options.expectedPlan;
   const candidates = options.candidates.map(
-    ({ stage, protocolRound, scriptSha256, sourceSha256 }) => {
+    ({ stage, protocolRound, scriptSha256, sourceSha256, observationsPath, gridSummaryPath }) => {
+      const rows = readFileSync(observationsPath, "utf8")
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as StubGridRow);
+      const summary = JSON.parse(readFileSync(gridSummaryPath, "utf8")) as StubGridSummary;
       const prior = options.candidates.find((entry) => entry.scriptSha256 === scriptSha256)!;
-      const points = prior.stage === winner ? 3 : 0;
-      const matches = options.expectedPlan.matches.map((match) => {
-        const rankings = [1, 2, 3];
-        rankings.splice(match.candidateSeat, 0, points === 3 ? 1 : 4);
-        if (points === 3)
-          for (let seat = 0; seat < 4; seat += 1)
-            if (seat !== match.candidateSeat) rankings[seat] = (rankings[seat] ?? 0) + 1;
+      const matches = plan.matches.map((match) => {
+        const row = rows.find((entry) => entry.matchIndex === match.matchIndex)!;
+        const ranks = [...row.terminalSummary.players]
+          .sort((left, right) => left.seat - right.seat)
+          .map((player) => player.rank);
         return {
           matchIndex: match.matchIndex,
           inputSha256: sha256Hex(
             canonicalSelectionFixture({
-              planSha256: options.expectedPlan.planSha256,
+              planSha256: plan.planSha256,
               scriptSha256,
               match,
             }),
           ),
-          result: { type: "result", rankings, reason: "timeout", territoryScores: [0, 0, 0, 0] },
-          candidatePoints: points,
+          observationSha256: sha256Hex(canonicalSelectionFixture(row)),
+          candidatePoints: pointsOfRanks(ranks)[match.candidateSeat]!,
         };
       });
       return {
@@ -1827,26 +2350,27 @@ const selectedFixture = (
         protocolRound,
         scriptSha256,
         sourceSha256,
+        score: summary.score,
         matches,
-        totalPoints: points * 12,
-        averagePoints: points,
-        countedMatches: 12,
         ...(prior.stage < stage ? { reusedFromStage: prior.stage } : {}),
       };
     },
   );
   const ranked = [...candidates].sort(
-    (a, b) => b.averagePoints - a.averagePoints || b.stage - a.stage,
+    (left, right) =>
+      right.score.averagePoints - left.score.averagePoints || right.stage - left.stage,
   );
   const chosen = ranked[0]!;
   const { stage, protocolRound, scriptSha256, sourceSha256 } = chosen;
   return {
-    version: 1,
-    plan: options.expectedPlan,
+    version: 2,
+    plan,
     candidates,
     selected: { stage, protocolRound, scriptSha256, sourceSha256 },
     reason:
-      chosen.averagePoints !== ranked[1]!.averagePoints ? "highest-average-points" : "later-stage",
+      chosen.score.averagePoints !== ranked[1]!.score.averagePoints
+        ? "highest-average-points"
+        : "later-stage",
   };
 };
 const selectionRoot = (): string => {
@@ -1855,13 +2379,13 @@ const selectionRoot = (): string => {
     symlinkSync(join(repoRoot, name), join(root, name), "dir");
   return root;
 };
-const selectionTrial: NonNullable<GenerationRequest["trial"]> = ({ observationsPath }) => {
-  writeFileSync(observationsPath, observationJsonl(terminalReadings()));
+const selectionTrial: NonNullable<GenerationRequest["trial"]> = (options) => {
+  writeGridEvidence(options);
   return { passed: true, stdout: "" };
 };
 
 it.each([false, true])(
-  "两次实际请求各接收上一阶段三场四方终局，最终保存且选拔开关%s不回喂",
+  "两次回喂各带本阶段 32 场三层事实与同格变化，最终保存且选拔开关%s不回喂",
   async (selectBestCandidate) => {
     const root = selectionRoot();
     const runId = "terminal-two-feedback";
@@ -1873,20 +2397,34 @@ it.each([false, true])(
     let stage = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, ({ observationsPath }) => {
-          const readings = [101, 202, 303].map((seed, matchIndex) => {
-            const terminalSummary = terminalSummaryFixture(seed);
-            for (const player of terminalSummary.players) {
-              player.controlledResources += stage;
-              player.score.resources += stage;
-              player.territoryScore += stage;
-            }
-            return { matchIndex, delivered: 0, captures: 0, noScoreSource: true, terminalSummary };
-          });
-          writeFileSync(
-            observationsPath,
-            readings.map((reading) => JSON.stringify(reading)).join("\n") + "\n",
-          );
+        ...requestWith(root, stub, runId, (options) => {
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          // 前两个阶段四方并列（两次回喂的对差表因此稳定）；第三阶段候选全败，于是选拔按
+          // 「平均分 → 较晚阶段」选中 stage1——选拔不产生新判别依据，胜者由生成阶段的分数决定。
+          // 每阶段把「资源点」抬一格：两次回喂的文本因此可区分，第二次的对差表还带着与上一阶段的同格变化。
+          // 前两个阶段四方并列（领土 6 → 7）；第三个阶段候选全败（名次由领土分决定）。
+          const readings =
+            stage === 2
+              ? gridReadingsAtRank(options.plan, 4, stage)
+              : gridReadings(options.plan).map((reading) => ({
+                  ...reading,
+                  terminalSummary: (() => {
+                    const summary = terminalSummaryFixture(
+                      reading.terminalSummary!.seed,
+                      "timeout",
+                      reading.terminalSummary!.players.map(
+                        (player) => player.player,
+                      ) as unknown as readonly [string, string, string, string],
+                    );
+                    for (const player of summary.players) {
+                      player.controlledResources += stage;
+                      player.score.resources += stage;
+                      player.territoryScore += stage;
+                    }
+                    return summary;
+                  })(),
+                }));
+          writeGridEvidence(options, readings);
           stage += 1;
           return { passed: true, stdout: "" };
         }),
@@ -1894,17 +2432,15 @@ it.each([false, true])(
         selectBestCandidate,
         selection: (options) => {
           expect(stub.calls).toHaveLength(3);
-          expect(options.expectedPlan.matches).toHaveLength(12);
-          expect([...new Set(options.expectedPlan.matches.map((match) => match.seed))]).toEqual([
-            401, 402, 403,
+          // 选拔用的计划就是生成阶段那张网格：32 场、每格一个种子、候选四个座位各坐一次。
+          expect(options.expectedPlan.matches).toHaveLength(32);
+          expect(options.expectedPlan.matches.map((match) => match.seed).slice(0, 3)).toEqual([
+            5000, 5001, 5002,
           ]);
           expect(
             [...new Set(options.expectedPlan.matches.map((match) => match.candidateSeat))].sort(),
           ).toEqual([0, 1, 2, 3]);
-          const selection = selectedFixture(options, 1);
-          for (const candidate of selection.candidates)
-            for (const match of candidate.matches) match.result.territoryScores = [987654, 0, 0, 0];
-          return selection;
+          return gridSelectionFixture(options);
         },
       },
       firstModelConfig(root),
@@ -1915,20 +2451,29 @@ it.each([false, true])(
     const first = callAt(stub, 1).messages[2]?.content ?? "";
     const second = callAt(stub, 2).messages[4]?.content ?? "";
     for (const feedback of [first, second]) {
-      for (const seed of [101, 202, 303]) expect(feedback).toContain(`终局事实：seed=${seed}`);
-      expect(feedback.match(/结束原因=timeout/g)).toHaveLength(3);
-      for (const player of [
-        "candidate",
-        "cell-a-melee-pressure",
-        "cell-b-expansion-economy",
-        "cell-c-claim-no-harvest",
-      ])
-        expect(feedback.match(new RegExp(`身份=${player}，`, "g"))).toHaveLength(3);
+      expect(feedback).toContain("试跑观测：本候选实际完成的 32 个对局。");
+      // 逐场一行 = 计划场数；每行三列事实齐全（名次 / 四方领土分 / 结束原因）。
+      expect(feedback.match(/^  #\d{2} \| .+ \| timeout$/gm)).toHaveLength(32);
+      // 只展开最差三场：三块明细，不是 32 块。
+      expect(feedback.match(/^- 第 \d+ 个对局：/gm)).toHaveLength(3);
       expect(feedback).toContain("名次=1，名次积分=1.5");
       expect(feedback).not.toMatch(
         /请检查|建议|应该|坐标|987654|401|402|403|highest-average-points|candidatePoints/,
       );
     }
+    // 第一阶段没有对照：八格都写「无上一阶段」。
+    expect(first.match(/无上一阶段/g)).toHaveLength(8);
+    expect(first).toContain("平均领土分 6.00（第一名 6.00，分差 0.00）");
+    // 第二阶段给出同一格的变化：本测试只抬领土分，四方同抬，所以名次积分与分差都不变。
+    expect(second).not.toContain("无上一阶段");
+    expect(second.match(/与上一阶段同一格：Δ平均名次积分 \+0\.00，Δ分差 \+0\.00/g)).toHaveLength(8);
+    expect(second).toContain("平均领土分 7.00（第一名 7.00，分差 0.00）");
+    // 领土分从 6 抬到 7：逐场行与最差三场明细都跟着变，前一轮的数字不再出现。
+    expect(first).toContain("| 1 | 6/6/6/6 | timeout");
+    expect(second).toContain("| 1 | 7/7/7/7 | timeout");
+    expect(second).not.toContain("6/6/6/6");
+    expect(second).not.toContain("领土分=6，");
+    // 每阶段 3 场明细 × 四方 = 12 行领土分（逐场行里是 `a/b/c/d`，不是这套逐方明细）。
     expect(first.match(/领土分=6，/g)).toHaveLength(12);
     expect(first).not.toContain("领土分=7，");
     expect(second.match(/领土分=7，/g)).toHaveLength(12);
@@ -1946,13 +2491,16 @@ it.each([false, true])(
       .map(
         (line) =>
           JSON.parse(line) as {
-            terminalSummary: { seed: number; players: { territoryScore: number }[] };
+            terminalSummary: { seed: number; players: { rank: number; territoryScore: number }[] };
           },
       );
-    expect(finalReadings.map((reading) => reading.terminalSummary.seed)).toEqual([101, 202, 303]);
+    expect(finalReadings.map((reading) => reading.terminalSummary.seed)).toEqual(
+      Array.from({ length: 32 }, (_, index) => 5000 + index),
+    );
+    // 第三阶段候选全败：四方名次是 1/2/3/4 各一，领土分随名次递减（不是四方并列）。
     for (const reading of finalReadings)
-      expect(reading.terminalSummary.players.map((player) => player.territoryScore)).toEqual([
-        8, 8, 8, 8,
+      expect(reading.terminalSummary.players.map((player) => player.rank).sort()).toEqual([
+        1, 2, 3, 4,
       ]);
     if (outcome.kind !== "frozen") throw new Error("终局反馈未完成定版");
     expect(outcome.meta.optimization?.feedbackRounds).toBe(2);
@@ -1972,14 +2520,25 @@ it.each([0, 1, 2])(
     ];
     const stub = stubClient(sources.map((source) => reply(source)));
     const runId = `select-stage-${winner}`;
+    // 每阶段的名次不同：只有 `winner` 那一阶段候选全胜（其余全败）。选拔按生成阶段的分数定版，
+    // 所以「谁赢」由试跑证据决定，probe 只是把证据解释成记录。
+    let invocation = 0;
     const outcome = await generateOneModel(
       {
-        ...requestWith(root, stub, runId, selectionTrial),
+        ...requestWith(root, stub, runId, (options) => {
+          if (options.plan === undefined) throw new Error("试跑桩需要计划");
+          writeGridEvidence(
+            options,
+            gridReadingsAtRank(options.plan, invocation === winner ? 1 : 4),
+          );
+          invocation += 1;
+          return { passed: true, stdout: "" };
+        }),
         scoreSourceFeedback: true,
         selectBestCandidate: true,
         selection: (options) => {
           expect(stub.calls).toHaveLength(3);
-          return selectedFixture(options, winner);
+          return gridSelectionFixture(options);
         },
       },
       firstModelConfig(root),
@@ -1988,6 +2547,7 @@ it.each([0, 1, 2])(
     expect(stub.calls).toHaveLength(3);
     if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
     expect(outcome.meta.selection?.selected.stage).toBe(winner);
+    expect(outcome.meta.selection?.reason).toBe("highest-average-points");
     expect(outcome.meta.optimization?.candidates[2]?.stage).toBe(2);
     expect(readFileSync(join(outcome.dir, "script.ts"))).toEqual(Buffer.from(sources[winner]!));
     for (const ext of ["ts", "js"])
@@ -2033,22 +2593,23 @@ it.each([
       scoreSourceFeedback: true,
       selectBestCandidate: true,
       selection: (options) => {
-        const selection = selectedFixture(options, failure === "legacy-stage-rule" ? -1 : 1);
+        const selection = gridSelectionFixture(options);
         if (failure === "legacy-stage-rule") {
-          const { stage, protocolRound, scriptSha256, sourceSha256 } = selection.candidates[0]!;
-          selection.selected = { stage, protocolRound, scriptSha256, sourceSha256 };
-          selection.reason = "earlier-stage";
+          // 新选拔结果不得使用历史决胜规则：v2 的形状里就没有这一栏。
+          Reflect.set(selection, "reason", "earlier-stage");
         }
         if (failure === "throw") throw new Error("credential provider-body PROMPT-SECRET");
         if (failure === "missing-match") selection.candidates[0]!.matches.pop();
         if (failure === "missing-terminal")
-          Reflect.deleteProperty(selection.candidates[0]!.matches[0]!, "result");
-        if (failure === "forged-score") selection.candidates[0]!.averagePoints = 3;
+          Reflect.deleteProperty(selection.candidates[0]!.matches[0]!, "observationSha256");
+        if (failure === "forged-score")
+          Reflect.set(selection.candidates[0]!.score, "averagePoints", 3);
         if (failure === "wrong-candidate") selection.candidates[0]!.sourceSha256 = "a".repeat(64);
         if (failure === "wrong-environment") {
+          // 记录里的计划与生成阶段的计划不同源（换一张图，摘要一起换；形状仍合法）。
           const body = {
             ...selection.plan,
-            mapSha256: "a".repeat(64),
+            maps: [{ ...selection.plan.maps[0]!, sha256: "c".repeat(64) }, selection.plan.maps[1]!],
           };
           Reflect.deleteProperty(body, "planSha256");
           selection.plan = { ...body, planSha256: sha256Hex(canonicalSelectionFixture(body)) };
@@ -2062,8 +2623,7 @@ it.each([
                 }),
               );
         }
-        if (failure === "mutate-plan")
-          Reflect.set(options.expectedPlan, "mapSha256", "a".repeat(64));
+        if (failure === "mutate-plan") Reflect.set(options.expectedPlan.matches[0]!, "seed", 999);
         if (failure === "mutate-ts") writeFileSync(options.candidates[1]!.sourcePath, "tampered");
         return selection;
       },
@@ -2098,7 +2658,7 @@ it("重复 JS 不合并三个 TS/阶段身份，同分冻结最终阶段的确�
       ...requestWith(root, stub, "select-duplicate", selectionTrial),
       scoreSourceFeedback: true,
       selectBestCandidate: true,
-      selection: (options) => selectedFixture(options, 2),
+      selection: (options) => gridSelectionFixture(options),
     },
     firstModelConfig(root),
   );
@@ -2147,6 +2707,7 @@ it("批次编排把选拔失败安全落盘，三个阶段与 TS 身份均保留
     configPath: "models.yaml",
     createClient: () => stub,
     trial: selectionTrial,
+    trialPlan: () => gridPlanFixture(),
     scoreSourceFeedback: true,
     selectBestCandidate: true,
     selection: () => {
@@ -2167,61 +2728,46 @@ it("批次编排把选拔失败安全落盘，三个阶段与 TS 身份均保留
   expect(
     record.selectionFailure?.candidates.map((candidate) => candidate.sourceSha256),
   ).toHaveLength(3);
-  expect(record.selectionFailure?.plan.matches).toHaveLength(12);
+  // v2：失败旁证里带的是生成阶段那张网格计划（32 场），不是另一套 12 场的选拔计划。
+  expect(record.selectionFailure?.plan.matches).toHaveLength(32);
   expect(JSON.stringify(record)).not.toContain("SECRET-provider");
   expect(files.every((file) => !file.startsWith(".tmp-"))).toBe(true);
 });
 
-it("最高生成入口默认真实选拔子进程完成四座终局计分与冻结身份链", { timeout: 30000 }, async () => {
-  const root = mkRoot();
-  for (const name of ["apps", "maps"]) symlinkSync(join(repoRoot, name), join(root, name), "dir");
-  for (const name of [
-    "cell-a-melee-pressure",
-    "cell-b-expansion-economy",
-    "cell-c-claim-no-harvest",
-  ]) {
-    mkdirSync(join(root, "benchmarks", name), { recursive: true });
-    writeFileSync(join(root, "benchmarks", name, "script.js"), "function loop() {}\n");
-  }
-  const rules = JSON.parse(readFileSync(join(root, "rulesets", `${RULESET_VERSION}.json`), "utf8"));
-  writeFileSync(
-    join(root, "rulesets", `${RULESET_VERSION}.json`),
-    JSON.stringify({ ...rules, tickLimit: 4 }),
-  );
-  const sources = [
-    "type First = number;\nfunction loop() {}\n",
-    "type Middle = number;\nfunction loop() {}\n",
-    "type Final = number;\nfunction loop() {}\n",
-  ];
-  const stub = stubClient(sources.map((source) => reply(source)));
-  const outcome = await generateOneModel(
-    {
-      ...requestWith(root, stub, "real-selection", selectionTrial),
-      scoreSourceFeedback: true,
-      selectBestCandidate: true,
-    },
-    firstModelConfig(root),
-  );
-  expect(outcome.kind).toBe("frozen");
-  if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
-  expect(stub.calls).toHaveLength(3);
-  expect(
-    outcome.meta.selection?.candidates.map((candidate) => [
-      candidate.countedMatches,
-      candidate.averagePoints,
-    ]),
-  ).toEqual([
-    [12, 1.5],
-    [12, 1.5],
-    [12, 1.5],
-  ]);
-  expect(outcome.meta.selection?.selected.stage).toBe(2);
-  expect(outcome.meta.selection?.reason).toBe("later-stage");
-  expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(sources[2]);
-  expect(sha256Hex(readFileSync(join(outcome.dir, "script.js")))).toBe(
-    outcome.meta.selection?.selected.scriptSha256,
-  );
-});
+it(
+  "真实选拔子进程拒绝与安装面不同源的网格计划：整次失败、零发布、三阶段留证",
+  { timeout: 30_000 },
+  async () => {
+    // 安装面里没有四份陪练的冻结存档（`archive/` 不入库），选拔子进程无法把计划从 root + model
+    // 重建出来——这正是「计划同源」这条硬判据的失败路径：整次生成失败，不是候选不合格。
+    const root = selectionRoot();
+    const sources = [
+      "type First = number;\nfunction loop() {}\n",
+      "type Middle = number;\nfunction loop() {}\n",
+      "type Final = number;\nfunction loop() {}\n",
+    ];
+    const stub = stubClient(sources.map((source) => reply(source)));
+    const outcome = await generateOneModel(
+      {
+        ...requestWith(root, stub, "real-selection", selectionTrial),
+        scoreSourceFeedback: true,
+        selectBestCandidate: true,
+      },
+      firstModelConfig(root),
+    );
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") throw new Error("安装面缺陪练档时不得发布");
+    expect(stub.calls).toHaveLength(3);
+    expect(outcome.failure.classification).toBe("selection");
+    expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+    expect(existsSync(join(root, "archive", "alpha", "real-selection"))).toBe(false);
+    // 三阶段证据仍在（选拔失败不改写候选旁挂），消息里不出现路径与陪练档细节。
+    expect(
+      readdirSync(join(root, "archive", "alpha")).filter((name) => name.endsWith(".candidate.js")),
+    ).toHaveLength(3);
+    expect(JSON.stringify(outcome.failure.message)).not.toContain("/");
+  },
+);
 
 it("未完成第三阶段的传输失败不调用选拔救回旧候选，保留 01 未收敛末行", async () => {
   const root = selectionRoot();

@@ -10,7 +10,7 @@
  * 键清单本身(21 个键的名字、量纲、标定状态)归 `packages/schema/src/ruleset.test.ts`,
  * 派生式与版本断言的实现归 `validator.ts`;这里只钉「落库的那一份没跑偏」。
  *
- * 刻意不做的事(spec《Testing Decisions》第三缝「单点,刻意不接线」):**不接进任何子命令的装载路径**,
+ * 刻意不做的事(第三缝「单点,刻意不接线」):**不接进任何子命令的装载路径**,
  * 也不新增子命令(hld §9 的六条不动)。所以本文件断的是纯函数 `validateRuleset` 的判决,
  * 不是某个命令的退出码——因此它属于 `unit` project 而不是 `gates`:`gates` 断的是
  * 「全量门禁 / 命令的退出码与报告文本」,而这条通路刻意没有命令可断。
@@ -87,8 +87,8 @@ const pointersOf = (result: ValidationRejection): readonly string[] =>
 
 /**
  * 键清单按标定状态分的两半。切法取自键清单本身,**不在这里另列一份名单**——
- * 八个预算键要分三批从 `undetermined` 落成 `final`,写死任何一边的数量都会让
- * 「落值票」红在一个与本票无关的理由上。判据是键自己身上那个 `state`,不是「值是不是 0」。
+ * 八个预算键要分批从 `undetermined` 落成 `final`,写死任何一边的数量都会让它红在
+ * 一个与判据无关的理由上。判据是键自己身上那个 `state`,不是「值是不是 0」。
  */
 const FINAL_KEYS = RULESET_KEYS.filter(
   (key) => RULESET_KEY_CATALOG[key].calibration.state === "final",
@@ -99,7 +99,7 @@ const UNDETERMINED_KEYS = RULESET_KEYS.filter(
 );
 
 /**
- * 定稿键的终值,**逐字抄自标定结论**:v1 的值抄自标定环交接单 §1(`resourcePerSite` 是票 09 改值后的
+ * 定稿键的终值,**逐字抄自标定结论**:v1 的值抄自标定环交接单 §1(`resourcePerSite` 是改值后的
  * 200,不是草案里的 125);v2 只动两个预算键——`eventTickLimit` 50000 / `apiCallTickLimit` 800 取自
  * 测试赛季 1320 局的真峰测量(10 非退化模型 events 真峰 ≤35000、apis 真峰 ≤635,各加余量;旧 sol 单 tick
  * 5.5 万的退化峰值仍在线上,照拦),其余键沿用 v1。四条兵种线的 `spawnTicks`
@@ -125,8 +125,7 @@ const FINAL_VALUES: Partial<Ruleset> = {
   baseScore: 4,
   resourceScore: 1,
   unitCostDivisor: 6,
-  // 预算键分批落定稿(票 05 落计数与异常三键,票 06 落内存两键,票 07 落墙钟两键与体积键);
-  // 票 07 之后八键全部定稿,未定键集为空。
+  // 预算键分批落定稿(计数与异常三键、内存两键、墙钟两键与体积键);八键全部定稿,未定键集为空。
   exceptionTickLimit: 3,
   eventTickLimit: 50000,
   apiCallTickLimit: 800,
@@ -234,12 +233,12 @@ it("定稿键逐字取终值抄本(抄本与定稿键集完全重合,不数数)"
   // 再查反方向:抄本里不许有定稿键之外的键(某个键退回未定值却还留着终值,这条红)。
   // 用集合重合代替「抄本长度 = 常数」,数量随落值批次变,写死就会假红。
   expect(Object.keys(FINAL_VALUES).sort()).toEqual([...FINAL_KEYS].sort());
-  // 反例:把 `resourcePerSite` 写回草案时代的 125(票 09 已改值为 200),上面那圈当场红。
+  // 反例:把 `resourcePerSite` 写回草案时代的 125(已改值为 200),上面那圈当场红。
   expect(FINAL_VALUES.resourcePerSite).not.toBe(125);
 });
 
-it("未定键各取自己身上标定的占位值(票 07 之后未定键集为空,这条仍守不变量)", () => {
-  // 八个预算键分三批落定稿,未定键数从 8 一路变到 0;这里不写死它,分组取自标定状态本身。
+it("未定键各取自己身上标定的占位值(未定键集为空,这条仍守不变量)", () => {
+  // 八个预算键分批落定稿,未定键数一路变到 0;这里不写死它,分组取自标定状态本身。
   for (const key of UNDETERMINED_KEYS) {
     const calibration = RULESET_KEY_CATALOG[key].calibration;
     // 判据是键自己的标定状态,不是「值是不是 0」:占位值从键身上取,不是一个字面量。
@@ -252,7 +251,7 @@ it("未定键各取自己身上标定的占位值(票 07 之后未定键集为�
 });
 
 it("反向用例:把标定状态翻一个方向,判据就换一套取值(未定↔定稿可逆)", () => {
-  // 票 07 收口后未定键集为空,所以反向用例改成从**定稿键**出发:把某个定稿键的标定临时切成
+  // 未定键集为空,所以反向用例改成从**定稿键**出发:把某个定稿键的标定临时切成
   // 「未定」,同一份判据就不再接受它的终值,而是要求它取占位值——证明判据读的是键自己身上的
   // `state`,不是「值是不是 0」(落库文件里那份终值不因这次临时切换而变)。
   expect(UNDETERMINED_KEYS).toEqual([]);

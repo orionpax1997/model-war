@@ -25,7 +25,7 @@
  *
  * ── 本文件里的「交接单 …」是一律历史出处,不是当前依据 ──────────────────────────
  *
- * 标定环那份一次性交接单(`.scratch/rules-calibration/handoff.md`)**已作废**(它搬运的三样东西
+ * 标定环那份一次性交接单**已作废**(它搬运的三样东西
  * 各自落库之后就没有第二个家了)。下面若干处引用它(座位自认 P0-1 / P0-N4、错误判别 P0-N2、
  * `ERR_BASE_BUSY` 可查询化那一格),记的是「这一条当初是被谁裁定的」这桩来历,
  * **不构成对当前事实的引用**。收与不收的当前依据只有上面那一句收录判据与下面逐条的理由:
@@ -359,7 +359,7 @@ export const SANDBOX_INJECTED_API_SYMBOL_CATALOG: readonly InjectedApiSymbolEntr
  * 注入面的裸名字清单,**由上面的目录投影而来**,不另存一份。
  *
  * 投影而不是再抄一份字面量:名字只有一处可改(`…_CATALOG`),而「名字 + 类别 + 为什么收」
- * 三样一起是可枚举的数据,面向模型的契约文档按它逐行渲染(票 05)。
+ * 三样一起是可枚举的数据,面向模型的契约文档按它逐行渲染(`packages/tools/src/generate/`)。
  */
 export const SANDBOX_INJECTED_API_SYMBOLS: readonly string[] =
   SANDBOX_INJECTED_API_SYMBOL_CATALOG.map((entry) => entry.symbol);

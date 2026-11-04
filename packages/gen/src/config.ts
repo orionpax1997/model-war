@@ -23,13 +23,18 @@ import {
 } from "./generation-policy.js";
 import { parseYamlSubset } from "./yaml-lite.js";
 
-/** 三条端点族:本期已开通模型全落在它们里(hld §2.2.6)。新增一族才需要动适配层。 */
-export type EndpointFamily = "chat-completions" | "messages" | "responses";
+/**
+ * 四条**线协议**族:本期已开通模型全落在它们里(hld §2.2.6)。新增一族才需要动适配层。
+ * 名字取端点动词/资源名而不是厂商名(`generate-content` = Google `:generateContent`),
+ * 因为真正变的是「请求 body 怎么摆、响应怎么读」,同一族里的不同厂商走同一份翻译。
+ */
+export type EndpointFamily = "chat-completions" | "messages" | "responses" | "generate-content";
 
 export const ENDPOINT_FAMILIES: readonly EndpointFamily[] = [
   "chat-completions",
   "messages",
   "responses",
+  "generate-content",
 ];
 
 /** 一条模型条目。必填五项之外,其余是可选项(缺省语义见各自注释)。 */

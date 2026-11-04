@@ -18,7 +18,7 @@
  * 领土分的唯一实现在 `processor/outcome.ts` 的 `territoryScoreOf`。本夹具**不重抄公式**:
  * 把回放的一行还原成一份状态(只换 `players` / `units` / `sites` 三栏,其余借终局状态),
  * 再调那份唯一实现——公式因此只有一个家。复验时拿这批形态读数去对 §8 #9 的「接受 + 记录」
- * 与 §1.4 的窗口;**本票不下结论**。
+ * 与 §1.4 的窗口;**这里不下结论**。
  */
 
 import type { Ruleset, ReplaySite, ReplayTickLine } from "@model-war/replay";

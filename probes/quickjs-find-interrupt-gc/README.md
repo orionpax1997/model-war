@@ -18,7 +18,7 @@ node probes/quickjs-find-interrupt-gc/repro-minimal.mjs --shim   # 等价 JS 实
 
 ## `repro-match.mjs` —— 引擎级确定性复现(真实冻结存档组合)
 
-重建 season 票 11 那一局的 `input.json`(map `corridor-split`、seed `2936867027`、
+重建赛季审计那一局的 `input.json`(map `corridor-split`、seed `2936867027`、
 四席 = [`mimo-v2.6-flash`, `muse-spark-1.3-contributor`, `deepseek-v4-flash`,
 `gpt-6-luna`],均取仓库内 `archive/*/2026-10-09T01-09-09-599Z/`,sha256 现算),再跑
 `modelwar match`。

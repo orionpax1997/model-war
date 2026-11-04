@@ -15,7 +15,8 @@ export type ReasoningControl =
   | "chat-effort"
   | "responses-effort"
   | "adaptive-effort"
-  | "thinking-enabled";
+  | "thinking-enabled"
+  | "thinking-level";
 export type OutputField =
   | "server-default"
   | "max_tokens"
@@ -52,6 +53,7 @@ const CONTROLS = [
   "responses-effort",
   "adaptive-effort",
   "thinking-enabled",
+  "thinking-level",
 ] as const;
 const OUTPUT_FIELDS = [
   "server-default",
@@ -59,7 +61,7 @@ const OUTPUT_FIELDS = [
   "max_completion_tokens",
   "max_output_tokens",
 ] as const;
-const FAMILIES = ["chat-completions", "messages", "responses"] as const;
+const FAMILIES = ["chat-completions", "messages", "responses", "generate-content"] as const;
 const supported = (evidence: SupportEvidence): boolean =>
   evidence.status === "documented" || evidence.status === "accepted";
 
@@ -200,7 +202,11 @@ export const parseGenerationPolicy = (
           ? "chat-completions"
           : control === "responses-effort"
             ? "responses"
-            : "messages";
+            : // Google 族的三级档位写作 `generationConfig.thinkingConfig.thinkingLevel`,
+              // 与本仓其他族的 effort/budget 形状都不同，单独占一格。
+              control === "thinking-level"
+              ? "generate-content"
+              : "messages";
       if (family !== expected) issues.push(`${label}.reasoning.control:与端点族不兼容`);
     }
   }
@@ -235,7 +241,10 @@ export const parseGenerationPolicy = (
     if (
       (family === "messages" && field !== "max_tokens") ||
       (family === "responses" && field !== "max_output_tokens") ||
-      (family === "chat-completions" && field === "max_output_tokens")
+      (family === "chat-completions" && field === "max_output_tokens") ||
+      // Google 的输出预算叫 `generationConfig.maxOutputTokens`，适配层把中立的
+      // `max_output_tokens` 翻过去；用别的名字会落到配置无法映射的地方。
+      (family === "generate-content" && field !== "max_output_tokens")
     )
       issues.push(`${label}.output.field:与端点族不兼容`);
   }
@@ -309,6 +318,12 @@ export const generationParams = (config: ModelConfig): ModelParams => {
         type: "enabled",
         budget_tokens: policy.reasoning.budgetTokens,
       });
+      break;
+    case "thinking-level":
+      // `includeThoughts` 不是锦上添花而是**能跑通的前提**：思考期上游不发任何帧时,
+      // 网关会在约 300 s 的静默上把连接掐掉(实测 `fetch failed`,四次重试全中)。
+      // 让它把思考增量也推成帧,首帧就从 7 m 38 s 降到 5 s,空闲超时也随之永不触发。
+      params.thinkingConfig = Object.freeze({ thinkingLevel: "high", includeThoughts: true });
       break;
     case "unverified":
     case "unsupported":

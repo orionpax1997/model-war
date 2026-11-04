@@ -6,8 +6,8 @@
  * 本包以源码形式由 Node 的类型擦除执行,不产出 dist、也不设 bin,所以包内相对 import 写 `.ts`。
  *
  * ── 这不是门禁,是一条观测 ──
- * 没有任何分数或行数红线(spec §7、Out of Scope)。成或败都进 meta.json 落盘,供三夜基线对比;
- * 它红不红不该阻断别的 leg(夜间流水线按 `continue-on-error` 处理,那一条归票 07)。
+ * 没有任何分数或行数红线(ADR-0010)。成或败都进 meta.json 落盘,供三夜基线对比;
+ * 它红不红不该阻断别的 leg(夜间流水线按 `continue-on-error` 处理)。
  *
  * ── scc 是手动装的外部工具(无 npm 分发) ──
  * `command -v scc` 失败时写一份带 `skipped` 字段的 meta.json 并退 0:值班者看到一份空的

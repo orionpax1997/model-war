@@ -12,6 +12,8 @@ import {
 } from "@model-war/runner";
 import {
   RULESET_VERSION,
+  TRIAL_BENCHMARK_IDS,
+  TRIAL_MAP_NAME,
   type ArchiveSelection,
   type SelectionCandidateIdentity,
   type SelectionPlan,
@@ -19,7 +21,6 @@ import {
 import { budgetOf, budgetTracksOf, headForMap } from "../match/assemble.js";
 import { measureSandboxRuntimeHash } from "../match/sandbox-runtime.js";
 import { loadTrial, type LoadedTrial } from "../trial/load.js";
-import { TRIAL_MAP, TRIAL_OPPONENTS } from "../trial/trial.js";
 
 const hash = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 export const planForSelection = (loaded: LoadedTrial): SelectionPlan =>
@@ -27,28 +28,30 @@ export const planForSelection = (loaded: LoadedTrial): SelectionPlan =>
     ruleset: RULESET_VERSION,
     rulesetSha256: loaded.rulesetSha256,
     sandboxRuntimeHash: measureSandboxRuntimeHash(),
-    map: TRIAL_MAP,
-    mapSha256: loaded.mapSha256,
+    map: TRIAL_MAP_NAME,
+    mapSha256: loaded.maps[0]!.sha256,
     baselines: [
-      { id: TRIAL_OPPONENTS[0]!, scriptSha256: hash(loaded.scripts[1]) },
-      { id: TRIAL_OPPONENTS[1]!, scriptSha256: hash(loaded.scripts[2]) },
-      { id: TRIAL_OPPONENTS[2]!, scriptSha256: hash(loaded.scripts[3]) },
+      { id: TRIAL_BENCHMARK_IDS[0], scriptSha256: loaded.opponents[0]!.script.scriptSha256 },
+      { id: TRIAL_BENCHMARK_IDS[1], scriptSha256: loaded.opponents[1]!.script.scriptSha256 },
+      { id: TRIAL_BENCHMARK_IDS[2], scriptSha256: loaded.opponents[2]!.script.scriptSha256 },
     ],
   });
 
-export type SelectionArtifact = SelectionCandidateIdentity & {
+/** 候选身份 + 两条盘上路径（v1 / v2 共用的那一截：字节必须与声明的摘要一致）。 */
+export type SelectionCandidateFiles = SelectionCandidateIdentity & {
   readonly scriptPath: string;
   readonly sourcePath: string;
 };
+export type SelectionArtifact = SelectionCandidateFiles;
 const object = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new Error("选拔输入形状不合法");
   return value as Record<string, unknown>;
 };
 /** 私有 JSON 协议仍按 unknown 处理，TS 类型不能证明候选或路径身份。 */
-export const readSelectionArtifacts = (value: unknown): readonly SelectionArtifact[] => {
+export const readSelectionCandidateFiles = (value: unknown): readonly SelectionCandidateFiles[] => {
   if (!Array.isArray(value) || value.length !== 3) throw new Error("选拔缺少三个有效候选");
-  return value.map((entry: unknown, stage): SelectionArtifact => {
+  return value.map((entry: unknown, stage): SelectionCandidateFiles => {
     const item = object(entry);
     if (
       item["stage"] !== stage ||
@@ -83,6 +86,8 @@ export const readSelectionArtifacts = (value: unknown): readonly SelectionArtifa
     };
   });
 };
+/** v1 的执行（十二场）与 `--validate` 读同一份候选清单。 */
+export const readSelectionArtifacts = readSelectionCandidateFiles;
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 const identity = ({
   stage,
@@ -144,7 +149,7 @@ export const executeSelection = async (options: {
       ["candidate", candidateCode],
       ...plan.baselines.map((entry, index): [string, string] => [
         entry.id,
-        loaded.scripts[index + 1]!,
+        loaded.opponents[index]!.code,
       ]),
     ]);
     const matches: SelectionCandidateEvidence["matches"][number][] = [];
@@ -171,10 +176,10 @@ export const executeSelection = async (options: {
             seat: seat as 0 | 1 | 2 | 3,
           })),
           ruleset: loaded.ruleset,
-          map: loaded.map,
+          map: loaded.maps[0]!.definition,
           seed: match.seed,
           budget,
-          head: headForMap(loaded.mapSha256),
+          head: headForMap(loaded.maps[0]!.sha256),
           sink: { write: () => {} },
         });
         if (outcome.status !== "completed") throw new Error("选拔对局缺少完整终局");

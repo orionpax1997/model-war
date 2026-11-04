@@ -1,9 +1,12 @@
 /** completed 的真实 finalState/result 投影；排名直接读引擎，积分复用 runner。 */
 import type { runMatch, RunMatchParams } from "@model-war/engine";
 import { DEFAULT_RANK_POINTS, perMatchScores } from "@model-war/runner";
-import type { ReplaySeat, TrialTerminalPlayer, TrialTerminalSummary } from "@model-war/schema";
-
-import { CANDIDATE_SEAT } from "./trial.js";
+import {
+  TRIAL_CANDIDATE_SEAT,
+  type ReplaySeat,
+  type TrialTerminalPlayer,
+  type TrialTerminalSummary,
+} from "@model-war/schema";
 
 type CompletedMatch = Extract<ReturnType<typeof runMatch>, { readonly status: "completed" }>;
 
@@ -13,6 +16,8 @@ export const terminalSummaryOf = (
     readonly seed: number;
     readonly ruleset: RunMatchParams["ruleset"];
     readonly players: RunMatchParams["players"];
+    /** 候选在本场坐哪（计划给；缺省 v1 固定座位）。 */
+    readonly candidateSeat?: ReplaySeat;
   },
 ): TrialTerminalSummary => {
   const { finalState: state, result } = outcome;
@@ -28,6 +33,7 @@ export const terminalSummaryOf = (
     ranged: ruleset.ranged.cost,
     cavalry: ruleset.cavalry.cost,
   };
+  const candidateSeat = options.candidateSeat ?? TRIAL_CANDIDATE_SEAT;
   const playerOf = (seat: ReplaySeat): Omit<TrialTerminalPlayer, "rankPoints"> => {
     const reference = options.players[seat];
     const player = state.players[seat];
@@ -67,7 +73,7 @@ export const terminalSummaryOf = (
     }
     return {
       seat,
-      player: seat === CANDIDATE_SEAT ? "candidate" : reference.model,
+      player: seat === candidateSeat ? "candidate" : reference.model,
       controlledBases,
       controlledResources,
       survivingUnits,

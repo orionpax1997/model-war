@@ -1,18 +1,19 @@
 /**
  * 生成管线的编排层与 CLI 处理器入口(hld §2.2.6 / §9)。
  *
- * ── 票 02 的边界:单轮到原子冻结 ──
+ * ── 边界:单轮到原子冻结 ──
  *
  * 本文件是编排层:根解析 → 读配置 → 读契约 → 读模板 → 对每个选中模型调 `pipeline.ts` 的
  * `generateOneModel`(发一次 → 编译 → 迭代期校验 → 冻结期校验 → 原子冻结,返回 `ModelOutcome`)。
- * 单模型失败不中断整批:**写失败记录文件**(`archive/<slug>/failed-<runId>.json`,票 05)再记账,
- * 成功者照旧冻结。`GenerationRequest` 这一组共享参数(契约 §2)由本文件组装一次、按模型复用。
+ * 单模型失败不中断整批:**写失败记录文件**(`archive/<slug>/failed-<runId>.json`,写盘见
+ * `packages/gen/src/failure.ts`)再记账,成功者照旧冻结。`GenerationRequest` 这一组共享参数(契约 §2)
+ * 由本文件组装一次、按模型复用。
  *
  * ── 根解析复用 `match` 的约定 ──
  *
  * 默认 cwd,`--root` 覆盖,`--config` 相对根。`.env` 在根解析之后加载(存在才加载),凭证只经
- * `process.env[credentialEnvVar]` 读——本票不读凭证,但要保证根解析与加载时机正确,
- * 让票 08 的真实客户端直接可用。
+ * `process.env[credentialEnvVar]` 读——本模块不读凭证,但要保证根解析与加载时机正确,
+ * 让 `packages/gen/src/http/client.ts` 的真实客户端直接可用。
  */
 
 import { existsSync } from "node:fs";
@@ -20,6 +21,7 @@ import { join, resolve } from "node:path";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { readRuleDocs, type RuleDocs } from "./contract.js";
 import { writeFailureRecord } from "./failure.js";
+import type { TrialPlan } from "@model-war/schema";
 import type { SelectionProbe } from "./selection.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
@@ -29,7 +31,7 @@ import { loadBaseTemplate } from "./prompt.js";
 
 /**
  * 单模型一次生成的全部共享输入(契约 §2)。由 `runGeneration` 组装一次、按模型复用;
- * 票 02 的 `generateOneModel(request, config)` 从这里取它需要的一切。
+ * `generateOneModel(request, config)` 从这里取它需要的一切。
  */
 export type GenerationRequest = {
   readonly root: string;
@@ -46,9 +48,14 @@ export type GenerationRequest = {
   readonly selection?: SelectionProbe;
   /**
    * 冻结期试跑探针。缺席即走真子进程（`trial.ts`）；测试注入桩，保持单测毫秒级
-   * （真试跑跑三场完整对局，约十秒，只属于 e2e 与手工冒烟）。
+   * （真试跑跑整张 32 场网格，约一到两分钟，只属于 e2e 与手工冒烟）。
    */
   readonly trial?: TrialProbe;
+  /**
+   * 评测网格计划的搬运（`--plan` 那一次）。缺席即真子进程（`trial.ts` 的 `prepareTrialPlan`）；
+   * 测试注入桩，保持单测毫秒级且不依赖本地冻结档案（`archive/` 不入库）。
+   */
+  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
 };
 
 export type GenerationOptions = {
@@ -63,8 +70,13 @@ export type GenerationOptions = {
   readonly modelFilter?: string;
   /** 测试注入桩;缺省用真实 HTTP 客户端(`http/client.ts`,唯一允许联网的代码)。 */
   readonly createClient?: (config: ModelConfig) => ModelClient;
-  /** 测试注入桩;缺省跑真试跑子进程（三场完整对局，见 `trial.ts`）。 */
+  /** 测试注入桩;缺省跑真试跑子进程（整张 32 场网格，见 `trial.ts`）。 */
   readonly trial?: TrialProbe;
+  /**
+   * 评测网格计划的搬运（`--plan` 那一次）。缺席即真子进程（`trial.ts` 的 `prepareTrialPlan`）；
+   * 测试注入桩，保持单测毫秒级且不依赖本地冻结档案（`archive/` 不入库）。
+   */
+  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
 };
 
 const messageOf = (cause: unknown): string =>
@@ -137,6 +149,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
       : { selectBestCandidate: options.selectBestCandidate }),
     ...(options.selection === undefined ? {} : { selection: options.selection }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
+    ...(options.trialPlan === undefined ? {} : { trialPlan: options.trialPlan }),
     ...(options.scoreSourceFeedback === undefined
       ? {}
       : { scoreSourceFeedback: options.scoreSourceFeedback }),
@@ -254,7 +267,7 @@ export const generateAndFreeze = async (args: readonly string[]): Promise<number
 
   const root = resolve(parsed.root ?? process.cwd());
   // 凭证从环境变量读;`.env` 只是本机便利,存在才加载,不存在不报错(hld §9)。
-  // 真实读取在票 08;此处只保证加载时机正确、且不把文件内容写进任何日志。
+  // 真实读取在 `packages/gen/src/http/client.ts`;此处只保证加载时机正确、且不把文件内容写进任何日志。
   const envFile = join(root, ".env");
   if (existsSync(envFile)) {
     try {

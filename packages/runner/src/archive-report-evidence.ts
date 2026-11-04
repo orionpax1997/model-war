@@ -4,8 +4,6 @@ import {
   ACTION_EFFECT_NAMES,
   ACTION_ERROR_CODES,
   USAGE_ENUM_FIELDS,
-  TRIAL_PLAYER_IDS,
-  TRIAL_SEEDS,
   TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA,
   type TrialActionFacts,
   type TrialObservationLine,
@@ -48,9 +46,19 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
     // 身份来自目录，不接受服务端模型名或任意证据字符串。
     configId,
     configIdMatches: evidence.configId === configId,
-    endpointFamily: enumOf(evidence.endpointFamily, ["chat-completions", "messages", "responses"]),
+    endpointFamily: enumOf(evidence.endpointFamily, [
+      "chat-completions",
+      "messages",
+      "responses",
+      "generate-content",
+    ]),
     endpoint: {
-      family: enumOf(endpoint.family, ["chat-completions", "messages", "responses"]),
+      family: enumOf(endpoint.family, [
+        "chat-completions",
+        "messages",
+        "responses",
+        "generate-content",
+      ]),
       ...supportOf(endpoint),
     },
     reasoning: {
@@ -62,6 +70,7 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
         "responses-effort",
         "adaptive-effort",
         "thinking-enabled",
+        "thinking-level",
       ]),
       budgetTokens: numberOf(reasoning.budgetTokens),
       ...supportOf(reasoning),
@@ -133,9 +142,26 @@ export const stopEvidenceOf = (value: unknown) => {
     ]),
   };
 };
+/** 投影值只能是白名单里的数值 / 布尔 / 已知枚举；嵌套对象也走同一套。 */
+type ReportParamValue = number | string | boolean | ReportParamObject;
+interface ReportParamObject {
+  readonly [key: string]: ReportParamValue;
+}
+const EFFORTS = ["high", "medium", "low", "none", "minimal", "xhigh"] as const;
+/** Google 族的三级思考档位（ADR-0022 只生产 `high`，读旧档时按同一白名单判）。 */
+const THINKING_LEVELS = ["high", "medium", "low", "minimal"] as const;
+
+/**
+ * 生成参数的报告投影：**只披露白名单可判定的参数**（数值 / 布尔 / 已知枚举）。
+ *
+ * 两处同源共用它：`generationLog[].params`（逐轮）与 `optimization.candidates[].params`
+ * （存档里「这一阶段实际发出了什么」）。`params` 是端点原生形状、由模型配置手写而来，
+ * 所以它可能带自由文本（`stop` / `logit_bias` 的内容），也可能带本报告不认识的键——
+ * 前者的值、后者的键名都不透传（hld §8.3：归档报告不公开任意自由文本）。
+ */
 export const paramsOf = (value: unknown) => {
   const params = objectOf(value);
-  const projected: Record<string, number | string | Readonly<Record<string, number | string>>> = {};
+  const projected: Record<string, ReportParamValue> = {};
   for (const key of ["max_tokens", "max_completion_tokens", "max_output_tokens", "seed"]) {
     const number = numberOf(params[key]);
     if (number !== null) projected[key] = number;
@@ -144,24 +170,10 @@ export const paramsOf = (value: unknown) => {
     const number = params[key];
     if (typeof number === "number" && Number.isFinite(number)) projected[key] = number;
   }
-  const effort = enumOf(params.reasoning_effort, [
-    "high",
-    "medium",
-    "low",
-    "none",
-    "minimal",
-    "xhigh",
-  ]);
+  const effort = enumOf(params.reasoning_effort, EFFORTS);
   if (effort !== null) projected.reasoning_effort = effort;
   for (const key of ["reasoning", "output_config"]) {
-    const nestedEffort = enumOf(objectOf(params[key]).effort, [
-      "high",
-      "medium",
-      "low",
-      "none",
-      "minimal",
-      "xhigh",
-    ]);
+    const nestedEffort = enumOf(objectOf(params[key]).effort, EFFORTS);
     if (nestedEffort !== null) projected[key] = { effort: nestedEffort };
   }
   const thinking = objectOf(params.thinking);
@@ -170,9 +182,21 @@ export const paramsOf = (value: unknown) => {
     const budget = numberOf(thinking.budget_tokens);
     projected.thinking = { type, ...(budget === null ? {} : { budget_tokens: budget }) };
   }
+  // generate-content 族的思考档位与 adaptive 中转扩展：枚举与布尔，没有自由文本。
+  const thinkingConfig = objectOf(params.thinkingConfig);
+  const thinkingLevel = enumOf(thinkingConfig.thinkingLevel, THINKING_LEVELS);
+  const includeThoughts =
+    typeof thinkingConfig.includeThoughts === "boolean" ? thinkingConfig.includeThoughts : null;
+  if (thinkingLevel !== null || includeThoughts !== null)
+    projected.thinkingConfig = {
+      ...(thinkingLevel === null ? {} : { thinkingLevel }),
+      ...(includeThoughts === null ? {} : { includeThoughts }),
+    };
+  if (typeof params.forceAdaptiveThinking === "boolean")
+    projected.forceAdaptiveThinking = params.forceAdaptiveThinking;
   return {
     values: projected,
-    // stop/logit_bias 内容有自由文本，只披露是否配置；未知键不透传。
+    // stop/logit_bias 内容有自由文本，只披露是否配置；未知键连键名都不透传。
     samplingBiasConfigured: [
       "temperature",
       "top_p",
@@ -191,10 +215,23 @@ const terminalSummarySchema = z.fromJSONSchema(
   JSON.parse(JSON.stringify(TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA)) as z.core.JSONSchema.JSONSchema,
 );
 
+/**
+ * 一场观测的**期待身份**：种子、候选座位与四个座位的选手 id。
+ *
+ * v1 历史档由旧表（三场单图、候选恒 0 号位、三份基准）给；v2 网格档逐场由计划给——
+ * 所以报告不再硬编码「候选恒坐 0 号位」，也不用同一个种子表去卡两版档。
+ */
+export type ObservationMatch = {
+  readonly seed: number;
+  readonly candidateSeat: number;
+  readonly seats: readonly [string, string, string, string];
+};
+
 const consistentPlayer = (
   summary: TrialTerminalSummary,
   player: TrialTerminalPlayer,
   seat: number,
+  expectedPlayer: string,
 ): boolean => {
   const costTerms = [
     player.survivingUnits.worker * summary.unitCosts.worker,
@@ -209,7 +246,7 @@ const consistentPlayer = (
   const territory = bases + resources + units;
   return (
     player.seat === seat &&
-    player.player === TRIAL_PLAYER_IDS[seat] &&
+    player.player === expectedPlayer &&
     [...costTerms, cost, bases, resources, units, territory].every(Number.isSafeInteger) &&
     player.survivingUnitCost === cost &&
     player.score.bases === bases &&
@@ -297,16 +334,18 @@ const playerOf = (value: TrialTerminalPlayer): TrialTerminalPlayer => ({
 /** 优化试跑终局的公共读入边界；非法数据返回 null，缺失不能补成零分。 */
 export const parseTerminalSummary = (
   value: unknown,
-  matchIndex: number,
+  expected: ObservationMatch,
 ): TrialTerminalSummary | null => {
   if (!terminalSummarySchema.safeParse(value).success) return null;
   // 仅在共享 JSON Schema 验证后恢复数据合同；公共出口始终显式逐字段重建。
   const summary = value as TrialTerminalSummary;
   if (
     summary.tick === 0 ||
-    !Number.isInteger(matchIndex) ||
-    summary.seed !== TRIAL_SEEDS[matchIndex] ||
-    !summary.players.every((player, seat) => consistentPlayer(summary, player, seat)) ||
+    !Number.isInteger(expected.seed) ||
+    summary.seed !== expected.seed ||
+    !summary.players.every((player, seat) =>
+      consistentPlayer(summary, player, seat, expected.seats[seat] ?? ""),
+    ) ||
     !consistentRanks(summary)
   )
     return null;
@@ -343,9 +382,10 @@ export type ReportObservationInput = Omit<TrialObservationLine, "terminalSummary
 /** 形状和行动归属验证后投影；终局使用报告独立的纯数据边界，不透传原观测对象。 */
 export const observationEvidenceOf = (
   value: ReportObservationInput,
+  expected: ObservationMatch,
 ): TrialObservationLine | null => {
   const summary = Object.hasOwn(value, "terminalSummary")
-    ? parseTerminalSummary(value.terminalSummary, value.matchIndex)
+    ? parseTerminalSummary(value.terminalSummary, expected)
     : undefined;
   if (summary === null) return null;
   const facts = value.actionFacts;

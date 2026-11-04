@@ -2,7 +2,7 @@
  * 面向模型的 API 文档里**每一个可运行示例都真编译过**——用参赛脚本那份编译配置。
  *
  * ── 为什么这道缝重要 ───────────────────────────────────────────────────────────
- * `docs/rules-v1/api.md` 是**直接进 prompt** 的:模型照着它写脚本,它里面的示例就是模型心里的
+ * `docs/rules-v2/api.md`(当前 active 契约)是**直接进 prompt** 的:模型照着它写脚本,它里面的示例就是模型心里的
  * 「正确写法」。散文读起来对,模型写出来的代码仍可能编译不过(`noUncheckedIndexedAccess` 下
  * `arr[i].x` 一句就够),而这一层没有任何东西看守:§3/§4/§5 之外的散文按设计不被逐字节比。
  * 这道缝把散文从「读起来对」变成「跑起来对」——它红一次,就有人回来改文档。
@@ -43,7 +43,7 @@ const here = (relative: string): string => fileURLToPath(new URL(relative, impor
 
 const repoRoot = here("../../../");
 const TSC = here("../../../node_modules/.bin/tsc");
-const API_DOC = here("../../../docs/rules-v1/api.md");
+const API_DOC = here("../../../docs/rules-v2/api.md");
 
 /** 全仓库唯一那份参赛脚本编译配置。示例就是按它编译的,不多不少。 */
 const SCRIPT_CONFIG = `${repoRoot}tsconfig.scripts.json`;
@@ -122,7 +122,7 @@ const unresolvedNamePattern = /error TS(?:2304|2552): Cannot find name '([^']+)'
 it("API 文档里至少有一个可运行示例,否则下面两条断言会在空集上绿", () => {
   expect(
     runnableExamples().length,
-    "docs/rules-v1/api.md 里一个声明了顶层入口 `function loop(` 的代码块都没有",
+    "docs/rules-v2/api.md 里一个声明了顶层入口 `function loop(` 的代码块都没有",
   ).toBeGreaterThan(0);
 });
 

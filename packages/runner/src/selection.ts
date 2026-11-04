@@ -1,36 +1,23 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   ARCHIVE_SELECTION_JSON_SCHEMA,
+  SELECTION_GRID_VERSION,
   SELECTION_VERSION,
   SELECTION_SEEDS,
   SELECTION_MATCHES_PER_CANDIDATE,
   type ArchiveSelection,
-  type JsonValue,
+  type ArchiveSelectionV1,
   type SelectionPlan,
   type SelectionCandidate,
   type SelectionCandidateIdentity,
   type SelectionMatch,
   type SelectionMatchResult,
 } from "@model-war/schema";
+import { hashOf, same } from "./canonical.js";
 import { rotateSeats } from "./enumerate.js";
-import { perMatchScores, rankSeason } from "./ranker.js";
-
-/** 对象键排序、数组保序；不依赖 metadata 的书写键序。 */
-const canonicalJson = (value: JsonValue): string => {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const object = value as Readonly<Record<string, JsonValue>>;
-    return `{${Object.keys(object)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key]!)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-};
-const hashOf = (value: JsonValue): string =>
-  createHash("sha256").update(canonicalJson(value)).digest("hex");
-const same = (a: JsonValue, b: JsonValue): boolean => canonicalJson(a) === canonicalJson(b);
+import { competitiveRankingIssue, perMatchScores, rankSeason } from "./ranker.js";
+import { validateGridSelection } from "./selection-grid.js";
+import { compareSelectionCandidates, selectionReasonOf } from "./selection-order.js";
 
 export type BuildSelectionPlanInput = Pick<
   SelectionPlan,
@@ -104,11 +91,8 @@ const scoreCandidate = (
     )
       throw new Error("选拔结果场次或 candidate/input hash 不一致");
     const rankings = reading.result.rankings;
-    const ranks = [...rankings].sort((a, b) => a - b);
-    if (
-      ranks.length !== 4 ||
-      ranks.some((rank, seat) => rank !== (ranks[seat - 1] === rank ? ranks[seat - 1] : seat + 1))
-    )
+    // 判据与网格计分、逐场复算同一处（`ranker.ts` 的 `competitiveRankingIssue`）。
+    if (rankings.length !== 4 || competitiveRankingIssue(rankings) !== undefined)
       throw new Error("选拔终局名次不符合四座竞争排名");
     return {
       matchId: String(match.matchIndex),
@@ -133,16 +117,15 @@ const scoreCandidate = (
   };
 };
 
-/** 对称计分后按阶段、协议轮、JS hash 定序；新选拔优先较晚阶段，旧档按其理由复算。 */
+/**
+ * 对称计分后按阶段、协议轮、JS hash 定序；新选拔优先较晚阶段，旧档按其理由复算。
+ * 四条决胜顺序的唯一写法在 `selection-order.ts`（v1 与 v2 共用）。
+ */
 const compareCandidates = (
   a: SelectionCandidate,
   b: SelectionCandidate,
   stageReason: "later-stage" | "earlier-stage",
-): number =>
-  b.averagePoints - a.averagePoints ||
-  (stageReason === "later-stage" ? b.stage - a.stage : a.stage - b.stage) ||
-  a.protocolRound - b.protocolRound ||
-  (a.scriptSha256 < b.scriptSha256 ? -1 : a.scriptSha256 > b.scriptSha256 ? 1 : 0);
+): number => compareSelectionCandidates(a, b, stageReason);
 const identityOf = (candidate: SelectionCandidateIdentity): SelectionCandidateIdentity => ({
   stage: candidate.stage,
   protocolRound: candidate.protocolRound,
@@ -152,19 +135,12 @@ const identityOf = (candidate: SelectionCandidateIdentity): SelectionCandidateId
 const decisionOf = (
   candidates: readonly SelectionCandidate[],
   stageReason: "later-stage" | "earlier-stage" = "later-stage",
-): Pick<ArchiveSelection, "selected" | "reason"> => {
+): Pick<ArchiveSelectionV1, "selected" | "reason"> => {
   const [winner, second] = [...candidates].sort((a, b) => compareCandidates(a, b, stageReason));
   if (winner === undefined || second === undefined) throw new Error("选拔缺少三个有效候选");
   return {
     selected: identityOf(winner),
-    reason:
-      winner.averagePoints !== second.averagePoints
-        ? "highest-average-points"
-        : winner.stage !== second.stage
-          ? stageReason
-          : winner.protocolRound !== second.protocolRound
-            ? "earlier-protocol-round"
-            : "script-hash",
+    reason: selectionReasonOf(winner, second, stageReason),
   };
 };
 
@@ -172,11 +148,26 @@ const selectionSchema = z.fromJSONSchema(
   JSON.parse(JSON.stringify(ARCHIVE_SELECTION_JSON_SCHEMA)) as z.core.JSONSchema.JSONSchema,
 );
 
-/** 完整复算证据与决胜；earlier-stage 仅用于按原算法兼容读取历史档。 */
+/**
+ * 存档 `selection` 段的读入端：**按 `version` 分派**（历史档不迁移）。
+ *
+ * v1（12 场 / 三基准 / 种子 401–403）走本文件的冻结路径——它必须继续能读、能校验，因为
+ * `archive/` 里那些档已经是那个形状；v2（评测网格）走 `selection-grid.ts`。两版的决胜顺序
+ * 是同一处写法（`selection-order.ts`），差别只在「分数从哪来」与「证据长什么样」。
+ */
 export const validateSelection = (value: unknown): ArchiveSelection => {
+  if (typeof value === "object" && value !== null) {
+    const version = Reflect.get(value, "version");
+    if (version === SELECTION_GRID_VERSION) return validateGridSelection(value);
+  }
+  return validateSelectionV1(value);
+};
+
+/** v1 的完整复算证据与决胜；earlier-stage 仅用于按原算法兼容读取历史档。 */
+export const validateSelectionV1 = (value: unknown): ArchiveSelectionV1 => {
   const parsed = selectionSchema.safeParse(value);
   if (!parsed.success) throw new Error("选拔记录形状不合法或缺少完整十二场终局");
-  const selection = parsed.data as ArchiveSelection;
+  const selection = parsed.data as ArchiveSelectionV1;
   checkPlan(selection.plan);
   for (const [index, candidate] of selection.candidates.entries()) {
     if (
@@ -221,7 +212,7 @@ export type SelectionCandidateEvidence = SelectionCandidateIdentity & {
 export const buildArchiveSelection = (
   plan: SelectionPlan,
   evidence: readonly SelectionCandidateEvidence[],
-): ArchiveSelection => {
+): ArchiveSelectionV1 => {
   checkPlan(plan);
   const candidates = [...evidence]
     .sort((a, b) => a.stage - b.stage)
@@ -231,10 +222,22 @@ export const buildArchiveSelection = (
         ? {}
         : { reusedFromStage: candidate.reusedFromStage }),
     }));
-  return validateSelection({
+  return validateSelectionV1({
     version: SELECTION_VERSION,
     plan,
     candidates,
     ...decisionOf(candidates),
   });
 };
+
+/**
+ * 存档选拔计划里的种子（赛季种子隔离门用它）。
+ *
+ * v1 是三个固定种子，v2 是网格逐场种子（32 个，每格一个）——两者的「种子」不是同一个形状，
+ * 所以读种子必须按版本分派：从 v2 的 `plan.seeds` 读会读到 `undefined`，那会让隔离门静默放行，
+ * 正是 `docs/hld.md` §8.1「不静默替换种子」要防的事。
+ */
+export const selectionSeedsOf = (selection: ArchiveSelection): readonly number[] =>
+  selection.version === SELECTION_GRID_VERSION
+    ? selection.plan.matches.map((match) => match.seed)
+    : [...selection.plan.seeds];

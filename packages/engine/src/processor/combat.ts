@@ -37,7 +37,7 @@ import { attackVerdict, unitById } from "./intent-verdicts.js";
 /** 本模块唯一处理的那条意图。收窄判别式,不靠 `as`。 */
 export type AttackIntent = Extract<Intent, { kind: "attack" }>;
 
-/** 判别 `attack`。其余五条不是战斗(归 04–09),本票只交付这一条。 */
+/** 判别 `attack`。其余五条不是战斗(归移动/采集/生产/终局那几格),本模块只交付这一条。 */
 export const isAttackIntent = (intent: Intent): intent is AttackIntent => intent.kind === "attack";
 
 /**

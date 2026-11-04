@@ -53,14 +53,14 @@ const SEAT_COUNT = 4;
  * 枚举全部 4 人组合 × M 张地图 × K 个种子,产出完整、确定的对局清单(hld §8.1)。
  *
  * 名册去重后按 **slug 升序**排序,组合因而只依赖名册的内容而不依赖入参顺序——同名输入必
- * 同输出(FR-7 AC1)。每个组合内的 4 名为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4`
+ * 同输出。每个组合内的 4 名为基准序列,座位 = 基准序列按 `(mapIndex + seedIndex) mod 4`
  * 循环左移;种子 = `H(masterSeed, comboId, mapIndex, seedIndex)`(纯确定性,见 `deriveSeed`)。
  *
  * ── 与 hld §8.1 的一处收紧 ────────────────────────────────────────────────
  * hld §8.1 原文说 `M × K ≢ 0 (mod 4)` 时「各座位的对局数最多差 1」,把残差留给 §12 的座位胜率统计。
- * 本票(spec「枚举器扩展」)把这条**收紧成硬错误**:不满足 `M × K ≡ 0 (mod 4)` 直接抛错,
+ * 本模块把这条**收紧成硬错误**:不满足 `M × K ≡ 0 (mod 4)` 直接抛错,
  * 不产出任何偏移的清单。理由是静默的残差不对称会让「座位对全体参赛者一致」这条承诺变成
- * 只对部分配置成立。以票为准;hld 归 hld,此处记下矛盾的一方是 hld 的宽松措辞。
+ * 只对部分配置成立。以实现为准;hld 归 hld,此处记下矛盾的一方是 hld 的宽松措辞。
  */
 export const enumerateMatchUps = (options: EnumerateMatchUpsOptions): readonly MatchUp[] => {
   const { participants, maps, seeds, masterSeed } = options;

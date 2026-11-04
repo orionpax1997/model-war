@@ -76,11 +76,9 @@ it("沙箱 runtime bundle 产物入库:落点不在任何 dist/ 下", () => {
   expect(isIgnored("packages/engine/sandbox-runtime/dist/runtime.iife.js")).toBe(true);
 });
 
-it("本地工作记录与探针输出不入库:.scratch/ 下的新内容被忽略", () => {
-  expect(isIgnored(".scratch/feature/spec.md")).toBe(true);
-  expect(isIgnored(".scratch/feature/issues/01-task.md")).toBe(true);
-  expect(isIgnored(".scratch/sandbox-executor/probe-output/probes.txt")).toBe(true);
-  expect(
-    isIgnored(".scratch/sandbox-executor/probe-output/probe-03-interrupt-granularity.txt"),
-  ).toBe(true);
+it("观测产物不入库:reports/ 下的变异、扫描与探针读数被忽略", () => {
+  expect(isIgnored("reports/mutation/mutation.json")).toBe(true);
+  expect(isIgnored("reports/scan/scc.json")).toBe(true);
+  expect(isIgnored("reports/sandbox-probes/probes.txt")).toBe(true);
+  expect(isIgnored("reports/sandbox-probes/probe-03-interrupt-granularity.txt")).toBe(true);
 });

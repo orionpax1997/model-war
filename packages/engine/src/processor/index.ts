@@ -5,7 +5,7 @@
  * 外部缝**唯一**是 `runMatch`(02b 落)。`processTick` 只给处理器自己的测试当构造器:
  * 测试要造一个「某个状态 + 某批 intents」的 tick,若走 `runMatch` 就得先造四份冻结脚本存档、
  * 一个沙箱和一个回放 sink,于是「这一步到底改了什么」这件事没法被断言。
- * 把两处合成一处,调用方要学的东西少于它拿到的能力(hld《模块的深度》)。
+ * 把两处合成一处,调用方要学的东西少于它拿到的能力(hld §3.1)。
  *
  * ── 测试侧参赛策略的写法约束(ADR-0005) ──
  * 测试里的参赛脚本是**普通 TS 函数**,经 `stubRunner` 接进这个缝:不经字符串、不经 VM。
@@ -64,7 +64,7 @@ export type TickResult = {
   readonly events: readonly Event[];
   /** 步 1 之后的那批 intent(带上座位,移动两条才有内容)。交出来是给测试断言用的。 */
   readonly intents: readonly IssuedIntent[];
-  /** 本 tick 按座位计的寻路调用量(票 04)。预算层的输入,本层不判罚。 */
+  /** 本 tick 按座位计的寻路调用量(hld §4.7)。预算层的输入,本层不判罚。 */
   readonly pathfindingCalls: readonly number[];
   /**
    * 步 0 置上的故障位(目前只有墙钟硬超时 `uncertain-timeout`),没有时为 `null`。

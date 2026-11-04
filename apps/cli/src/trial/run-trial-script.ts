@@ -1,10 +1,26 @@
 /**
  * 冻结期试跑的执行入口：gen 以子进程调它（与 `validate.ts` 调校验器同形）。
  *
- * 用法：`node run-trial-script.js <候选产物.js> --root <安装根> [--observations <路径>]`。
- * 读：候选产物 + `<root>/rulesets/<RULESET_VERSION>.json` + `<root>/maps/<TRIAL_MAP>.json`
- * + 三份基准脚本 + wasm 与 runtime bundle；跑 `TRIAL_SEEDS` 的三场；stdout 打面向模型的
- * 反馈文本（逐字回喂），退出码回答结论。
+ * 用法：
+ * - `node run-trial-script.js --plan --root <安装根> --model <模型 slug>`
+ *   → 从盘上现算事实、造**评测网格计划**，stdout 打它的 canonical JSON（含 `planSha256`），退出 0。
+ * - `node run-trial-script.js <候选产物.js> --root <安装根> --model <模型 slug> [--observations <路径>] [--expected-plan <计划文件>]`
+ *   → 同样由仓库现状造计划，**按计划跑满计划里的每一场**，stdout 打面向模型的反馈文本，
+ *   退出码回答结论；给了 `--expected-plan` 就必须与现场重建的计划逐字段相等
+ *   （不等即 infra，退出 2——那是"计划被换过"或"安装面变了"，不是候选的错）。
+ *
+ * ── `--model` 用来解析在位陪练，不是对手参数 ──
+ *
+ * 四份陪练里「在位」那份 = **正在被生成的那个模型自己最近一次冻结存档**（没有存档时用代位档）。
+ * 所以造计划必须知道「给谁生成」：`--plan` 与执行模式都要它，否则两条路径造出来的计划不同源。
+ *
+ * ── 计划是这条缝的公共语言 ──
+ *
+ * 读什么：候选产物 + `<root>/rulesets/<RULESET_VERSION>.json` + `<root>/maps/<图>.json`
+ * + 计划里点名的对手脚本 + wasm 与 runtime bundle。**跑哪几场、谁坐哪、什么种子、哪张图**
+ * 全部来自计划（形状在 `@model-war/schema` 的 `trial-plan.ts`，构造与校验在
+ * `@model-war/runner` 的 `trial-plan.ts`）——入口不再自己查常量表。计划只收事实，
+ * 事实（摘要）由 `load.ts` 从盘上现算，所以 `--plan` 与默认执行模式造出来的计划同源。
  *
  * ── `--observations` 是 gen 与入口之间的私有协议，不是 `modelwar` 的用户可见参数 ──
  *
@@ -15,10 +31,15 @@
  *
  * ── 退出码是 gen 的私有协议，不是 CLI 全局表 ──
  *
- * `0` 通过；`1` 预算超限（stdout = 回喂文本）；`2` 内部/infra 错误（用法错、读不到文件、
- * 规则集/地图未过校验、作废无法判定、引擎抛错——细节打 stderr）。gen 见 0/1 之外的码
- * 即大声失败，不回喂。不要把 `apps/cli/src/exit-codes.ts` 那张表套到这里：
+ * `0` 通过（含 `--plan`）；`1` 预算超限（stdout = 回喂文本）；`2` 内部/infra 错误（用法错、
+ * 读不到文件、规则集/地图未过校验、计划与预期不符、作废无法判定、引擎抛错——细节打 stderr）。
+ * gen 见 0/1 之外的码即大声失败，不回喂。不要把 `apps/cli/src/exit-codes.ts` 那张表套到这里：
  * 那张表的 1 是"装载期拒跑"，而这里的 1 是"拦下候选"，两码含义不同。
+ *
+ * ── 跑满，不再早停 ──
+ *
+ * 网格的观测同时是反馈与分数的原料，所以 32 场一场不少地跑：触限之后仍要跑完并写全部观测，
+ * 只是退出码变成 1（拦截）。判定本身仍是零容忍（`verdictOfTrips`），没有软化。
  *
  * ── 预算与组装复用 `assemble.ts` 的三处 ──
  *
@@ -27,193 +48,142 @@
  * 唯一不复用的是存档装载——候选此刻还不是存档（`commitArchive` 之前），脚本常驻内存。
  */
 
-import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { type ReplayPlayerRef } from "@model-war/schema";
-import { createQuickJsRunner } from "@model-war/engine/runner";
+import { type TrialPlan } from "@model-war/schema";
+import {
+  buildTrialPlan,
+  canonicalJson,
+  checkTrialPlan,
+  readTrialPlan,
+  trialPlanMismatch,
+  type BuildTrialPlanInput,
+} from "@model-war/runner";
 
 import { splitArgs } from "../args.js";
-import { budgetOf, budgetTracksOf, headForMap } from "../match/assemble.js";
-import { loadTrial, type LoadedTrial } from "./load.js";
-import { runTrialMatch, type TrialMatchOutcome } from "./match-run.js";
 import {
-  trialObservationLines,
-  writeTrialObservations,
-  type TrialObservationLine,
-} from "./observations.js";
+  gridSummaryPathOf,
+  runTrialGrid,
+  summaryOfGrid,
+  trialScriptSha256,
+  writeTrialGridSummary,
+} from "./grid.js";
+import { loadTrialGrid, loadTrialGridInputs, trialPlanFactsOf, type LoadedTrial } from "./load.js";
+import { trialObservationLines, writeTrialObservations } from "./observations.js";
 import {
-  CANDIDATE_SEAT,
-  TRIAL_OPPONENTS,
-  TRIAL_SEEDS,
   WATCHED_TRACKS,
-  renderScoreSourceObservation,
   renderTrialFeedback,
   verdictOfTrips,
-  type RecordedTrip,
+  type CandidateSeatOf,
 } from "./trial.js";
 
 const USAGE =
-  "用法: node run-trial-script.js <候选产物.js> --root <安装根> [--observations <观测文件路径>]";
+  "用法: node run-trial-script.js <候选产物.js> --root <安装根> --model <模型 slug> " +
+  "[--observations <观测文件路径>] [--expected-plan <计划文件>]\n" +
+  "      node run-trial-script.js --plan --root <安装根> --model <模型 slug>";
 
 /** 试跑自己的退出码（见文件头：不是 CLI 全局表）。 */
 const TRIAL_PASSED = 0;
 const TRIAL_BLOCKED = 1;
 const TRIAL_INFRA = 2;
 
-const sha256 = (bytes: Buffer | string): string => createHash("sha256").update(bytes).digest("hex");
+const reasonOf = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
 
-/** meta 行的四方：候选 0 号位 + 三个基准（只进 meta 行，不进判据）。 */
-const trialPlayers = (): readonly ReplayPlayerRef[] => [
-  { model: "trial-candidate", archiveRef: "trial/candidate", seat: 0 },
-  ...TRIAL_OPPONENTS.map((name, index): ReplayPlayerRef => ({
-    model: name,
-    archiveRef: `trial/${name}`,
-    seat: (index + 1) as ReplayPlayerRef["seat"],
-  })),
-];
+/** 由仓库现状造计划：事实来自盘上字节，场次由事实派生。失败即 infra。 */
+const planOf = (facts: BuildTrialPlanInput): TrialPlan => {
+  const plan = buildTrialPlan(facts);
+  checkTrialPlan(plan);
+  return plan;
+};
 
-/**
- * 跑三场：预算/执行器映射/meta 头全走 `assemble.ts` 的复用件；每场建四个 VM、跑完即释放。
- *
- * 作废（墙钟硬超时）同一种子重跑一次：仍作废则抛 infra（无法判定，大声失败，不回喂）。
- * 非判定触限（对手座位/非看轨）打到 stderr 留痕，不进 stdout（stdout 是回喂纯文本）。
- *
- * 每场的「无得分来源」读数都收进 `readings` 一并**带回**给调用方——落盘是输出副作用，
- * 归 `main`（那里才是 stdout / stderr / 退出码那一层的地盘），本函数只负责跑与收。
- */
-const runThreeMatches = async (
-  loaded: LoadedTrial,
-): Promise<{
-  readonly trips: readonly RecordedTrip[];
-  readonly readings: readonly TrialObservationLine[];
-}> => {
-  const budget = budgetOf(loaded.ruleset);
-  const tracks = budgetTracksOf(budget);
-  const head = headForMap(loaded.mapSha256);
-  const players = trialPlayers();
-  const wasmModule = await WebAssembly.compile(loaded.wasmBytes);
-  const trips: RecordedTrip[] = [];
-  const readings: TrialObservationLine[] = [];
-  // 哈希绑定与 runner 共用已加载的源码，不重读候选路径，也不使用前轮产物。
-  const scriptSha256 = sha256(loaded.scripts[CANDIDATE_SEAT]);
-
-  for (const [matchIndex, seed] of TRIAL_SEEDS.entries()) {
-    const attempt = async (): Promise<TrialMatchOutcome> => {
-      const handles = await Promise.all(
-        ([0, 1, 2, 3] as const).map((seat) =>
-          createQuickJsRunner({
-            wasm: wasmModule,
-            runtimeCode: loaded.runtimeCode,
-            scriptCode: loaded.scripts[seat] ?? "",
-            seat,
-            ruleset: loaded.ruleset,
-            ...tracks,
-          }),
-        ),
-      );
-      try {
-        return runTrialMatch({
-          runners: handles.map((handle) => handle.runner),
-          players: [...players],
-          ruleset: loaded.ruleset,
-          map: loaded.map,
-          seed,
-          budget,
-          head,
-          matchIndex,
-        });
-      } finally {
-        for (const handle of handles) {
-          handle.dispose();
-        }
-      }
-    };
-
-    let outcome = await attempt();
-    if (outcome.fault !== null) {
-      process.stderr.write(
-        `试跑注：第 ${String(matchIndex + 1)} 场在第 ${String(outcome.fault.tick)} tick 作废` +
-          `（墙钟硬超时），同一种子重跑一次。\n`,
-      );
-      outcome = await attempt();
-      if (outcome.fault !== null) {
-        throw new Error(
-          `第 ${String(matchIndex + 1)} 场两次作废（墙钟硬超时），无法判定候选是否超限`,
-        );
-      }
-    }
-    trips.push(...outcome.trips);
-    const observation = renderScoreSourceObservation(matchIndex, outcome.scoreSource);
-    if (observation !== null) {
-      process.stderr.write(`${observation}\n`);
-    }
-    // 观测文件记的是**每一场**的读数，命中与否都记（命中的读数恒为 0/0，只记命中等于没有读数）。
-    readings.push({
-      matchIndex,
-      ...outcome.scoreSource,
-      ...(outcome.terminalSummary === undefined
-        ? {}
-        : { terminalSummary: outcome.terminalSummary }),
-      actionFacts: {
-        version: 1,
-        scriptSha256,
-        seed,
-        seat: CANDIDATE_SEAT,
-        ...outcome.actionFacts,
-      },
-    });
-    // 早停：零容忍下首拦即定——后场的触限不可能把首触挤掉（到场序即数组序），
-    // 全跑完只多花两场的 VM 时间，结论与反馈逐字相同。
-    if (!verdictOfTrips(trips).passed) {
-      break;
-    }
+/** `--plan`：打印计划并退出 0（不读候选、不建 VM）。 */
+const printPlan = (root: string, model: string): number => {
+  let plan: TrialPlan;
+  try {
+    plan = planOf(trialPlanFactsOf(loadTrialGridInputs(root, model)));
+  } catch (cause) {
+    process.stderr.write(`试跑计划装载失败:${reasonOf(cause)}\n`);
+    return TRIAL_INFRA;
   }
-  return { trips, readings };
+  process.stdout.write(`${canonicalJson(plan)}\n`);
+  return TRIAL_PASSED;
+};
+
+/** `--expected-plan`：预期计划必须能由现场事实重建，否则指名哪一处不符并退出 infra。 */
+const checkExpectedPlan = (path: string, plan: TrialPlan): void => {
+  let expected: TrialPlan;
+  try {
+    expected = readTrialPlan(JSON.parse(readFileSync(path, "utf8")) as unknown);
+  } catch (cause) {
+    throw new Error(`预期试跑计划读不了或形状不合法:${reasonOf(cause)}`);
+  }
+  const mismatch = trialPlanMismatch(expected, plan);
+  if (mismatch !== null) throw new Error(`预期试跑计划与现场事实不符:${mismatch}`);
 };
 
 const main = async (argv: readonly string[]): Promise<number> => {
-  const { root: rootArg, observationsPath, positional } = splitArgs(argv);
+  const {
+    root: rootArg,
+    model,
+    observationsPath,
+    expectedPlanPath,
+    planMode,
+    positional,
+  } = splitArgs(argv);
+  const root = resolve(rootArg ?? process.cwd());
+  if (model === undefined) {
+    process.stderr.write(`缺 --model（在位陪练随模型而定，造计划必须知道给谁生成）。\n${USAGE}\n`);
+    return TRIAL_INFRA;
+  }
+  if (planMode) return printPlan(root, model);
+
   const candidateArg = positional[0];
   if (candidateArg === undefined) {
     process.stderr.write(`缺候选产物参数。\n${USAGE}\n`);
     return TRIAL_INFRA;
   }
-  const root = resolve(rootArg ?? process.cwd());
 
   let loaded: LoadedTrial;
+  let plan: TrialPlan;
   try {
-    loaded = loadTrial(root, resolve(candidateArg));
+    loaded = loadTrialGrid(root, model, resolve(candidateArg));
+    plan = planOf(trialPlanFactsOf(loaded));
+    if (expectedPlanPath !== undefined) checkExpectedPlan(resolve(expectedPlanPath), plan);
   } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    process.stderr.write(`试跑装载失败:${reason}\n`);
+    process.stderr.write(`试跑装载失败:${reasonOf(cause)}\n`);
     return TRIAL_INFRA;
   }
 
-  let ran: {
-    readonly trips: readonly RecordedTrip[];
-    readonly readings: readonly TrialObservationLine[];
-  };
+  let ran: Awaited<ReturnType<typeof runTrialGrid>>;
   try {
-    ran = await runThreeMatches(loaded);
+    ran = await runTrialGrid(loaded, plan);
   } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    process.stderr.write(`试跑执行失败:${reason}\n`);
+    process.stderr.write(`试跑执行失败:${reasonOf(cause)}\n`);
     return TRIAL_INFRA;
   }
   const { trips, readings } = ran;
+  const candidateSeatOf: CandidateSeatOf = (matchIndex) =>
+    plan.matches[matchIndex]?.candidateSeat ?? 0;
 
-  // 观测落盘：在**结论之外**，三场跑完之后才写。早停时只有跑过的那几行（没跑的场没有读数）；
-  // 某一轮试跑中途 infra（两场作废等）时这一轮一个字都不写，上一次**跑完**的读数留在盘上。
+  // 证据落盘在**结论之外**：整张网格跑完之后才写，一次 invocation 内部不允许半截。
+  // 网格中途 infra（两场作废等）时这一轮一个字都不写，上一次**跑完**的证据留在盘上。
   if (observationsPath !== undefined) {
     const written = writeTrialObservations(observationsPath, trialObservationLines(readings));
     if (!written.ok) {
       process.stderr.write(`试跑注：观测文件写盘失败:${written.reason}\n`);
     }
+    const summary = summaryOfGrid(plan, trialScriptSha256(loaded), readings);
+    const summarized = writeTrialGridSummary(gridSummaryPathOf(observationsPath), summary);
+    if (!summarized.ok) {
+      process.stderr.write(`试跑注：网格汇总写盘失败:${summarized.reason}\n`);
+    }
   }
 
   const ignored = trips.filter(
-    (trip) => trip.seat !== CANDIDATE_SEAT || !WATCHED_TRACKS.includes(trip.track),
+    (trip) =>
+      trip.seat !== candidateSeatOf(trip.matchIndex) || !WATCHED_TRACKS.includes(trip.track),
   );
   if (ignored.length > 0) {
     process.stderr.write(
@@ -221,15 +191,14 @@ const main = async (argv: readonly string[]): Promise<number> => {
     );
   }
 
-  const verdict = verdictOfTrips(trips);
-  process.stdout.write(`${renderTrialFeedback(verdict)}\n`);
+  const verdict = verdictOfTrips(trips, candidateSeatOf);
+  process.stdout.write(`${renderTrialFeedback(verdict, plan)}\n`);
   return verdict.passed ? TRIAL_PASSED : TRIAL_BLOCKED;
 };
 
 try {
   process.exitCode = await main(process.argv.slice(2));
 } catch (cause) {
-  const reason = cause instanceof Error ? cause.message : String(cause);
-  process.stderr.write(`试跑未捕获异常:${reason}\n`);
+  process.stderr.write(`试跑未捕获异常:${reasonOf(cause)}\n`);
   process.exitCode = TRIAL_INFRA;
 }

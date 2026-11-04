@@ -20,15 +20,26 @@ import {
   ACTION_API_NAMES,
   ACTION_ERROR_CODES,
   ACTION_EFFECT_NAMES,
-  ARCHIVE_META_JSON_SCHEMA,
+  ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA,
   ARCHIVE_SELECTION_JSON_SCHEMA,
+  OPTIMIZATION_GRID_VERSION,
   OPTIMIZATION_STAGES,
-  SELECTION_MATCHES_PER_CANDIDATE,
+  SELECTION_GRID_VERSION,
+  SELECTION_VERSION,
+  TRIAL_PLAN_JSON_SHAPE,
+  type ArchiveOptimization,
+  type ArchiveSelection,
+  type SelectionCandidate,
   type SelectionPlan,
   type SelectionCandidateIdentity,
+  type SelectionGridCandidate,
+  type TrialGridScore,
+  type TrialPlan,
   FAILURE_RECORD_PREFIX,
   OBSERVATIONS_FILE_PREFIX,
+  TRIAL_CANDIDATE_SEAT,
   TRIAL_OBSERVATION_JSON_SCHEMA,
+  TRIAL_PLAYER_IDS,
   TRIAL_SEEDS,
   type ArchiveOptimizationCandidate,
   type TrialObservationLine,
@@ -36,6 +47,7 @@ import {
 
 import { optimizationMetaOf } from "./archive-optimization.js";
 import { buildSelectionPlan } from "./selection.js";
+import { checkTrialPlan } from "./trial-plan.js";
 import {
   objectOf,
   numberOf,
@@ -45,8 +57,177 @@ import {
   failureClassificationOf,
   usageEnumOf,
   observationEvidenceOf,
+  type ObservationMatch,
   type ReportRequestEvidence,
 } from "./archive-report-evidence.js";
+
+/**
+ * 选拔候选的分数投影：v1 把总分 / 均分 / 分母摊在候选自己身上，v2 把它们收进 `score`
+ * （生成阶段那张网格的分数）。**两版的分数口径不同**（v1 = 选拔自有的 12 场单图；
+ * v2 = 生成阶段 32 场网格的复算读数），所以它只是一处「选拔读数」，不进三类分数分列，
+ * 分列见 `ReportCandidateScores`。
+ */
+const selectionCandidateScoreOf = (
+  candidate: SelectionCandidate | SelectionGridCandidate,
+): TrialGridScore =>
+  "score" in candidate
+    ? candidate.score
+    : {
+        totalPoints: candidate.totalPoints,
+        averagePoints: candidate.averagePoints,
+        countedMatches: candidate.countedMatches,
+      };
+
+/** 不适用（非零、非空）：某类分数不属本档口径时用它。 */
+const NOT_APPLICABLE_SCORE: ReportScoreReading = {
+  state: "not-applicable",
+  totalPoints: null,
+  averagePoints: null,
+  countedMatches: null,
+};
+
+/** 计划的事实投影（种子 / 场数）。判据：v1 的选拔计划有 `seeds`，v2 就是生成阶段那张网格。 */
+const planFactsOf = (
+  plan: SelectionPlan | TrialPlan,
+): { readonly seeds: readonly number[]; readonly matchesPerCandidate: number } =>
+  "seeds" in plan
+    ? { seeds: [...plan.seeds], matchesPerCandidate: plan.matchesPerCandidate }
+    : {
+        seeds: plan.matches.map((match) => match.seed),
+        matchesPerCandidate: plan.matchesPerCandidate,
+      };
+
+/**
+ * 网格分数的读数。
+ *
+ * v2 的 schema 把 `score` 写进 **required**，装载期（`optimizationMetaOf`）先把缺项的档拖掉了；
+ * 走到这里还缺，就明确报错而不是补零——报告从不把「没记」说成「零分」。
+ */
+const gridScoreOf = (score: TrialGridScore | undefined): ReportScoreReading => {
+  if (score === undefined) throw new Error("网格候选缺少分数，归档报告不补零");
+  return {
+    state: "recorded",
+    totalPoints: score.totalPoints,
+    averagePoints: score.averagePoints,
+    countedMatches: score.countedMatches,
+  };
+};
+
+/** v1 历史档的选拔读数（12 场单图口径，摊在候选自己身上）。 */
+const legacyScoreReadingOf = (candidate: SelectionCandidate | undefined): ReportScoreReading => {
+  if (candidate === undefined) throw new Error("选拔候选缺少分数，归档报告不补零");
+  return {
+    state: "recorded",
+    totalPoints: candidate.totalPoints,
+    averagePoints: candidate.averagePoints,
+    countedMatches: candidate.countedMatches,
+  };
+};
+
+/** 两读是否逐位相同（分母也算：分母不同的均分不可比）。 */
+const sameScoreReading = (a: ReportScoreReading, b: ReportScoreReading): boolean =>
+  a.state === "recorded" &&
+  b.state === "recorded" &&
+  a.totalPoints === b.totalPoints &&
+  a.averagePoints === b.averagePoints &&
+  a.countedMatches === b.countedMatches;
+
+/**
+ * 三类分数分列：生成阶段 / 选拔复算 / 赛季，一个候选一行。
+ *
+ * 三者**不互相替代**：
+ * - 生成阶段分数（v2 才有）= 生成阶段跑的那张网格的平均名次积分，分母 32；
+ * - 选拔复算读数 = 独立子进程重跑同一张网格得到的分数，只作校验（装载期已强制逐位相同）；
+ * - 赛季分数属赛季报告口径（`runs/` 的排名），归档报告恒写**不适用**，不用上面两类冒充。
+ * v1 历史档没有网格分数，所以它的生成阶段写不适用、选拔读数就是它自己的 12 场口径。
+ */
+const candidateScoresOf = (
+  optimization: ArchiveOptimization | undefined,
+  selection: ArchiveSelection | undefined,
+): readonly ReportCandidateScores[] => {
+  if (optimization === undefined) return [];
+  const grid = optimization.version === OPTIMIZATION_GRID_VERSION;
+  return optimization.candidates.map((candidate, index) => {
+    const generation = grid ? gridScoreOf(candidate.score) : NOT_APPLICABLE_SCORE;
+    const selectionReading =
+      selection === undefined
+        ? NOT_APPLICABLE_SCORE
+        : selection.version === SELECTION_GRID_VERSION
+          ? gridScoreOf(selection.candidates[index]?.score)
+          : legacyScoreReadingOf(selection.candidates[index]);
+    return {
+      stage: candidate.stage,
+      protocolRound: candidate.protocolRound,
+      scriptSha256: candidate.scriptSha256,
+      sourceSha256: selection?.candidates[index]?.sourceSha256 ?? null,
+      reusedFromStage: candidate.reusedFromStage ?? null,
+      generation,
+      selection: selectionReading,
+      season: NOT_APPLICABLE_SCORE,
+      agreement: sameScoreReading(generation, selectionReading) ? "identical" : "unavailable",
+    };
+  });
+};
+
+/**
+ * 网格计划 → 报告投影（不搬 32 场明文）。
+ *
+ * 「跟谁打」= `scripts` + 每个组合的 `sitOut`；「坐哪」= 每个组合的 `candidateSeats`；
+ * 「哪张图」= `maps` 与每个组合的 `maps`。逐场细节（哪个种子、哪一号位）以 `source` 指向的
+ * 计划正文为准——报告不复写一份。
+ */
+const gridPlanReportOf = (plan: TrialPlan, source: string): ReportGridPlan => {
+  const scriptIds = plan.scripts.map((script) => script.id);
+  const combos = [...new Set(plan.matches.map((match) => match.comboIndex))]
+    .sort((a, b) => a - b)
+    .map((comboIndex) => {
+      const matches = plan.matches.filter((match) => match.comboIndex === comboIndex);
+      // 轮空的是「四份身份里这个组合一次也没上场的那个」；对不上就不猜。
+      const seated = new Set(matches.flatMap((match) => match.seats));
+      const absent = scriptIds.filter((id) => !seated.has(id));
+      return {
+        comboIndex,
+        sitOut: absent.length === 1 ? absent[0]! : null,
+        firstMatchIndex: Math.min(...matches.map((match) => match.matchIndex)),
+        matchCount: matches.length,
+        candidateSeats: [...new Set(matches.map((match) => match.candidateSeat))].sort(
+          (a, b) => a - b,
+        ),
+        maps: [...new Set(matches.map((match) => match.map))],
+      };
+    });
+  return {
+    kind: "grid",
+    version: plan.version,
+    planSha256: plan.planSha256,
+    source,
+    matchesPerCandidate: plan.matchesPerCandidate,
+    seeds: plan.matches.map((match) => match.seed),
+    maps: plan.maps.map(({ name, sha256 }) => ({ name, sha256 })),
+    scripts: plan.scripts.map(({ id, role, source: from, scriptSha256 }) => ({
+      id,
+      role,
+      source: from,
+      scriptSha256,
+    })),
+    combos,
+  };
+};
+
+/** v1 选拔计划 → 报告投影（12 场单图 / 三份基准 / 种子 401–403）。 */
+const legacySelectionPlanReportOf = (
+  plan: SelectionPlan,
+  source: string,
+): ReportLegacySelectionPlan => ({
+  kind: "legacy-selection",
+  version: plan.version,
+  planSha256: plan.planSha256,
+  source,
+  matchesPerCandidate: plan.matchesPerCandidate,
+  seeds: [...plan.seeds],
+  map: { name: plan.map, sha256: plan.mapSha256 },
+  baselines: plan.baselines.map(({ id, scriptSha256 }) => ({ id, scriptSha256 })),
+});
 
 export type ReportTotal = {
   readonly value: number | null;
@@ -96,7 +277,125 @@ export type ReportObservations = {
   readonly issues: readonly { readonly line: number; readonly reason: string }[];
 };
 
-export type ReportCandidate = ArchiveOptimizationCandidate & {
+/**
+ * 三类分数里的一类。
+ *
+ * **`not-applicable` 与「零分」是两件事**：某类分数不属本档口径时写不适用（各顶点皆 `null`），
+ * 绝不用 `0` 或空串顶上；台账里真没有这个读数时装载端先拖（见 `gridScoreOf`），不靠报告补零。
+ */
+export type ReportScoreReading =
+  | {
+      readonly state: "recorded";
+      readonly totalPoints: number;
+      readonly averagePoints: number;
+      readonly countedMatches: number;
+    }
+  | {
+      readonly state: "not-applicable";
+      readonly totalPoints: null;
+      readonly averagePoints: null;
+      readonly countedMatches: null;
+    };
+
+/**
+ * 每个候选一行：身份 + 同字节复用来源 + **三类分数分列**（互不替代）。
+ *
+ * - `generation`：生成阶段那张网格的平均名次积分（分母 32，来自 `optimization.candidates[].score`）。
+ * - `selection`：选拔独立子进程全量复算的读数，**只作校验**，不是第二个排名依据。
+ *   v2 的 `agreement` 恒为 `identical`（装载期已逐位比对）；v1 历史档没有网格分数，写 `unavailable`。
+ * - `season`：属赛季报告口径（`runs/` 的赛季排名），归档报告不得用上面任一类冒充，恒写不适用。
+ */
+export type ReportCandidateScores = {
+  readonly stage: number;
+  readonly protocolRound: number;
+  /** 编译产物摘要：三阶段是否字节相同，看这一列与 `reusedFromStage`。 */
+  readonly scriptSha256: string;
+  /** 对应阶段的原始 TS 摘要；没有选拔段时 `null`（不补）。 */
+  readonly sourceSha256: string | null;
+  /** 编译产物与更早阶段相同时，复用的是哪一阶段的网格结果；`null` = 本轮自己跑了网格。 */
+  readonly reusedFromStage: number | null;
+  readonly generation: ReportScoreReading;
+  readonly selection: ReportScoreReading;
+  readonly season: ReportScoreReading;
+  /** 生成与选拔两读的关系；`unavailable` = 两读至少一侧不属本档口径。 */
+  readonly agreement: "identical" | "unavailable";
+};
+
+/** 计划里的一张图（名字 + 内容摘要）。 */
+export type ReportPlanMap = { readonly name: string; readonly sha256: string };
+
+/** 计划里的一份陪练身份（与存档 `sparring[]` 同形）。 */
+export type ReportPlanScript = {
+  readonly id: string;
+  readonly role: string;
+  readonly source: string;
+  readonly scriptSha256: string;
+};
+
+/**
+ * 一个「轮空一份陪练」组合的覆盖范围。
+ *
+ * 报告**不搬 32 场明文**：计划正文就在 `ReportGridPlan.source` 指向的存档里；这里只给
+ * 「跟谁打、坐哪、哪张图」的直读摘要（组合 → 谁轮空 / 哪几张图 / 覆盖哪几场）。
+ */
+export type ReportPlanCombo = {
+  readonly comboIndex: number;
+  /** 该组合里一次也没上场的那份陪练 id；与四份身份对不上时 `null`（不猜）。 */
+  readonly sitOut: string | null;
+  /** 该组合的第一场与场数；逐场座位/种子/地图以计划正文为准。 */
+  readonly firstMatchIndex: number;
+  readonly matchCount: number;
+  /** 该组合里候选坐过的座位（升序；v2 恒为 0/1/2/3）。 */
+  readonly candidateSeats: readonly number[];
+  /** 该组合跑过的图名（顺序即计划顺序）。 */
+  readonly maps: readonly string[];
+};
+
+/**
+ * 网格计划（v2）的报告投影。
+ *
+ * 四份陪练身份、两张图、计划版本与 `planSha256` 都在这里；`source` 是计划正文在档里的
+ * JSON 指针（`<记录来源>#optimization.plan` 或 `#selection.plan`），复现就从那里读。
+ */
+export type ReportGridPlan = {
+  readonly kind: "grid";
+  /** 计划形状版本（`TrialPlan.version`），不是存档或观测行的版本。 */
+  readonly version: number;
+  readonly planSha256: string;
+  readonly source: string;
+  readonly matchesPerCandidate: number;
+  /** 逐场种子（计划顺序）；v2 网格每格一个固定值。 */
+  readonly seeds: readonly number[];
+  readonly maps: readonly ReportPlanMap[];
+  readonly scripts: readonly ReportPlanScript[];
+  readonly combos: readonly ReportPlanCombo[];
+};
+
+/**
+ * 历史档（v1）选拔计划的报告投影：12 场单图、三份基准、种子 401–403。
+ *
+ * 不做成网格的「退化成单值」形状：历史档没有变，变的是报告不再把 v2 往这几个单值栏位里塞。
+ */
+export type ReportLegacySelectionPlan = {
+  readonly kind: "legacy-selection";
+  readonly version: typeof SELECTION_VERSION;
+  readonly planSha256: string;
+  readonly source: string;
+  readonly matchesPerCandidate: number;
+  readonly seeds: readonly number[];
+  readonly map: ReportPlanMap;
+  readonly baselines: readonly { readonly id: string; readonly scriptSha256: string }[];
+};
+
+/**
+ * 一个候选一行。
+ *
+ * `params` **不是**存档里那份端点原生参数，而是与逐轮日志同一套白名单投影（见 `paramsOf`）：
+ * 存档原值只能断定数值 / 布尔 / 已知枚举那几格，`stop` / `logit_bias` 的内容与白名单外的键
+ * 不进报告（hld §8.3）。旧档没有这栏就不写，不追填。
+ */
+export type ReportCandidate = Omit<ArchiveOptimizationCandidate, "params"> & {
+  readonly params?: ReturnType<typeof paramsOf>;
   readonly scriptSource: string;
   readonly scriptState: "verified" | "missing" | "unreadable" | "mismatch";
   readonly actualScriptSha256: string | null;
@@ -110,37 +409,48 @@ export type ArchiveReport = {
   /** 最后生成阶段与实际冻结阶段分别保留；旧档冻结第三阶段。 */
   readonly frozenCandidate: ReportCandidate | null;
   readonly selection: {
-    readonly version: 1;
+    /**
+     * 选拔记录版本：1 = 历史档（12 场 / 三基准 / 单图），2 = 评测网格（32 场 / 四陪练 / 两图）。
+     * 计划口径按 `plan.kind` 分流，且**不互相冒充**（见 `ReportGridPlan` / `ReportLegacySelectionPlan`）。
+     */
+    readonly version: 1 | 2;
     readonly stage: number;
     readonly protocolRound: number;
     readonly scriptSha256: string;
     readonly sourceSha256: string;
+    /** 胜者的选拔读数；与生成阶段网格分数逐位相同时才与 `scores` 一致。 */
     readonly averagePoints: number;
-    readonly countedMatches: 12;
+    readonly countedMatches: number;
     readonly reason: string;
     readonly planSha256: string;
     readonly distinctScripts: number;
     readonly reusedFromStage: number | null;
+    /** 每个候选的选拔读数（身份 + 分数）；三类分数的分列视图是 `scores`，两处同源。 */
     readonly candidates: readonly (SelectionCandidateIdentity & {
       readonly averagePoints: number;
       readonly totalPoints: number;
-      readonly countedMatches: 12;
+      readonly countedMatches: number;
       readonly reusedFromStage: number | null;
     })[];
     readonly executedMatches: number;
     readonly reusedMatches: number;
-    readonly seeds: readonly number[];
     readonly rulesetSha256: string;
-    readonly mapSha256: string;
     readonly sandboxRuntimeHash: string;
-    readonly baselineScriptSha256: readonly string[];
+    /** 选拔计划：v2 就是生成阶段那张网格（`planSha256` 相同），v1 是选拔自有的 12 场单图。 */
+    readonly plan: ReportGridPlan | ReportLegacySelectionPlan;
   } | null;
   readonly selectionFailure: {
     readonly planSha256: string;
     readonly seeds: readonly number[];
-    readonly matchesPerCandidate: 12;
+    readonly matchesPerCandidate: number;
     readonly candidates: readonly SelectionCandidateIdentity[];
   } | null;
+  /**
+   * 生成阶段计划：v2 才有（v1 历史档没有计划字段，不迁移、不回填）。`null` = 不适用。
+   */
+  readonly plan: ReportGridPlan | null;
+  /** 三类分数分列，每个候选一行；没有优化旁证（失败档等）时为空数组。 */
+  readonly scores: readonly ReportCandidateScores[];
   readonly candidateStages: number;
   readonly distinctScripts: number;
   readonly runScope: "current-run" | "historical" | "unscoped";
@@ -353,11 +663,42 @@ const observationSchema = z.fromJSONSchema(
 const issueReasonOf = (cause: unknown, allowed: readonly string[], fallback: string): string =>
   cause instanceof Error && allowed.includes(cause.message) ? cause.message : fallback;
 
+/**
+ * 观测行的期待口径：两版档各有自己的「这一场是谁跟谁打」。
+ *
+ * - `legacy`：v1 历史档（三场单图、候选恒 0 号位、种子 101/202/303、三份基准），图表不变。
+ * - `grid`：v2 网格档，种子/候选座位/四座选手全部逐场由计划给（`archive-meta.ts` 头注
+ *   说的「网格档的计划口径」）。
+ */
+type ObservationCaliber =
+  | { readonly kind: "legacy" }
+  | { readonly kind: "grid"; readonly plan: TrialPlan };
+
+/** 按下标取这一场的期待身份；`undefined` = 这个下标不属这一档的计划。 */
+const expectedMatchOf = (
+  caliber: ObservationCaliber,
+  matchIndex: number,
+): ObservationMatch | undefined => {
+  if (caliber.kind === "legacy") {
+    const seed = TRIAL_SEEDS[matchIndex];
+    return seed === undefined
+      ? undefined
+      : { seed, candidateSeat: TRIAL_CANDIDATE_SEAT, seats: TRIAL_PLAYER_IDS };
+  }
+  const match = caliber.plan.matches.find((entry) => entry.matchIndex === matchIndex);
+  return match === undefined
+    ? undefined
+    : { seed: match.seed, candidateSeat: match.candidateSeat, seats: match.seats };
+};
+
 const observationsOf = (
   root: string,
   relative: string,
-  finalMeta?: Record<string, unknown>,
-  strictTrial = false,
+  options: {
+    readonly caliber: ObservationCaliber;
+    /** 候选自己那份编译产物摘要（`meta.scriptSha256`）；给了就逐行对。 */
+    readonly scriptSha256?: string;
+  },
 ): ReportObservations => {
   const path = join(root, relative);
   let text: string;
@@ -408,13 +749,15 @@ const observationsOf = (
         typeof candidate.noScoreSource !== "boolean"
       )
         throw new Error("观测行形状不合法");
-      if (strictTrial && matchIndex >= TRIAL_SEEDS.length)
-        throw new Error("观测对局下标不属于固定试跑清单");
+      const expected = expectedMatchOf(options.caliber, matchIndex);
+      if (expected === undefined) throw new Error("观测对局下标不属于试跑计划");
       const facts = candidate.actionFacts;
       if (
         facts !== undefined &&
         (facts.complete !== (facts.missingTicks === 0) ||
-          facts.seed !== TRIAL_SEEDS[matchIndex] ||
+          facts.seed !== expected.seed ||
+          // 座位是每场参数：v1 历史档候选恒 0 号位，v2 网格档逐场由计划给。
+          facts.seat !== expected.candidateSeat ||
           ACTION_API_NAMES.some(
             (name) =>
               (facts.observedTicks === 0 && facts.calls[name] > 0) ||
@@ -425,8 +768,8 @@ const observationsOf = (
         throw new Error("行动事实完整性、错误计数或 seed 归属不合法");
       if (
         facts !== undefined &&
-        finalMeta !== undefined &&
-        facts.scriptSha256 !== finalMeta.scriptSha256
+        options.scriptSha256 !== undefined &&
+        facts.scriptSha256 !== options.scriptSha256
       )
         throw new Error("行动事实与 meta 编译 JS hash 不一致");
       if (seen.has(matchIndex)) throw new Error("对局下标重复");
@@ -434,7 +777,7 @@ const observationsOf = (
         throw new Error("noScoreSource 与读数矛盾");
       if (facts !== undefined && factsHash !== undefined && facts.scriptSha256 !== factsHash)
         throw new Error("同一候选行动事实的编译 JS hash 不一致");
-      const evidence = observationEvidenceOf(candidate);
+      const evidence = observationEvidenceOf(candidate, expected);
       if (evidence === null) throw new Error("终局事实计分、名次或归属不合法");
       seen.add(matchIndex);
       if (facts !== undefined) factsHash = facts.scriptSha256;
@@ -447,7 +790,7 @@ const observationsOf = (
           [
             "观测行 JSON 不合法",
             "观测行形状不合法",
-            "观测对局下标不属于固定试跑清单",
+            "观测对局下标不属于试跑计划",
             "行动事实完整性、错误计数或 seed 归属不合法",
             "行动事实与 meta 编译 JS hash 不一致",
             "对局下标重复",
@@ -491,7 +834,12 @@ const candidateObservationsOf = (
         suffix !== String(protocolRound)
       )
         return [];
-      return [{ ...observationsOf(root, `${directory}/${entry.name}`), protocolRound }];
+      return [
+        {
+          ...observationsOf(root, `${directory}/${entry.name}`, { caliber: { kind: "legacy" } }),
+          protocolRound,
+        },
+      ];
     })
     .sort((a, b) => a.protocolRound - b.protocolRound);
 };
@@ -503,7 +851,7 @@ const candidateObservationsOf = (
  */
 const failureCandidateSchema = z.fromJSONSchema(
   JSON.parse(
-    JSON.stringify(ARCHIVE_META_JSON_SCHEMA.properties.optimization.properties.candidates.items),
+    JSON.stringify(ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA),
   ) as z.core.JSONSchema.JSONSchema,
 );
 
@@ -534,11 +882,20 @@ const failureCandidatesOf = (record: unknown): ArchiveOptimizationCandidate[] =>
   return out;
 };
 
+/**
+ * 失败旁证里的计划：v1 是 12 场选拔计划，v2 是生成阶段那张网格（`TrialPlan`）。
+ *
+ * 两版形状互斥（有 `seeds` 的是 v1），所以用联合而不是就地改检查：历史失败记录不迁移，
+ * 新失败记录带的是网格计划。
+ */
 const selectionFailureSchema = z
   .object({
-    plan: z.fromJSONSchema(
-      ARCHIVE_SELECTION_JSON_SCHEMA.properties.plan as unknown as z.core.JSONSchema.JSONSchema,
-    ),
+    plan: z.union([
+      z.fromJSONSchema(
+        ARCHIVE_SELECTION_JSON_SCHEMA.properties.plan as unknown as z.core.JSONSchema.JSONSchema,
+      ),
+      z.fromJSONSchema(TRIAL_PLAN_JSON_SHAPE as unknown as z.core.JSONSchema.JSONSchema),
+    ]),
     candidates: z
       .array(
         z.fromJSONSchema(
@@ -549,17 +906,32 @@ const selectionFailureSchema = z
       .length(3),
   })
   .strict();
+
+/** 计划能否由它自己的事实重建：v1 用选拔计划的构造，v2 用 `checkTrialPlan`。 */
+const rebuiltSelectionFailurePlan = (
+  plan: SelectionPlan | TrialPlan,
+): SelectionPlan | TrialPlan => {
+  if (!("seeds" in plan)) {
+    checkTrialPlan(plan);
+    return plan;
+  }
+  return buildSelectionPlan(plan);
+};
+
 const selectionFailureOf = (
   record: Record<string, unknown>,
   descriptors: readonly ArchiveOptimizationCandidate[],
   protocolRounds: number,
-): { plan: SelectionPlan; candidates: SelectionCandidateIdentity[] } | null => {
+): { plan: SelectionPlan | TrialPlan; candidates: SelectionCandidateIdentity[] } | null => {
   if (record.selectionFailure === undefined) return null;
   const parsed = selectionFailureSchema.safeParse(record.selectionFailure);
   if (!parsed.success || record.classification !== "selection" || descriptors.length !== 3)
     throw new Error("选拔失败旁证形状不合法");
-  const value = parsed.data as { plan: SelectionPlan; candidates: SelectionCandidateIdentity[] };
-  const expected = buildSelectionPlan(value.plan);
+  const value = parsed.data as {
+    plan: SelectionPlan | TrialPlan;
+    candidates: SelectionCandidateIdentity[];
+  };
+  const expected = rebuiltSelectionFailurePlan(value.plan);
   if (
     JSON.stringify(expected) !== JSON.stringify(value.plan) ||
     value.candidates.some((identity, index) => {
@@ -606,6 +978,7 @@ const candidateReportOf = (
   descriptor: ArchiveOptimizationCandidate,
   finalHash: string,
   runId: string,
+  caliber: ObservationCaliber,
   frozenStage: number | null = 2,
   candidateSourceHash?: string,
 ): ReportCandidate => {
@@ -642,20 +1015,24 @@ const candidateReportOf = (
   } catch (cause) {
     scriptState = objectOf(cause).code === "ENOENT" ? "missing" : "unreadable";
   }
-  const observations = observationsOf(
-    root,
-    `${directory}/${descriptor.observationsFile}`,
-    {
-      scriptSha256: descriptor.scriptSha256,
-    },
-    true,
-  );
+  const observations = observationsOf(root, `${directory}/${descriptor.observationsFile}`, {
+    caliber,
+    scriptSha256: descriptor.scriptSha256,
+  });
   return {
     stage: descriptor.stage,
     protocolRound: descriptor.protocolRound,
     scriptFile: descriptor.scriptFile,
     observationsFile: descriptor.observationsFile,
     scriptSha256: descriptor.scriptSha256,
+    // 档里有才搬：v1 历史档没有分数、场数与复用来源，不追填、不补零。
+    ...(descriptor.score === undefined ? {} : { score: descriptor.score }),
+    ...(descriptor.matchCount === undefined ? {} : { matchCount: descriptor.matchCount }),
+    ...(descriptor.reusedFromStage === undefined
+      ? {}
+      : { reusedFromStage: descriptor.reusedFromStage }),
+    // 存档里的端点原生参数只过白名单投影再进报告：原值含自由文本（`stop` / `logit_bias`）。
+    ...(descriptor.params === undefined ? {} : { params: paramsOf(descriptor.params) }),
     scriptSource,
     scriptState,
     actualScriptSha256,
@@ -781,6 +1158,16 @@ const readRecord = (
   const failureDescriptors = kind === "failure" ? failureCandidatesOf(record) : [];
   const failedSelection =
     kind === "failure" ? selectionFailureOf(record, failureDescriptors, protocolRounds) : null;
+  /**
+   * 观测行的期待口径：v2 网格档逐场由计划给（种子 / 候选座位 / 四座身份），v1 历史档查旧表。
+   * 失败档没有 `optimization`，但 v2 的选拔失败旁证里带的是同一张计划。
+   */
+  const caliber: ObservationCaliber =
+    optimizationMeta?.optimization?.version === OPTIMIZATION_GRID_VERSION
+      ? { kind: "grid", plan: optimizationMeta.optimization.plan }
+      : failedSelection !== null && !("seeds" in failedSelection.plan)
+        ? { kind: "grid", plan: failedSelection.plan }
+        : { kind: "legacy" };
   const optimizationCandidates =
     optimizationMeta?.optimization?.candidates.map((descriptor) =>
       candidateReportOf(
@@ -789,6 +1176,7 @@ const readRecord = (
         descriptor,
         optimizationMeta.scriptSha256,
         runId,
+        caliber,
         optimizationMeta.selection?.selected.stage ?? 2,
         optimizationMeta.selection?.candidates[descriptor.stage]?.sourceSha256,
       ),
@@ -809,6 +1197,7 @@ const readRecord = (
             descriptor,
             "",
             runId,
+            caliber,
             null,
             failedSelection?.candidates[descriptor.stage]?.sourceSha256,
           ),
@@ -817,11 +1206,12 @@ const readRecord = (
   const optimizedFinal = optimizationCandidates[2];
   const observations =
     optimizedFinal?.observations ??
-    observationsOf(
-      root,
-      `archive/${slug}/${OBSERVATIONS_FILE_PREFIX}${runId}.jsonl`,
-      kind === "success" ? record : undefined,
-    );
+    observationsOf(root, `archive/${slug}/${OBSERVATIONS_FILE_PREFIX}${runId}.jsonl`, {
+      caliber,
+      ...(kind === "success" && typeof record.scriptSha256 === "string"
+        ? { scriptSha256: record.scriptSha256 }
+        : {}),
+    });
   const describedCandidates =
     optimizationMeta !== undefined ? optimizationCandidates : failureDescribed;
   const candidateObservations =
@@ -844,6 +1234,13 @@ const readRecord = (
   const convergedRounds = rounds.filter((round) => round.responseConverged);
   const allAttempts = rounds.flatMap((round) => round.attempts);
   const selection = optimizationMeta?.selection;
+  const optimization = optimizationMeta?.optimization;
+  // v1 历史档没有计划字段：不适用（`null`），不迁移、不回填。
+  const plan =
+    optimization?.version === OPTIMIZATION_GRID_VERSION
+      ? gridPlanReportOf(optimization.plan, `${source}#optimization.plan`)
+      : null;
+  const scores = candidateScoresOf(optimization, selection);
   const stages = describedCandidates.length;
   const expectedAttempts =
     protocolRounds + (kind === "failure" && record.classification === "transport" ? 1 : 0);
@@ -859,13 +1256,15 @@ const readRecord = (
           ? "current-run"
           : "historical",
     candidateStages: stages,
+    plan,
+    scores,
     distinctScripts: new Set(describedCandidates.map((candidate) => candidate.scriptSha256)).size,
     selectionFailure:
       failedSelection === null
         ? null
         : {
             planSha256: failedSelection.plan.planSha256,
-            seeds: [...failedSelection.plan.seeds],
+            seeds: planFactsOf(failedSelection.plan).seeds,
             matchesPerCandidate: failedSelection.plan.matchesPerCandidate,
             candidates: failedSelection.candidates.map((identity) => ({
               stage: identity.stage,
@@ -910,17 +1309,17 @@ const readRecord = (
         selectionMaximumMatches:
           selection === undefined && failedSelection === null
             ? null
-            : OPTIMIZATION_STAGES.length * SELECTION_MATCHES_PER_CANDIDATE,
+            : OPTIMIZATION_STAGES.length * (selection ?? failedSelection)!.plan.matchesPerCandidate,
         selectionExecutedMatches:
           selection === undefined
             ? null
             : selection.candidates.filter((candidate) => candidate.reusedFromStage === undefined)
-                .length * SELECTION_MATCHES_PER_CANDIDATE,
+                .length * selection.plan.matchesPerCandidate,
         selectionReusedMatches:
           selection === undefined
             ? null
             : selection.candidates.filter((candidate) => candidate.reusedFromStage !== undefined)
-                .length * SELECTION_MATCHES_PER_CANDIDATE,
+                .length * selection.plan.matchesPerCandidate,
       },
     },
     initialCandidate: optimizationCandidates[0] ?? failureDescribed[0] ?? null,
@@ -940,9 +1339,9 @@ const readRecord = (
             protocolRound: optimizationMeta.selection.selected.protocolRound,
             scriptSha256: optimizationMeta.selection.selected.scriptSha256,
             sourceSha256: optimizationMeta.selection.selected.sourceSha256,
-            averagePoints:
-              optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!
-                .averagePoints,
+            averagePoints: selectionCandidateScoreOf(
+              optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!,
+            ).averagePoints,
             countedMatches: optimizationMeta.selection.plan.matchesPerCandidate,
             reason: optimizationMeta.selection.reason,
             planSha256: optimizationMeta.selection.plan.planSha256,
@@ -952,31 +1351,37 @@ const readRecord = (
             reusedFromStage:
               optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!
                 .reusedFromStage ?? null,
-            candidates: optimizationMeta.selection.candidates.map((candidate) => ({
-              stage: candidate.stage,
-              protocolRound: candidate.protocolRound,
-              scriptSha256: candidate.scriptSha256,
-              sourceSha256: candidate.sourceSha256,
-              averagePoints: candidate.averagePoints,
-              totalPoints: candidate.totalPoints,
-              countedMatches: candidate.countedMatches,
-              reusedFromStage: candidate.reusedFromStage ?? null,
-            })),
+            candidates: optimizationMeta.selection.candidates.map((candidate) => {
+              const score = selectionCandidateScoreOf(candidate);
+              return {
+                stage: candidate.stage,
+                protocolRound: candidate.protocolRound,
+                scriptSha256: candidate.scriptSha256,
+                sourceSha256: candidate.sourceSha256,
+                averagePoints: score.averagePoints,
+                totalPoints: score.totalPoints,
+                countedMatches: score.countedMatches,
+                reusedFromStage: candidate.reusedFromStage ?? null,
+              };
+            }),
             executedMatches:
               optimizationMeta.selection.candidates.filter(
                 (candidate) => candidate.reusedFromStage === undefined,
-              ).length * SELECTION_MATCHES_PER_CANDIDATE,
+              ).length * optimizationMeta.selection.plan.matchesPerCandidate,
             reusedMatches:
               optimizationMeta.selection.candidates.filter(
                 (candidate) => candidate.reusedFromStage !== undefined,
-              ).length * SELECTION_MATCHES_PER_CANDIDATE,
-            seeds: [...optimizationMeta.selection.plan.seeds],
+              ).length * optimizationMeta.selection.plan.matchesPerCandidate,
             rulesetSha256: optimizationMeta.selection.plan.rulesetSha256,
-            mapSha256: optimizationMeta.selection.plan.mapSha256,
             sandboxRuntimeHash: optimizationMeta.selection.plan.sandboxRuntimeHash,
-            baselineScriptSha256: optimizationMeta.selection.plan.baselines.map(
-              (baseline) => baseline.scriptSha256,
-            ),
+            // 选拔计划本身（不搬 32 场明文）：v2 = 生成阶段那张网格，v1 = 12 场单图。
+            plan:
+              optimizationMeta.selection.version === SELECTION_GRID_VERSION
+                ? gridPlanReportOf(optimizationMeta.selection.plan, `${source}#selection.plan`)
+                : legacySelectionPlanReportOf(
+                    optimizationMeta.selection.plan,
+                    `${source}#selection.plan`,
+                  ),
           },
     protocolRounds,
     rounds,
@@ -1099,6 +1504,40 @@ export const readArchiveReports = (
 const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
   const escape = (value: string): string =>
     value.replaceAll("|", "\\|").replaceAll("\n", " ").replaceAll("\r", " ");
+  /**
+   * 三类分数的一个格子。**不适用就是「不适用」**：不写 0，也不留空。
+   * 三类各有各的口径（见头部说明），不可互相代替。
+   */
+  const renderScore = (reading: ReportScoreReading): string =>
+    reading.state === "recorded"
+      ? `均分 ${reading.averagePoints}（总分 ${reading.totalPoints} / 分母 ${reading.countedMatches}）`
+      : "不适用";
+  /** 种子集合：连续的写区间（v1 = 三个固定种子，v2 = 每格一个固定值）。 */
+  const renderSeeds = (seeds: readonly number[]): string => {
+    const distinct = [...new Set(seeds)];
+    if (distinct.length === 0) return "不适用";
+    const contiguous = distinct.every(
+      (seed, index) => index === 0 || seed === distinct[index - 1]! + 1,
+    );
+    return contiguous && distinct.length > 1
+      ? `${distinct[0]}–${distinct[distinct.length - 1]}（${distinct.length} 个种子）`
+      : distinct.join("/");
+  };
+  /** 一份陪练身份：四要素齐（id / role / source / scriptSha256），复现「跟谁打」用它。 */
+  const renderPlanScript = (script: ReportPlanScript): string =>
+    `${escape(script.id)}（role=${script.role}；source=${escape(script.source)}；scriptSha256=${script.scriptSha256}）`;
+  const renderGridPlan = (plan: ReportGridPlan): string[] => [
+    `- 生成阶段计划：v${plan.version}；planSha256=${plan.planSha256}；每候选场数=${plan.matchesPerCandidate}；正文 ${escape(plan.source)}（逐场座位/种子/地图从那里读，本报告不搬明文）`,
+    `- 地图（${plan.maps.length} 张）：${plan.maps.map((map) => `${escape(map.name)}=${map.sha256}`).join("；")}`,
+    `- 陪练身份（${plan.scripts.length} 份）：${plan.scripts.map(renderPlanScript).join("；")}`,
+    `- 组合（${plan.combos.length}）：${plan.combos
+      .map(
+        (combo) =>
+          `组合 ${combo.comboIndex} 轮空 ${combo.sitOut === null ? "null" : escape(combo.sitOut)}；候选座位 ${combo.candidateSeats.join("/")}；图 ${combo.maps.map(escape).join("/")}；场次 ${combo.firstMatchIndex}–${combo.firstMatchIndex + combo.matchCount - 1}`,
+      )
+      .join("；")}`,
+    `- 逐场种子：${renderSeeds(plan.seeds)}`,
+  ];
   const fields = ["sendMs", "input", "output", "cacheRead", "cacheWrite", "reasoning"] as const;
   const labels = {
     sendMs: "sendMs",
@@ -1155,6 +1594,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     "# 生成归档报告",
     "",
     "> usage 的 cache / reasoning 是组成明细，不重复加总。缺失用 null；部分数据只给已记录小计。收敛响应与全部 HTTP 尝试是重叠证据，不相加作账单；传输错误消费未知。",
+    "> 三类分数互不替代：生成阶段（网格平均名次积分，分母 = 每候选场数）／选拔复算（独立子进程重跑同一张网格，只作校验读数，不是第二个排名依据）／赛季（赛季报告口径，本报告不冒充）。不属本档口径的分数写「不适用」，不补零、不留空。",
     "> 配置和渠道能力是请求意图与支持声明；HTTP 接受不证明参数执行，服务端模型回报不认证后端身份。证据来源自由文本、prompt、原响应与诊断不公开。",
     "> --run-id 显式指定本轮标识：其它记录为历史；未指定时全部未分轮，不将历史失败当作本轮失败或参赛资格。",
     "> 最终观测独立读取 observed-<runId>.jsonl；旧档标记最后完成试跑，可能在 infra 后留旧读数。回喂前后的候选按协议 round 单列，不合并命中数。成功档最后 round 与最终文件精确匹配且新事实 hash 符合 meta 编译 JS hash 时标记最终候选。",
@@ -1224,24 +1664,47 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         );
       }
     }
+    out.push("", "### 计划、陪练与三类分数", "");
+    if (report.plan === null)
+      out.push("- 生成阶段计划：不适用（版本 1 历史档没有计划字段，不迁移、不回填）");
+    else out.push(...renderGridPlan(report.plan));
+    out.push(
+      "- 同字节直读：看下表「复用来源」列——标出阶段号的是编译产物与那一阶段字节相同、复用它的网格结果",
+      "- 不适用 = 该口径不属本档（v1 历史档没有网格分数；无选拔段时没有复算读数；赛季分数恒不适用）",
+    );
+    if (report.scores.length === 0)
+      out.push("- 候选分数：不适用（本档没有优化旁证，无三阶段候选可出分数）");
+    else
+      out.push(
+        "",
+        "| 阶段 | 协议轮 | JS hash | TS hash | 复用来源 | 生成阶段分数 | 选拔复算（校验读数） | 赛季分数 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ...report.scores.map(
+          (score) =>
+            `| ${score.stage} | ${score.protocolRound} | ${score.scriptSha256} | ${score.sourceSha256 ?? "null"} | ${score.reusedFromStage === null ? "null" : `stage${score.reusedFromStage}`} | ${renderScore(score.generation)} | ${renderScore(score.selection)}${score.agreement === "identical" ? "（与生成阶段逐位相同）" : ""} | ${renderScore(score.season)} |`,
+        ),
+      );
     if (report.selection !== null) {
       const selection = report.selection;
+      const plan = selection.plan;
       out.push(
         "",
         "### 有效候选选拔",
         "",
         `- 胜者 stage=${selection.stage}；协议轮=${selection.protocolRound}；JS=${selection.scriptSha256}；TS=${selection.sourceSha256}`,
-        `- 胜者平均名次积分=${selection.averagePoints}；固定分母=${selection.countedMatches}；理由=${selection.reason}；胜者复用来源=${selection.reusedFromStage ?? "null"}`,
-        `- planSha256=${selection.planSha256}；独立 seeds=${selection.seeds.join("/")}；不同 JS=${selection.distinctScripts}`,
-        `- 环境：rulesetSha256=${selection.rulesetSha256}；mapSha256=${selection.mapSha256}；runtime=${selection.sandboxRuntimeHash}；基准 JS=${selection.baselineScriptSha256.join("/")}`,
+        `- 胜者选拔读数：平均名次积分=${selection.averagePoints}；固定分母=${selection.countedMatches}；理由=${selection.reason}；胜者复用来源=${selection.reusedFromStage === null ? "null" : `stage${selection.reusedFromStage}`}`,
+        `- 选拔计划：v${plan.version}；planSha256=${selection.planSha256}；每候选场数=${plan.matchesPerCandidate}；正文 ${escape(plan.source)}`,
+        ...(plan.kind === "grid"
+          ? [
+              "- 选拔计划口径：评测网格（四陪练 × 四座位 × 两图），与生成阶段计划逐字相同；陪练身份、地图与组合见上节，这里不重列",
+            ]
+          : [
+              `- 地图（1 张）：${escape(plan.map.name)}=${plan.map.sha256}`,
+              `- 基准（${plan.baselines.length} 份）：${plan.baselines.map((baseline) => `${escape(baseline.id)}=${baseline.scriptSha256}`).join("；")}`,
+            ]),
+        `- 独立 seeds=${renderSeeds(plan.seeds)}；不同 JS=${selection.distinctScripts}；已执行 ${selection.executedMatches} 场；复用 ${selection.reusedMatches} 场`,
+        `- 环境：rulesetSha256=${selection.rulesetSha256}；runtime=${selection.sandboxRuntimeHash}`,
         `- 实际冻结 stage=${report.frozenCandidate?.stage ?? "null"}；冻结字节校验=${report.frozenCandidate?.scriptState ?? "null"}；最后生成阶段仍是 stage2`,
-        "",
-        "| 阶段 | 协议轮 | JS hash | TS hash | 平均积分 | 完整分母 | 复用来源 |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
-        ...selection.candidates.map(
-          (candidate) =>
-            `| ${candidate.stage} | ${candidate.protocolRound} | ${candidate.scriptSha256} | ${candidate.sourceSha256} | ${candidate.averagePoints} | ${candidate.countedMatches} | ${candidate.reusedFromStage ?? "null"} |`,
-        ),
       );
     }
     if (report.failure?.classification === "selection")
@@ -1284,6 +1747,12 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         "",
         `- JS 来源：${escape(candidate.scriptSource)}；状态：${candidate.scriptState}`,
         `- scriptSha256=${candidate.scriptSha256}；实际 hash=${candidate.actualScriptSha256 ?? "null"}`,
+        // 参数只写白名单投影（与逐轮同一套）：原值含 `stop` / `logit_bias` 的自由文本，不回显。
+        ...(candidate.params === undefined
+          ? ["- 实际参数：旧档未记录（不追填）"]
+          : [
+              `- 实际参数（白名单投影）：${escape(JSON.stringify(candidate.params.values))}；采样偏置已配置=${candidate.params.samplingBiasConfigured}`,
+            ]),
         `- 观测状态：${candidate.observations.state}；来源：${escape(candidate.observations.source)}`,
         `- 实际场数 ${candidate.observations.observedMatches ?? "null"}；noScoreSource ${candidate.observations.noScoreSource ?? "null"}`,
         ...renderFacts(candidate.observations),

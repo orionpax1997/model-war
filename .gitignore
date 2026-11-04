@@ -23,8 +23,7 @@ stryker.log
 /models.yaml
 /season.yaml
 
-# 本地工作记录、实验与模型生成档案;已跟踪的历史文件不受忽略规则影响
-/.scratch/
+# 本地冻结档案与模型生成档案;已跟踪的历史文件不受忽略规则影响
 /archive/
 # codegraph 索引(由源码重建)
 .codegraph/
@@ -41,3 +40,6 @@ stryker.log
 # 对局运行产物:体量随 tick 数线性增长,保留在本地。
 runs/**
 !runs/.gitkeep
+
+# 任务过程产物（spec / ticket），实现后随目录清理
+.scratch/

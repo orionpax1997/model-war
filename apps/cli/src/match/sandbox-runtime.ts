@@ -3,7 +3,7 @@
  *
  * ── 它现在是什么 ──
  *
- * 沙箱执行器已落地(票 03),runtime bundle 也已成形并入库(票 04):产物是
+ * 沙箱执行器与 runtime bundle 都已入库:产物是
  * `packages/engine/sandbox-runtime/runtime.iife.js`(路径真源在 `@model-war/schema` 的
  * `SANDBOX_RUNTIME_ARTIFACT_PATH`),它的字节 sha256 就是真源包里的 `SANDBOX_RUNTIME_HASH`,
  * 也就是回放 meta 那一栏 `sandboxRuntimeHash` 的**唯一真源**。
@@ -15,7 +15,7 @@
  * 常量与入库产物字节的一致性由**门禁**担保(`check:runtime` 比「现算 == 入库」「入库 hash ==
  * 常量」两段,见 `packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts`)。CLI 打包后
  * 不持有仓库根的可靠锚点(`import.meta.url` 会指到 `dist/`),当场读盘反而会把「判据锚定确切
- * 字节」这件事换成「判据锚定运行目录」——那是本票要消灭的漂移。读盘入口留给需要**逐字节核对**
+ * 字节」这件事换成「判据锚定运行目录」——那是要消灭的漂移。读盘入口留给需要**逐字节核对**
  * 的调用方(门禁与 VM 载入测试),它们都从仓库根出发。
  *
  * ── 桩值为什么必须消失 ──

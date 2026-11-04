@@ -12,7 +12,7 @@
 import { relative, resolve } from "node:path";
 import { checkNoFloatTree } from "./no-float-gate.ts";
 
-/** 门禁作用域:引擎包的运行时源码(FR-2 AC3 / NFR-1,hld §2.2.3、§4.6)。 */
+/** 门禁作用域:引擎包的运行时源码(hld §2.2.3、§4.6)。 */
 const ENGINE_SOURCE_DIR = "packages/engine/src";
 
 /** 本文件在 `<repo>/packages/tools/src/gate/` 下,上溯四层是仓库根。 */

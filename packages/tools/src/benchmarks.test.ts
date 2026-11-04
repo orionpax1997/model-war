@@ -99,7 +99,7 @@ it("基准目录逐字是登记册上那三份的源码 + 产物,外加那份说
   const entries = readdirSync(BENCHMARK_ROOT, { withFileTypes: true })
     .map((entry) => entry.name)
     .sort();
-  // `.gitkeep` 是空占位目录的占位符,本目录有内容之后它仍然留着(与 `rulesets/`、`docs/rules-v1/` 同一处置)。
+  // `.gitkeep` 是空占位目录的占位符,本目录有内容之后它仍然留着(与 `rulesets/` 同一处置)。
   const expected = [...BENCHMARK_NAMES, "README.md", ".gitkeep"].sort();
   expect(entries, "基准目录里多出或少了东西").toEqual(expected);
 

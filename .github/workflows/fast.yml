@@ -6,7 +6,7 @@
 #
 # ── 无凭证、离线可跑 ──
 # 全部 step 只有 checkout / setup / `pnpm install` / 命名脚本,没有一处凭证引用。
-# 版本与写法见 `.scratch/release-gates/../` 的调研与 ADR-0010;pnpm 版本由 packageManager 决定。
+# 版本与写法见 ADR-0010;pnpm 版本由 packageManager 决定。
 
 name: fast
 

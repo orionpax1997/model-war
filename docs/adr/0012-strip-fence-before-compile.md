@@ -6,7 +6,7 @@ status: accepted
 
 `modelwar gen` 全量重跑 v2 契约时,10 家一次冻结,唯 `claude-opus-5-5`(yomiapi 中转) 10 轮连挂:
 9 轮 `script.ts(1,1) TS2349: This expression is not callable. Type 'String' has no call
-signatures`,1 轮围栏残留 TS1127 系列。原文证据见 `.scratch/opus-probe/run2-r{1,2,3,4}-assistant.txt`:
+signatures`,1 轮围栏残留 TS1127 系列。四份连挂原文的形态是一致的(原文是那一轮的一次性产物,不入库):
 r1–r3 首行 ```` ```typescript ````、r4 首行中文引导语 + 空行 + 围栏,尾行都是 ```` ``` ````。
 管线按裸文本直接进 `tsc`,与模板 `prompts/base.md` 的禁围栏令正面对撞。本 ADR 记"在编译调用处剥包装"的决定。
 

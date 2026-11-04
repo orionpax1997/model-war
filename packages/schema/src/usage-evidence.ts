@@ -17,6 +17,14 @@ const TOKEN_FIELDS = [
   "audio_tokens",
   "accepted_prediction_tokens",
   "rejected_prediction_tokens",
+  // Google `usageMetadata` 用 camelCase 且自带总量（prompt + candidates + thoughts），
+  // 与上面两家的字段并列保留：同一指标的不同拼写，不重新配名、也不相加。
+  "promptTokenCount",
+  "candidatesTokenCount",
+  "totalTokenCount",
+  "thoughtsTokenCount",
+  "cachedContentTokenCount",
+  "toolUsePromptTokenCount",
 ] as const;
 const CACHE_CREATION_FIELDS = ["ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"] as const;
 
@@ -41,13 +49,19 @@ export const USAGE_ENUM_FIELDS = {
 
 /** 每项是同一指标的备选来源，不相加；顺序保持旧档报告的优先级。 */
 export const USAGE_READING_PATHS = {
-  input: ["prompt_tokens", "input_tokens"],
-  output: ["completion_tokens", "output_tokens", "billing_usage.claude_usage.output_tokens"],
+  input: ["prompt_tokens", "input_tokens", "promptTokenCount"],
+  output: [
+    "completion_tokens",
+    "output_tokens",
+    "billing_usage.claude_usage.output_tokens",
+    "candidatesTokenCount",
+  ],
   cacheRead: [
     "prompt_tokens_details.cached_tokens",
     "input_tokens_details.cached_tokens",
     "cache_read_input_tokens",
     "billing_usage.claude_usage.cache_read_input_tokens",
+    "cachedContentTokenCount",
   ],
   cacheWrite: [
     "prompt_tokens_details.cached_creation_tokens",
@@ -60,6 +74,7 @@ export const USAGE_READING_PATHS = {
     "completion_tokens_details.reasoning_tokens",
     "output_tokens_details.reasoning_tokens",
     "output_tokens_details.thinking_tokens",
+    "thoughtsTokenCount",
   ],
 } as const;
 

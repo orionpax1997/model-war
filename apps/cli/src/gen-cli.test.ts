@@ -8,7 +8,7 @@
  * ── 为什么不改 `cli.test.ts` ──
  *
  * 契约 §6 给 05 留的缝是「补一条 CLI 子进程冒烟」;`cli.test.ts` 的既有断言(帮助文本、未实现路径、
- * match/verify/map-lint e2e)不在本票范围。这里新开一个文件,既不把那条 27KB 的用例集撑得更大,
+ * match/verify/map-lint e2e)不在本文件范围。这里新开一个文件,既不把那条 27KB 的用例集撑得更大,
  * 也让这条冒烟的可观察面(真打一次 HTTP、真编一次 tsc)单独成篇。
  *
  * ── 为什么用异步 `spawn` 而不是 `spawnSync` ──
@@ -38,7 +38,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { RULESET_VERSION } from "@model-war/schema";
+import {
+  RULESET_VERSION,
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_GRID_SUMMARY_SUFFIX,
+  TRIAL_MATCHES_PER_CANDIDATE,
+  TRIAL_SPARRING_LADDER,
+  TRIAL_SPARRING_SUBSTITUTE,
+} from "@model-war/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -48,6 +55,18 @@ const CONTRACT_RULES = "# rules\n\n机制正文:这里是规则契约。\n";
 const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
 /** 过得了 tsc 与静态校验的最简脚本:假服务的回文本。 */
 const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
+
+/**
+ * 评测网格要四份**真存档陪练**（钉死内容摘要），而 `archive/` 不入库：没有本地冻结档案的机器上
+ * 这两条端到端跑不起来（陪练池装载会明确拒绝，这正是它该做的事）。所以按仓库既有纪律
+ * （`sparring-pool.test.ts` 同款）显式跳过，而不是把摘要校验放宽成「有就用」。
+ */
+const substituteSlug = TRIAL_SPARRING_SUBSTITUTE.id;
+const substituteRunId = TRIAL_SPARRING_SUBSTITUTE.runId;
+const archivePresent = [
+  ...TRIAL_SPARRING_LADDER.map((identity) => [identity.id, identity.runId] as const),
+  [substituteSlug, substituteRunId] as const,
+].every(([slug, runId]) => existsSync(join(repoRoot, "archive", slug, runId, "script.js")));
 
 /** 本次冒烟用的假凭证环境变量:取唯一名,避免与宿主已有变量撞车(loadEnvFile 不该依赖覆盖语义)。 */
 const CREDENTIAL_ENV_VAR = `GEN_CLI_SMOKE_KEY_${String(Date.now())}`;
@@ -145,6 +164,22 @@ const mkRoot = (baseUrl: string): string => {
   symlinkSync(join(repoRoot, "apps"), join(root, "apps"), "dir");
   symlinkSync(join(repoRoot, "maps"), join(root, "maps"), "dir");
   symlinkSync(join(repoRoot, "benchmarks"), join(root, "benchmarks"), "dir");
+  // 四份存档陪练：只把 `script.js` 符号链接进来（**不要**链接整个 archive 目录——
+  // 那是读盘面的根，gen 会往 `<root>/archive/<slug>/` 里写候选与证据）。
+  for (const identity of TRIAL_SPARRING_LADDER) {
+    const dir = join(root, "archive", identity.id, identity.runId);
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(
+      join(repoRoot, "archive", identity.id, identity.runId, "script.js"),
+      join(dir, "script.js"),
+    );
+  }
+  const substituteDir = join(root, "archive", substituteSlug, substituteRunId);
+  mkdirSync(substituteDir, { recursive: true });
+  symlinkSync(
+    join(repoRoot, "archive", substituteSlug, substituteRunId, "script.js"),
+    join(substituteDir, "script.js"),
+  );
 
   mkdirSync(join(root, "docs", "rules-v2"), { recursive: true });
   writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
@@ -152,9 +187,13 @@ const mkRoot = (baseUrl: string): string => {
   mkdirSync(join(root, "prompts"), { recursive: true });
   writeFileSync(join(root, "prompts", "base.md"), "契约:\n\n{{contract}}\n");
   mkdirSync(join(root, "rulesets"), { recursive: true });
+  // 网格是 32 场：把 tick 上限压到 4，让端到端稳定在秒级（断言的是接线，不是对局长度）。
+  const ruleset = JSON.parse(
+    readFileSync(join(repoRoot, "rulesets", `${RULESET_VERSION}.json`), "utf8"),
+  ) as Record<string, unknown>;
   writeFileSync(
     join(root, "rulesets", `${RULESET_VERSION}.json`),
-    readFileSync(join(repoRoot, "rulesets", `${RULESET_VERSION}.json`)),
+    JSON.stringify({ ...ruleset, tickLimit: 4 }),
   );
   writeFileSync(
     join(root, "models.yaml"),
@@ -210,59 +249,76 @@ const runCli = (
     });
   });
 
-it("冒烟:假端点后端到端跑通 `gen`，退出 0，存档三件套落地", { timeout: 120_000 }, async () => {
-  const endpoint = await startFakeEndpoint();
-  try {
-    const root = mkRoot(endpoint.baseUrl);
-    const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
-    expect(result.status, result.stderr).toBe(0);
+it.skipIf(!archivePresent)(
+  "冒烟:假端点后端到端跑通 `gen`，退出 0，存档三件套落地",
+  { timeout: 120_000 },
+  async () => {
+    const endpoint = await startFakeEndpoint();
+    try {
+      const root = mkRoot(endpoint.baseUrl);
+      const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
+      expect(result.status, result.stderr).toBe(0);
 
-    // 真打到了假端点：POST /chat/completions，带上 Bearer 鉴权头。
-    expect(endpoint.requests).toHaveLength(1);
-    expect(endpoint.requests[0]?.method).toBe("POST");
-    expect(endpoint.requests[0]?.path).toBe("/chat/completions");
-    expect(endpoint.requests[0]?.authorization).toBe("Bearer smoke-fake-key");
+      // 真打到了假端点：POST /chat/completions，带上 Bearer 鉴权头。
+      expect(endpoint.requests).toHaveLength(1);
+      expect(endpoint.requests[0]?.method).toBe("POST");
+      expect(endpoint.requests[0]?.path).toBe("/chat/completions");
+      expect(endpoint.requests[0]?.authorization).toBe("Bearer smoke-fake-key");
 
-    // 三件套落地（单轮成功）。存档目录里除目录外只有那份观测文件（旁挂，不进三件套）。
-    const slugDir = join(root, "archive", "alpha");
-    const entries = readdirSync(slugDir, { withFileTypes: true });
-    const runIds = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-    const sidecars = entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name);
-    expect(runIds).toHaveLength(1);
-    const runId = runIds[0] as string;
-    // 失败记录不该出现在成功路径里。
-    expect(runIds.some((name) => name.startsWith("failed-"))).toBe(false);
-    expect(sidecars).toEqual([`observed-${runId}.jsonl`]);
-    expect(existsSync(join(slugDir, runId, "script.ts"))).toBe(true);
-    expect(existsSync(join(slugDir, runId, "script.js"))).toBe(true);
-    expect(existsSync(join(slugDir, runId, "meta.json"))).toBe(true);
+      // 三件套落地（单轮成功）。存档目录里除目录外只有那份观测文件（旁挂，不进三件套）。
+      const slugDir = join(root, "archive", "alpha");
+      const entries = readdirSync(slugDir, { withFileTypes: true });
+      const runIds = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+      const sidecars = entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name);
+      expect(runIds).toHaveLength(1);
+      const runId = runIds[0] as string;
+      // 失败记录不该出现在成功路径里。
+      expect(runIds.some((name) => name.startsWith("failed-"))).toBe(false);
+      // 观测 + 网格汇总（旁挂，不进三件套）：汇总里是这次评测的整张计划。
+      expect(sidecars.sort()).toEqual([
+        `observed-${runId}.jsonl`,
+        `observed-${runId}.jsonl${TRIAL_GRID_SUMMARY_SUFFIX}`,
+      ]);
+      const grid = JSON.parse(
+        readFileSync(join(slugDir, `observed-${runId}.jsonl${TRIAL_GRID_SUMMARY_SUFFIX}`), "utf8"),
+      ) as { plan: { matches: readonly { map: string }[] } };
+      expect(grid.plan.matches).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
+      expect([...new Set(grid.plan.matches.map((match) => match.map))]).toEqual([
+        ...TRIAL_GRID_MAP_NAMES,
+      ]);
+      expect(existsSync(join(slugDir, runId, "script.ts"))).toBe(true);
+      expect(existsSync(join(slugDir, runId, "script.js"))).toBe(true);
+      expect(existsSync(join(slugDir, runId, "meta.json"))).toBe(true);
 
-    const meta = JSON.parse(readFileSync(join(slugDir, runId, "meta.json"), "utf8")) as {
-      protocolRounds: number;
-      prompts: readonly string[];
-    };
-    expect(meta.protocolRounds).toBe(1);
-    expect(meta.prompts).toHaveLength(1);
+      const meta = JSON.parse(readFileSync(join(slugDir, runId, "meta.json"), "utf8")) as {
+        protocolRounds: number;
+        prompts: readonly string[];
+      };
+      expect(meta.protocolRounds).toBe(1);
+      expect(meta.prompts).toHaveLength(1);
 
-    // 试跑观测落地：三场各一行（这个候选整局无所作为，三场都命中「无得分来源」）。
-    // 这是「留痕进得去 gen 的记录」那一条的接线断言——不落盘，这条缺口就还在。
-    const observations = readObservationLines(join(slugDir, `observed-${runId}.jsonl`));
-    expect(observations).toHaveLength(3);
-    expect(observations.map((line) => line.matchIndex)).toEqual([0, 1, 2]);
-    expect(
-      observations.every(
-        (line) => line.noScoreSource && line.delivered === 0 && line.captures === 0,
-      ),
-    ).toBe(true);
-  } finally {
-    await endpoint.close();
-  }
-});
+      // 试跑观测落地：整张网格 32 场各一行（这个候选整局无所作为，场场命中「无得分来源」）。
+      // 这是「留痕进得去 gen 的记录」那一条的接线断言——不落盘，这条缺口就还在。
+      const observations = readObservationLines(join(slugDir, `observed-${runId}.jsonl`));
+      expect(observations).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
+      expect(observations.map((line) => line.matchIndex)).toEqual(
+        Array.from({ length: TRIAL_MATCHES_PER_CANDIDATE }, (_, index) => index),
+      );
+      expect(
+        observations.every(
+          (line) => line.noScoreSource && line.delivered === 0 && line.captures === 0,
+        ),
+      ).toBe(true);
+    } finally {
+      await endpoint.close();
+    }
+  },
+);
 
 /** 死循环惯犯：过得了 tsc 与静态校验，但每 tick 必然触碰事件计数上限。 */
 const HABITUAL_SCRIPT = `function loop() {\n  while (true) {\n  }\n}\n`;
 
-it(
+it.skipIf(!archivePresent)(
   "试跑拦下惯犯:死循环脚本退出非零,失败记录分类 contract 且诊断含试跑明细",
   { timeout: 120_000 },
   async () => {
@@ -270,7 +326,7 @@ it(
     try {
       const root = mkRoot(endpoint.baseUrl);
       const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
-      // 冻结失败 → 非零退出（早停：首场首 tick 即拦，不必跑满三场）。
+      // 冻结失败 → 非零退出。网格不再早停：跑满 32 场照样判拦。
       expect(result.status, result.stderr).toBe(1);
 
       // 不建存档目录，只留失败记录（旁证）+ 试跑观测，且记录指明是试跑拦的。
@@ -290,11 +346,10 @@ it(
       expect(diagnostics).toContain("试跑未通过");
       expect(diagnostics).toContain("控制流事件计数");
 
-      // 被拦下的候选同样留观测（旁证不挑结论）：runId 与失败记录同源，行数 = 跑过的场数
-      // （首场首 tick 即拦 → 早停，后面两场没跑，也就没有读数）。
+      // 被拦下的候选同样留观测（旁证不挑结论）：runId 与失败记录同源，32 场一行不少。
       expect(names).toContain(`observed-${record.runId}.jsonl`);
       const observations = readObservationLines(join(slugDir, `observed-${record.runId}.jsonl`));
-      expect(observations).toHaveLength(1);
+      expect(observations).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
       expect(observations[0]?.matchIndex).toBe(0);
     } finally {
       await endpoint.close();

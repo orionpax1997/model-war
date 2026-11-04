@@ -1,6 +1,6 @@
 /**
- * 观测不影响回放(票 09):墙钟软限与内存压力走**回放之外**那条通道,永远不进事件流、更不进
- * `stateHash`(hld §5.3 / spec《观测通道》)。
+ * 观测不影响回放:墙钟软限与内存压力走**回放之外**那条通道,永远不进事件流、更不进
+ * `stateHash`(hld §5.3)。
  *
  * 三条用例的关系:
  *
@@ -94,7 +94,7 @@ it("同一输入两次跑得到逐字节相同回放,即使观测行不同(观�
 it("能弄红的反例:把墙钟读数塞进事件流,状态哈希立刻跨跑不一致", () => {
   const state = gameState();
   // 同一份状态、同一 tick,只有「墙钟读数」不同。事件流进哈希,所以读数一旦裹进事件,
-  // 同一局在两次跑(机器负载不同、读数不同)会算出不同的 stateHash——直接违反 FR-2。
+  // 同一局在两次跑(机器负载不同、读数不同)会算出不同的 stateHash——直接违反 hld §4.6 的确定性要求。
   const first = buildTickLine(state, [{ kind: "exception", subjectId: 1201 }]);
   const second = buildTickLine(state, [{ kind: "exception", subjectId: 1207 }]);
   expect(first.stateHash).not.toBe(second.stateHash);

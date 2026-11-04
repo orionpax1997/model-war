@@ -212,16 +212,22 @@ it("行动事实 JSON Schema 拒绝每个计数位置的负数、小数、不安
   }
 });
 
-it("行动事实 JSON Schema 继续限制版本、hash、座位与 complete iff missingTicks=0", () => {
+it("行动事实 JSON Schema 继续限制版本、hash、座位域与 complete iff missingTicks=0", () => {
   for (const patch of [
     { version: 2 },
     { scriptSha256: "a".repeat(63) },
     { scriptSha256: "A".repeat(64) },
-    { seat: 1 },
+    // 座位是每场参数：0..3 都合法（网格里候选四个座位各坐一次），域外仍拒。
+    { seat: 4 },
+    { seat: -1 },
+    { seat: 1.5 },
     { complete: false },
     { missingTicks: 1 },
   ]) {
     expect(validateTrialObservation(withFacts({ ...FACTS, ...patch })).ok).toBe(false);
+  }
+  for (const seat of [0, 1, 2, 3]) {
+    expect(validateTrialObservation(withFacts({ ...FACTS, seat })).ok).toBe(true);
   }
 });
 

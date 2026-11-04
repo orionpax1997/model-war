@@ -1,5 +1,5 @@
 /**
- * 冻结期试跑的常量、纯判定与反馈文案（不经引擎、不起 VM）。
+ * 冻结期试跑的**纯判定与反馈文案**（不经引擎、不起 VM）。
  *
  * ── 为什么这一格是纯的 ──
  *
@@ -7,38 +7,16 @@
  * 覆盖；「记录下来后怎么判、怎么讲」归这里，断言不需要 VM。两件事拆在两处，
  * 于是本文件的测试毫秒级，而真沙箱的开销只落在必须有它的那一侧。
  *
- * ── 常量的取舍 ──
+ * ── 「跑哪几场」不再住在这里 ──
  *
- * K=3、种子固定（三场同一组种子对所有候选：可复现且公平）；地图固定 `corridor-split`
- * （三张地图同为 64 格 28 点位，"小"无差别，取赛季当前地图；赛季换图时改这一处）；
- * 对手固定三份基准脚本（登记册真源在 `packages/tools/src/benchmarks/compile.ts` 的
- * `BENCHMARK_NAMES`，这里只取三份作固定对手，漂移由测试里的存在断言盯着）；
- * 候选固定 0 号位（预算计数分座位独立，固定座位使回喂稳定）。
+ * 场数、地图、种子、座位、对手都在**试跑计划**里（形状在 `@model-war/schema` 的
+ * `trial-plan.ts`，构造与校验在 `@model-war/runner` 的 `trial-plan.ts`）。本文件只接计划、
+ * 判计划跑出来的触限、按计划里的取值讲结论——于是「把当前配置换成网格」不再需要改这一格。
  */
 
-import {
-  TRIAL_CANDIDATE_SEAT,
-  TRIAL_PLAYER_IDS,
-  TRIAL_SEEDS,
-  type ReplaySeat,
-} from "@model-war/schema";
+import { TRIAL_CANDIDATE_SEAT, type ReplaySeat, type TrialPlan } from "@model-war/schema";
 
 import type { ScoreSourceReading } from "./score-source.js";
-
-/** 试跑场数：零容忍，K 场爆 1 次就打回。 */
-export const TRIAL_MATCH_COUNT = TRIAL_SEEDS.length;
-
-/** 跨进程场次身份真源归 schema，执行与反馈读取共用。 */
-export { TRIAL_SEEDS };
-
-/** 试跑地图：赛季当前地图（三张地图同尺寸，"小"无差别）。 */
-export const TRIAL_MAP = "corridor-split";
-
-/** 三个固定对手：基准脚本目录名（下标 1..3 即座位，0 号位留给候选）。 */
-export const TRIAL_OPPONENTS: readonly string[] = TRIAL_PLAYER_IDS.slice(1);
-
-/** 候选脚本的固定座位。 */
-export const CANDIDATE_SEAT = TRIAL_CANDIDATE_SEAT satisfies ReplaySeat;
 
 /** 试跑看的两条轨：tick 级 events/apis。其余轨（未吞异常、内存）进联赛三振，这里不判。 */
 export const WATCHED_TRACKS: readonly string[] = ["eventTickLimit", "apiCallTickLimit"];
@@ -59,15 +37,23 @@ export type TrialVerdict =
   | { readonly passed: true }
   | { readonly passed: false; readonly trip: RecordedTrip };
 
+/** 每个场次的候选座位由计划给（v1 恒 0；网格起逐场轮转）。 */
+export type CandidateSeatOf = (matchIndex: number) => ReplaySeat;
+
 /**
  * 按到达序取首条"候选座位在看轨上"的触限。有它即拦（零容忍），否则放行。
  *
  * 对手座位的触限（基准健康假设）与非看轨（未吞异常、内存）的触限一律忽略：
  * 前者不算候选的账，后者进联赛后靠现行三振兜着——两处分工，出局只留给真崩溃。
+ *
+ * `candidateSeatOf` 缺省取 v1 的固定座位，便于不起计划的单元用例直接断言判定规则。
  */
-export const verdictOfTrips = (trips: readonly RecordedTrip[]): TrialVerdict => {
+export const verdictOfTrips = (
+  trips: readonly RecordedTrip[],
+  candidateSeatOf: CandidateSeatOf = () => TRIAL_CANDIDATE_SEAT,
+): TrialVerdict => {
   for (const trip of trips) {
-    if (trip.seat === CANDIDATE_SEAT && WATCHED_TRACKS.includes(trip.track)) {
+    if (trip.seat === candidateSeatOf(trip.matchIndex) && WATCHED_TRACKS.includes(trip.track)) {
       return { passed: false, trip };
     }
   }
@@ -89,14 +75,15 @@ const TRACK_HINTS: Record<string, string> = {
 /**
  * 渲染面向模型的试跑反馈（逐字回喂，不加引擎内部诊断）。
  *
- * 通过：写明场数、地图与种子（可复现信息）；拦下：写明第几场、第几 tick、
+ * 通过：写明场数、地图与种子（可复现信息，全部取自计划）；拦下：写明第几场、第几 tick、
  * 哪项预算、读数/上限/超出，并给一句该轨的改法提示。
  */
-export const renderTrialFeedback = (verdict: TrialVerdict): string => {
+export const renderTrialFeedback = (verdict: TrialVerdict, plan: TrialPlan): string => {
+  const matchCount = plan.matches.length;
   if (verdict.passed) {
     return (
-      `试跑通过：${String(TRIAL_MATCH_COUNT)} 场（地图 ${TRIAL_MAP}，` +
-      `种子 ${TRIAL_SEEDS.map(String).join(" / ")}）无预算超限。`
+      `试跑通过：${String(matchCount)} 场（地图 ${plan.maps.map((map) => map.name).join(" / ")}，` +
+      `种子 ${plan.matches.map((match) => String(match.seed)).join(" / ")}）无预算超限。`
     );
   }
   const { trip } = verdict;
@@ -107,7 +94,7 @@ export const renderTrialFeedback = (verdict: TrialVerdict): string => {
     `第 ${String(trip.tick)} tick 触发预算超限。\n` +
     `- ${label}超限（读数 ${String(trip.value)}，上限 ${String(trip.limit)}，` +
     `超出 ${String(trip.value - trip.limit)}）。\n` +
-    `${String(TRIAL_MATCH_COUNT)} 场试跑零容忍：任一场超限即打回。${hint}。`
+    `${String(matchCount)} 场试跑零容忍：任一场超限即打回。${hint}。`
   );
 };
 
@@ -116,8 +103,8 @@ export const renderTrialFeedback = (verdict: TrialVerdict): string => {
  *
  * 只观测的理由与口径见 `score-source.ts` 头注；升级为判定另票裁决。
  *
- * 留痕行数**可以少于场数**：首场触限后的早停会把后场整场省掉，于是那一局没有读数也没有留痕。
- * 早停是为了省 VM 时间而早有的，不动它——观测不影响结论，少几行读数不改变任何判定。
+ * 留痕行数通常等于场数：网格执行器不早停，触限之后的后场照样跑、照样有读数。
+ * 某一场作废且重跑仍作废时整轮 infra，这一轮不落盘（上一轮跑完的证据留在盘上）。
  */
 export const renderScoreSourceObservation = (
   matchIndex: number,

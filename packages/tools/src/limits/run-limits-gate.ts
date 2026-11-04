@@ -60,7 +60,7 @@ const BENCHMARK_CELLS = [
 const MAP_NAME = "open-clash";
 const RULESET_VERSION = "v2";
 const DEFAULT_SEED = 20260101;
-/** 算例赛季规模(srs NFR-3 的 N=5/M=3/K=5 → 75 局)。 */
+/** 算例赛季规模(N=5/M=3/K=5 → 75 局)。 */
 const DEFAULT_SEASON_MATCHES = 75;
 /** #6 的停止条件:拷贝税占单局墙钟 < 10%。 */
 const COPY_SHARE_LIMIT_PERCENT = 10;
@@ -69,7 +69,7 @@ const SEASON_BYTE_LIMIT = 1024 ** 3;
 const NIGHTLY_READ_LIMIT_SECONDS = 600;
 /** 每 tick 每席各构一次快照,四席串行共用一份(hld §4.5)。 */
 const SNAPSHOTS_PER_TICK = 4;
-/** 快照拷贝微基准的取样次数(与 `.scratch/engine-core/readings.md` 同口径,取中位)。 */
+/** 快照拷贝微基准的取样次数(取中位,与 hld 开放项 #6 那一行的口径同形)。 */
 const COPY_SAMPLES = 5;
 
 // ── 命令行 ──────────────────────────────────────────────────────────────────

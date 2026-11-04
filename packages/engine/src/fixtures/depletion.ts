@@ -16,7 +16,7 @@
  *
  * 逐 tick 的 `remaining` 只在回放的 `sites` 栏里,`terrain` 不在 tick 行(所以体量不随 `size: 64`
  * 膨胀)。「100% 采空」的 tick 就是枯竭时点;复验时拿这批 tick 去对 §8 #7 与记录 #13 那条
- * 「采空中位落在哪个窗口」的证据——**本票不下结论**,只把分布量出来。
+ * 「采空中位落在哪个窗口」的证据——**这里不下结论**,只把分布量出来。
  */
 
 import type { Ruleset } from "@model-war/replay";

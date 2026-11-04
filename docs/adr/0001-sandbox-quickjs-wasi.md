@@ -4,7 +4,7 @@ status: accepted
 
 # 沙箱选型:quickjs-wasi,且不为"未来换 VM"预留抽象层
 
-每方脚本运行在独立 QuickJS VM(WASM 实例)中,v0 选定 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时),版本锁死到 `package.json`(锁版值与基线理由见 hld §5.0)。同时决定**不为"未来可能换 VM"保留抽象层**——那是投机抽象;host 侧 `Runner` 缝只为可测性存在,出现第二个真实 VM 实现之前不新增抽象层。机制细节归 hld §5,实测依据归 `.scratch/sandbox-budget/`;本 ADR 只记取舍。
+每方脚本运行在独立 QuickJS VM(WASM 实例)中,v0 选定 `quickjs-wasi`(QuickJS-NG 编译为 WASM 的快照型 JS 运行时),版本锁死到 `package.json`(锁版值与基线理由见 hld §5.0)。同时决定**不为"未来可能换 VM"保留抽象层**——那是投机抽象;host 侧 `Runner` 缝只为可测性存在,出现第二个真实 VM 实现之前不新增抽象层。机制细节归 hld §5,实测依据归 hld §5.0 那张表与它的可执行探针(`pnpm run probes:sandbox`);本 ADR 只记取舍。
 
 ## Considered Options
 
