@@ -1874,6 +1874,17 @@ const shardConfigs = (): readonly string[] =>
     .sort();
 
 /**
+ * `fragment()` 给**每一个**分片追加的 `mutate` 排除项(读文本的理由同上:`.mjs` 无类型声明)。
+ * 抽不出来就返回空数组——那时下面那条断言会以「12 片全部是违规者」的形态红,不会安静通过。
+ */
+const sharedMutateExclusions = (): readonly string[] => {
+  const array =
+    /SHARED_MUTATE_EXCLUSIONS\s*=\s*\[([\s\S]*?)\]/.exec(readFileSync(STRYKER_BASE, "utf8"))?.[1] ??
+    "";
+  return [...array.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
+};
+
+/**
  * **未播种**的分片:没有入库基线,靠棘轮的 `first-run` 不判红而不是靠一个假数字。
  *
  * 只该有这两片,理由同一条:没有覆盖各自 `mutate` 范围的真实报告。分片改造初期它们是拿
@@ -1996,6 +2007,23 @@ it("engine-processor 分片仍限定结算管线,且棘轮不设绝对阈值", (
   expect(base, "共享底座里没有把阈值显式关掉").toContain(
     "thresholds: { high: 0, low: 0, break: null }",
   );
+});
+
+it("属性测试(*.prop.ts)不进任何分片的变异范围:它们是测试,不是生产代码", () => {
+  // 理由:属性测试进 mutate 等于「让测试给测试打分」——`processor/invariants.prop.ts` 一度被
+  // engine 那几片当成生产代码变异,凭空造出一批 NoCoverage/Survived,而那批数字会跟着基线入库。
+  // 排除项只写在 `stryker/base.mjs` 的 `fragment()` 里一份,这里算的是每片的**有效**排除集。
+  const shared = sharedMutateExclusions();
+  expect(
+    shared,
+    "stryker/base.mjs 的 fragment() 里抽不出共享排除项(或它不再包含 *.prop.ts)",
+  ).toContain("!**/*.prop.ts");
+
+  const offenders = shardConfigs().filter((file) => {
+    const effective = [...mutateGlobsOf(`${STRYKER_DIR}${file}`), ...shared];
+    return !effective.some((glob) => glob.startsWith("!") && glob.endsWith("*.prop.ts"));
+  });
+  expect(offenders, "这些分片的 mutate 会把属性测试当成生产代码变异").toEqual([]);
 });
 
 // ── 基线权柄:抬升命令在场,但它不在任何自动路径上 ────────────────

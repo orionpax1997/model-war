@@ -29,7 +29,13 @@ export default fragment({
     "packages/tools/src/ast.ts",
     "packages/tools/src/ci-workflows.ts",
     "!**/*.test.ts",
-    "!**/*.prop.ts",
+    // 一次性门禁入口不进 mutate(与头注同一条理由):它们的唯一消费者是 spawn 子进程的门禁自测,
+    // 那类测试进不了 dry-run 集,于是这些文件必然 100% NoCoverage —— 白占夜间预算,还把入库基线压偏。
+    // 用 glob 而不是逐个点名:新加一条 `run-*-gate.ts` 不该需要同时改这里。本批新增的
+    // `rules/run-prose-gate.ts` / `gate/run-landing-gate.ts` 原先就是这么被收进范围的。
+    // 已知代价:`gate/run-quickjs-coupling-gate.ts` 导出的纯函数 `findQuickjsMisalignments`
+    // 有单测(见 `gate/quickjs-coupling.test.ts`),这条 glob 把它连带拿走。
+    "!packages/tools/src/**/run-*-gate.ts",
     "!**/*.d.ts",
   ],
   // 刻意不包含:gates / gates-slow / api-example-compile / script-compile-config /

@@ -20,7 +20,6 @@ export default fragment({
   mutate: [
     "packages/gen/src/**/*.ts",
     "!packages/gen/src/**/*.test.ts",
-    "!packages/gen/src/**/*.prop.ts",
     "!packages/gen/src/**/*.fixture.ts",
     "!packages/gen/src/**/*.d.ts",
   ],
