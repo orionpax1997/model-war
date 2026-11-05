@@ -181,7 +181,8 @@ it("计划就是生成阶段那张网格：32 场、四个座位各 8 场、两�
     maps.set(match.map, (maps.get(match.map) ?? 0) + 1);
     expect(match.seats[match.candidateSeat]).toBe(TRIAL_CANDIDATE_ID);
   }
-  expect([...seats.entries()].sort()).toEqual([
+  // 座位号 0..3：显式按数值升序比，与原默认字符串排序同序（一位数字的字典序即数值序）。
+  expect([...seats.entries()].sort((left, right) => left[0] - right[0])).toEqual([
     [0, 8],
     [1, 8],
     [2, 8],

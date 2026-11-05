@@ -741,7 +741,7 @@ it("v2 网格档：不与网格种子重叠的显式评测 seed 照跑", async (
   expect(
     readReport(root)
       .matches.map((match) => match.seed)
-      .sort(),
+      .sort((left, right) => left - right),
   ).toEqual([404, 505, 606, 707]);
 });
 

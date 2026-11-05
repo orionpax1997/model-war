@@ -28,6 +28,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import type {
   ArchiveGridSelection,
+  JsonValue,
   SelectionCandidateIdentity,
   TrialPlan,
 } from "@model-war/schema";
@@ -41,17 +42,27 @@ export type SelectionArtifact = SelectionCandidateIdentity & {
   /** 同目录旁挂的网格汇总（`<观测文件>.grid.json`）：分数与计划的来源。 */
   readonly gridSummaryPath: string;
 };
+/**
+ * 选拔探测器交回来的那一份协议输出：**可能同步、也可能异步**。
+ *
+ * 生产路径是同步子进程，注入桩常写成 `async`，两者都得收。两个成员必须是具体类型：
+ * `unknown | Promise<unknown>` 会被 `unknown` 整个吞掉，「可能异步」在类型上就消失了
+ * （`typescript/no-redundant-type-constituents`）。协议输出是子进程 stdout 上的 JSON，
+ * 所以同步侧取 `JsonValue`——它进存档前还要过 `--validate` 的完整证据校验。
+ */
+export type SelectionProbeOutput = JsonValue | Promise<JsonValue>;
+
 export type SelectionProbe = (options: {
   readonly root: string;
   /** 正在被生成的模型 slug（在位陪练 = 它自己最近一次冻结存档）。 */
   readonly model: string;
   readonly candidates: readonly SelectionArtifact[];
   expectedPlan: TrialPlan;
-}) => unknown | Promise<unknown>;
+}) => SelectionProbeOutput;
 
 const ENTRY = join("apps", "cli", "dist", "selection", "run-selection.js");
 
-const invoke = (root: string, mode: readonly string[], input?: unknown): unknown => {
+const invoke = (root: string, mode: readonly string[], input?: unknown): JsonValue => {
   const ran = spawnSync(process.execPath, [join(root, ENTRY), "--root", root, ...mode], {
     encoding: "utf8",
     input: input === undefined ? undefined : JSON.stringify(input),
@@ -59,7 +70,7 @@ const invoke = (root: string, mode: readonly string[], input?: unknown): unknown
   });
   if (ran.error !== undefined || ran.status !== 0) throw new Error("选拔执行或完整证据校验失败");
   try {
-    return JSON.parse(ran.stdout) as unknown;
+    return JSON.parse(ran.stdout) as JsonValue;
   } catch {
     throw new Error("选拔协议输出不完整");
   }

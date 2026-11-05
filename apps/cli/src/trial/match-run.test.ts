@@ -67,7 +67,7 @@ const recordingStub = (options: {
 
 const quiet = [recordingStub({}), recordingStub({}), recordingStub({}), recordingStub({})] as const;
 
-it("候选座的触限被记下：座位/tick/轨名/读数/上限逐字对", { timeout: 30_000 }, async () => {
+it("候选座的触限被记下：座位/tick/轨名/读数/上限逐字对", { timeout: 30_000 }, () => {
   const runners = [
     recordingStub({
       trips: [{ at: 3, track: "eventTickLimit", value: 55000, limit: 50000 }],
@@ -76,7 +76,7 @@ it("候选座的触限被记下：座位/tick/轨名/读数/上限逐字对", { 
     recordingStub({}),
     recordingStub({}),
   ] as const;
-  const outcome = await runTrialMatch({
+  const outcome = runTrialMatch({
     runners: [...runners],
     players: [...players],
     ruleset,
@@ -98,8 +98,8 @@ it("候选座的触限被记下：座位/tick/轨名/读数/上限逐字对", { 
   });
 });
 
-it("全场干净 → 无记录、无作废", { timeout: 30_000 }, async () => {
-  const outcome = await runTrialMatch({
+it("全场干净 → 无记录、无作废", { timeout: 30_000 }, () => {
+  const outcome = runTrialMatch({
     runners: [...quiet],
     players: [...players],
     ruleset,
@@ -113,7 +113,7 @@ it("全场干净 → 无记录、无作废", { timeout: 30_000 }, async () => {
   expect(outcome.trips).toEqual([]);
 });
 
-it("tick 归因按交回序：两次触限的 tick 差等于交回次数差", { timeout: 30_000 }, async () => {
+it("tick 归因按交回序：两次触限的 tick 差等于交回次数差", { timeout: 30_000 }, () => {
   const runners = [
     recordingStub({
       trips: [
@@ -125,7 +125,7 @@ it("tick 归因按交回序：两次触限的 tick 差等于交回次数差", { 
     recordingStub({}),
     recordingStub({}),
   ] as const;
-  const outcome = await runTrialMatch({
+  const outcome = runTrialMatch({
     runners: [...runners],
     players: [...players],
     ruleset,
@@ -140,41 +140,37 @@ it("tick 归因按交回序：两次触限的 tick 差等于交回次数差", { 
   expect(outcome.trips[1]?.track).toBe("apiCallTickLimit");
 });
 
-it(
-  "对手座位的触限也记下（记不记与判不判是两件事：判由 verdict 定）",
-  { timeout: 30_000 },
-  async () => {
-    const runners = [
-      recordingStub({}),
-      recordingStub({}),
-      recordingStub({
-        trips: [{ at: 2, track: "eventTickLimit", value: 60000, limit: 50000 }],
-      }),
-      recordingStub({}),
-    ] as const;
-    const outcome = await runTrialMatch({
-      runners: [...runners],
-      players: [...players],
-      ruleset,
-      map,
-      seed: 101,
-      budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
-      head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
-      matchIndex: 0,
-    });
-    expect(outcome.trips).toHaveLength(1);
-    expect(outcome.trips[0]?.seat).toBe(2);
-  },
-);
+it("对手座位的触限也记下（记不记与判不判是两件事：判由 verdict 定）", { timeout: 30_000 }, () => {
+  const runners = [
+    recordingStub({}),
+    recordingStub({}),
+    recordingStub({
+      trips: [{ at: 2, track: "eventTickLimit", value: 60000, limit: 50000 }],
+    }),
+    recordingStub({}),
+  ] as const;
+  const outcome = runTrialMatch({
+    runners: [...runners],
+    players: [...players],
+    ruleset,
+    map,
+    seed: 101,
+    budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  expect(outcome.trips).toHaveLength(1);
+  expect(outcome.trips[0]?.seat).toBe(2);
+});
 
-it("作废故障透出来（墙钟硬超时那条轨：整场作废而非判罚）", { timeout: 30_000 }, async () => {
+it("作废故障透出来（墙钟硬超时那条轨：整场作废而非判罚）", { timeout: 30_000 }, () => {
   const runners = [
     recordingStub({}),
     recordingStub({ faultAt: 2 }),
     recordingStub({}),
     recordingStub({}),
   ] as const;
-  const outcome = await runTrialMatch({
+  const outcome = runTrialMatch({
     runners: [...runners],
     players: [...players],
     ruleset,
@@ -187,24 +183,20 @@ it("作废故障透出来（墙钟硬超时那条轨：整场作废而非判罚�
   expect(outcome.fault).not.toBeNull();
 });
 
-it(
-  "空转的一局：候选座位的无得分来源读数随局返回（只观测，不带判定）",
-  { timeout: 30_000 },
-  async () => {
-    const outcome = await runTrialMatch({
-      runners: [...quiet],
-      players: [...players],
-      ruleset,
-      map,
-      seed: 101,
-      budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
-      head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
-      matchIndex: 0,
-    });
-    expect(outcome.scoreSource.noScoreSource).toBe(true);
-    expect(outcome.trips).toHaveLength(0);
-  },
-);
+it("空转的一局：候选座位的无得分来源读数随局返回（只观测，不带判定）", { timeout: 30_000 }, () => {
+  const outcome = runTrialMatch({
+    runners: [...quiet],
+    players: [...players],
+    ruleset,
+    map,
+    seed: 101,
+    budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  expect(outcome.scoreSource.noScoreSource).toBe(true);
+  expect(outcome.trips).toHaveLength(0);
+});
 
 /* ───────────────────── 无得分来源的**接线**（上面那条空转用例证明不了） ─────────────────────
  *
@@ -269,8 +261,8 @@ const capturingStub = (seat: number, siteId: number) => {
   };
 };
 
-it("接线：候选座位占下中立点位 → 读数记下这 1 次占点，不命中", { timeout: 30_000 }, async () => {
-  const outcome = await runTrialMatch({
+it("接线：候选座位占下中立点位 → 读数记下这 1 次占点，不命中", { timeout: 30_000 }, () => {
+  const outcome = runTrialMatch({
     runners: [capturingStub(0, 4), recordingStub({}), recordingStub({}), recordingStub({})],
     players: [...players],
     ruleset,
@@ -283,8 +275,8 @@ it("接线：候选座位占下中立点位 → 读数记下这 1 次占点，�
   expect(outcome.scoreSource).toEqual({ delivered: 0, captures: 1, noScoreSource: false });
 });
 
-it("接线：他座位占下中立点位不算候选的得分来源 → 候选仍判命中", { timeout: 30_000 }, async () => {
-  const outcome = await runTrialMatch({
+it("接线：他座位占下中立点位不算候选的得分来源 → 候选仍判命中", { timeout: 30_000 }, () => {
+  const outcome = runTrialMatch({
     runners: [recordingStub({}), capturingStub(1, 5), recordingStub({}), recordingStub({})],
     players: [...players],
     ruleset,
