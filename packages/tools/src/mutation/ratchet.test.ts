@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   SHARD_INCOMPARABLE_NOTE,
+  baselineFromCounts,
   compareToBaseline,
   countsFromReport,
   coverageBasedScore,
@@ -124,6 +125,30 @@ describe("棘轮判决:三种", () => {
     expect(scoreGapPercent({ detected: 7, valid: 10 }, baseline)).toBeLessThan(0);
     expect(scoreGapPercent({ detected: 8, valid: 10 }, baseline)).toBe(0);
     expect(scoreGapPercent({ detected: 9, valid: 10 }, baseline)).toBeGreaterThan(0);
+  });
+});
+
+describe("抬升命令造基线的纯函数", () => {
+  it("把三个计数装成基线:两个百分比收成两位小数,判决要用的两个整数原样保留", () => {
+    const baseline = baselineFromCounts("replay", { detected: 2, valid: 3, survived: 1 });
+    // 2/3 与 2/(2+1) 都是 66.666…%:文件里只保留两位,判决用的仍是 2 与 3。
+    expect(baseline).toEqual({
+      shard: "replay",
+      detected: 2,
+      valid: 3,
+      score: 66.67,
+      coverageBased: 66.67,
+    });
+    // 造出来的东西必须过得了门禁那一侧的守卫,否则抬升写出的文件自己就把门禁弄红。
+    expect(isShardBaseline(baseline)).toBe(true);
+  });
+
+  it("source 缺省不写,给了就如实带上(「这个数字打哪来」)", () => {
+    const counts = { detected: 8, valid: 10, survived: 2 };
+    expect("source" in baselineFromCounts("replay", counts)).toBe(false);
+    expect(baselineFromCounts("replay", counts, "reports/mutation/replay.json").source).toBe(
+      "reports/mutation/replay.json",
+    );
   });
 });
 
