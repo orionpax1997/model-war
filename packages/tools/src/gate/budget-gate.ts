@@ -9,7 +9,7 @@
  * **不做**「取值是否贴边」这类结论性判断——那是动态失配断言(默认 `test` 项目)的活。重活
  * (真引擎失配)留在那边。
  *
- * ── 为什么零 import、为什么读源码文本 ──
+ * ── 为什么零构建、为什么读源码文本 ──
  *
  * 快门禁必须**零构建**(hld §2.2.1 / §2.2.7):它挂在 `check:quick`,`check:quick` 里不能出现
  * 「需要一次 `tsc -b`」的依赖。所以本模块不 import 真源包(`@model-war/schema`),改用两条既有缝:
@@ -24,8 +24,11 @@
  *
  * 读到 0 个预算键、或 0 个已定稿的预算键,门禁**按失败处理**(与 `run-no-float-gate.ts` 的
  * 「一个文件都没读到」、`run-drift-gate.ts` 的「注册表空」同一条纪律):此时报「干净」是一条会
- * 一直绿的假门禁,比红更危险。
+ * 一直绿的假门禁,比红更危险。三处计数口(预算键、已定稿键、基准产物)都用 `vacuous.ts` 的
+ * 共享件判——本模块唯一一条 import 就是它:同包内的纯函数、不依赖测试框架,不影响零构建。
  */
+
+import { vacuousReason } from "./vacuous.ts";
 
 /**
  * 八个预算键的名字。真源是 `packages/schema/src/ruleset-keys.ts` 的 `RULESET_KEY_CATALOG`;
@@ -290,11 +293,12 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
           "(低于它会把 `check:selfproof` 的静态校验弄红,而那条不在默认链上)",
       });
     }
-    if (input.benchmarkArtifacts === 0) {
-      violations.push({
-        check: "防假绿",
-        detail: "一个基准产物都没读到,scriptSizeLimit 的下界断言失效",
-      });
+    const artifactsMissing = vacuousReason(input.benchmarkArtifacts, {
+      subject: "基准产物",
+      scope: "benchmarks/<cell>/script.js",
+    });
+    if (artifactsMissing !== "") {
+      violations.push({ check: "防假绿", detail: artifactsMissing });
     }
   }
 
@@ -323,14 +327,19 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
 
   // ── 防假绿 ──
 
-  if (budgetKeys === 0) {
-    violations.push({ check: "防假绿", detail: "一个预算键都没读到,门禁目标失效" });
+  const budgetKeysMissing = vacuousReason(budgetKeys, {
+    subject: "预算键",
+    scope: "packages/schema/src/ruleset-keys.ts",
+  });
+  if (budgetKeysMissing !== "") {
+    violations.push({ check: "防假绿", detail: budgetKeysMissing });
   }
-  if (finalizedKeys === 0) {
-    violations.push({
-      check: "防假绿",
-      detail: "没有已定稿的预算键,这道门禁什么也没断言",
-    });
+  const finalizedKeysMissing = vacuousReason(finalizedKeys, {
+    subject: "已定稿的预算键",
+    scope: "packages/schema/src/ruleset-keys.ts 的 calibration.state",
+  });
+  if (finalizedKeysMissing !== "") {
+    violations.push({ check: "防假绿", detail: finalizedKeysMissing });
   }
 
   return { budgetKeys, finalizedKeys, violations };

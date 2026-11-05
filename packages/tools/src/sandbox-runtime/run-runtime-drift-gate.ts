@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { SANDBOX_RUNTIME_ARTIFACT_PATH, SANDBOX_RUNTIME_HASH } from "@model-war/schema";
 
 import { buildRuntimeCode, runtimeArtifactFile } from "./build-runtime.ts";
+import { vacuousReason } from "../gate/vacuous.ts";
 
 /**
  * 模块语法的形态;产物里一个都不许有。动态 `import()` 单列一条,与静态 `import` 分开报。
@@ -57,6 +58,20 @@ const firstDifference = (left: string, right: string): number => {
 let failed = false;
 
 const committed = readFileSync(runtimeArtifactFile(SANDBOX_RUNTIME_ARTIFACT_PATH), "utf8");
+
+// 入库产物为空 = 逐字节比对、sha256 与模块语法三刀全部无对象可判(sha256("") 只是一串
+// 无意义的摘要)。按空转处理,理由来自共享件(`gate/vacuous.ts`)。
+const artifactCount = committed === "" ? 0 : 1;
+const vacuous = vacuousReason(artifactCount, {
+  subject: "runtime bundle 的入库产物",
+  scope: SANDBOX_RUNTIME_ARTIFACT_PATH,
+});
+if (vacuous !== "") {
+  console.error(`✗ runtime bundle:${vacuous}`);
+  console.log("runtime bundle 门禁:红(入库产物是空的,三刀都没有对象可判)");
+  process.exit(1);
+}
+
 const fresh = await buildRuntimeCode();
 
 // ① 产物可复现:重跑构建的结果必须与入库的那份逐字节相同。

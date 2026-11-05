@@ -56,6 +56,8 @@ import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
 
+import { vacuousReason } from "../gate/vacuous.ts";
+
 /** 仓库根 = 本文件上溯四级(`packages/tools/src/cross-process/`)。 */
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -347,8 +349,11 @@ const main = async (argv: readonly string[]): Promise<number> => {
       }\n`,
     );
 
-    if (tickCount === 0) {
-      process.stdout.write("跨进程一致性门禁:红(回放里一个 tick 都没有——防假绿)\n");
+    // 「回放里一个 tick 都没有」是假绿的典型形态:两个进程都退 0、逐 tick 比对也说一致,
+    // 而实际上一对就没比。空转检测的理由来自共享件(`gate/vacuous.ts`)。
+    const vacuous = vacuousReason(tickCount, { subject: "回放 tick", scope: "回放 JSONL" });
+    if (vacuous !== "") {
+      process.stdout.write(`跨进程一致性门禁:红(${vacuous})\n`);
       return 1;
     }
     if (!consistent) {

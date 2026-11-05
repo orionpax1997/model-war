@@ -41,6 +41,7 @@ import { resolve } from "node:path";
 import { GENERATED_ARTIFACTS } from "./registry.ts";
 import { readSection } from "./section.ts";
 import type { GeneratedArtifact } from "./artifact.ts";
+import { vacuousReason } from "../gate/vacuous.ts";
 
 /** 本文件在 `<repo>/packages/tools/src/generate/` 下,上溯四层是仓库根。 */
 const repoRoot = resolve(import.meta.dirname, "../../../..");
@@ -109,10 +110,14 @@ const consistencyFindings = (artifact: GeneratedArtifact, actual: string): reado
 const main = (): number => {
   const findings: string[] = [];
 
-  if (GENERATED_ARTIFACTS.length === 0) {
-    // 注册表空 = 没有任何一件生成物要查。此时报「无漂移」是一条永远全绿、什么也没断言的门禁,
-    // 与 `run-no-float-gate.ts` 里「一个文件都没读到按失败处理」同一条纪律。
-    process.stderr.write("生成物漂移检查:注册表是空的,没有可检查的生成物,按失败处理。\n");
+  // 注册表空 = 没有任何一件生成物要查。此时报「无漂移」是一条永远全绿、什么也没断言的门禁,
+  // 与 `run-no-float-gate.ts` 里「一个文件都没读到按失败处理」同一条纪律(共享件在 `vacuous.ts`)。
+  const vacuous = vacuousReason(GENERATED_ARTIFACTS.length, {
+    subject: "生成物",
+    scope: "GENERATED_ARTIFACTS 注册表",
+  });
+  if (vacuous !== "") {
+    process.stderr.write(`生成物漂移检查:${vacuous}\n`);
     return 1;
   }
 
