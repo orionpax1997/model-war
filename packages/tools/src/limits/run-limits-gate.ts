@@ -47,6 +47,8 @@ import { arch, cpus, platform, release, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { vacuousReason } from "../gate/vacuous.ts";
+
 /** 仓库根 = 本文件上溯四级(`packages/tools/src/limits/`)。 */
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -515,6 +517,20 @@ const main = async (argv: readonly string[]): Promise<number> => {
         `  第 ${String(samples.length)} 局:${plan.cell} 种子 ${String(plan.seed)} → ${sampled.sample.status},` +
           `tick ${String(sampled.sample.ticks)},墙钟 ${fixed(sampled.sample.wallMs, 1)} ms,回放 ${mib(sampled.sample.replayBytes)} MiB\n`,
       );
+    }
+
+    // 0 局样本 = 报告里的 p50 / 均值 / 最坏 / 季体量全是 0,而「0 局」本身什么都不成立。
+    // 此时唯一会变红的是拷贝税占比(除数为 0 → ∞),而那是一条**偶然的**防线:
+    // 它遇的是除零而不是空转,任何一个公式调整都能让报告回到绿。所以这里在算报告之前显式判空转,
+    // 理由文案来自共享件 `gate/vacuous.ts`。
+    const vacuous = vacuousReason(samples.length, {
+      subject: "对局样本",
+      scope: "planOf(options) 的采样计划",
+    });
+    if (vacuous !== "") {
+      process.stderr.write(`limits 门禁:${vacuous}\n`);
+      process.stdout.write("limits 门禁:红(一局样本都没有)\n");
+      return 1;
     }
 
     const report = buildReport(samples, options, scratch, largestReplay);

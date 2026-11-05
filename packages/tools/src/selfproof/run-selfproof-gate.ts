@@ -76,6 +76,7 @@ import type { Ruleset } from "@model-war/schema";
 
 import { compatGapsOf, compatPrelude } from "./contract-compat.ts";
 import { BENCHMARK_NAMES, PRODUCT_FILE, benchmarkFile, repoRoot } from "../benchmarks/compile.ts";
+import { vacuousReason } from "../gate/vacuous.ts";
 import {
   DEFAULT_QUOTA_PERCENT,
   SCRIPT_LABELS,
@@ -708,6 +709,14 @@ const main = async (argv: readonly string[]): Promise<number> => {
   }
 
   const jobs = buildJobs(harness, options.probe);
+  // 矩阵空 = 四问都没有样本可判。「跑 0 场然后判四问」在当前判定层也会红
+  // (`questions.ts` 的 `matches.length > 0`),两层各有各的理由:判定层守的是「一场都没有」这个
+  // 语义,这里守的是「空转发生在跑批之前就不该浪费一次报告」。理由文案来自共享件 `gate/vacuous.ts`。
+  const vacuous = vacuousReason(jobs.length, { subject: "跑批场次", scope: "契约自证矩阵" });
+  if (vacuous !== "") {
+    process.stderr.write(`[selfproof] ${vacuous}\n`);
+    return 1;
+  }
   const started = Date.now();
   const rows = await runJobs(harness, jobs, options);
   const elapsed = ((Date.now() - started) / 1000).toFixed(1);

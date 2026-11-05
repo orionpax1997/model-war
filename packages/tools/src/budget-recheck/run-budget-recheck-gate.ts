@@ -19,7 +19,8 @@
  * `check:budget`(快门禁,零构建)读**结构**:整数倍、夹逼、文档副本一致。本门禁读**失配语义**:
  * 它要真跑引擎,故归**按需→夜间**层(不进 `check:quick` / `check` / `test` / `verify:fast`)。
  * 复算的实际断言在 `packages/engine/src/runner/probe-harness.test.ts` 的三条 `复算:*` 用例里
- * (复用同一条探针缝,不新开探针格式);本脚本只**编排**它、读退出码、给出红/绿与缘由。
+ * (复用同一条探针缝,不新开探针格式);本脚本只**编排**它、读退出码、数那三条用例真的跑了(空转检测),
+ * 给出红/绿与缘由。
  *
  * ── 它补的缺口 ──────────────────────────────────────────────────────────────
  * `probe-harness.test.ts` 的诚实侧默认传 `budget: {}`(空预算,一条轨都没启用),所以「不被截停」
@@ -36,6 +37,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { vacuousReason } from "../gate/vacuous.ts";
+
 /** 仓库根 = 本文件上溯四级(`packages/tools/src/budget-recheck/`)。 */
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -47,6 +50,9 @@ const PROBE_FAILURE_MARK = "终值下三类探针必被截停";
 const BASELINE_FAILURE_MARK = "终值预算下三份基准脚本必不被截停";
 /** 诚实侧的读数用例:基准被截停时它也可能先红,归到同一侧。 */
 const HONEST_FAILURE_MARK = "诚实侧:三份基准脚本在真引擎上跑出";
+
+/** 三条被指望真的跑起来的用例名片段——它们同时也是本门禁的空转计数口。 */
+const RECHECK_MARKS = [PROBE_FAILURE_MARK, BASELINE_FAILURE_MARK, HONEST_FAILURE_MARK] as const;
 
 type Tamper = "probe" | "baseline" | null;
 
@@ -90,7 +96,9 @@ const main = (argv: readonly string[]): number => {
 
   const result = spawnSync(
     process.env["GATE_PNPM"] ?? "pnpm",
-    ["exec", "vitest", "run", "--project", "unit", TEST_FILE],
+    // `--reporter=verbose` 不是好看:默认 reporter 在非 TTY 下**不输出用例名**,而本门禁的
+    // 空转检测要从输出里数「那些用例真的跑了吗」(见下面那段)。
+    ["exec", "vitest", "run", "--project", "unit", "--reporter=verbose", TEST_FILE],
     {
       cwd: repoRoot,
       encoding: "utf8",
@@ -106,6 +114,19 @@ const main = (argv: readonly string[]): number => {
   }
   const output = `${result.stdout}${result.stderr}`;
   const status = result.status ?? -1;
+
+  // 空转检测:本门禁的全部断言都住在被测测试里,而 vitest 在「那些用例被删名 / 被删掉」时
+  // 会拿着剩下几条全绿的用例退 0——那时本门禁会报「绿」而实际一条复算都没跑。
+  // 所以从输出里数被指望真的跑起来的用例名片段;一条都对不上就是空转(共享件 `gate/vacuous.ts`)。
+  const seenMarks = RECHECK_MARKS.filter((mark) => output.includes(mark));
+  const vacuous = vacuousReason(seenMarks.length, {
+    subject: "复算用例",
+    scope: `${TEST_FILE} 的用例名`,
+  });
+  if (vacuous !== "") {
+    process.stdout.write(`预算复算门禁:红(${vacuous})\n`);
+    return 1;
+  }
 
   if (status === 0) {
     process.stdout.write("  探针:终值下三类探针均被截停(轨名由引擎给出)\n");
