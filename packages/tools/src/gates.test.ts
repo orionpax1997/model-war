@@ -51,8 +51,17 @@
  * 清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { afterAll, expect, it } from "vitest";
 import { SANDBOX_RUNTIME_ARTIFACT_PATH } from "@model-war/schema";
@@ -69,6 +78,7 @@ import {
   withProbeFile,
 } from "./gates-harness.ts";
 import { MUTATION_SHARDS } from "./mutation/shards.ts";
+import { isShardBaseline } from "./mutation/ratchet.ts";
 import { sectionMarker } from "./generate/section.ts";
 
 const bin = (name: string): string => here(`../../../node_modules/.bin/${name}`);
@@ -1837,7 +1847,8 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
 // 扫描仍是**观测**(没有行数红线)。
 //
 // 这一层能钉的外部可观察量:配置在不在、分片名与清单对不对得上、范围限不限定、每个入口有没有串上
-// 棘轮门禁、抬升命令有没有溜进任何入口,以及**用夹具报告跑真实门禁入口的三态退出码**。
+// 棘轮门禁、抬升命令在场且有没有溜进任何入口、**跑完变异入口的比较后入库基线字节变不变**,
+// 以及用夹具报告跑真实门禁入口的三态退出码。
 // 真跑一遍变异(分钟级到小时级,`pnpm run mutate`)不在这一层的预算里,也不需要:
 // 判定是纯函数、门禁只读两份 JSON,所以「低一分就红」用夹具就能现做现验。
 
@@ -1959,24 +1970,232 @@ it("engine-processor 分片仍限定结算管线,且棘轮不设绝对阈值", (
   );
 });
 
-it("抬基线的命令不存在:基线权柄还没落地,更不在任何入口上", () => {
-  // ADR-0026:抬基线只能显式为之,且那条命令不得出现在任何流水线、默认链或常跑入口。
-  // 本 ticket 只落棘轮与入库基线,抬升命令归 08——所以此刻它一条都不该存在。
+// ── 基线权柄:抬升命令在场,但它不在任何自动路径上 ────────────────
+//
+// ADR-0026:抬基线只能显式为之,且那条命令不得出现在任何流水线、默认链或常跑入口。
+// 于是这里同时钉两件相反的事:命令**在场**(否则「显式为之」无处可为之),且**不在任何链上**。
+// 三道锁各管一段:命令自身(缺分片即非零、只写被点名的那一份)、接线层(不在任何入口/
+// 流水线,且跑完变异入口的比较后基线字节不变)、agent 纪律(AGENTS.md《门禁纪律》)。
+
+/** 抬基线命令的可 grep 字面量:脚本名与入口文件名。两者都在场才算「这条命令存在且可调」。 */
+const BASELINE_RAISE_MARKERS = ["mutation:baseline:raise", "accept-baseline"] as const;
+
+/** 一段文本里出现抬基线命令就返回命中的字面量。纯函数:反例可以直接喂一段构造的清单文本。 */
+const baselineRaiseIn = (text: string): string | undefined =>
+  BASELINE_RAISE_MARKERS.find((marker) => text.includes(marker));
+
+/** 常跑入口(清单本身由「变异 / 扫描只在夜间」那条钉住)。 */
+const FREQUENT_ENTRIES = ["check", "check:quick", "check:types", "test", "verify:fast"] as const;
+
+/** 「入口名 → 命令」里哪些入口带着抬基线命令。 */
+const raiseViolationsIn = (entries: Readonly<Record<string, string>>): readonly string[] =>
+  Object.entries(entries)
+    .filter(([, command]) => baselineRaiseIn(command) !== undefined)
+    .map(([name]) => name);
+
+/** 常跑入口当前的样子(反例在它上面改一项,不真动 `package.json`)。 */
+const frequentEntryCommands = (): Record<string, string> => {
   const scripts = manifest().scripts;
-  const suspicious = Object.entries(scripts).filter(
-    ([name, command]) =>
-      /baseline|accept-?baseline|raise/i.test(name) || command.includes("accept-baseline"),
-  );
+  return Object.fromEntries(FREQUENT_ENTRIES.map((entry) => [entry, scripts[entry] ?? ""]));
+};
+
+/** 流水线文本(文件名 → 文本)。读文本而不是解析 yaml:断言对象就是「有没有出现这条命令」。 */
+const workflowTexts = (): readonly (readonly [string, string])[] =>
+  readdirSync(`${repoRoot}.github/workflows`)
+    .filter((entry) => entry.endsWith(".yml") || entry.endsWith(".yaml"))
+    .sort()
+    .map(
+      (entry) => [entry, readFileSync(`${repoRoot}.github/workflows/${entry}`, "utf8")] as const,
+    );
+
+it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核组与变异入口上", () => {
+  // 在场:它是「显式为之」的唯一入口。缺了它,基线只能靠手改文件抬——那时棘轮就没有权柄了。
   expect(
-    suspicious.map(([name]) => name),
-    "出现了抬基线的命令,它不该在脚本清单里",
-  ).toEqual([]);
-  // 变异入口也不许顺手写基线:那会让「让门禁变绿」比「修测试」更省事。
-  for (const [name, command] of Object.entries(scripts)) {
-    if (name === "mutate" || name.startsWith("mutate:")) {
-      expect(command, `${name} 在写基线`).not.toMatch(/baseline=|--write/);
-    }
+    manifest().scripts["mutation:baseline:raise"] ?? "",
+    "抬基线命令没落进可手工调用的脚本",
+  ).toContain("accept-baseline.ts");
+
+  // 缺席①:五个常跑入口。
+  const frequent = frequentEntryCommands();
+  expect(Object.keys(frequent), "常跑入口清单不完备,下面的缺席断言会放宽").toEqual([
+    ...FREQUENT_ENTRIES,
+  ]);
+  expect(raiseViolationsIn(frequent), "抬基线命令被接进了常跑入口").toEqual([]);
+
+  // 缺席②:末尾复核组(提交内容复核不该改写判据本身)。
+  for (const step of tailSteps()) {
+    expect(baselineRaiseIn(step), `末尾复核组里混进了抬基线命令:${step}`).toBeUndefined();
   }
+
+  // 缺席③:12 条变异入口。跑完变异就地比 → 比完不许顺手抬。
+  const scripts = manifest().scripts;
+  const mutateScripts = Object.entries(scripts).filter(
+    ([name]) => name === "mutate" || name.startsWith("mutate:"),
+  );
+  expect(mutateScripts.length, "变异入口清单空了,下面的缺席断言会在空数组上通过").toBe(
+    MUTATION_SHARDS.length,
+  );
+  for (const [name, command] of mutateScripts) {
+    expect(baselineRaiseIn(command), `${name} 里出现了抬基线命令`).toBeUndefined();
+    // 也不许把比较对象指到别处:变异入口读的是本分片的入库基线(写口只有抬升命令那一个)。
+    expect(command, `${name} 改写了比较对象`).not.toContain("--baseline=");
+  }
+
+  // 缺席④:两条流水线。
+  const workflows = workflowTexts();
+  expect(
+    workflows.map(([name]) => name),
+    "流水线清单变了,下面的缺席断言覆盖面跟着歪",
+  ).toEqual(["fast.yml", "nightly.yml"]);
+  for (const [name, text] of workflows) {
+    expect(baselineRaiseIn(text), `流水线 ${name} 里出现了抬基线命令`).toBeUndefined();
+  }
+
+  // 自证:这条 grep 抓得住东西。否则上面四处「缺席」可能只是「什么都没查」。
+  expect(
+    baselineRaiseIn(
+      '{"scripts":{"check:quick":"pnpm run mutation:baseline:raise --shard=replay"}}',
+    ),
+    "grep 抓不住被塞进命令文本的抬基线命令",
+  ).toBe("mutation:baseline:raise");
+  expect(baselineRaiseIn('{"scripts":{"check:quick":"pnpm run check:prose"}}')).toBeUndefined();
+});
+
+it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯文本,不真改 package.json)", () => {
+  const frequent = frequentEntryCommands();
+  expect(raiseViolationsIn(frequent), "还原状态下就已经是红").toEqual([]);
+  // 临时把命令加进 check:quick(只在字串层面),同样的断言必须红。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run mutation:baseline:raise --shard=replay`,
+  };
+  expect(raiseViolationsIn(tampered), "抬基线命令进了 check:quick 却没被判红").toEqual([
+    "check:quick",
+  ]);
+  // 换一条入口也一样:判红的对象是命令文本,不是某个名字。
+  expect(
+    raiseViolationsIn({ ...frequent, test: "pnpm run mutation:baseline:raise --shard=replay" }),
+  ).toEqual(["test"]);
+});
+
+it("跑完变异入口的棘轮比较后,12 份入库基线的字节不变", () => {
+  const gate = "packages/tools/src/mutation/run-mutation-ratchet-gate.ts";
+  // 夹具报告 10/10(Killed 9 + Timeout 1),高于每一片的入库基线;全程不跑真实变异。
+  const report = "packages/tools/src/mutation/fixtures/report-higher.json";
+  const before = MUTATION_SHARDS.map((shard) => ({
+    path: shard.baseline,
+    bytes: readFileSync(`${repoRoot}${shard.baseline}`),
+  }));
+  expect(before.length, "基线清单空了,这条断言会什么都不比").toBe(12);
+
+  // 变异入口里会跑我们自己代码的只有后半段(`stryker run` + 棘轮门禁),而它在 12 条入口里是同一段:
+  // 逐片跑一遍,顺带证明每片的默认基线路径都读得到(读不到会落进「首次」而不是「ok」)。
+  for (const shard of MUTATION_SHARDS) {
+    const compared = run("node", [gate, `--shard=${shard.name}`, `--report=${report}`]);
+    expect(compared.status, `${shard.name} 的棘轮比较没跑起来:\n${compared.output}`).toBe(0);
+    expect(compared.output, compared.output).toContain(`变异棘轮 [${shard.name}]`);
+  }
+
+  for (const { path, bytes } of before) {
+    expect(
+      readFileSync(`${repoRoot}${path}`).equals(bytes),
+      `跑完变异入口的比较后入库基线被改写了:${path}`,
+    ).toBe(true);
+  }
+});
+
+it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线", () => {
+  const entry = "packages/tools/src/mutation/accept-baseline.ts";
+  const fixture = (name: string): string => `packages/tools/src/mutation/fixtures/${name}`;
+  const accept = (...args: readonly string[]): Outcome => run("node", [entry, ...args]);
+
+  // 无参数 → 非零,而且不许有「全量重写」这种默认行为。
+  const noArgs = accept();
+  expect(noArgs.status, noArgs.output).toBe(1);
+  expect(noArgs.output).toContain("--shard=<name>");
+  // 未知分片 → 非零(拼错的分片名不能落进「抬一个默认分片」)。
+  const unknown = accept("--shard=no-such-shard");
+  expect(unknown.status, unknown.output).toBe(1);
+  expect(unknown.output).toContain("未知分片");
+  // 拼错的开关 → 非零:静默忽略会去写默认路径,而这是唯一会写入库基线的命令。
+  const typo = accept("--shard=replay", "--baselin=/tmp/x.json");
+  expect(typo.status, typo.output).toBe(1);
+  expect(typo.output).toContain("不认识的参数");
+
+  // 写口只指向临时目录:测试永远不碰 `stryker/baseline/`(AGENTS.md《门禁纪律》)。
+  const dir = mkdtempSync(join(tmpdir(), "mw-baseline-"));
+  try {
+    const target = join(dir, "replay.json");
+    const raised = accept(
+      "--shard=replay",
+      `--report=${fixture("report-higher.json")}`,
+      `--baseline=${target}`,
+    );
+    expect(raised.status, raised.output).toBe(0);
+    expect(raised.output, "没打印抬了哪一片").toContain("抬升 [replay]");
+    expect(raised.output, "没打印旧 → 新").toContain("旧 → 新:无 → 100.00%");
+
+    // 写出来的是一份合法基线:与门禁读的是同一个形状守卫。
+    const written: unknown = JSON.parse(readFileSync(target, "utf8"));
+    expect(isShardBaseline(written), `临时基线的形状不对:${String(written)}`).toBe(true);
+    expect(written).toMatchObject({ shard: "replay", detected: 10, valid: 10, score: 100 });
+    // `source` 如实记下「这个数字打哪来」。
+    expect((written as { readonly source?: string }).source).toBe(fixture("report-higher.json"));
+
+    // 再抬一次:旧基线在场时打印的旧值是上一次的数字,下降要被点出来。
+    const lowered = accept(
+      "--shard=replay",
+      `--report=${fixture("report-lower.json")}`,
+      `--baseline=${target}`,
+    );
+    expect(lowered.status, lowered.output).toBe(0);
+    expect(lowered.output).toContain("旧 → 新:100.00%");
+    expect(lowered.output, "基线下降没有被点出来").toContain("棘轮从此更松");
+
+    // 空转报告拒绝入基线:valid 0 的基线会让棘轮从此对任何真实报告都判绿。
+    const vacuousTarget = join(dir, "vacuous.json");
+    const vacuous = accept(
+      "--shard=replay",
+      `--report=${fixture("report-vacuous.json")}`,
+      `--baseline=${vacuousTarget}`,
+    );
+    expect(vacuous.status, vacuous.output).toBe(1);
+    expect(vacuous.output).toContain("空转");
+    expect(existsSync(vacuousTarget), "空转的报告被写成了基线").toBe(false);
+
+    // 报告缺失 → 非零,不写。
+    const missingTarget = join(dir, "missing.json");
+    const missing = accept(
+      "--shard=replay",
+      `--report=${fixture("no-such-report.json")}`,
+      `--baseline=${missingTarget}`,
+    );
+    expect(missing.status, missing.output).toBe(1);
+    expect(existsSync(missingTarget), "没有报告也写出了基线").toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("抬基线命令只抬本分片:指到别的分片的基线上 → 非零,且那份文件原样不动", () => {
+  const entry = "packages/tools/src/mutation/accept-baseline.ts";
+  const victim = "stryker/baseline/runner.json";
+  const original = readFileSync(`${repoRoot}${victim}`);
+  let crossed: Outcome;
+  try {
+    crossed = run("node", [
+      entry,
+      "--shard=replay",
+      "--report=packages/tools/src/mutation/fixtures/report-higher.json",
+      `--baseline=${victim}`,
+    ]);
+  } finally {
+    // 守卫挡住时下面这行是空操作;挡不住时它保证「测试弄脏真实基线」不留在工作区里。
+    writeFileSync(`${repoRoot}${victim}`, original);
+  }
+  expect(crossed.status, crossed.output).toBe(1);
+  expect(crossed.output).toContain("不是本分片的基线");
+  expect(readFileSync(`${repoRoot}${victim}`).equals(original)).toBe(true);
 });
 
 it("棘轮门禁:低一分夹具 → 红,等于/高于 → 绿,无基线 → 首次,判不了 → 红", () => {

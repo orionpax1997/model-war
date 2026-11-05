@@ -52,6 +52,7 @@
     "mutate:gen:io": "stryker run stryker/gen-io.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=gen-io",
     "mutate:gen:pipeline": "stryker run stryker/gen-pipeline.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=gen-pipeline",
     "mutate:tools": "stryker run stryker/tools.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=tools",
+    "mutation:baseline:raise": "node packages/tools/src/mutation/accept-baseline.ts",
     "scan": "node packages/tools/src/gate/run-scan-gate.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget && pnpm run check:prose && pnpm run check:landings",

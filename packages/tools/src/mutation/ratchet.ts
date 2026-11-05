@@ -128,6 +128,34 @@ export const coverageBasedScore = (counts: MutationCounts): number => {
   return covered > 0 ? (counts.detected / covered) * 100 : 0;
 };
 
+/** 百分比一律两位小数:`score` / `coverageBased` 是打印与文件里的人类可读副本,判决不用它们。 */
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
+/**
+ * 从一次测量造出入库基线的形状:抬升命令(`accept-baseline.ts`)与门禁读的是同一个类型。
+ *
+ * 只做一件事——把 `countsFromReport` / `mutationScore` / `coverageBasedScore` 的结果装成
+ * `ShardBaseline`,并把两个百分比收成两位小数。判决不读 `score`:它用 `detected` / `valid`
+ * 交叉相乘(见 `compareToBaseline`),所以这里的四舍五入不可能改变任何一次判定。
+ *
+ * `source` 缺省不写(`exactOptionalPropertyTypes`:可选项不能显式塞 `undefined`)。
+ * `note` 一律不写:那是给人读的随情形变化的说明,由人写,不由命令猜。
+ */
+export const baselineFromCounts = (
+  shard: string,
+  counts: MutationCounts,
+  source?: string,
+): ShardBaseline => {
+  const baseline = {
+    shard,
+    detected: counts.detected,
+    valid: counts.valid,
+    score: round2(mutationScore(counts)),
+    coverageBased: round2(coverageBasedScore(counts)),
+  };
+  return source === undefined ? baseline : { ...baseline, source };
+};
+
 /**
  * 判定:同一分片的这一次 vs 入库的上一次。
  *
