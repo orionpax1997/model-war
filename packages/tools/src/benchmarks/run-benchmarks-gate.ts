@@ -33,6 +33,7 @@ import {
   loadProduct,
   type Diagnostic,
 } from "./compile.ts";
+import { vacuousReason } from "../gate/vacuous.ts";
 
 /**
  * 模块语法的三种形态;产物里一个都不许有。
@@ -64,14 +65,32 @@ const countBy = (diagnostics: readonly Diagnostic[], cls: Diagnostic["cls"]): nu
 
 let failed = false;
 
+// 登记册空 = 没有任何一份基准脚本要查。此时报「绿」是一条什么也没断言的门禁,
+// 与 `run-no-float-gate.ts` 的「一个文件都没读到按失败处理」同一条纪律(共享件在 `gate/vacuous.ts`)。
+const registryVacuous = vacuousReason(BENCHMARK_NAMES.length, {
+  subject: "基准脚本",
+  scope: "BENCHMARK_NAMES 登记册",
+});
+if (registryVacuous !== "") {
+  console.error(`基准产物门禁:${registryVacuous}`);
+  process.exit(1);
+}
+
 for (const name of BENCHMARK_NAMES) {
   const source = readFileSync(benchmarkFile(name, SOURCE_FILE), "utf8");
   const compiled = compileBenchmarkSource(source);
 
   // ① 产物可复现:重跑编译的结果必须与入库的那份逐字节相同。
   const committed = readFileSync(benchmarkFile(name, PRODUCT_FILE), "utf8");
-  if (compiled.products === "") {
-    console.error(`✗ ${name}:按 ${SOURCE_FILE} 重新编译没有产物(tsc 退出码 ${compiled.status})`);
+  // 「抽不出区块」的产物体:重编译没吐字节时逐字节比对与后面的三条判决全部无对象可判,
+  // 所以它按空转处理(理由同样来自共享件)。
+  const productCount = compiled.products === "" ? 0 : 1;
+  const productVacuous = vacuousReason(productCount, {
+    subject: "重编译产物",
+    scope: `${name}/${PRODUCT_FILE}`,
+  });
+  if (productVacuous !== "") {
+    console.error(`✗ ${name}:${productVacuous}(tsc 退出码 ${compiled.status})`);
     failed = true;
     continue;
   }

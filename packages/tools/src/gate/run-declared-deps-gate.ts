@@ -12,6 +12,7 @@
 
 import { relative, resolve } from "node:path";
 import { checkDeclaredDepsTree, readDeclaredPackageNames } from "./declared-deps-gate.ts";
+import { vacuousReason } from "./vacuous.ts";
 
 /** 门禁作用域:本包的运行时源码。测试文件由目录薄壳豁免(理由见 `declared-deps-gate.ts` 头注)。 */
 const PACKAGE_DIR = "packages/tools";
@@ -24,12 +25,14 @@ const main = (): number => {
   const declared = readDeclaredPackageNames(resolve(packageDir, "package.json"));
   const report = checkDeclaredDepsTree(resolve(packageDir, "src"), declared);
 
-  if (report.files === 0) {
-    // 一个文件都没读到 = 目标路径写错或源码挪了窝。此时报「干净」是一条会一直绿的假门禁,
-    // 比红更危险,所以按失败处理(与禁浮点门禁同一条纪律)。
-    process.stderr.write(
-      `声明即依赖门禁:${PACKAGE_DIR}/src 下没有可检查的文件,门禁目标失效,按失败处理。\n`,
-    );
+  // 一个文件都没读到 = 目标路径写错或源码挪了窝。此时报「干净」是一条会一直绿的假门禁,
+  // 比红更危险,所以按失败处理(与禁浮点门禁同一条纪律,共享件在 `vacuous.ts`)。
+  const vacuous = vacuousReason(report.files, {
+    subject: "工具包运行时源码文件",
+    scope: `${PACKAGE_DIR}/src`,
+  });
+  if (vacuous !== "") {
+    process.stderr.write(`声明即依赖门禁:${vacuous}\n`);
     return 1;
   }
 

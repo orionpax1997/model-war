@@ -11,6 +11,7 @@
 
 import { relative, resolve } from "node:path";
 import { checkNoFloatTree } from "./no-float-gate.ts";
+import { vacuousReason } from "./vacuous.ts";
 
 /** 门禁作用域:引擎包的运行时源码(hld §2.2.3、§4.6)。 */
 const ENGINE_SOURCE_DIR = "packages/engine/src";
@@ -21,12 +22,14 @@ const repoRoot = resolve(import.meta.dirname, "../../../..");
 const main = (): number => {
   const report = checkNoFloatTree(resolve(repoRoot, ENGINE_SOURCE_DIR));
 
-  if (report.files === 0) {
-    // 一个文件都没读到 = 目标路径写错或源码挪了窝。此时报「干净」是一条会一直绿的假门禁,
-    // 比红更危险,所以按失败处理。
-    process.stderr.write(
-      `禁浮点门禁:${ENGINE_SOURCE_DIR} 下没有可检查的文件,门禁目标失效,按失败处理。\n`,
-    );
+  // 一个文件都没读到 = 目标路径写错或源码挪了窝。此时报「干净」是一条会一直绿的假门禁,
+  // 比红更危险,所以按失败处理(空转检测的共享件在 `vacuous.ts`)。
+  const vacuous = vacuousReason(report.files, {
+    subject: "引擎运行时源码文件",
+    scope: ENGINE_SOURCE_DIR,
+  });
+  if (vacuous !== "") {
+    process.stderr.write(`禁浮点门禁:${vacuous}\n`);
     return 1;
   }
 

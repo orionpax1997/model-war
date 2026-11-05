@@ -20,6 +20,7 @@ import {
   INTERRUPT_EVERY_EVENTS,
 } from "../sandbox-probes/constants.ts";
 import { checkBudget } from "./budget-gate.ts";
+import { vacuousReason } from "./vacuous.ts";
 
 /** 本文件在 `<repo>/packages/tools/src/gate/` 下,上溯四层是仓库根。 */
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -76,11 +77,16 @@ const main = (): number => {
   });
 
   // 防假绿:读到 0 个预算键、或 0 个已定稿的预算键,都按失败处理——此时报「干净」什么也没断言。
-  if (report.budgetKeys === 0 || report.finalizedKeys === 0) {
-    process.stderr.write(
-      `预算结构门禁:读到 ${report.budgetKeys} 个预算键、${report.finalizedKeys} 个已定稿键,` +
-        "门禁目标失效,按失败处理。\n",
-    );
+  // 两条理由各自来自共享的空转检测(`vacuous.ts`),这里只把它们拼成一条 stderr。
+  const vacuous = [
+    vacuousReason(report.budgetKeys, { subject: "预算键", scope: RULESET_JSON }),
+    vacuousReason(report.finalizedKeys, {
+      subject: "已定稿的预算键",
+      scope: `${RULESET_KEYS_SOURCE} 的 calibration.state`,
+    }),
+  ].filter((reason) => reason !== "");
+  if (vacuous.length > 0) {
+    process.stderr.write(`预算结构门禁:${vacuous.join("")}\n`);
     return 1;
   }
 
