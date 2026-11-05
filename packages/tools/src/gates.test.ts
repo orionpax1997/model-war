@@ -1847,10 +1847,12 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
 // 扫描仍是**观测**(没有行数红线)。
 //
 // 这一层能钉的外部可观察量:配置在不在、分片名与清单对不对得上、范围限不限定、每个入口有没有串上
-// 棘轮门禁、抬升命令在场且有没有溜进任何入口、**跑完变异入口的比较后入库基线字节变不变**,
+// 棘轮门禁、抬升命令在场且有没有溜进任何入口、**跑完变异入口后入库基线字节变不变**,
 // 以及用夹具报告跑真实门禁入口的三态退出码。
-// 真跑一遍变异(分钟级到小时级,`pnpm run mutate`)不在这一层的预算里,也不需要:
-// 判定是纯函数、门禁只读两份 JSON,所以「低一分就红」用夹具就能现做现验。
+// 真跑一变异的预算只给最小的那一片(`mutate:replay`,本机约 30s):它只证明「跑完入口后字节不变」
+// ——那是 ticket 08 的字面要求,只跑入口的后半段(棘轮门禁)证明不了 `stryker run` 那一半。
+// 「低一分就红」不需要真跑:判定是纯函数、门禁只读两份 JSON,夹具报告就现做现验。
+// 其余分片(engine / runner / tools:半小时到一小时)与抬基线命令一条都不跑。
 
 /** 分片配置目录与共享底座。读文本而不是 import:`.mjs` 无类型声明,import 会让 `tsc -b` 找不到声明。 */
 const STRYKER_DIR = `${repoRoot}stryker/`;
@@ -2104,6 +2106,10 @@ it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯
   ).toEqual(["test"]);
 });
 
+// 两条字节不变的必测,分两半:
+//   ① 入口的**后半段**(棘轮门禁)跑遍全部分片,喂夹具报告——不跑真实变异,零成本;
+//   ② 入口的**全部**(`stryker run` + 棘轮门禁)真跑最小的 `replay` 分片。
+// 只有①会留下一道缝:`stryker run` 那一半到底会不会碰基线没人验。② 把这道缝堵上。
 it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
   const gate = "packages/tools/src/mutation/run-mutation-ratchet-gate.ts";
   // 夹具报告 10/10(Killed 9 + Timeout 1),高于每一片的入库基线;全程不跑真实变异。
@@ -2120,9 +2126,9 @@ it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
     bytes: readFileSync(`${repoRoot}${shard.baseline}`),
   }));
 
-  // 变异入口里会跑我们自己代码的只有后半段(`stryker run` + 棘轮门禁),而它在 12 条入口里是同一段:
-  // 逐片跑一遍,顺带证明每片的默认基线路径都读得到(读不到会落进「首次」而不是「ok」)。
-  // 未播种的两片也跑一遍:它们落进「首次」,同样不许写文件。
+  // 入口的后半段(`stryker run` + 棘轮门禁)在 12 条入口里是同一段代码,所以它只跑一遍就够:
+  // 逐片跑一次,顺带证明每片的默认报告与默认基线路径都指得对(读不到基线会落进「首次」
+  // 而不是「ok」)。未播种的两片也跑:它们落进「首次」,同样不许写文件。
   for (const shard of MUTATION_SHARDS) {
     const compared = run("node", [gate, `--shard=${shard.name}`, `--report=${report}`]);
     expect(compared.status, `${shard.name} 的棘轮比较没跑起来:\n${compared.output}`).toBe(0);
@@ -2136,6 +2142,35 @@ it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
     ).toBe(true);
   }
 });
+
+// ticket 08 的字面要求是「跑完**变异入口**后基线文件字节不变」:上面那条只跑了入口的棘轮那半。
+// 这一条真跑一次完整的命名入口(`stryker run` + 棘轮门禁)。
+// 之所以可以是 replay:它是全仓最小的分片(338 个变异体,本机实测约 30s),而这条断言只证明
+// 「字节不变」,不证明「分数没退」——后者靠夹具报告已经验过,不需要真跑一次半夜的变异。
+// 大分片(engine / runner / tools:半小时到一小时)不在门禁自测的预算里;抬基线命令更不跑。
+it("真实跑一次 mutate:replay 之后,stryker/baseline/replay.json 的字节逐字不变", () => {
+  const baseline = "stryker/baseline/replay.json";
+  const before = readFileSync(`${repoRoot}${baseline}`);
+
+  const mutation = script("mutate:replay");
+
+  // 0 = 不低于基线,1 = 退化(棘轮红了)——两个退出码都说明变异跑完了、比较也跑了。
+  // spawn 失败(没有 stryker、进程起不来)会由 `run` 直接抛出,不会落在下面的 allowlist 里。
+  // 分数高低不是这条用例的断言对象:那一半由夹具报告那条用例负责。
+  expect(
+    [0, 1],
+    `mutate:replay 的退出码不是棘轮的两种判决(0/1):${String(mutation.status)}\n${mutation.output}`,
+  ).toContain(mutation.status);
+  // 「跑完了」这件事得在输出里有痕迹:没有它,一个什么都没跑的命令也能退 0。
+  expect(mutation.output, `mutate:replay 没有跑完棘轮比较:\n${mutation.output}`).toContain(
+    "变异棘轮 [replay]",
+  );
+
+  expect(
+    readFileSync(`${repoRoot}${baseline}`).equals(before),
+    `真实跑完 mutate:replay 之后入库基线被改写了:${baseline}`,
+  ).toBe(true);
+}, 180_000);
 
 it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线", () => {
   const entry = "packages/tools/src/mutation/accept-baseline.ts";
