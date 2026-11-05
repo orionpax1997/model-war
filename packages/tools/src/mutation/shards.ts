@@ -18,6 +18,12 @@
  * `stryker.config.mjs` 至今只是转发到 `stryker/engine-processor.mjs`。
  * 于是这个分片的入口就是 `mutate`——不另立一个同内容的 `mutate:engine:processor`,
  * 同一个作用域有两条入口是又一处会漂的真源。
+ *
+ * ── 未播种的分片 ──────────────────────────────────────────────────────────
+ * `engine` 与 `gen` 两片现在**没有**基线文件(没有覆盖各自 `mutate` 范围的真实报告,
+ * 拿单文件标定跑的数字冒充整片是错的)。它们的 `baseline` 路径照旧写在这里——那是「播种后会落在哪」。
+ * 缺文件 = 棘轮报「首次」不判红;人类可读的说明在 `stryker/baseline/README.md`,
+ * 门禁自测(`gates.test.ts`)盯着「列在 `UNSEEDED_SHARDS` 里的分片确实没有基线文件」这一条。
  */
 
 /** 一个分片的接线。路径一律是仓库根相对路径(门禁按仓库根解析)。 */
@@ -28,7 +34,7 @@ export type MutationShard = {
   readonly config: string;
   /** `package.json` 里的入口脚本名;它跑完变异后必须串上棘轮门禁。 */
   readonly script: string;
-  /** 入库基线的落点。缺这个文件 = 该分片首次运行,不判红。 */
+  /** 入库基线的落点。缺这个文件 = 该分片首次运行(不判红),见文件头注「未播种的分片」。 */
   readonly baseline: string;
   /** 默认读的报告。报告不入库(`reports/` 被忽略),所以它只是「这一次」的落盘点。 */
   readonly report: string;

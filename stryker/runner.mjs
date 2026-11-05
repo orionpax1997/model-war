@@ -16,7 +16,6 @@ export default fragment({
   mutate: [
     "packages/runner/src/**/*.ts",
     "!packages/runner/src/**/*.test.ts",
-    "!packages/runner/src/**/*.prop.ts",
     "!packages/runner/src/**/*.fixture.ts",
     "!packages/runner/src/**/*.d.ts",
   ],

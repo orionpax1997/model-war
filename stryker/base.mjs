@@ -119,6 +119,23 @@ const shared = {
 };
 
 /**
+ * `fragment()` 给**每一个**分片的 `mutate` 追加的排除项。
+ *
+ * 分片自己的 glob 只管「范围」(本包/本子系统),通用排除只在这里写一遍——抄到 12 份配置里,
+ * 下一份新配置就漏一条,而漏的那一条不会报错,只会让该分片的分数悄悄换了口径。
+ *
+ * 唯一那条是「排掉属性测试」:属性测试是**测试**,不是生产代码。`testFiles` 照旧按需收它们,
+ * 但 mutate 收进来等于「让测试给测试打分」:`packages/engine/src/processor/invariants.prop.ts`
+ * 一度落进 engine 那几片的变异范围,凭空造出一批 NoCoverage/Survived 变异体,
+ * 而那批数字会跟着基线入库 → 与「比较粒度 = 分片」的口径无关的噪声。
+ * 这也让入库基线与当前口径对齐:现有 10 份基线的来源报告里本来就没有任何属性测试文件。
+ *
+ * 注:这条 JSDoc 里写不出这条 glob 的原文——它的字符序列会在中途把块注释提前关掉,
+ * 这是本注释唯一的可读性代价。
+ */
+export const SHARED_MUTATE_EXCLUSIONS = ["!**/*.prop.ts"];
+
+/**
  * 造一个分片配置。
  *
  * @param {object} spec
@@ -130,7 +147,7 @@ const shared = {
 export function fragment({ name, mutate, testFiles }) {
   return {
     ...shared,
-    mutate,
+    mutate: [...mutate, ...SHARED_MUTATE_EXCLUSIONS],
     testFiles,
     // 每条 reporter 的默认路径不一致(html 默认在仓库根,json 默认在 reports/mutation/ 下),
     // 所以都显式写死,免得上层 CI 的 artifact 路径抄错一个;分片各写各的,互不覆盖。

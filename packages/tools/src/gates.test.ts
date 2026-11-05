@@ -77,7 +77,7 @@ import {
   tailSteps,
   withProbeFile,
 } from "./gates-harness.ts";
-import { MUTATION_SHARDS } from "./mutation/shards.ts";
+import { MUTATION_SHARDS, shardByName } from "./mutation/shards.ts";
 import { isShardBaseline } from "./mutation/ratchet.ts";
 import { sectionMarker } from "./generate/section.ts";
 
@@ -1847,10 +1847,12 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
 // 扫描仍是**观测**(没有行数红线)。
 //
 // 这一层能钉的外部可观察量:配置在不在、分片名与清单对不对得上、范围限不限定、每个入口有没有串上
-// 棘轮门禁、抬升命令在场且有没有溜进任何入口、**跑完变异入口的比较后入库基线字节变不变**,
+// 棘轮门禁、抬升命令在场且有没有溜进任何入口、**跑完变异入口后入库基线字节变不变**,
 // 以及用夹具报告跑真实门禁入口的三态退出码。
-// 真跑一遍变异(分钟级到小时级,`pnpm run mutate`)不在这一层的预算里,也不需要:
-// 判定是纯函数、门禁只读两份 JSON,所以「低一分就红」用夹具就能现做现验。
+// 真跑一变异的预算只给最小的那一片(`mutate:replay`,本机约 30s):它只证明「跑完入口后字节不变」
+// ——那是 ticket 08 的字面要求,只跑入口的后半段(棘轮门禁)证明不了 `stryker run` 那一半。
+// 「低一分就红」不需要真跑:判定是纯函数、门禁只读两份 JSON,夹具报告就现做现验。
+// 其余分片(engine / runner / tools:半小时到一小时)与抬基线命令一条都不跑。
 
 /** 分片配置目录与共享底座。读文本而不是 import:`.mjs` 无类型声明,import 会让 `tsc -b` 找不到声明。 */
 const STRYKER_DIR = `${repoRoot}stryker/`;
@@ -1871,7 +1873,27 @@ const shardConfigs = (): readonly string[] =>
     .filter((entry) => entry.endsWith(".mjs") && entry !== "base.mjs")
     .sort();
 
-it("Stryker 分片清单与配置同名:每片都有入库基线与串了棘轮门禁的入口脚本", () => {
+/**
+ * `fragment()` 给**每一个**分片追加的 `mutate` 排除项(读文本的理由同上:`.mjs` 无类型声明)。
+ * 抽不出来就返回空数组——那时下面那条断言会以「12 片全部是违规者」的形态红,不会安静通过。
+ */
+const sharedMutateExclusions = (): readonly string[] => {
+  const array =
+    /SHARED_MUTATE_EXCLUSIONS\s*=\s*\[([\s\S]*?)\]/.exec(readFileSync(STRYKER_BASE, "utf8"))?.[1] ??
+    "";
+  return [...array.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
+};
+
+/**
+ * **未播种**的分片:没有入库基线,靠棘轮的 `first-run` 不判红而不是靠一个假数字。
+ *
+ * 只该有这两片,理由同一条:没有覆盖各自 `mutate` 范围的真实报告。分片改造初期它们是拿
+ * 一次性单文件标定跑(`processor/economy.ts` / `src/retry.ts`)算的,拿单文件冒充整片会把
+ * 往后每一次全范围跑都推成「退化」。人类可读的记录在 `stryker/baseline/README.md`。
+ */
+const UNSEEDED_SHARDS = ["engine", "gen"] as const;
+
+it("Stryker 分片清单与配置同名:已播种的片有入库基线与串了棘轮门禁的入口脚本", () => {
   const configs = shardConfigs();
   // 清单是数据,分片名才是真源。两边逐字对齐:少一片、多一片、改一个名都当场红。
   expect(configs.length, `stryker/ 下的分片配置数变了:\n${configs.join("\n")}`).toBe(
@@ -1888,6 +1910,21 @@ it("Stryker 分片清单与配置同名:每片都有入库基线与串了棘轮�
   // 分片名唯一:两个分片同名会让它们的报告与基线互相覆盖。
   expect(new Set(configuredNames).size).toBe(configuredNames.length);
 
+  // 未播种清单不许漂:名单里的每一片必须真的没有基线文件(播种了就把它从名单里拿掉,
+  // 否则这条断言会红,提醒一起去改 README),名单外的每一片必须有。
+  for (const name of UNSEEDED_SHARDS) {
+    expect(shardByName(name), `未播种清单里的「${name}」不是分片`).toBeDefined();
+    const path = `${repoRoot}stryker/baseline/${name}.json`;
+    expect(existsSync(path), `「${name}」列在未播种清单里,却已经有基线文件 ${path}`).toBe(false);
+  }
+  // 名单必须反过来也全:README 点名了哪两片没有基线,读者与断言看的是同一份事实。
+  const readme = readFileSync(`${repoRoot}stryker/baseline/README.md`, "utf8");
+  for (const name of UNSEEDED_SHARDS) {
+    expect(readme, `stryker/baseline/README.md 没有点名未播种的分片「${name}」`).toContain(
+      `\`${name}\``,
+    );
+  }
+
   const scripts = manifest().scripts;
   for (const shard of MUTATION_SHARDS) {
     // 三条路径的命名规则由这里钉住:配置在 `stryker/`,基线在 `stryker/baseline/`,
@@ -1901,17 +1938,19 @@ it("Stryker 分片清单与配置同名:每片都有入库基线与串了棘轮�
     );
     expect(existsSync(`${repoRoot}${shard.config}`), `${shard.config} 不存在`).toBe(true);
 
-    // 基线入版本库:文件在、形状对、属于这个分片。缺了它,棘轮对这个分片就只剩「首次」。
-    const baselinePath = `${repoRoot}${shard.baseline}`;
-    expect(existsSync(baselinePath), `${shard.name} 没有入库基线 ${shard.baseline}`).toBe(true);
-    const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as {
-      shard?: string;
-      detected?: number;
-      valid?: number;
-    };
-    expect(baseline.shard, `${shard.baseline} 的 shard 字段对不上`).toBe(shard.name);
-    expect(Number.isInteger(baseline.detected), `${shard.baseline} 缺 detected`).toBe(true);
-    expect(Number.isInteger(baseline.valid), `${shard.baseline} 缺 valid`).toBe(true);
+    // 基线入版本库:已播种的片文件在、形状对、属于这个分片。缺了它,棘轮对这个分片就只剩「首次」。
+    if (!(UNSEEDED_SHARDS as readonly string[]).includes(shard.name)) {
+      const baselinePath = `${repoRoot}${shard.baseline}`;
+      expect(existsSync(baselinePath), `${shard.name} 没有入库基线 ${shard.baseline}`).toBe(true);
+      const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as {
+        shard?: string;
+        detected?: number;
+        valid?: number;
+      };
+      expect(baseline.shard, `${shard.baseline} 的 shard 字段对不上`).toBe(shard.name);
+      expect(Number.isInteger(baseline.detected), `${shard.baseline} 缺 detected`).toBe(true);
+      expect(Number.isInteger(baseline.valid), `${shard.baseline} 缺 valid`).toBe(true);
+    }
 
     // 入口:跑完变异就地比。比较没串上,棘轮就只是一份没人读的文件。
     const command = scripts[shard.script] ?? "";
@@ -1968,6 +2007,23 @@ it("engine-processor 分片仍限定结算管线,且棘轮不设绝对阈值", (
   expect(base, "共享底座里没有把阈值显式关掉").toContain(
     "thresholds: { high: 0, low: 0, break: null }",
   );
+});
+
+it("属性测试(*.prop.ts)不进任何分片的变异范围:它们是测试,不是生产代码", () => {
+  // 理由:属性测试进 mutate 等于「让测试给测试打分」——`processor/invariants.prop.ts` 一度被
+  // engine 那几片当成生产代码变异,凭空造出一批 NoCoverage/Survived,而那批数字会跟着基线入库。
+  // 排除项只写在 `stryker/base.mjs` 的 `fragment()` 里一份,这里算的是每片的**有效**排除集。
+  const shared = sharedMutateExclusions();
+  expect(
+    shared,
+    "stryker/base.mjs 的 fragment() 里抽不出共享排除项(或它不再包含 *.prop.ts)",
+  ).toContain("!**/*.prop.ts");
+
+  const offenders = shardConfigs().filter((file) => {
+    const effective = [...mutateGlobsOf(`${STRYKER_DIR}${file}`), ...shared];
+    return !effective.some((glob) => glob.startsWith("!") && glob.endsWith("*.prop.ts"));
+  });
+  expect(offenders, "这些分片的 mutate 会把属性测试当成生产代码变异").toEqual([]);
 });
 
 // ── 基线权柄:抬升命令在场,但它不在任何自动路径上 ────────────────
@@ -2078,18 +2134,29 @@ it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯
   ).toEqual(["test"]);
 });
 
-it("跑完变异入口的棘轮比较后,12 份入库基线的字节不变", () => {
+// 两条字节不变的必测,分两半:
+//   ① 入口的**后半段**(棘轮门禁)跑遍全部分片,喂夹具报告——不跑真实变异,零成本;
+//   ② 入口的**全部**(`stryker run` + 棘轮门禁)真跑最小的 `replay` 分片。
+// 只有①会留下一道缝:`stryker run` 那一半到底会不会碰基线没人验。② 把这道缝堵上。
+it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
   const gate = "packages/tools/src/mutation/run-mutation-ratchet-gate.ts";
   // 夹具报告 10/10(Killed 9 + Timeout 1),高于每一片的入库基线;全程不跑真实变异。
   const report = "packages/tools/src/mutation/fixtures/report-higher.json";
-  const before = MUTATION_SHARDS.map((shard) => ({
+  // 只对**实际存在**的基线比字节:未播种的分片(`UNSEEDED_SHARDS`)没有文件可比。
+  // 数量取实际存在的份数而不是写死,否则播不播种会让这条断言变成一个版本号。
+  const seeded = MUTATION_SHARDS.filter((shard) => existsSync(`${repoRoot}${shard.baseline}`));
+  expect(seeded.length, "一份入库基线都没有,这条断言会什么都不比").toBeGreaterThan(0);
+  expect(seeded.length, "实际存在的基线数与未播种清单对不上").toBe(
+    MUTATION_SHARDS.length - UNSEEDED_SHARDS.length,
+  );
+  const before = seeded.map((shard) => ({
     path: shard.baseline,
     bytes: readFileSync(`${repoRoot}${shard.baseline}`),
   }));
-  expect(before.length, "基线清单空了,这条断言会什么都不比").toBe(12);
 
-  // 变异入口里会跑我们自己代码的只有后半段(`stryker run` + 棘轮门禁),而它在 12 条入口里是同一段:
-  // 逐片跑一遍,顺带证明每片的默认基线路径都读得到(读不到会落进「首次」而不是「ok」)。
+  // 入口的后半段(`stryker run` + 棘轮门禁)在 12 条入口里是同一段代码,所以它只跑一遍就够:
+  // 逐片跑一次,顺带证明每片的默认报告与默认基线路径都指得对(读不到基线会落进「首次」
+  // 而不是「ok」)。未播种的两片也跑:它们落进「首次」,同样不许写文件。
   for (const shard of MUTATION_SHARDS) {
     const compared = run("node", [gate, `--shard=${shard.name}`, `--report=${report}`]);
     expect(compared.status, `${shard.name} 的棘轮比较没跑起来:\n${compared.output}`).toBe(0);
@@ -2103,6 +2170,35 @@ it("跑完变异入口的棘轮比较后,12 份入库基线的字节不变", () 
     ).toBe(true);
   }
 });
+
+// ticket 08 的字面要求是「跑完**变异入口**后基线文件字节不变」:上面那条只跑了入口的棘轮那半。
+// 这一条真跑一次完整的命名入口(`stryker run` + 棘轮门禁)。
+// 之所以可以是 replay:它是全仓最小的分片(338 个变异体,本机实测约 30s),而这条断言只证明
+// 「字节不变」,不证明「分数没退」——后者靠夹具报告已经验过,不需要真跑一次半夜的变异。
+// 大分片(engine / runner / tools:半小时到一小时)不在门禁自测的预算里;抬基线命令更不跑。
+it("真实跑一次 mutate:replay 之后,stryker/baseline/replay.json 的字节逐字不变", () => {
+  const baseline = "stryker/baseline/replay.json";
+  const before = readFileSync(`${repoRoot}${baseline}`);
+
+  const mutation = script("mutate:replay");
+
+  // 0 = 不低于基线,1 = 退化(棘轮红了)——两个退出码都说明变异跑完了、比较也跑了。
+  // spawn 失败(没有 stryker、进程起不来)会由 `run` 直接抛出,不会落在下面的 allowlist 里。
+  // 分数高低不是这条用例的断言对象:那一半由夹具报告那条用例负责。
+  expect(
+    [0, 1],
+    `mutate:replay 的退出码不是棘轮的两种判决(0/1):${String(mutation.status)}\n${mutation.output}`,
+  ).toContain(mutation.status);
+  // 「跑完了」这件事得在输出里有痕迹:没有它,一个什么都没跑的命令也能退 0。
+  expect(mutation.output, `mutate:replay 没有跑完棘轮比较:\n${mutation.output}`).toContain(
+    "变异棘轮 [replay]",
+  );
+
+  expect(
+    readFileSync(`${repoRoot}${baseline}`).equals(before),
+    `真实跑完 mutate:replay 之后入库基线被改写了:${baseline}`,
+  ).toBe(true);
+}, 180_000);
 
 it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线", () => {
   const entry = "packages/tools/src/mutation/accept-baseline.ts";

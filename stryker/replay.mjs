@@ -13,7 +13,6 @@ export default fragment({
   mutate: [
     "packages/replay/src/**/*.ts",
     "!packages/replay/src/**/*.test.ts",
-    "!packages/replay/src/**/*.prop.ts",
     "!packages/replay/src/**/*.d.ts",
   ],
   testFiles: [
