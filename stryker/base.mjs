@@ -116,6 +116,18 @@ const shared = {
 
   // 夜间每晚全量跑,基线才可比;本地想只跑改动部分时用 `--incremental`。
   incremental: false,
+
+  // ── 为什么每条变异入口都前置 `pnpm run build`(见 package.json 的 12 条 `mutate*`)──
+  //
+  // 上面那条「跨包 import 在沙箱里指向仓库外」是**运行时**的事:测试在沙箱里跑,但
+  // `packages/*/node_modules/@model-war/*` 的 pnpm 相对软链经 junction 后落到原仓库,而工作区包的
+  // `exports` 指向 `dist/`。`dist/` 是 gitignore 的——**新克隆里它不存在**,于是一份没有先构建的
+  // 沙箱只能跑起那些「只用相对 import」的测试:engine-processor 分片的 12 个测试文件里只剩 1 个
+  // 的 5 条用例能 collected,其余全部 collection 失败,而 Stryker 不会因此报错,它把少掉的覆盖
+  // 静默记成 NoCoverage。实测(全新克隆、未构建):dry-run 只 5 条用例、1218/1246 变异体 NoCoverage、
+  // 分数坍到 1.93%;同一棵树上先跑 `pnpm run build` 再 dry-run:126 条用例、数字回到基线。
+  // 所以「跑变异前必须有 dist」是这个夹具的**前提**,由命名入口自己声明,不靠调用方记得。
+  // `check:selfproof` 同一条理由(它用 `node` 直跑 `.ts` 入口并在加载时 import 工作区包)。
 };
 
 /**
