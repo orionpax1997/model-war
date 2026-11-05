@@ -77,7 +77,7 @@ import {
   tailSteps,
   withProbeFile,
 } from "./gates-harness.ts";
-import { MUTATION_SHARDS } from "./mutation/shards.ts";
+import { MUTATION_SHARDS, shardByName } from "./mutation/shards.ts";
 import { isShardBaseline } from "./mutation/ratchet.ts";
 import { sectionMarker } from "./generate/section.ts";
 
@@ -1871,7 +1871,16 @@ const shardConfigs = (): readonly string[] =>
     .filter((entry) => entry.endsWith(".mjs") && entry !== "base.mjs")
     .sort();
 
-it("Stryker 分片清单与配置同名:每片都有入库基线与串了棘轮门禁的入口脚本", () => {
+/**
+ * **未播种**的分片:没有入库基线,靠棘轮的 `first-run` 不判红而不是靠一个假数字。
+ *
+ * 只该有这两片,理由同一条:没有覆盖各自 `mutate` 范围的真实报告。分片改造初期它们是拿
+ * 一次性单文件标定跑(`processor/economy.ts` / `src/retry.ts`)算的,拿单文件冒充整片会把
+ * 往后每一次全范围跑都推成「退化」。人类可读的记录在 `stryker/baseline/README.md`。
+ */
+const UNSEEDED_SHARDS = ["engine", "gen"] as const;
+
+it("Stryker 分片清单与配置同名:已播种的片有入库基线与串了棘轮门禁的入口脚本", () => {
   const configs = shardConfigs();
   // 清单是数据,分片名才是真源。两边逐字对齐:少一片、多一片、改一个名都当场红。
   expect(configs.length, `stryker/ 下的分片配置数变了:\n${configs.join("\n")}`).toBe(
@@ -1888,6 +1897,21 @@ it("Stryker 分片清单与配置同名:每片都有入库基线与串了棘轮�
   // 分片名唯一:两个分片同名会让它们的报告与基线互相覆盖。
   expect(new Set(configuredNames).size).toBe(configuredNames.length);
 
+  // 未播种清单不许漂:名单里的每一片必须真的没有基线文件(播种了就把它从名单里拿掉,
+  // 否则这条断言会红,提醒一起去改 README),名单外的每一片必须有。
+  for (const name of UNSEEDED_SHARDS) {
+    expect(shardByName(name), `未播种清单里的「${name}」不是分片`).toBeDefined();
+    const path = `${repoRoot}stryker/baseline/${name}.json`;
+    expect(existsSync(path), `「${name}」列在未播种清单里,却已经有基线文件 ${path}`).toBe(false);
+  }
+  // 名单必须反过来也全:README 点名了哪两片没有基线,读者与断言看的是同一份事实。
+  const readme = readFileSync(`${repoRoot}stryker/baseline/README.md`, "utf8");
+  for (const name of UNSEEDED_SHARDS) {
+    expect(readme, `stryker/baseline/README.md 没有点名未播种的分片「${name}」`).toContain(
+      `\`${name}\``,
+    );
+  }
+
   const scripts = manifest().scripts;
   for (const shard of MUTATION_SHARDS) {
     // 三条路径的命名规则由这里钉住:配置在 `stryker/`,基线在 `stryker/baseline/`,
@@ -1901,17 +1925,19 @@ it("Stryker 分片清单与配置同名:每片都有入库基线与串了棘轮�
     );
     expect(existsSync(`${repoRoot}${shard.config}`), `${shard.config} 不存在`).toBe(true);
 
-    // 基线入版本库:文件在、形状对、属于这个分片。缺了它,棘轮对这个分片就只剩「首次」。
-    const baselinePath = `${repoRoot}${shard.baseline}`;
-    expect(existsSync(baselinePath), `${shard.name} 没有入库基线 ${shard.baseline}`).toBe(true);
-    const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as {
-      shard?: string;
-      detected?: number;
-      valid?: number;
-    };
-    expect(baseline.shard, `${shard.baseline} 的 shard 字段对不上`).toBe(shard.name);
-    expect(Number.isInteger(baseline.detected), `${shard.baseline} 缺 detected`).toBe(true);
-    expect(Number.isInteger(baseline.valid), `${shard.baseline} 缺 valid`).toBe(true);
+    // 基线入版本库:已播种的片文件在、形状对、属于这个分片。缺了它,棘轮对这个分片就只剩「首次」。
+    if (!(UNSEEDED_SHARDS as readonly string[]).includes(shard.name)) {
+      const baselinePath = `${repoRoot}${shard.baseline}`;
+      expect(existsSync(baselinePath), `${shard.name} 没有入库基线 ${shard.baseline}`).toBe(true);
+      const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as {
+        shard?: string;
+        detected?: number;
+        valid?: number;
+      };
+      expect(baseline.shard, `${shard.baseline} 的 shard 字段对不上`).toBe(shard.name);
+      expect(Number.isInteger(baseline.detected), `${shard.baseline} 缺 detected`).toBe(true);
+      expect(Number.isInteger(baseline.valid), `${shard.baseline} 缺 valid`).toBe(true);
+    }
 
     // 入口:跑完变异就地比。比较没串上,棘轮就只是一份没人读的文件。
     const command = scripts[shard.script] ?? "";
@@ -2078,18 +2104,25 @@ it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯
   ).toEqual(["test"]);
 });
 
-it("跑完变异入口的棘轮比较后,12 份入库基线的字节不变", () => {
+it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
   const gate = "packages/tools/src/mutation/run-mutation-ratchet-gate.ts";
   // 夹具报告 10/10(Killed 9 + Timeout 1),高于每一片的入库基线;全程不跑真实变异。
   const report = "packages/tools/src/mutation/fixtures/report-higher.json";
-  const before = MUTATION_SHARDS.map((shard) => ({
+  // 只对**实际存在**的基线比字节:未播种的分片(`UNSEEDED_SHARDS`)没有文件可比。
+  // 数量取实际存在的份数而不是写死,否则播不播种会让这条断言变成一个版本号。
+  const seeded = MUTATION_SHARDS.filter((shard) => existsSync(`${repoRoot}${shard.baseline}`));
+  expect(seeded.length, "一份入库基线都没有,这条断言会什么都不比").toBeGreaterThan(0);
+  expect(seeded.length, "实际存在的基线数与未播种清单对不上").toBe(
+    MUTATION_SHARDS.length - UNSEEDED_SHARDS.length,
+  );
+  const before = seeded.map((shard) => ({
     path: shard.baseline,
     bytes: readFileSync(`${repoRoot}${shard.baseline}`),
   }));
-  expect(before.length, "基线清单空了,这条断言会什么都不比").toBe(12);
 
   // 变异入口里会跑我们自己代码的只有后半段(`stryker run` + 棘轮门禁),而它在 12 条入口里是同一段:
   // 逐片跑一遍,顺带证明每片的默认基线路径都读得到(读不到会落进「首次」而不是「ok」)。
+  // 未播种的两片也跑一遍:它们落进「首次」,同样不许写文件。
   for (const shard of MUTATION_SHARDS) {
     const compared = run("node", [gate, `--shard=${shard.name}`, `--report=${report}`]);
     expect(compared.status, `${shard.name} 的棘轮比较没跑起来:\n${compared.output}`).toBe(0);

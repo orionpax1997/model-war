@@ -1,9 +1,0 @@
-{
-  "shard": "engine",
-  "detected": 50,
-  "valid": 73,
-  "score": 68.49,
-  "coverageBased": 74.63,
-  "source": "reports/mutation/engine.json",
-  "note": "来源报告只变异了 packages/engine/src/processor/economy.ts 一个文件(一次性标定跑),不覆盖本分片的 mutate 范围。全范围分数预计明显低于它(engine-runtime 那半边有 334 个 NoCoverage、181 个 Timeout),因此首次全范围跑很可能判红——那是本基线来源的问题,不是测试退化的证据,处置只能是显式的基线抬升(ADR-0026)。"
-}
