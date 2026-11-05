@@ -15,6 +15,11 @@ This repository uses Matt Pocock's engineering skills (installed under `.pi/skil
 - 探索子代理的产出是结论 + 关键文件：行号引用，不是文件转储；不要让它整段贴源码回来。
 - 实现与修复期间运行 `pnpm run check:quick` 和相关测试；完成 review 修复后，由主线程运行 `pnpm run verify:fast`。`verify:fast` 是 `check:quick`（格式、lint、轻量门禁）加默认快速 `test`（unit + property）的唯一收口命令；Vitest 会为工作区依赖做增量构建。`check` 全量门禁、`test:gates`、`test:slow`、`check:selfproof`、变异测试等专项质量检查仅在验收明确要求或改动直接影响其覆盖范围时运行，并说明原因。
 
+### 门禁纪律
+
+- **agent 不得运行 `pnpm run mutation:baseline:raise`。** 变异基线的抬升只由这条命令完成，它不在任何流水线、默认链或常跑入口上。agent 的职责是修测试把分数拉回去，不是抬基线让门禁变绿。
+- 这条与「`check:selfproof --probe` 只准用于反例」是同一个形状：**能改判据的开关，不能出现在判据自己的正常路径上**。门禁自测里它也只能指向临时路径，不许碰 `stryker/baseline/`。
+
 ### 工作记录与长期信息
 
 长期项目事实进入代码、配置、方向性设计文档或 ADR，并由对应位置作为唯一真源。分支、worktree 与临时任务记录服务于当前工作，完成后清理，不承担长期文档职责。
