@@ -106,7 +106,7 @@
 
 | 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick` | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁、散文禁抄取值门禁;**零构建**,贴得住每轮编辑循环 |
+| 编辑循环(每轮) | `check:quick` | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、验收落点门禁;**零构建**,贴得住每轮编辑循环 |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
 | 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
@@ -500,14 +500,16 @@ archive/<modelSlug>/<runId>/
 
 | 验收面 | 落点 |
 |---|---|
-| 重放确定性 | 属性测试(重放一致性、序列化往返)+ `modelwar verify` + 夜间重放扫描 |
-| 四方对等 | 属性测试(四重旋转对称)+ `modelwar map-lint` |
+| 重放确定性 | `packages/engine/src/determinism.test.ts`(十次重跑逐 tick `stateHash` 全等)+ `packages/replay/src/state-hash.prop.ts`(键序无关 / JSON 往返)+ `modelwar verify`(按 `input.json` 重算并逐 tick 比对) |
+| 四方对等 | `modelwar map-lint` + `apps/cli/src/map-lint/map-lint.test.ts`(四重旋转对称是静态判定 + 单测,不是属性测试) |
 | 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
-| 沙箱与预算 | 沙箱裁决单测 + 预算结构门禁 + 预算探针复核 |
+| 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `check:budget`(结构门禁)+ `check:budget-recheck`(探针复核) |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
-| 可追溯与复算 | 存档元数据读入端校验 + 对局输入物化 + 报告双轨 |
-| 评测网格与选拔复算 | 计划形状断言(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ 逐场复算比对 + 生成阶段分数与赛季口径分离 |
-| 状态与数值确定性 | 属性测试 + `stateHash` 断言(禁浮点门禁是其中一轨) |
+| 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
+| 评测网格与选拔复算 | `packages/runner/src/trial-plan.test.ts`(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ `packages/runner/src/selection-grid.test.ts`(逐场复算比对)+ `packages/runner/src/archive-report-v2.test.ts`(生成阶段分数与赛季口径分离) |
+| 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`(`stateHash` 断言)+ `check:no-float`(禁浮点门禁是其中一轨) |
+
+它自己有判据:`check:landings` 逐行验落点的存在性(命名脚本必在脚本清单里、`modelwar <子命令>` 必在 CLI 的 `COMMANDS` 里、文件与目录必须存在且被版本库跟踪、一行里一个都认不出即红),并顺带断言文档里以命名脚本形态出现的 token 都真的存在。判据只读这张表,**不把它变成生成物**——它的家就是这份文档。
 
 ## 12. 开放项(工程侧)
 

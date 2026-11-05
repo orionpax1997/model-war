@@ -31,6 +31,7 @@
     "check:no-float": "node packages/tools/src/gate/run-no-float-gate.ts",
     "check:budget": "node packages/tools/src/gate/run-budget-gate.ts",
     "check:prose": "node packages/tools/src/rules/run-prose-gate.ts",
+    "check:landings": "node packages/tools/src/gate/run-landing-gate.ts",
     "check:declared-deps": "node packages/tools/src/gate/run-declared-deps-gate.ts",
     "check:drift": "node packages/tools/src/generate/run-drift-gate.ts",
     "check:bench": "node packages/tools/src/benchmarks/run-benchmarks-gate.ts",
@@ -54,7 +55,7 @@
     "mutation:baseline:raise": "node packages/tools/src/mutation/accept-baseline.ts",
     "scan": "node packages/tools/src/gate/run-scan-gate.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
-    "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget && pnpm run check:prose",
+    "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget && pnpm run check:prose && pnpm run check:landings",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
     "check:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
     "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime"
