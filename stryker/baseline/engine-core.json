@@ -1,0 +1,8 @@
+{
+  "shard": "engine-core",
+  "detected": 1362,
+  "valid": 1782,
+  "score": 76.43,
+  "coverageBased": 79.88,
+  "source": "reports/mutation/engine-core.json"
+}

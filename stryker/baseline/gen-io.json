@@ -1,0 +1,8 @@
+{
+  "shard": "gen-io",
+  "detected": 878,
+  "valid": 1150,
+  "score": 76.35,
+  "coverageBased": 83.46,
+  "source": "reports/mutation/gen-io.json"
+}

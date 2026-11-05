@@ -1,0 +1,8 @@
+{
+  "shard": "schema",
+  "detected": 0,
+  "valid": 231,
+  "score": 0.0,
+  "coverageBased": 0.0,
+  "source": "reports/mutation/schema.json"
+}

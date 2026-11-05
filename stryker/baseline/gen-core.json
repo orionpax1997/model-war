@@ -1,0 +1,8 @@
+{
+  "shard": "gen-core",
+  "detected": 1895,
+  "valid": 2811,
+  "score": 67.41,
+  "coverageBased": 74.4,
+  "source": "reports/mutation/gen-core.json"
+}
