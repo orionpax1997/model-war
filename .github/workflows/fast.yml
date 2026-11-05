@@ -1,4 +1,4 @@
-# 主流水线(快链):PR 开/更新/重开与合入 main 时跑 `check:quick` + `test`。
+# 主流水线(快链):PR 开/更新/重开与合入 main 时跑 `check:quick` + `lint:types` + `test`。
 #
 # ── 只调命名脚本 ──
 # 两个 run 步都是 `pnpm run <script>`:CI 的失败信号只有一个来源——那条命名脚本本身
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   verify:
-    name: 快链(check:quick + test)
+    name: 快链(check:quick + lint:types + test)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -52,6 +52,11 @@ jobs:
 
       - name: check:quick
         run: pnpm run check:quick
+
+      # 类型感知 lint(`tsc -b` + `oxlint --type-aware`)。它只挂这条链,不进 `verify:fast`:
+      # 本地每轮跑会断反馈回路(hld §2.2.7)。仍是命名脚本,不直调 tsc / oxlint。
+      - name: lint:types
+        run: pnpm run lint:types
 
       - name: test
         run: pnpm run test

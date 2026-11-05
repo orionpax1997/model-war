@@ -10,7 +10,7 @@ ADR-0002 拒 CI 的理由是「流水线形态与仓库首个真实实现强相�
 ## Considered Options
 
 - **只做本地命名脚本编排,改 DAG 措辞(落选)**:DAG `:253` 关 M2 的剩余工作明写「无 CI、无跨进程确定性门禁」,只做本地等于 M2 的缺口永远不关,hld 与 DAG 的矛盾也只是换一边藏。
-- **最小 `.github/workflows/`(采纳)**:主流水线 = PR/合入触发快链(`check:quick` + `test`),夜间流水线 = 定时触发慢链(慢门禁 + `mutate`/`scan` 观测项;**成员以 `.github/workflows/nightly.yml` 为准**)。CI 只做复核不引入新断言;CI 无凭证、离线可跑(J 已办结)。
+- **最小 `.github/workflows/`(采纳)**:主流水线 = PR/合入触发快链,夜间流水线 = 定时触发慢链(慢门禁 + `mutate`/`scan` 观测项)。**两条链的成员以 `.github/workflows/*.yml` 与 `packages/tools/src/ci.test.ts` 的清单断言为准**,不在本 ADR 里复制(成员会变,决策不会)。CI 只做复核不引入新断言;CI 无凭证、离线可跑(J 已办结)。
 - **一次到位加夜间全量红线(落选)**:`mutate`/`scan` 尚无基线就设红线只会得到一条天天红的流水线;grill 已裁两者在 L 内只观测不设红线,设红线的那天另开 ADR。
 
 ## Consequences
