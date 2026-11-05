@@ -13,8 +13,10 @@
  *     探针必须是真实源码文件才会进视野。探针取 `.js` 而非 `.ts`,因为各包 tsconfig 的 include
  *     只收 `.ts` 且不开 allowJs——`.js` 进得了格式化与 lint 门禁、进不了编译,
  *     于是不会把 `tsc -b` 一起弄红,反例只证明它该证明的那一件事。
- *     唯一的例外是 `typescript/*` 那批规则(oxlint 不把它们施加到 .js 上),它们用 .ts 探针;
- *     反正 lint 用例里不跑 tsc,编译被染红也轮不到它说话。
+ *     例外是 `typescript/*` 与 `vitest/*` 那批规则(不施加到 `.js` 上),它们用 .ts 探针;
+ *     lint 用例里不跑 tsc,编译被染红也轮不到它说话。
+ *     **类型感知 lint 那一条是唯一的例外**:它要的正好是 `tsc` 那一半(`lint:types` 含 `tsc -b`),
+ *     所以探针必须**编得过**——它的红必须来自类型感知规则,而探针的编译产物得跟源码一起清。
  *   - **落进工具包源码树的 .ts 探针**(`__declared-deps-probe.ts`):给「声明即依赖」门禁用。
  *     它读的是 `packages/tools/src` 的源码,所以探针必须是 .ts;而它读不到 dist 里的任何东西,
  *     与禁浮点门禁同形态。
@@ -83,6 +85,21 @@ const SECTION_PROBE_PATH = "docs/__section-probe.md";
 /** 禁浮点反例用的探针路径:落在 engine 的运行时代码里,这道门禁才看得见它。 */
 const NO_FLOAT_PROBE = "packages/engine/src/__nofloat-probe.ts";
 
+/**
+ * 类型感知反例用的探针路径及其编译产物。
+ *
+ * 探针必须是 `.ts` 且落在某个包的 `tsconfig` include 里——`typescript/*` 那批规则靠类型信息,
+ * 拿一个不在项目里的文件去问,规则无从作答。代价是它会被 `tsc -b` 一起编出去,
+ * 所以源码与 `dist` 两买的清理都得有;只清源码的话,后面的 dist 巡航门禁会多看见一个孤儿模块。
+ */
+const TYPE_AWARE_PROBE = "packages/schema/src/__type-aware-probe.ts";
+const TYPE_AWARE_PROBE_OUTPUTS = [
+  "packages/schema/dist/__type-aware-probe.js",
+  "packages/schema/dist/__type-aware-probe.js.map",
+  "packages/schema/dist/__type-aware-probe.d.ts",
+  "packages/schema/dist/__type-aware-probe.d.ts.map",
+] as const;
+
 /** 本文件用过的全部探针路径(`gates-slow.test.ts` 用它自己的那一条,各自兜底)。 */
 const PROBES = [
   "packages/schema/src/__fmt-probe.js",
@@ -99,10 +116,12 @@ const PROBES = [
   UNRELATED_NOISE_PATH,
   SECTION_PROBE_PATH,
   VIOLATING_SCRIPT_PROBE_PATH,
+  TYPE_AWARE_PROBE,
 ] as const;
 
 afterAll(() => {
-  for (const probe of PROBES) {
+  // 类型感知反例的探针被 `tsc -b` 编出去过,产物跟着源码一起清(参见 `TYPE_AWARE_PROBE`)。
+  for (const probe of [...PROBES, ...TYPE_AWARE_PROBE_OUTPUTS]) {
     rmSync(`${repoRoot}${probe}`, { force: true });
   }
 });
@@ -1243,6 +1262,51 @@ it("lint 门禁:被禁写法被拦下,改正后放行", () => {
   expect(anyFixed.status, `unknown 仍被拦下:\n${anyFixed.output}`).toBe(0);
 
   expect(script("lint").status).toBe(0);
+});
+
+// ── 类型感知 lint 反例:主流水线那道门禁真的带着规则 ──────────────────────────
+
+/** 放一个类型感知探针进去,跑 `body`,源码与编译产物都撤掉。 */
+const withTypeAwareProbe = (contents: string, body: () => Outcome): Outcome => {
+  try {
+    return withProbeFile(TYPE_AWARE_PROBE, contents, body);
+  } finally {
+    for (const output of TYPE_AWARE_PROBE_OUTPUTS) {
+      rmSync(`${repoRoot}${output}`, { force: true });
+    }
+  }
+};
+
+it("类型感知门禁:tsc 编得过的类型级违规让 lint:types 红,撤掉即绿", () => {
+  // 这一条与上面的 `lint 门禁` 不是同一件事。上面那道是语法级(`oxlint apps packages`),
+  // 这里是类型感知那一半(`oxlint --type-aware`):规则要读类型信息才知道自己该不该说话。
+  // 主流水线挂的就是后者(`lint:types`),所以「它真的带着规则」只能用一条带类型的反例来证。
+  const clean = script("lint:types");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 探针的选型标准只有一条:**tsc 完全编得过,只有类型感知规则看得见**。
+  // `unknown | string` 是合法类型,不是编译错误;它错在联合里 `unknown` 吞掉了另一半——
+  // 这正是「只加类型检查(`tsc`)是无效的」那句话的样本:红线在那半边上,不在这半边上。
+  const violated = withTypeAwareProbe('export const probe: unknown | string = "x";\n', () =>
+    script("lint:types"),
+  );
+  expect(violated.status, `类型感知违规没有让门禁非零退出:\n${violated.output}`).toBe(1);
+  // 点名规则本身:非零也可能是别的步骤顺手红了,那样这条反例证明的就不是它要证的那件事。
+  expect(violated.output, violated.output).toContain("no-redundant-type-constituents");
+  // 并且断言红线不是编译失败:报告里不应出现 tsc 的错误行(`error TS…`)。
+  expect(violated.output, `探针竟然没编过,反例证错了东西:\n${violated.output}`).not.toContain(
+    "error TS",
+  );
+
+  // 还原:同一路径、同一道门禁,内容换成不触发规则的形态——判决跟内容走,不跟文件名走。
+  const restored = withTypeAwareProbe('export const probe: unknown = "x";\n', () =>
+    script("lint:types"),
+  );
+  expect(restored.status, `违规改成干净形态后仍被拦下:\n${restored.output}`).toBe(0);
+
+  // 探针已撤,真实树必须回到绿。这一条是兜底:前两行里任何一步的清理漏了,都会在这里红。
+  const after = script("lint:types");
+  expect(after.status, `撤掉探针后类型感知门禁没有回到绿:\n${after.output}`).toBe(0);
 });
 
 // ── 测试纪律门禁反例:三条 vitest 规则真的挂在门禁上 ────────────────────────
