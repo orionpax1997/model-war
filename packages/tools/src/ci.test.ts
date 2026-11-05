@@ -39,7 +39,8 @@ const nightly = workflowText("nightly.yml");
 /** 主链成员(ADR-0010:PR/合入触发的快链 = `check:quick` + `lint:types` + `test`)。 */
 const FAST_MEMBERS = ["check:quick", "lint:types", "test"] as const;
 
-/** 夜间硬门禁:任一红 = 夜间链红。 */
+/** 夜间硬门禁:任一红 = 夜间链红。 `mutate` 在这里而不是观测项,因为它是棘轮(ADR-0026):
+ * 不设绝对阈值,但「同一分片比入库基线低」是退化,退化即红。 */
 const NIGHTLY_HARD_GATES = [
   "check",
   "test:gates",
@@ -48,10 +49,11 @@ const NIGHTLY_HARD_GATES = [
   "check:cross-process",
   "check:limits",
   "check:budget-recheck",
+  "mutate",
 ] as const;
 
-/** 夜间观测项:只落盘不设红线,红不阻断(ADR-0010、hld §2.2.7)。 */
-const NIGHTLY_OBSERVATIONS = ["mutate", "scan"] as const;
+/** 夜间观测项:只落盘不设红线,红不阻断(ADR-0010、ADR-0026:后者的棘轮只管 `mutate`,`scan` 仍只观测)。 */
+const NIGHTLY_OBSERVATIONS = ["scan"] as const;
 
 const sorted = (values: readonly string[]): readonly string[] => [...values].sort();
 
@@ -112,7 +114,7 @@ it("主链成员 = check:quick + lint:types + test", () => {
   expect(sorted(namedScripts(fast))).toEqual(sorted(FAST_MEMBERS));
 });
 
-it("夜间链硬门禁齐全,观测项恰为 mutate / scan", () => {
+it("夜间链硬门禁齐全,观测项恰为 scan", () => {
   expect(sorted(hardGateScripts(nightly))).toEqual(sorted(NIGHTLY_HARD_GATES));
   expect(sorted(observationalScripts(nightly))).toEqual(sorted(NIGHTLY_OBSERVATIONS));
 

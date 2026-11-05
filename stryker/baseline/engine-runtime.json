@@ -1,0 +1,8 @@
+{
+  "shard": "engine-runtime",
+  "detected": 345,
+  "valid": 803,
+  "score": 42.96,
+  "coverageBased": 73.56,
+  "source": "reports/mutation/engine-runtime.json"
+}

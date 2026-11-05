@@ -1,0 +1,8 @@
+{
+  "shard": "gen-pipeline",
+  "detected": 478,
+  "valid": 530,
+  "score": 90.19,
+  "coverageBased": 93.36,
+  "source": "reports/mutation/gen-pipeline.json"
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "files": {
+    "packages/replay/src/fixture.ts": {
+      "language": "typescript",
+      "mutants": [
+        { "id": "0", "mutatorName": "EqualityOperator", "status": "Killed" },
+        { "id": "1", "mutatorName": "StringLiteral", "status": "Killed" },
+        { "id": "2", "mutatorName": "ArithmeticOperator", "status": "Killed" },
+        { "id": "3", "mutatorName": "LogicalOperator", "status": "Killed" },
+        { "id": "4", "mutatorName": "ConditionalExpression", "status": "Killed" },
+        { "id": "5", "mutatorName": "BlockStatement", "status": "Killed" },
+        { "id": "6", "mutatorName": "ArrayDeclaration", "status": "Killed" },
+        { "id": "7", "mutatorName": "BooleanLiteral", "status": "Killed" },
+        { "id": "8", "mutatorName": "ObjectLiteral", "status": "Killed" },
+        { "id": "9", "mutatorName": "OptionalChaining", "status": "Timeout" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "shard": "engine-processor",
+  "detected": 49,
+  "valid": 73,
+  "score": 67.12,
+  "coverageBased": 75.38,
+  "source": "reports/mutation/engine-processor.json",
+  "note": "来源报告只变异了 packages/engine/src/processor/economy.ts 一个文件(一次性标定跑),不覆盖本分片的 mutate 范围(processor/**)。它因此偏低:首次全范围跑大概率高于它,棘轮判 ok 但约束偏松,应在全范围跑完之后显式抬升。"
+}

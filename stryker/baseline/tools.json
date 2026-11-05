@@ -1,0 +1,8 @@
+{
+  "shard": "tools",
+  "detected": 822,
+  "valid": 2072,
+  "score": 39.67,
+  "coverageBased": 69.31,
+  "source": "reports/mutation/tools.json"
+}

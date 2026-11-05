@@ -1,0 +1,8 @@
+{
+  "shard": "runner",
+  "detected": 3486,
+  "valid": 5433,
+  "score": 64.16,
+  "coverageBased": 69.65,
+  "source": "reports/mutation/runner.json"
+}
