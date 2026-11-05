@@ -4,7 +4,7 @@ status: accepted
 
 # 执行器的缝就是那两次宿主桥调用,中间不设任何表示
 
-`engine:runner` 那个缝**照 hld §4.5 已经写好的两次桥调用原样交付**:`__setSnapshot(snapshot)` 进、`__drainIntents()` 出。`StubRunner` 与 `QuickJsRunner` 是这个缝的两个适配器,都不在缝与适配器之间加中间表示。测试侧的参赛策略写成**普通 TS 函数**,不经字符串、不经 VM。
+引擎与执行器之间那个缝**照 hld §4.5 已经写好的两次桥调用原样交付**:`__setSnapshot(snapshot)` 进、`__drainIntents()` 出。`StubRunner` 与 `QuickJsRunner` 是这个缝的两个适配器,都不在缝与适配器之间加中间表示。测试侧的参赛策略写成**普通 TS 函数**,不经字符串、不经 VM。
 
 hld §5 已经把这条缝的动机写死了:「§5.0 的 `Runner` 缝**只为可测性**存在」,而 §5 的边界说明写着「不为『未来换 VM』保留抽象层(那是投机抽象)」。本决定是那两句在类型层面的落地。
 
