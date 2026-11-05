@@ -15,6 +15,7 @@ reports/
 # Stryker 的沙箱与日志:变异体复制进沙箱后再插桩,不影响源码树
 .stryker-tmp/
 stryker.log
+stryker-setup-*.js
 
 # 本地子代理模型配置
 .pi/subagents-lite.json
