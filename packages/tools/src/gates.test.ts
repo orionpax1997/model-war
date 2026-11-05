@@ -83,6 +83,14 @@ const SECTION_PROBE_PATH = "docs/__section-probe.md";
 /** 禁浮点反例用的探针路径:落在 engine 的运行时代码里,这道门禁才看得见它。 */
 const NO_FLOAT_PROBE = "packages/engine/src/__nofloat-probe.ts";
 
+/**
+ * 散文禁抄取值反例用的探针路径:落在 `docs/adr/` 里。
+ *
+ * 那个目录是**整目录扫**的,所以探针不必另进清单就会进视野——这一条同时证明「ADR 不是按文件豁免」
+ * 与「静态陈述会红」。
+ */
+const PROSE_PROBE_PATH = "docs/adr/__prose-probe.md";
+
 /** 本文件用过的全部探针路径(`gates-slow.test.ts` 用它自己的那一条,各自兜底)。 */
 const PROBES = [
   "packages/schema/src/__fmt-probe.js",
@@ -99,6 +107,7 @@ const PROBES = [
   UNRELATED_NOISE_PATH,
   SECTION_PROBE_PATH,
   VIOLATING_SCRIPT_PROBE_PATH,
+  PROSE_PROBE_PATH,
 ] as const;
 
 afterAll(() => {
@@ -971,6 +980,88 @@ it("预算结构门禁挂在 check:quick,且没被挪进按需 / 慢链", () => 
   expect(scripts["test"] ?? "", "预算结构门禁被挪进了默认测试").not.toContain("check:budget");
   // 末尾那组仍是「提交内容对不对」的复核:结构门禁不属于那里。
   expect(tailSteps(), "预算结构门禁被挪进了全量门禁末尾复核组").not.toContain("check:budget");
+});
+
+// ── 散文禁抄取值门禁:静态陈述变红,变更记账放行,ADR 目录被扫 ──────────────────
+//
+// 这道判据早就实现、也有自测,但一直没挂到任何命名脚本上(ADR-0008 因此把它叫「待接线判据」)。
+// 这里断言的是**接线之后**的外部可观察行为:命名脚本的退出码与报告文本。
+//
+// 反例的探针落在 `docs/adr/` 里:那个目录是整目录扫的,所以探针不必另进清单就会进视野。
+// 这一条同时证明「ADR 不是按文件豁免」与「静态陈述会红」——按文件豁免正是 ADR-0008 明文否决的修法。
+
+/**
+ * 改一份**门禁按源码文本读**的真源,跑 body,无论成败都按字节还原。
+ *
+ * 与 `withPatchedRuleset` 同形,区别只在目标:散文判据读的是键清单的**源码文本**(零构建),
+ * 所以反例不需要 `tsc -b`,改完当场生效。
+ */
+const withPatchedText = (
+  path: string,
+  patch: (source: string) => string,
+  body: () => Outcome,
+): Outcome => {
+  const file = `${repoRoot}${path}`;
+  const original = readFileSync(file, "utf8");
+  const patched = patch(original);
+  // 补丁没打上 = 判据随真源改了形状,这条用例会安静地测一个不存在的东西。必须当场红。
+  expect(patched, "补丁没有改动真源,这条反例不成立").not.toBe(original);
+  writeFileSync(file, patched, "utf8");
+  try {
+    return body();
+  } finally {
+    writeFileSync(file, original, "utf8");
+  }
+};
+
+it("散文禁抄取值门禁:静态陈述变红,还原变绿", () => {
+  const clean = script("check:prose");
+  expect(clean.status, clean.output).toBe(0);
+  // 规模自证:报告必须给出扫到的文档数与名字数——「退出 0」只有在真的扫过东西时才成立。
+  expect(clean.output, clean.output).toContain("份文档");
+  expect(clean.output, clean.output).toContain("个受管参数名");
+
+  const violated = withProbeFile(PROSE_PROBE_PATH, "# 探针\n\n携带上限:`carryLimit`(=20)。\n", () =>
+    script("check:prose"),
+  );
+  expect(violated.status, "被扫目录里出现静态陈述时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain(PROSE_PROBE_PATH);
+  expect(violated.output, violated.output).toContain("carryLimit");
+
+  expect(script("check:prose").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("散文禁抄取值门禁:变更记账(旧值 → 新值)放行", () => {
+  const accounting = withProbeFile(
+    PROSE_PROBE_PATH,
+    "# 探针\n\n预算终值改了两处:`eventTickLimit` 10000→50000、`apiCallTickLimit` 300 -> 800。\n",
+    () => script("check:prose"),
+  );
+  expect(accounting.status, accounting.output).toBe(0);
+});
+
+it("散文禁抄取值门禁:抽不出参数名时按失败处理(空转反例)", () => {
+  // 把键清单的起点标记改掉 = 源码文本抽取退化。此时「没有违规」不等于「散文干净」,
+  // 而是「什么也没查」——必须按失败处理,理由来自共享的空转检测。
+  const broken = withPatchedText(
+    "packages/schema/src/ruleset-keys.ts",
+    (source) => source.replace("export const RULESET_KEY_CATALOG = {", "const RENAMED_CATALOG = {"),
+    () => script("check:prose"),
+  );
+  expect(broken.status, "抽不出参数名时门禁必须非零退出").toBe(1);
+  expect(broken.output, broken.output).toContain("0 个键清单参数名");
+});
+
+it("散文禁抄取值门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它必须挂在默认的快门禁上,否则散文里抄取值时没人拦。
+  expect(scripts["check:quick"] ?? "", "散文判据不在快门禁里").toContain("check:prose");
+  // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "散文判据被挪进了按需门禁").not.toContain("check:prose");
+  expect(scripts["test:slow"] ?? "", "散文判据被挪进了慢链").not.toContain("check:prose");
+  expect(scripts["test"] ?? "", "散文判据被挪进了默认测试").not.toContain("check:prose");
+  // 末尾那组仍是「提交内容对不对」的复核:散文判据属于编辑循环,不属于那里。
+  expect(tailSteps(), "散文判据被挪进了全量门禁末尾复核组").not.toContain("check:prose");
 });
 
 // ── 生成物漂移检查:API 面的表(真源是符号表与后果行,落在契约文档的正文里) ─────────
