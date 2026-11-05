@@ -597,7 +597,7 @@ it("find 家族换上等价实现后仍与规范同语义(值 / 索引 / thisArg
   }
 }, 30_000);
 
-it("规避 quickjs-ng #1792:中断落在 find 里之后再强制回收不再断言崩溃", async () => {
+it("规避 quickjs-ng #1792:中断落在 find 里之后再强制回收不崩(每次回收都显式断言)", async () => {
   // 载入期建好大数组(此时计数未 arm,不烧事件);每 tick 的 `loop()` 只做一次 find。
   // 事件上限压到 10000,find 扫描途中必被中断——未规避时下一次 `runGC()` 即 trap。
   const script = [
@@ -613,20 +613,34 @@ it("规避 quickjs-ng #1792:中断落在 find 里之后再强制回收不再断�
     eventTickLimit: 10000,
   });
   try {
-    for (let tick = 0; tick < 8; tick++) {
+    const totalTicks = 8;
+    for (let tick = 0; tick < totalTicks; tick++) {
       session.setSnapshot(snapshotOf(tick));
       session.beginTick();
+      let thrown = false;
       try {
         session.runLoop();
         session.pumpJobs();
       } catch {
         // 事件计数截停本 tick:与真执行器同路,不当作 engine-crash。
+        thrown = true;
       }
-      session.endTick();
-      // 真执行器 tick 末的次序:强制回收 → 读存活堆 → 交回意图。
+      const readings = session.endTick();
+      // 前提断言:本 tick 真的**在 find 扫描途中**被事件计数截停。少了这一条,「没崩」可能
+      // 只是因为压根没走到缺陷路径(例如 find 提前结束、事件上限没生效),用例会恒绿。
+      expect(readings.eventTripped, `tick ${tick} 没有被事件计数截停,没走到 #1792 那条路径`).toBe(
+        true,
+      );
+      expect(thrown, `tick ${tick} 的截停没有从 runLoop 抛出来`).toBe(true);
+      // 判据断言:每次回收都是真实的第四步调用,不再崩溃的原判据保持不变
+      // (未规避时它撞在 gc_decref_child / js_free_shape0 的断言上,trap 直接让整个用例失败)。
+      // 下面三处都有返回值,断言落在返回值上——「跑完了」不再等同于「没崩」。
       session.runGC();
-      session.memoryUsage();
-      session.drainIntents();
+      expect(
+        session.memoryUsage().mallocSize,
+        `tick ${tick} 强制回收之后的存活堆读数不是正数`,
+      ).toBeGreaterThan(0);
+      expect(session.drainIntents().intents, `tick ${tick} 交回了脚本没产生的意图`).toEqual([]);
     }
   } finally {
     session.dispose();

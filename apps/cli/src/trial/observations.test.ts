@@ -95,7 +95,8 @@ it("落盘：每行一个 JSON，末尾换行（与回放 JSONL 同种行式）"
 it("没有读数 → 不落盘，也不创建文件（路径都不碰）", () => {
   const path = join(scratch, "never-written.jsonl");
   expect(writeTrialObservations(path, []).ok).toBe(true);
-  expect(() => readFileSync(path, "utf8")).toThrow();
+  // 路径都没碰过,所以读回来的就是 Node 的 `ENOENT`;消息钉住「真的没落盘」这件事。
+  expect(() => readFileSync(path, "utf8")).toThrow("ENOENT");
 });
 
 it("写到一半失败：旧完整观测保留，半截文件清理，返回写盘原因", () => {
@@ -128,7 +129,7 @@ it("首次写到一半失败：目标不存在，半截临时文件清理", () =
     ok: false,
     reason: "injected first write failure",
   });
-  expect(() => readFileSync(path, "utf8")).toThrow();
+  expect(() => readFileSync(path, "utf8")).toThrow("ENOENT");
   expect(readdirSync(directory)).toEqual([]);
 });
 
@@ -151,7 +152,7 @@ it.each([true, false])("rename 失败（旧目标存在：%s）：目标状态�
     expect(readFileSync(path, "utf8")).toBe(previous);
     expect(readdirSync(directory)).toEqual(["observed-r1.jsonl"]);
   } else {
-    expect(() => readFileSync(path, "utf8")).toThrow();
+    expect(() => readFileSync(path, "utf8")).toThrow("ENOENT");
     expect(readdirSync(directory)).toEqual([]);
   }
 });

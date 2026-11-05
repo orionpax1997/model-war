@@ -242,9 +242,18 @@ it("选拔身份/hash/计分被改、缺优化阶段、实际 TS 错配或未测
       },
     },
   ];
-  for (const changed of changes) {
+  // 每条篡改都要落在**它该落在的那一关**:候选/冻结 hash 关系、胜者身份、形状(少一个候选)、
+  // 优化阶段与选拔的逐位一致。消息取自 `archive-optimization.ts` 与 v1 校验的抛点。
+  const expected = [
+    "选拔候选、冻结 hash 或执行环境与优化存档不一致",
+    "选拔胜者身份或选择理由不一致",
+    "优化存档元数据形状不合法",
+    "选拔候选、冻结 hash 或执行环境与优化存档不一致",
+  ] as const;
+  expect(changes).toHaveLength(expected.length);
+  for (const [index, changed] of changes.entries()) {
     expect(validateArchiveMeta(changed, provenance(meta)).ok).toBe(false);
-    expect(() => optimizationMetaOf(changed)).toThrow();
+    expect(() => optimizationMetaOf(changed), `changed ${String(index)}`).toThrow(expected[index]);
   }
   const missing = { ...meta };
   delete missing.optimization;
@@ -417,7 +426,7 @@ it("历史 earlier-stage 同分档经公共 meta 与真实 report CLI 读取，�
   expect(readFileSync(join(directory, "meta.json"))).toEqual(bytes);
   const wrongReason = { ...meta, selection: { ...meta.selection!, reason: "later-stage" } };
   expect(validateArchiveMeta(wrongReason, provenance(meta)).ok).toBe(false);
-  expect(() => optimizationMetaOf(wrongReason)).toThrow();
+  expect(() => optimizationMetaOf(wrongReason)).toThrow("选拔胜者身份或选择理由不一致");
 });
 
 it("selection 失败报告保留三个合法候选及 TS/JS 证据，stage2 是最后阶段但无冻结胜者", async () => {
@@ -599,8 +608,8 @@ it("同一较早胜者贯通正式赛季物化输入、CLI 真实装载及生成
   };
   writeFileSync(join(root, "archive/alpha/r1/meta.json"), JSON.stringify(tampered));
   expect(validateArchiveMeta(tampered, provenance(meta)).ok).toBe(false);
-  expect(() => optimizationMetaOf(tampered)).toThrow();
-  expect(() => readArchiveReports(root)).toThrow();
+  expect(() => optimizationMetaOf(tampered)).toThrow("选拔候选计分或结果顺序不一致");
+  expect(() => readArchiveReports(root)).toThrow("无法生成摘要");
   let spawned = 0;
   await expect(
     scheduleSeason(
@@ -612,7 +621,7 @@ it("同一较早胜者贯通正式赛季物化输入、CLI 真实装载及生成
         },
       },
     ),
-  ).rejects.toThrow();
+  ).rejects.toThrow("选拔候选计分或结果顺序不一致");
   expect(spawned).toBe(0);
 });
 

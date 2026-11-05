@@ -346,7 +346,7 @@ it.each([
 it("候选产物字节被换、观测文件读不到、汇总说的不是这张网格都拒", async () => {
   const bytes = fixture();
   writeFileSync(bytes.candidates[1]!.sourcePath, "tampered");
-  await expect(execute(bytes)).rejects.toThrow();
+  await expect(execute(bytes)).rejects.toThrow("选拔候选 TS/JS 字节不一致");
 
   const missing = fixture();
   rmSync(missing.candidates[2]!.observationsPath);

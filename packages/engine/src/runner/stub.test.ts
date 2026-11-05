@@ -68,14 +68,15 @@ it("桩执行器的观测恒为空:它没有预算事实可报", () => {
 
 it("协议误用当场抛:setSnapshot 之前 drain、或者一个 tick drain 两次", () => {
   const beforeSet = stubRunner(() => []);
-  expect(() => beforeSet.drainIntents()).toThrow();
+  // 消息取自 `stub.ts` 的 `DRAINED_BEFORE_SET`:断言「就是顺序反了这一条」,不是「抛了点什么」。
+  expect(() => beforeSet.drainIntents()).toThrow("执行器在收到快照之前就被要求交回 intents");
 
   const twice = stubRunner(() => []);
   twice.setSnapshot(snapshotOf(0));
   twice.drainIntents();
   // 「drain 可以随便调」的反例:这一条红。一个 tick 一次 `__drainIntents()` 是协议,
   // 调错要在缝上停住,而不是渗进结算。
-  expect(() => twice.drainIntents()).toThrow();
+  expect(() => twice.drainIntents()).toThrow("一个 tick 里向同一个执行器要了两次 intents");
   // 下一个 tick 重新武装:「一个 tick 一次」是每 tick 计一次,不是整局只准一次。
   twice.setSnapshot(snapshotOf(1));
   expect(twice.drainIntents()).toEqual({ intents: [], observations: [] });
