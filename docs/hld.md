@@ -110,7 +110,7 @@
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
 | 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑 |
-| 按需 → 夜间 | `mutate` / `scan` | **只观测、不设红线** |
+| 按需 → 夜间 | `mutate` / `mutate:<分片>` / `scan` | `mutate*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`scan` 仍**只观测、不设红线** |
 
 > **快反馈优先**:类型感知 lint 超过 ~10s,agent 就会「写完一起跑」,反馈回路断掉。门禁耗时是**基线不是承诺**——把它写成硬约束,后来者会为了凑数字改门禁覆盖面,那比慢几秒坏得多。
 
