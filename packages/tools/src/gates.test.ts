@@ -109,6 +109,14 @@ const TYPE_AWARE_PROBE_OUTPUTS = [
  */
 const PROSE_PROBE_PATH = "docs/adr/__prose-probe.md";
 
+/**
+ * 验收落点反例用的探针路径:同样落在 `docs/adr/` 里。
+ *
+ * 那个目录是**整目录扫**的,所以探针不必另进清单就会进视野——这一条同时证明「文档扫描面
+ * 不是按文件豁免的」与「脚本形态的 token 必须真的存在」。
+ */
+const LANDING_PROBE_PATH = "docs/adr/__landing-probe.md";
+
 /** 本文件用过的全部探针路径(`gates-slow.test.ts` 用它自己的那一条,各自兜底)。 */
 const PROBES = [
   "packages/schema/src/__fmt-probe.js",
@@ -127,6 +135,7 @@ const PROBES = [
   VIOLATING_SCRIPT_PROBE_PATH,
   TYPE_AWARE_PROBE,
   PROSE_PROBE_PATH,
+  LANDING_PROBE_PATH,
 ] as const;
 
 afterAll(() => {
@@ -1082,6 +1091,129 @@ it("散文禁抄取值门禁挂在 check:quick,且没被挪进按需 / 慢链", 
   expect(scripts["test"] ?? "", "散文判据被挪进了默认测试").not.toContain("check:prose");
   // 末尾那组仍是「提交内容对不对」的复核:散文判据属于编辑循环,不属于那里。
   expect(tailSteps(), "散文判据被挪进了全量门禁末尾复核组").not.toContain("check:prose");
+});
+
+// ── 验收落点门禁:落点表自己的存在性判据 ─────────────────────────────────────
+//
+// 这张表自称「验收写在能被跑出来的东西上」,所以它自己也得有判据:每一行至少一个可执行
+// token,每个 token 按自己的类别(命名脚本 / CLI 子命令 / 文件 / 目录)验存在性。
+//
+// 反例改的是 `docs/hld.md` 的**真本表**,不是夹具:与散文判据同一条纪律——一条只在假文档上
+// 成立的判据,和没有判据是同一种东西。每一条反例都先把「改哪里」用验收面定位再整格替换,
+// 于是表格以后加行、改措辞都不会把这条用例弄成「补丁没打上」的假红。
+
+/** 把 §11 表里某个验收面的落点单元格整格换掉。全表就这一格匹配,补丁没打上会在 `withPatchedText` 里当场红。 */
+const patchLandingRow =
+  (face: string, landing: string): ((source: string) => string) =>
+  (source) =>
+    source.replace(new RegExp(`\\| ${face} \\| [^\\n]* \\|`), `| ${face} | ${landing} |`);
+
+it("验收落点门禁:全绿,且报告给出规模自证", () => {
+  const clean = script("check:landings");
+  expect(clean.status, clean.output).toBe(0);
+  // 规模自证:「退出 0」只有在真的查过表与文档时才成立(8 行落点、多份文档)。
+  expect(clean.output, clean.output).toContain("行落点");
+  expect(clean.output, clean.output).toContain("个可执行 token");
+  expect(clean.output, clean.output).toContain("份文档");
+  expect(clean.output, clean.output).toContain("个 CLI 子命令");
+});
+
+it("验收落点门禁:某行落点改成不存在的文件 → 变红,还原 → 变绿", () => {
+  const violated = withPatchedText(
+    "docs/hld.md",
+    patchLandingRow("只读隔离", "`packages/engine/src/snapshot/__no-such-landing.test.ts`"),
+    () => script("check:landings"),
+  );
+  expect(violated.status, "落点指向不存在的文件时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("__no-such-landing.test.ts");
+  expect(violated.output, violated.output).toContain("文件路径");
+
+  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("验收落点门禁:某行落点改成不存在的脚本名 → 变红,还原 → 变绿", () => {
+  const violated = withPatchedText(
+    "docs/hld.md",
+    patchLandingRow("契约可读性", "`check:no-such-landing`"),
+    () => script("check:landings"),
+  );
+  expect(violated.status, "落点指向不存在的命名脚本时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("check:no-such-landing");
+  expect(violated.output, violated.output).toContain("scripts 里没有这个名字");
+
+  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("验收落点门禁:某行落点改成不存在的 CLI 子命令 → 变红,还原 → 变绿", () => {
+  const violated = withPatchedText(
+    "docs/hld.md",
+    patchLandingRow("四方对等", "`modelwar no-such-command`"),
+    () => script("check:landings"),
+  );
+  expect(violated.status, "落点指向不存在的子命令时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("no-such-command");
+  expect(violated.output, violated.output).toContain("COMMANDS 里没有");
+
+  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("验收落点门禁:某行落点整行退回散文 → 变红(一行一个可执行 token 都没有)", () => {
+  const violated = withPatchedText(
+    "docs/hld.md",
+    patchLandingRow("可追溯与复算", "存档元数据读入端校验 + 对局输入物化 + 报告双轨"),
+    () => script("check:landings"),
+  );
+  expect(violated.status, "整行落点是散文时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("可追溯与复算");
+  expect(violated.output, violated.output).toContain("散文不是落点");
+
+  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("验收落点门禁:文档里出现不存在的脚本形态 token → 变红,撤掉 → 变绿", () => {
+  // 探针落在 `docs/adr/` 里:那个目录是整目录扫的,探针不必另进清单就会进视野。
+  // 它同时证明「豁免按前缀、不按文件」——ADR 目录不因为「它是决策记录」就被放过。
+  const violated = withProbeFile(
+    LANDING_PROBE_PATH,
+    "# 探针\n\n跑 `check:no-such-probe` 看结果。\n",
+    () => script("check:landings"),
+  );
+  expect(violated.status, "文档里错指脚本名时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain(LANDING_PROBE_PATH);
+  expect(violated.output, violated.output).toContain("check:no-such-probe");
+
+  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("验收落点门禁:抽不到 CLI 子命令名时按失败处理(空转反例)", () => {
+  // 把 `COMMANDS` 那个声明改个名字 = 源码文本抽取退化。此时「没有违规」不等于「落点都在」,
+  // 而是「子命令这一维什么也没查」——必须按失败处理,理由来自共享的空转检测。
+  const broken = withPatchedText(
+    "apps/cli/src/commands.ts",
+    (source) =>
+      source.replace(
+        "export const COMMANDS: readonly CommandSpec[] = [",
+        "export const RENAMED_COMMANDS: readonly CommandSpec[] = [",
+      ),
+    () => script("check:landings"),
+  );
+  expect(broken.status, "抽不出子命令名时门禁必须非零退出").toBe(1);
+  expect(broken.output, broken.output).toContain("子命令名");
+  expect(broken.output, broken.output).toContain("什么也没断言");
+});
+
+it("验收落点门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它必须挂在默认的快门禁上,否则落点表退化成装饰时没人拦。
+  expect(scripts["check:quick"] ?? "", "验收落点判据不在快门禁里").toContain("check:landings");
+  // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "验收落点判据被挪进了按需门禁").not.toContain(
+    "check:landings",
+  );
+  expect(scripts["test:slow"] ?? "", "验收落点判据被挪进了慢链").not.toContain("check:landings");
+  expect(scripts["test"] ?? "", "验收落点判据被挪进了默认测试").not.toContain("check:landings");
+  // 末尾那组仍是「提交内容对不对」的复核:落点判据属于编辑循环,不属于那里。
+  expect(tailSteps(), "验收落点判据被挪进了全量门禁末尾复核组").not.toContain("check:landings");
 });
 
 // ── 生成物漂移检查:API 面的表(真源是符号表与后果行,落在契约文档的正文里) ─────────
