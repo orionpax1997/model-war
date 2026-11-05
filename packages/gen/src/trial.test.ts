@@ -149,8 +149,9 @@ it("给了计划就转发 --expected-plan：临时计划文件在子进程读得
   const argv = JSON.parse(readFileSync(report, "utf8")) as readonly string[];
   const at = argv.indexOf("--expected-plan");
   expect(at).toBeGreaterThan(0);
-  // 临时目录跑完即删：入口拿到的那条路径已经不存在。
-  expect(() => readFileSync(argv[at + 1]!, "utf8")).toThrow();
+  // 临时目录跑完即删：入口拿到的那条路径已经不存在。期望消息是 Node 的 `ENOENT`,
+  // 不是仓库自己的文案——断言「真去读了那条路径且读不到」,而不是「抛了点什么」。
+  expect(() => readFileSync(argv[at + 1]!, "utf8")).toThrow("ENOENT");
 });
 
 it("--plan 模式失败：非 0 退出与坏 JSON 都大声失败，不交回半个计划", () => {

@@ -942,7 +942,7 @@ it.each(["{", JSON.stringify({ model: "alpha" })])(
     ]);
     expect(stderr.join("")).toContain("archive/alpha/bad/meta.json");
     expect(stderr.join("")).toContain("读取记录失败");
-    expect(() => readArchiveReports(root)).toThrow();
+    expect(() => readArchiveReports(root)).toThrow("无法生成摘要");
     const readIssues: { source: string; reason: string }[] = [];
     expect(
       readArchiveReports(root, { onReadIssue: (issue) => readIssues.push(issue) }),

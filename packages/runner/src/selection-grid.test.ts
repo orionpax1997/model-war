@@ -348,6 +348,8 @@ it("逐场证据与分数三元组的篡改都被拒（缺场、重复场、伪�
   // `observationSha256` 不在这一层判：它要与盘上那 32 行观测比才有意义（CLI 的
   // `verifyGridSelectionEvidence` 与「观测行证据」用例各自钉住那一条）。
   const good = selectionOf([2, 1, 4]);
+  // 每条篡改都要落在**它该落在的那一关**:形状、缺场/重复场、单场身份、单场积分、均分、
+  // 阶段顺序、复用来源、胜者与理由。消息取自 `selection-grid.ts` 的 `fail(...)`。
   const mutations: readonly ((value: MutableJson<typeof good>) => void)[] = [
     (value) => value.candidates[0]!.matches.pop(),
     (value) => (value.candidates[0]!.matches[1]!.matchIndex = 0),
@@ -364,10 +366,29 @@ it("逐场证据与分数三元组的篡改都被拒（缺场、重复场、伪�
     (value) => (value.reason = "earlier-stage"),
     (value) => (value.version = 1),
   ];
-  for (const mutate of mutations) {
+  const expectedMessages = [
+    "记录形状不合法或缺少完整网格证据",
+    "第 1 场证据缺失或场次不符",
+    "单场身份摘要不一致",
+    "逐场名次积分之和与分数总分不一致",
+    "均分与总分不一致",
+    "均分与总分不一致",
+    "记录形状不合法或缺少完整网格证据",
+    "单场身份摘要不一致",
+    "候选阶段或协议轮不一致",
+    "复用来源必须指向更早的同字节候选",
+    "胜者身份或选择理由与决胜顺序不一致",
+    "胜者身份或选择理由与决胜顺序不一致",
+    "记录形状不合法或缺少完整网格证据",
+    "记录形状不合法或缺少完整网格证据",
+  ] as const;
+  expect(mutations).toHaveLength(expectedMessages.length);
+  for (const [index, mutate] of mutations.entries()) {
     const changed = mutable(good);
     mutate(changed);
-    expect(() => validateGridSelection(changed)).toThrow();
+    expect(() => validateGridSelection(changed), `mutation ${String(index)}`).toThrow(
+      expectedMessages[index],
+    );
   }
 });
 
