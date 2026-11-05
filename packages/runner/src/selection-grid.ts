@@ -114,6 +114,7 @@ const candidatePointsOf = (plan: TrialPlan, match: TrialPlanMatch, row: JsonValu
   const seed = terminal["seed"];
   if (seed !== match.seed)
     fail(
+      // oxlint-disable-next-line typescript/no-base-to-string -- 值域真源是 `TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA.seed`（`COUNT_JSON_SCHEMA`：整数 0..MAX_SAFE_INTEGER）；`JsonValue` 只是读入前的宽类型，两份读入侧（`readTrialObservations` / `validateTrialObservation`）已按该 Schema 拒过非整数行。
       `第 ${String(match.matchIndex)} 场的终局种子 ${String(seed)}` +
         `与本场计划种子 ${String(match.seed)} 不符`,
     );
@@ -125,12 +126,14 @@ const candidatePointsOf = (plan: TrialPlan, match: TrialPlanMatch, row: JsonValu
       fail(`第 ${String(match.matchIndex)} 场的终局第 ${String(seat)} 格不是对象`);
     if (player["seat"] !== seat)
       fail(
+        // oxlint-disable-next-line typescript/no-base-to-string -- 值域真源是 `TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA.players[].seat`（`{ type: "integer", minimum: 0, maximum: 3 }`），只可能是 0..3 的整数，不可能是对象。
         `第 ${String(match.matchIndex)} 场的终局第 ${String(seat)} 格记的是座位 ${String(player["seat"])}`,
       );
     const expected = match.seats[seat]!;
     if (player["player"] !== expected)
       fail(
         `第 ${String(match.matchIndex)} 场座位 ${String(seat)} 的终局身份 ` +
+          // oxlint-disable-next-line typescript/no-base-to-string -- 值域真源是 `TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA.players[].player`（string，minLength 1、maxLength 128、`^[a-z0-9][a-z0-9:.-]*$`），只可能是脚本 id 文本。
           `${String(player["player"])} 与本场座位表的 ${expected} 不符`,
       );
     const rank = player["rank"];

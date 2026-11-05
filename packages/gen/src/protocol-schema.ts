@@ -139,6 +139,7 @@ export const compileProtocolSchema = (schema: ProtocolSchema): ((value: unknown)
     )
       return false;
     if (typeof value === "string") {
+      // oxlint-disable-next-line typescript/no-misused-spread -- JSON Schema 的 minLength/maxLength 数的是**码点**（RFC 8259 的 character），`[...value]` 正好按码点切；换成 `.length` 按 UTF-16 码元数，emoji/星形平面字符会被数成两个，与本 Schema 语义相反。
       const length = [...value].length;
       if (schema.minLength !== undefined && length < schema.minLength) return false;
       if (schema.maxLength !== undefined && length > schema.maxLength) return false;
