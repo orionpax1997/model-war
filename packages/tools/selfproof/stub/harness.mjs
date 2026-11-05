@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildMap } from './map.mjs';
+import { buildMap, loadMapFile } from './map.mjs';
 import { createGame, runTick, finishByTimeout, exportTerritoryScores } from './engine.mjs';
 import { RULESET, chebyshev, APPLIED_OVERRIDES } from './ruleset.mjs';
 import { createPlayerRuntime, createIdleRuntime } from './runtime.mjs';
@@ -503,8 +503,12 @@ export function buildMatrices({ variants = VARIANTS } = {}) {
 }
 
 // job → playMatch 入参（runMatrix 与 replay.mjs 共用，保证重放与跑批同源）
+// `mapFile` 在时走真图（三张落库地图），否则走桩内夹具。两条支路共用同一份 mapOpts 语义。
 export function matchArgsOf(job) {
-  const map = buildMap(job.seed, { variant: job.variant, size: job.size, ...(job.mapOpts ?? {}) });
+  const mapOpts = job.mapOpts ?? {};
+  const map = job.mapFile
+    ? loadMapFile(job.mapFile, { ...mapOpts, seed: job.seed })
+    : buildMap(job.seed, { variant: job.variant, size: job.size, ...mapOpts });
   return { seatScripts: job.seatScripts, seed: job.seed, map, mirror: job.mirror };
 }
 

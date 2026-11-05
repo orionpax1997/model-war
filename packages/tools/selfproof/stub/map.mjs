@@ -14,6 +14,7 @@
 //   size=40：相邻两家 27 tick —— 首触必然落在 tick 30 附近，**达不到** gdd §2 的 40–160 窗口；
 //   size=64：相邻两家 43 tick —— 首触落在 45–70，正是设计窗口。
 // 两档都跑（见 harness 的矩阵维度 size），目的是把“窗口达不到”归因到地图尺寸而不是规则数值。
+import { readFileSync } from 'node:fs';
 import { RULESET } from './ruleset.mjs';
 
 export const MAP_SIZES = [40, 64];
@@ -178,6 +179,91 @@ export function buildMap(seed = 1, opts = {}) {
   return {
     name: `stub-fixture-${size}/${variant}${ownedMineOrbits !== 1 ? `/mines${ownedMineOrbits}` : ''}`,
     variant,
+    size,
+    seed,
+    terrain,
+    sites,
+    spawnUnits,
+    variantSlots,
+  };
+}
+
+// --- 真图装载（maps/*.json）---
+//
+// 夹具里有两类地图：`buildMap` 生成的桩内夹具，和 `maps/*.json` 落库的三张真图。真图归
+// map-lint 与地图池校验，桩里不重复造它，只做**形状翻译 + 种子变体墙**：
+//   - terrain：真图用字符行（`.` 走、`#` 墙），桩引擎用 'plain' / 'wall'；
+//   - sites：真图的 `initialOwner`（`null` = 中立）→ 桩的 `owner`（-1 = 中立），并补上
+//     占领进度与单矿储量两个桩才有的运行态字段；
+//   - spawnUnits：真图声明的是**相对主基地的偏移**，桩引擎吃绝对坐标——同一条算式在真引擎
+//     `createInitialState`（`initial-state.ts`）里，这里逐字复刻，两边不各写一套；
+//   - variantSlots：真图给的是**静态候选轨道**，种子逐槽位独立判定 50% 是否填上（整条轨道
+//     填或不填，四重对称才成立）。这一层与 `driver/random.ts` 的 `fillVariantWalls` 同义：
+//     它让「地图 + 种子 → 地形」仍是纯函数，否则四颗种子在同一张图上会退化成四场同一张图。
+// 填充用桩自己的 LCG 与同一套消费次序（槽位声明序），与夹具臂、与 #13 标定轮同口径。
+// 不在这里重算对称性与点位不变量：那些判据归 map-lint（单图）与池层（多图），桩只负责跑。
+const TERRAIN_CHARS = { '.': 'plain', '#': 'wall' };
+
+export function loadMapFile(file, opts = {}) {
+  const def = JSON.parse(readFileSync(file, 'utf8'));
+  const seed = opts.seed ?? 1;
+  const size = def.size;
+  if (def.terrain.length !== size) {
+    throw new Error(`地形有 ${def.terrain.length} 行，与 size=${size} 不符`);
+  }
+  const terrain = def.terrain.map((row, y) => {
+    if (row.length !== size) throw new Error(`地形第 ${y} 行长度 ${row.length} 与 size=${size} 不符`);
+    return [...row].map((cell) => {
+      const kind = TERRAIN_CHARS[cell];
+      if (kind === undefined) throw new Error(`未知地形字符 ${JSON.stringify(cell)}`);
+      return kind;
+    });
+  });
+  const sites = def.sites.map((s) => ({
+    id: s.id,
+    kind: s.kind,
+    x: s.x,
+    y: s.y,
+    owner: s.initialOwner ?? -1,
+    progressOwner: -1,
+    progress: 0,
+    ...(s.kind === 'resource' ? { remaining: opts.resourcePerSite ?? RULESET.resourcePerSite } : {}),
+  }));
+  const homes = new Map();
+  for (const s of sites) if (s.kind === 'base' && s.owner >= 0) homes.set(s.owner, s);
+  const spawnUnits = def.spawnUnits.map((u) => {
+    const home = homes.get(u.owner);
+    if (home === undefined) throw new Error(`地图 ${def.name} 缺 ${u.owner} 号家的主基地`);
+    const x = home.x + u.offset[0];
+    const y = home.y + u.offset[1];
+    if (x < 0 || y < 0 || x >= size || y >= size) throw new Error(`起始单位越界 ${x},${y}`);
+    return { owner: u.owner, type: u.type, x, y };
+  });
+
+  // 种子变体：点位与起始单位及其八邻域不可被填墙（与夹具同一道夹具卫生约束）。
+  const rand = makeLcg(seed);
+  const forbidden = new Set();
+  for (const [sx, sy] of [
+    ...sites.map((s) => [s.x, s.y]),
+    ...spawnUnits.map((u) => [u.x, u.y]),
+  ]) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) forbidden.add(`${sx + dx},${sy + dy}`);
+    }
+  }
+  const variantSlots = [];
+  for (const slot of def.variantSlots) {
+    const cells = slot.filter(([x, y]) => !forbidden.has(`${x},${y}`));
+    if (rand() % 100 < VARIANT_FILL_PERCENT) {
+      for (const [x, y] of cells) terrain[y][x] = 'wall';
+      if (cells.length > 0) variantSlots.push(cells);
+    }
+  }
+
+  return {
+    name: `realmap/${def.name}/${size}`,
+    // 跑批产物按 `<variant>@<size>` 拼名字，这里放图名才能分辨三张真图。
+    variant: def.name,
     size,
     seed,
     terrain,
