@@ -88,6 +88,7 @@ const PROBES = [
   "packages/schema/src/__fmt-probe.js",
   "packages/schema/src/__lint-probe.js",
   "packages/schema/src/__lint-probe.ts",
+  "packages/schema/src/__vitest-lint-probe.ts",
   NO_FLOAT_PROBE,
   "packages/tools/src/__declared-deps-probe.ts",
   "packages/runner/dist/__gate-probe.js",
@@ -1242,6 +1243,84 @@ it("lint 门禁:被禁写法被拦下,改正后放行", () => {
   expect(anyFixed.status, `unknown 仍被拦下:\n${anyFixed.output}`).toBe(0);
 
   expect(script("lint").status).toBe(0);
+});
+
+// ── 测试纪律门禁反例:三条 vitest 规则真的挂在门禁上 ────────────────────────
+
+/**
+ * 探针取 `.ts` 且**不叫** `*.test.ts`,这两点都是故意的。
+ *
+ * `.ts`:与 `typescript/*` 那一批同理,oxlint 不把这类规则施加到 `.js` 上;
+ * 不叫 `*.test.ts`:`vitest/*` 的规则按**声明**认用例(`import("vitest")` 来的 `it` / `expect`),
+ * 不按文件名认。所以探针落在 `packages/schema/src/` 这个跟测试无关的位置也能命中——
+ * 顺带钉住「以后新加的测试文件哪怕换个命名,纪律也照样管得着」。
+ */
+const VITEST_PROBE_PATH = "packages/schema/src/__vitest-lint-probe.ts";
+
+it("测试纪律门禁:集中测试 / 禁用测试 / 用例体内无断言各自变红,还原后放行", () => {
+  const clean = script("lint");
+  expect(clean.status, clean.output).toBe(0);
+
+  // 三条规则各自一条反例:同一路径、同一道门禁,只换内容——判决跟内容走,不跟文件名走。
+  // 每条断言都点名规则本身,而不是「退出码非零」就算数:非零也可能是别的规则顺手红了,
+  // 那样这条反例证明的就不是它要证明的那一件事。
+  const violations = [
+    {
+      rule: "vitest(no-focused-tests)",
+      contents:
+        'import { expect, it } from "vitest";\n\nit.only("集中测试", () => {\n  expect(1).toBe(1);\n});\n',
+    },
+    {
+      rule: "vitest(no-disabled-tests)",
+      contents:
+        'import { expect, it } from "vitest";\n\nit.skip("禁用测试", () => {\n  expect(1).toBe(1);\n});\n',
+    },
+    {
+      rule: "vitest(expect-expect)",
+      contents:
+        'import { it } from "vitest";\n\nit("用例体内无断言", () => {\n  const value = 1;\n  void value;\n});\n',
+    },
+  ];
+
+  for (const { rule, contents } of violations) {
+    const violated = withProbeFile(VITEST_PROBE_PATH, contents, () => script("lint"));
+    expect(violated.status, `${rule} 没有让门禁非零退出:\n${violated.output}`).toBe(1);
+    expect(violated.output, violated.output).toContain(rule);
+  }
+
+  // 还原:三条判据都不再说话,而内容仍是合法的 vitest 用例——红线是「这三件事」,不是「有任何用例」。
+  const restored = withProbeFile(
+    VITEST_PROBE_PATH,
+    'import { expect, it } from "vitest";\n\nit("规矩的用例", () => {\n  expect(1).toBe(1);\n});\n',
+    () => script("lint"),
+  );
+  expect(restored.status, `规矩的用例仍被拦下:\n${restored.output}`).toBe(0);
+
+  expect(script("lint").status, "撤掉探针后门禁没有回到绿").toBe(0);
+});
+
+// ── 条件跳过不属于禁用测试 ──────────────────────────────────────────────────
+
+it("条件跳过(skipIf / runIf)的现有用法不被测试纪律的三条规则命中", () => {
+  // 「条件跳过」与「禁用测试」是两件事:前者随环境决定跑不跑(存档在不在、是否复算模式),
+  // 后者是有人把用例按了暂停。仓库现有 `it.skipIf(...)` / `it.runIf(...)` 的写法保持原样,
+  // 既不该被 `no-disabled-tests` 命中,也不该因为包了一层条件就被算成「没有断言」。
+  //
+  // 断言落在两侧:①现有文件里确有这种用法(否则这条反例在讲一件不存在的事),
+  // ②把它喂给真实门禁,门禁一个字都不说。
+  const conditionalSkips = readFileSync(
+    `${repoRoot}apps/cli/src/trial/run-trial-script.test.ts`,
+    "utf8",
+  ).match(/it\.(skipIf|runIf)\(/g);
+  expect(
+    conditionalSkips?.length ?? 0,
+    "仓库里已经没有条件跳过的用法了,这条反例该换文件",
+  ).toBeGreaterThan(0);
+
+  const probe =
+    'import { expect, it } from "vitest";\n\nconst present = true;\n\nit.skipIf(!present)("条件跳过", () => {\n  expect(1).toBe(1);\n});\n\nit.runIf(present)("条件运行", () => {\n  expect(1).toBe(1);\n});\n';
+  const outcome = withProbeFile(VITEST_PROBE_PATH, probe, () => script("lint"));
+  expect(outcome.status, `条件跳过被任何一条测试纪律规则命中:\n${outcome.output}`).toBe(0);
 });
 
 // ── 基准产物门禁反例:产物与源码分叉即红 ─────────────────────────────────────

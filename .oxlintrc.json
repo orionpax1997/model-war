@@ -1,6 +1,15 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  // ── 本文件里允许做与禁止做的两种事 ───────────────────────────────────────────
+  // 这里只允许**决定一条新引入判据的启用范围**:启用一个插件,等于把该插件的一批判据
+  // 新引入本仓库,它们此前不在门里,所以「留哪几条、关哪几条」是范围决策,允许——但理由
+  // 必须写在对应规则旁边(下面每条关闭都带理由)。
+  // 反过来,**关掉或降级一条已经在守的判据是禁止的**:改 `categories` 里既有类别的严重级别、
+  // 放宽已有规则的选项、为躲命中而整体加 `ignorePatterns`,都属于把门禁砸掉,不写理由、直接不受理。
+  // 落笔前问一句:这条判据本来就在门里吗?在 → 不许动;不在 → 可以定范围,理由留下。
+  // 本文件虽然是 `.json` 后缀,但 oxlint 按 JSONC 解析(`.json` 与 `.jsonc` 两种都收注释),
+  // `oxfmt` 也按 JSONC 排版并原样保留注释——所以理由就写在这里,不另开 README 承载。
+  "plugins": ["typescript", "unicorn", "oxc", "vitest"],
   "env": { "builtin": true },
   "ignorePatterns": [
     "**/node_modules/**",
@@ -18,6 +27,36 @@
     ],
     "typescript/no-explicit-any": "error",
     "typescript/no-floating-promises": "error",
-    "typescript/no-misused-promises": "error"
+    "typescript/no-misused-promises": "error",
+
+    // ── vitest 插件:只留三条零成本纪律规则 ───────────────────────────────────
+    // 「零成本」= 见到即是缺陷、没有误报、且不需要改写断言强度,所以直接进快门禁(error)。
+    // 集中测试:`.only` 一旦入库,同文件其余用例静默消失,退出码照样是 0。
+    "vitest/no-focused-tests": "error",
+    // 禁用测试:`.skip` 入库等于用例消失。条件跳过(`skipIf` / `runIf`)不是禁用测试:
+    // 它随环境决定跑不跑,规则实现也不认它,仓库现有用法保持原样。
+    "vitest/no-disabled-tests": "error",
+    // 用例体内无断言:这种用例通过的原因是「没东西可查」,与「通过因为行为正确」分不开。
+    "vitest/expect-expect": "error",
+
+    // ── 同一插件里另外五条:显式关闭(范围决策,不是降级) ─────────────────────
+    // 这五条是启用插件后默认命中的,关掉之前它们不在门里,因此属于「定一条新判据的范围」。
+    // 条件断言:`expect` 写在 `if` / 三元里。现存 96 处都是「有就查」的真实意图(可选产物、
+    // 分片边界),改成无条件断言等于改断言强度——那是判据决策,不属于本次配置接线。
+    "vitest/no-conditional-expect": "off",
+    // 独立断言:oxlint 的实现把 `expect` 判在「用例体内」之外就算违规,不再区分钩子。
+    // 现存 1 处是模块级 `beforeAll` 里准备共享夹具的那次检查(`cli.test.ts`:先让 `tsc -b`
+    // 把 dist 备齐),它是**每条**用例的前提,塞进某一条会让其余用例在缺夹具时失败、归因错位。
+    "vitest/no-standalone-expect": "off",
+    // mock 类型参数:`vi.fn<T>()` 的类型参数。现存 6 处靠 TS 推导已经够用,类型正确性由
+    // `tsc -b` 与类型感知 lint 兜底;这条是风格偏好,不构成缺陷。
+    "vitest/require-mock-type-parameters": "off",
+    // 抛出消息:现存 19 处 `toThrow()` 没带消息。补强它要逐处抄被测实现真正会给出的那一句,
+    // 是一次独立的断言强度改造(见 issue 11),不在本次「纯接线」的范围里;届时它转 error。
+    "vitest/require-to-throw-message": "off",
+    // `expect` 入参个数:本仓库大量使用 `expect(value, "message")` 两参形态——这是 Vitest 5
+    // 官方签名 `<T>(actual: T, message?: string)`,失败时把上下文直接打进报告。
+    // 而这条规则的实现按「最多 1 个参数」判(max-args),与 Vitest 的真实 API 冲突:现存 208 处命中,没有一处是缺陷。
+    "vitest/valid-expect": "off"
   }
 }
