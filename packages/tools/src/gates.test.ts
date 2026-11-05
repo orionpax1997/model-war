@@ -1363,6 +1363,28 @@ it("测试纪律门禁:集中测试 / 禁用测试 / 用例体内无断言各自
   expect(script("lint").status, "撤掉探针后门禁没有回到绿").toBe(0);
 });
 
+// ── 抛了异常但不检查消息 ───────────────────────────────────────────────────
+
+it("测试纪律门禁:抛了异常但不检查消息变红,补上期望消息后放行", () => {
+  // 探针与上面三条共用同一份 `.ts` 路径(PROBES 里已有它的兜底清理):
+  // 「不检查消息」是一条**断言强度**判据,不该因为它写在跟测试无关的目录里就看不见。
+  const probe =
+    'import { expect, it } from "vitest";\n\nit("只断言抛了点什么", () => {\n  expect(() => {\n    throw new Error("x");\n  }).toThrow();\n});\n';
+  const violated = withProbeFile(VITEST_PROBE_PATH, probe, () => script("lint"));
+  expect(violated.status, `require-to-throw-message 没有让门禁非零退出:\n${violated.output}`).toBe(
+    1,
+  );
+  expect(violated.output, violated.output).toContain("vitest(require-to-throw-message)");
+
+  // 还原:同一句断言只多一个期望消息就放行——红线是「只验抛了点什么」,不是「用了 `toThrow`」。
+  const restored =
+    'import { expect, it } from "vitest";\n\nit("断言抛的是哪一条", () => {\n  expect(() => {\n    throw new Error("x");\n  }).toThrow("x");\n});\n';
+  const outcome = withProbeFile(VITEST_PROBE_PATH, restored, () => script("lint"));
+  expect(outcome.status, `带上期望消息仍被拦下:\n${outcome.output}`).toBe(0);
+
+  expect(script("lint").status, "撤掉探针后门禁没有回到绿").toBe(0);
+});
+
 // ── 条件跳过不属于禁用测试 ──────────────────────────────────────────────────
 
 it("条件跳过(skipIf / runIf)的现有用法不被测试纪律的三条规则命中", () => {

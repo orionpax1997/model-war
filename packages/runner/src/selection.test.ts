@@ -171,13 +171,15 @@ it.each([
 
 it("最高集合的胜者与理由必须同时匹配，非法或不适用的理由不能绕过复算", () => {
   const tied = buildArchiveSelection(plan, evidence([1, 1, 4]));
-  for (const reason of [
-    "highest-average-points",
-    "earlier-protocol-round",
-    "script-hash",
-    "invalid",
-  ])
-    expect(() => validateSelection({ ...tied, reason })).toThrow();
+  // 每个理由都要落在**自己那一关**:前三条是合法枚举值与复算出的胜者不符(`selection.ts`
+  // 的胜者/理由一致性那一关),`invalid` 连理由枚举都不是,在形状那一关就被拒。
+  for (const [reason, message] of [
+    ["highest-average-points", "选拔胜者身份或选择理由不一致"],
+    ["earlier-protocol-round", "选拔胜者身份或选择理由不一致"],
+    ["script-hash", "选拔胜者身份或选择理由不一致"],
+    ["invalid", "选拔记录形状不合法"],
+  ] as const)
+    expect(() => validateSelection({ ...tied, reason }), reason).toThrow(message);
   for (const stage of [0, 2]) {
     const candidate = tied.candidates[stage]!;
     expect(() =>
@@ -206,6 +208,7 @@ it("缺场、重复场次、错 input/candidate hash、伪造计分、计划或�
       : T extends readonly (infer Element)[]
         ? MutableJson<Element>[]
         : { -readonly [Key in keyof T]: MutableJson<T[Key]> };
+  // 每条篡改都要落在**它该落在的那一关**:逐场身份、单场计分、名次、计划 hash、胜者、复用证据。
   const mutations: ((value: MutableJson<ArchiveSelectionV1>) => void)[] = [
     (value) => value.candidates[0]!.matches.pop(),
     (value) => (value.candidates[0]!.matches[1]!.matchIndex = 0),
@@ -222,10 +225,29 @@ it("缺场、重复场次、错 input/candidate hash、伪造计分、计划或�
     (value) => (value.reason = "earlier-stage"),
     (value) => (value.candidates[2]!.reusedFromStage = 0),
   ];
-  for (const mutate of mutations) {
+  const expectedMessages = [
+    "选拔记录形状不合法",
+    "candidate/input hash 不一致",
+    "candidate/input hash 不一致",
+    "candidate/input hash 不一致",
+    "选拔候选计分",
+    "选拔候选计分",
+    "四座竞争排名",
+    "选拔记录形状不合法",
+    "plan hash 不一致",
+    "plan hash 不一致",
+    "选拔记录形状不合法",
+    "选拔胜者身份或选择理由不一致",
+    "选拔胜者身份或选择理由不一致",
+    "复用证据不一致",
+  ] as const;
+  expect(mutations).toHaveLength(expectedMessages.length);
+  for (const [index, mutate] of mutations.entries()) {
     const changed = JSON.parse(JSON.stringify(good)) as MutableJson<ArchiveSelectionV1>;
     mutate(changed);
-    expect(() => validateSelection(changed)).toThrow();
+    expect(() => validateSelection(changed), `mutation ${String(index)}`).toThrow(
+      expectedMessages[index],
+    );
   }
 });
 
@@ -245,7 +267,7 @@ it("结果完成顺序可变，输出按阶段与场次排序；不接受缩小�
         .map((candidate) => ({ ...candidate, matches: [...candidate.matches].reverse() })),
     ),
   ).toEqual(buildArchiveSelection(plan, candidates));
-  expect(() => buildArchiveSelection(plan, candidates.slice(0, 2))).toThrow();
+  expect(() => buildArchiveSelection(plan, candidates.slice(0, 2))).toThrow("缺少完整十二场终局");
   expect(() =>
     buildArchiveSelection(
       plan,

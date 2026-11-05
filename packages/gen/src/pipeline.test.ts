@@ -1685,39 +1685,42 @@ it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或�
   }
 });
 
-it.each(["候选JS", "观测JSONL", "网格汇总"])(
-  "本轮%s已有证据时拒绝复用或覆盖，保留原证据",
-  async (kind) => {
-    const root = mkRoot();
-    const runId = "feedback-evidence-collision";
-    const path = join(
-      root,
-      "archive",
-      "alpha",
-      `observed-${runId}-round-1.jsonl${kind === "候选JS" ? ".candidate.js" : kind === "网格汇总" ? TRIAL_GRID_SUMMARY_SUFFIX : ""}`,
-    );
-    mkdirSync(join(root, "archive", "alpha"), { recursive: true });
-    writeFileSync(path, "previous-evidence");
-    const stub = stubClient([reply(VALID_SCRIPT)]);
-    let trialInvoked = false;
-    await expect(
-      generateOneModel(
-        {
-          ...requestWith(root, stub, runId, () => {
-            trialInvoked = true;
-            return { passed: true, stdout: "" };
-          }),
-          scoreSourceFeedback: true,
-        },
-        { ...firstModelConfig(root), protocolRounds: 3 },
-      ),
-    ).rejects.toThrow();
-    expect(readFileSync(path, "utf8")).toBe("previous-evidence");
-    expect(trialInvoked).toBe(false);
-    expect(stub.calls).toHaveLength(1);
-    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
-  },
-);
+// 每种证据各自落在**它该落在的那一关**：候选 JS 靠 `COPYFILE_EXCL` 的独占复制（Node 的
+// `EEXIST`），观测与网格汇总靠管线自己的存在检查（`pipeline.ts` 的那句中文）。
+it.each([
+  ["候选JS", "EEXIST"],
+  ["观测JSONL", "本轮试跑观测已存在"],
+  ["网格汇总", "本轮试跑观测已存在"],
+] as const)("本轮%s已有证据时拒绝复用或覆盖，保留原证据", async (kind, message) => {
+  const root = mkRoot();
+  const runId = "feedback-evidence-collision";
+  const path = join(
+    root,
+    "archive",
+    "alpha",
+    `observed-${runId}-round-1.jsonl${kind === "候选JS" ? ".candidate.js" : kind === "网格汇总" ? TRIAL_GRID_SUMMARY_SUFFIX : ""}`,
+  );
+  mkdirSync(join(root, "archive", "alpha"), { recursive: true });
+  writeFileSync(path, "previous-evidence");
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  let trialInvoked = false;
+  await expect(
+    generateOneModel(
+      {
+        ...requestWith(root, stub, runId, () => {
+          trialInvoked = true;
+          return { passed: true, stdout: "" };
+        }),
+        scoreSourceFeedback: true,
+      },
+      { ...firstModelConfig(root), protocolRounds: 3 },
+    ),
+  ).rejects.toThrow(message);
+  expect(readFileSync(path, "utf8")).toBe("previous-evidence");
+  expect(trialInvoked).toBe(false);
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+});
 
 it("试跑期间编译产物被更换时不能回喂错配事实或冻结", async () => {
   const root = mkRoot();
@@ -1930,28 +1933,31 @@ it("事实回喂后的预算失败用尽阶段独立额度，不以全零替代�
   ]);
 });
 
-it.each(["trial 抛错", "观测 JSON 损坏", "读盘失败"])(
-  "基础设施异常 %s 大声抛出，不作为观测反馈",
-  async (kind) => {
-    const root = mkRoot();
-    const runId = "feedback-infra";
-    const stub = stubClient([reply(VALID_SCRIPT)]);
-    const request = {
-      ...requestWith(root, stub, runId, (options) => {
-        if (kind === "trial 抛错") throw new Error("试跑基础设施不可用");
-        if (kind === "观测 JSON 损坏") writeFileSync(options.observationsPath, "not-json\n");
-        else mkdirSync(options.observationsPath);
-        return { passed: true, stdout: "" };
-      }),
-      scoreSourceFeedback: true,
-    };
-    await expect(
-      generateOneModel(request, { ...firstModelConfig(root), protocolRounds: 3 }),
-    ).rejects.toThrow();
-    expect(stub.calls).toHaveLength(1);
-    expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
-  },
-);
+// 三种基础设施异常的抛点各不相同，期望消息分别来自：演练用的试跑桩自己抛的那句、
+// Node 的 JSON 解析（观测行损坏）与 Node 的 `EISDIR`（观测路径被写成目录）。
+it.each([
+  ["trial 抛错", "试跑基础设施不可用"],
+  ["观测 JSON 损坏", "is not valid JSON"],
+  ["读盘失败", "EISDIR"],
+] as const)("基础设施异常 %s 大声抛出，不作为观测反馈", async (kind, message) => {
+  const root = mkRoot();
+  const runId = "feedback-infra";
+  const stub = stubClient([reply(VALID_SCRIPT)]);
+  const request = {
+    ...requestWith(root, stub, runId, (options) => {
+      if (kind === "trial 抛错") throw new Error("试跑基础设施不可用");
+      if (kind === "观测 JSON 损坏") writeFileSync(options.observationsPath, "not-json\n");
+      else mkdirSync(options.observationsPath);
+      return { passed: true, stdout: "" };
+    }),
+    scoreSourceFeedback: true,
+  };
+  await expect(
+    generateOneModel(request, { ...firstModelConfig(root), protocolRounds: 3 }),
+  ).rejects.toThrow(message);
+  expect(stub.calls).toHaveLength(1);
+  expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
+});
 
 it("观测协议拒绝重复 matchIndex：抛出异常，不回喂、不冻结候选", async () => {
   const root = mkRoot();
