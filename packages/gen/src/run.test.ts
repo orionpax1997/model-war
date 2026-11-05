@@ -266,7 +266,9 @@ it.each([{ flags: [] }, { flags: ["--select-best-candidate"] }])(
   async ({ flags }) => {
     const root = mkdtempSync(`${scratch}/cli-opt-in-`);
     const messages: string[] = [];
-    const original = process.stderr.write;
+    // `process.stderr.write` 是原型上的方法：把未绑定的引用存下来再赋回去，`this` 就丢了，
+    // 恢复之后 stderr 会静默失效（这条测试就再也抓不到 CLI 的错误输出）。
+    const original = process.stderr.write.bind(process.stderr);
     process.stderr.write = (chunk: string | Uint8Array): boolean => {
       messages.push(String(chunk));
       return true;
