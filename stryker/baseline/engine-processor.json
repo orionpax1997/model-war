@@ -1,0 +1,9 @@
+{
+  "shard": "engine-processor",
+  "detected": 897,
+  "valid": 1155,
+  "score": 77.66,
+  "coverageBased": 81.62,
+  "source": "reports/mutation/mutation.json",
+  "note": "这是分片改造之前默认配置(pnpm run mutate → engine-processor 分片)的一次完整跑,覆盖本分片的 mutate 范围:19 个 processor 文件、1155 个变异体(Killed 896 + Timeout 1 / Survived 202 / NoCoverage 56)。报告路径 reports/mutation/mutation.json 是旧产物名,不是当前的 reports/mutation/engine-processor.json;壳换了名字,跑的是同一份 mutate scope 与同一份 testFiles,所以数字可以直接当本分片的基线。与当前范围的唯一差别是 processor/action-effects.ts(后加的类型再导出文件,零变异体)。"
+}

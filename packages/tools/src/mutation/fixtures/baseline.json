@@ -1,0 +1,9 @@
+{
+  "shard": "fixture",
+  "detected": 8,
+  "valid": 10,
+  "score": 80,
+  "coverageBased": 88.89,
+  "source": "门禁自测夹具(不是任何真实分片的测量结果)",
+  "note": "只用于验证棘轮的三态判决,与任何分片的真实分数无关。"
+}

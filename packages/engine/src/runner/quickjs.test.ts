@@ -87,10 +87,16 @@ beforeAll(async () => {
  * 探针脚本:把三件事编码进一条 `move` 意图交回来。
  * `unitId` = 按 `__` 前缀枚举到的全局数;`dx` = 引用已删桥是否抛 `ReferenceError`;
  * `dy` = `typeof __setSnapshot` 是否是 `"undefined"`。
+ *
+ * `__stryker__` 被排除:runtime bundle 是测试现用 esbuild 从磁盘上的**被插桩**源码打的,
+ * 插桩器把自己那个命名空间写进了 guest 全局。它不属于产品注入面,是 harness 污染物。
+ * 排除后判据不变:`__setup`、两个桥、任何其它 `__` 全局仍然一律算泄漏。
  */
 const PROBE_SCRIPT = `
 function loop() {
-  const names = Object.getOwnPropertyNames(globalThis).filter((name) => name.indexOf("__") === 0);
+  const names = Object.getOwnPropertyNames(globalThis).filter(
+    (name) => name.indexOf("__") === 0 && name.indexOf("__stryker__") !== 0,
+  );
   let refError = 0;
   try {
     __drainIntents();

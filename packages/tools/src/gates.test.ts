@@ -49,8 +49,17 @@
  * 清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { afterAll, expect, it } from "vitest";
 import { SANDBOX_RUNTIME_ARTIFACT_PATH } from "@model-war/schema";
@@ -66,6 +75,8 @@ import {
   tailSteps,
   withProbeFile,
 } from "./gates-harness.ts";
+import { MUTATION_SHARDS, shardByName } from "./mutation/shards.ts";
+import { isShardBaseline } from "./mutation/ratchet.ts";
 import { sectionMarker } from "./generate/section.ts";
 
 const bin = (name: string): string => here(`../../../node_modules/.bin/${name}`);
@@ -1441,31 +1452,152 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
   );
 });
 
-// ── 变异 / 扫描观测:配置落库、范围限定、只进夜间 ────────────────────────────
+// ── 变异棘轮 / 扫描观测:分片清单、基线入库、入口串联、只进夜间 ──────────────
 //
-// 两项都是**观测**,不是门禁:没有分数/行数红线,产物落盘供三夜基线对比(hld §2.2.7)。这里断言的
-// 因此不是「跑出多少分」,而是三件外部可观察的事:配置在不在、范围限不限定在 engine 结算管线、
-// 有没有混进常跑入口。真跑一遍变异(分钟级起,`pnpm run mutate`)不在这一层的预算里。
+// 变异分数是**棘轮**(ADR-0026):不设绝对红线,只设「不许比上次低」。比较粒度 = 分片,
+// 基线入版本库(`stryker/baseline/`,不是 `reports/`——后者是产物),每个分片的入口跑完变异就地比较。
+// 扫描仍是**观测**(没有行数红线)。
 //
-// 真跑一遍变异的成本属观测层,不在本层预算里;这里只钉「配置存在且
-// scope 限定」——把「配置落地」误读成「分数达标」是这里明确要避免的那种读法。
+// 这一层能钉的外部可观察量:配置在不在、分片名与清单对不对得上、范围限不限定、每个入口有没有串上
+// 棘轮门禁、抬升命令在场且有没有溜进任何入口、**跑完变异入口后入库基线字节变不变**,
+// 以及用夹具报告跑真实门禁入口的三态退出码。
+// 真跑一变异的预算只给最小的那一片(`mutate:replay`,本机约 30s):它只证明「跑完入口后字节不变」
+// ——那是 ticket 08 的字面要求,只跑入口的后半段(棘轮门禁)证明不了 `stryker run` 那一半。
+// 「低一分就红」不需要真跑:判定是纯函数、门禁只读两份 JSON,夹具报告就现做现验。
+// 其余分片(engine / runner / tools:半小时到一小时)与抬基线命令一条都不跑。
 
-/** Stryker 配置的落点。读文本而不是 import:`.mjs` 无类型声明,import 会让 `tsc -b` 找不到声明。 */
-const STRYKER_CONFIG = `${repoRoot}stryker.config.mjs`;
+/** 分片配置目录与共享底座。读文本而不是 import:`.mjs` 无类型声明,import 会让 `tsc -b` 找不到声明。 */
+const STRYKER_DIR = `${repoRoot}stryker/`;
+const STRYKER_BASE = `${STRYKER_DIR}base.mjs`;
+
+/** 从一份分片配置里抽出 `name:`——分片名的**真源**是它,不是清单。 */
+const nameOfConfig = (text: string): string | undefined => /name:\s*"([^"]+)"/.exec(text)?.[1];
 
 /** 从 `mutate: [ ... ]` 里抽出被引号包住的 glob 原文(含 `!` 排除项)。 */
-const mutateGlobs = (): readonly string[] => {
-  const array = /mutate:\s*\[([\s\S]*?)\]/.exec(readFileSync(STRYKER_CONFIG, "utf8"))?.[1] ?? "";
+const mutateGlobsOf = (path: string): readonly string[] => {
+  const array = /mutate:\s*\[([\s\S]*?)\]/.exec(readFileSync(path, "utf8"))?.[1] ?? "";
   return [...array.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
 };
 
-it("Stryker 配置落库,且 mutate 范围限定在 engine 结算管线", () => {
-  const source = readFileSync(STRYKER_CONFIG, "utf8");
+/** 分片目录里除共享底座之外的配置文件(一个文件 = 一次 `stryker run`)。 */
+const shardConfigs = (): readonly string[] =>
+  readdirSync(STRYKER_DIR)
+    .filter((entry) => entry.endsWith(".mjs") && entry !== "base.mjs")
+    .sort();
 
+/**
+ * `fragment()` 给**每一个**分片追加的 `mutate` 排除项(读文本的理由同上:`.mjs` 无类型声明)。
+ * 抽不出来就返回空数组——那时下面那条断言会以「12 片全部是违规者」的形态红,不会安静通过。
+ */
+const sharedMutateExclusions = (): readonly string[] => {
+  const array =
+    /SHARED_MUTATE_EXCLUSIONS\s*=\s*\[([\s\S]*?)\]/.exec(readFileSync(STRYKER_BASE, "utf8"))?.[1] ??
+    "";
+  return [...array.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
+};
+
+/**
+ * **未播种**的分片:没有入库基线,靠棘轮的 `first-run` 不判红而不是靠一个假数字。
+ *
+ * 只该有这两片,理由同一条:没有覆盖各自 `mutate` 范围的真实报告。分片改造初期它们是拿
+ * 一次性单文件标定跑(`processor/economy.ts` / `src/retry.ts`)算的,拿单文件冒充整片会把
+ * 往后每一次全范围跑都推成「退化」。人类可读的记录在 `stryker/baseline/README.md`。
+ */
+const UNSEEDED_SHARDS = ["engine", "gen"] as const;
+
+it("Stryker 分片清单与配置同名:已播种的片有入库基线与串了棘轮门禁的入口脚本", () => {
+  const configs = shardConfigs();
+  // 清单是数据,分片名才是真源。两边逐字对齐:少一片、多一片、改一个名都当场红。
+  expect(configs.length, `stryker/ 下的分片配置数变了:\n${configs.join("\n")}`).toBe(
+    MUTATION_SHARDS.length,
+  );
+  const configuredNames = configs.map(
+    (file) => nameOfConfig(readFileSync(`${STRYKER_DIR}${file}`, "utf8")) ?? "",
+  );
+  expect(
+    configuredNames.every((name) => name !== ""),
+    "有分片配置抽不出 name:",
+  ).toBe(true);
+  expect([...configuredNames].sort()).toEqual(MUTATION_SHARDS.map((shard) => shard.name).sort());
+  // 分片名唯一:两个分片同名会让它们的报告与基线互相覆盖。
+  expect(new Set(configuredNames).size).toBe(configuredNames.length);
+
+  // 未播种清单不许漂:名单里的每一片必须真的没有基线文件(播种了就把它从名单里拿掉,
+  // 否则这条断言会红,提醒一起去改 README),名单外的每一片必须有。
+  for (const name of UNSEEDED_SHARDS) {
+    expect(shardByName(name), `未播种清单里的「${name}」不是分片`).toBeDefined();
+    const path = `${repoRoot}stryker/baseline/${name}.json`;
+    expect(existsSync(path), `「${name}」列在未播种清单里,却已经有基线文件 ${path}`).toBe(false);
+  }
+  // 名单必须反过来也全:README 点名了哪两片没有基线,读者与断言看的是同一份事实。
+  const readme = readFileSync(`${repoRoot}stryker/baseline/README.md`, "utf8");
+  for (const name of UNSEEDED_SHARDS) {
+    expect(readme, `stryker/baseline/README.md 没有点名未播种的分片「${name}」`).toContain(
+      `\`${name}\``,
+    );
+  }
+
+  const scripts = manifest().scripts;
+  for (const shard of MUTATION_SHARDS) {
+    // 三条路径的命名规则由这里钉住:配置在 `stryker/`,基线在 `stryker/baseline/`,
+    // 报告在 `reports/mutation/`(`stryker/base.mjs` 的 fragment 按分片名拼出报告路径)。
+    expect(shard.config, `${shard.name} 的配置不在 stryker/ 下`).toBe(`stryker/${shard.name}.mjs`);
+    expect(shard.baseline, `${shard.name} 的基线不在 stryker/baseline/ 下`).toBe(
+      `stryker/baseline/${shard.name}.json`,
+    );
+    expect(shard.report, `${shard.name} 的报告不在 reports/mutation/ 下`).toBe(
+      `reports/mutation/${shard.name}.json`,
+    );
+    expect(existsSync(`${repoRoot}${shard.config}`), `${shard.config} 不存在`).toBe(true);
+
+    // 基线入版本库:已播种的片文件在、形状对、属于这个分片。缺了它,棘轮对这个分片就只剩「首次」。
+    if (!(UNSEEDED_SHARDS as readonly string[]).includes(shard.name)) {
+      const baselinePath = `${repoRoot}${shard.baseline}`;
+      expect(existsSync(baselinePath), `${shard.name} 没有入库基线 ${shard.baseline}`).toBe(true);
+      const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as {
+        shard?: string;
+        detected?: number;
+        valid?: number;
+      };
+      expect(baseline.shard, `${shard.baseline} 的 shard 字段对不上`).toBe(shard.name);
+      expect(Number.isInteger(baseline.detected), `${shard.baseline} 缺 detected`).toBe(true);
+      expect(Number.isInteger(baseline.valid), `${shard.baseline} 缺 valid`).toBe(true);
+    }
+
+    // 入口:跑完变异就地比。比较没串上,棘轮就只是一份没人读的文件。
+    const command = scripts[shard.script] ?? "";
+    expect(command, `${shard.name} 的入口脚本 ${shard.script} 没了`).toContain(
+      `stryker run ${shard.config}`,
+    );
+    expect(command, `${shard.script} 跑完变异没有串上棘轮门禁`).toContain(
+      `run-mutation-ratchet-gate.ts --shard=${shard.name}`,
+    );
+  }
+
+  // 12 个分片 = 12 条入口脚本(含默认的 `mutate`,它是 engine-processor 分片那条)。
+  const mutateScripts = Object.keys(scripts).filter(
+    (name) => name === "mutate" || name.startsWith("mutate:"),
+  );
+  expect(mutateScripts.length, `变异入口脚本数变了:\n${mutateScripts.join("\n")}`).toBe(
+    MUTATION_SHARDS.length,
+  );
+});
+
+it("engine-processor 分片仍限定结算管线,且棘轮不设绝对阈值", () => {
+  // `pnpm run mutate` 与夜间链走的是这一片:`stryker.config.mjs` 只是转发壳。
+  const forwarder = readFileSync(`${repoRoot}stryker.config.mjs`, "utf8");
+  expect(forwarder, "stryker.config.mjs 不再是 engine-processor 的转发壳").toContain(
+    'export { default } from "./stryker/engine-processor.mjs";',
+  );
+
+  const processor = `${STRYKER_DIR}engine-processor.mjs`;
+  const source = readFileSync(processor, "utf8");
+  const globs = mutateGlobsOf(processor);
   // 抽取本身要成立,否则下面几条会在空数组上安静通过(与「探针没打上补丁」同一条纪律)。
-  const globs = mutateGlobs();
-  expect(globs.length, `stryker.config.mjs 里抽不出 mutate 清单:\n${source}`).toBeGreaterThan(0);
-
+  expect(
+    globs.length,
+    `stryker/engine-processor.mjs 里抽不出 mutate 清单:\n${source}`,
+  ).toBeGreaterThan(0);
   const included = globs.filter((glob) => !glob.startsWith("!"));
   expect(included.length, "mutate 里没有一条正向 glob").toBeGreaterThan(0);
   for (const glob of included) {
@@ -1481,8 +1613,366 @@ it("Stryker 配置落库,且 mutate 范围限定在 engine 结算管线", () => 
   expect(source, "没有排掉 processor 下的测试文件").toContain(
     "!packages/engine/src/processor/**/*.test.ts",
   );
-  // 只落盘、不设红线:`break: null` 是可 grep、可 review 的那一条证据(ADR-0010)。
-  expect(source, "Stryker 配置里没有把阈值显式关掉").toContain("break: null");
+  // 不设绝对红线:`break: null` 是可 grep、可 review 的那一条证据。绝对阈值仍被否决(ADR-0010),
+  // 棘轮换进来的是相对退化(ADR-0026)。它在共享底座里一份,不在每个分片里各写一遍。
+  const base = readFileSync(STRYKER_BASE, "utf8");
+  expect(base, "共享底座里没有把阈值显式关掉").toContain(
+    "thresholds: { high: 0, low: 0, break: null }",
+  );
+});
+
+it("属性测试(*.prop.ts)不进任何分片的变异范围:它们是测试,不是生产代码", () => {
+  // 理由:属性测试进 mutate 等于「让测试给测试打分」——`processor/invariants.prop.ts` 一度被
+  // engine 那几片当成生产代码变异,凭空造出一批 NoCoverage/Survived,而那批数字会跟着基线入库。
+  // 排除项只写在 `stryker/base.mjs` 的 `fragment()` 里一份,这里算的是每片的**有效**排除集。
+  const shared = sharedMutateExclusions();
+  expect(
+    shared,
+    "stryker/base.mjs 的 fragment() 里抽不出共享排除项(或它不再包含 *.prop.ts)",
+  ).toContain("!**/*.prop.ts");
+
+  const offenders = shardConfigs().filter((file) => {
+    const effective = [...mutateGlobsOf(`${STRYKER_DIR}${file}`), ...shared];
+    return !effective.some((glob) => glob.startsWith("!") && glob.endsWith("*.prop.ts"));
+  });
+  expect(offenders, "这些分片的 mutate 会把属性测试当成生产代码变异").toEqual([]);
+});
+
+// ── 基线权柄:抬升命令在场,但它不在任何自动路径上 ────────────────
+//
+// ADR-0026:抬基线只能显式为之,且那条命令不得出现在任何流水线、默认链或常跑入口。
+// 于是这里同时钉两件相反的事:命令**在场**(否则「显式为之」无处可为之),且**不在任何链上**。
+// 三道锁各管一段:命令自身(缺分片即非零、只写被点名的那一份)、接线层(不在任何入口/
+// 流水线,且跑完变异入口的比较后基线字节不变)、agent 纪律(AGENTS.md《门禁纪律》)。
+
+/** 抬基线命令的可 grep 字面量:脚本名与入口文件名。两者都在场才算「这条命令存在且可调」。 */
+const BASELINE_RAISE_MARKERS = ["mutation:baseline:raise", "accept-baseline"] as const;
+
+/** 一段文本里出现抬基线命令就返回命中的字面量。纯函数:反例可以直接喂一段构造的清单文本。 */
+const baselineRaiseIn = (text: string): string | undefined =>
+  BASELINE_RAISE_MARKERS.find((marker) => text.includes(marker));
+
+/** 常跑入口(清单本身由「变异 / 扫描只在夜间」那条钉住)。 */
+const FREQUENT_ENTRIES = ["check", "check:quick", "check:types", "test", "verify:fast"] as const;
+
+/** 「入口名 → 命令」里哪些入口带着抬基线命令。 */
+const raiseViolationsIn = (entries: Readonly<Record<string, string>>): readonly string[] =>
+  Object.entries(entries)
+    .filter(([, command]) => baselineRaiseIn(command) !== undefined)
+    .map(([name]) => name);
+
+/** 常跑入口当前的样子(反例在它上面改一项,不真动 `package.json`)。 */
+const frequentEntryCommands = (): Record<string, string> => {
+  const scripts = manifest().scripts;
+  return Object.fromEntries(FREQUENT_ENTRIES.map((entry) => [entry, scripts[entry] ?? ""]));
+};
+
+/** 流水线文本(文件名 → 文本)。读文本而不是解析 yaml:断言对象就是「有没有出现这条命令」。 */
+const workflowTexts = (): readonly (readonly [string, string])[] =>
+  readdirSync(`${repoRoot}.github/workflows`)
+    .filter((entry) => entry.endsWith(".yml") || entry.endsWith(".yaml"))
+    .sort()
+    .map(
+      (entry) => [entry, readFileSync(`${repoRoot}.github/workflows/${entry}`, "utf8")] as const,
+    );
+
+it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核组与变异入口上", () => {
+  // 在场:它是「显式为之」的唯一入口。缺了它,基线只能靠手改文件抬——那时棘轮就没有权柄了。
+  expect(
+    manifest().scripts["mutation:baseline:raise"] ?? "",
+    "抬基线命令没落进可手工调用的脚本",
+  ).toContain("accept-baseline.ts");
+
+  // 缺席①:五个常跑入口。
+  const frequent = frequentEntryCommands();
+  expect(Object.keys(frequent), "常跑入口清单不完备,下面的缺席断言会放宽").toEqual([
+    ...FREQUENT_ENTRIES,
+  ]);
+  expect(raiseViolationsIn(frequent), "抬基线命令被接进了常跑入口").toEqual([]);
+
+  // 缺席②:末尾复核组(提交内容复核不该改写判据本身)。
+  for (const step of tailSteps()) {
+    expect(baselineRaiseIn(step), `末尾复核组里混进了抬基线命令:${step}`).toBeUndefined();
+  }
+
+  // 缺席③:12 条变异入口。跑完变异就地比 → 比完不许顺手抬。
+  const scripts = manifest().scripts;
+  const mutateScripts = Object.entries(scripts).filter(
+    ([name]) => name === "mutate" || name.startsWith("mutate:"),
+  );
+  expect(mutateScripts.length, "变异入口清单空了,下面的缺席断言会在空数组上通过").toBe(
+    MUTATION_SHARDS.length,
+  );
+  for (const [name, command] of mutateScripts) {
+    expect(baselineRaiseIn(command), `${name} 里出现了抬基线命令`).toBeUndefined();
+    // 也不许把比较对象指到别处:变异入口读的是本分片的入库基线(写口只有抬升命令那一个)。
+    expect(command, `${name} 改写了比较对象`).not.toContain("--baseline=");
+  }
+
+  // 缺席④:两条流水线。
+  const workflows = workflowTexts();
+  expect(
+    workflows.map(([name]) => name),
+    "流水线清单变了,下面的缺席断言覆盖面跟着歪",
+  ).toEqual(["fast.yml", "nightly.yml"]);
+  for (const [name, text] of workflows) {
+    expect(baselineRaiseIn(text), `流水线 ${name} 里出现了抬基线命令`).toBeUndefined();
+  }
+
+  // 自证:这条 grep 抓得住东西。否则上面四处「缺席」可能只是「什么都没查」。
+  expect(
+    baselineRaiseIn(
+      '{"scripts":{"check:quick":"pnpm run mutation:baseline:raise --shard=replay"}}',
+    ),
+    "grep 抓不住被塞进命令文本的抬基线命令",
+  ).toBe("mutation:baseline:raise");
+  expect(baselineRaiseIn('{"scripts":{"check:quick":"pnpm run check:prose"}}')).toBeUndefined();
+});
+
+it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯文本,不真改 package.json)", () => {
+  const frequent = frequentEntryCommands();
+  expect(raiseViolationsIn(frequent), "还原状态下就已经是红").toEqual([]);
+  // 临时把命令加进 check:quick(只在字串层面),同样的断言必须红。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run mutation:baseline:raise --shard=replay`,
+  };
+  expect(raiseViolationsIn(tampered), "抬基线命令进了 check:quick 却没被判红").toEqual([
+    "check:quick",
+  ]);
+  // 换一条入口也一样:判红的对象是命令文本,不是某个名字。
+  expect(
+    raiseViolationsIn({ ...frequent, test: "pnpm run mutation:baseline:raise --shard=replay" }),
+  ).toEqual(["test"]);
+});
+
+// 两条字节不变的必测,分两半:
+//   ① 入口的**后半段**(棘轮门禁)跑遍全部分片,喂夹具报告——不跑真实变异,零成本;
+//   ② 入口的**全部**(`stryker run` + 棘轮门禁)真跑最小的 `replay` 分片。
+// 只有①会留下一道缝:`stryker run` 那一半到底会不会碰基线没人验。② 把这道缝堵上。
+it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
+  const gate = "packages/tools/src/mutation/run-mutation-ratchet-gate.ts";
+  // 夹具报告 10/10(Killed 9 + Timeout 1),高于每一片的入库基线;全程不跑真实变异。
+  const report = "packages/tools/src/mutation/fixtures/report-higher.json";
+  // 只对**实际存在**的基线比字节:未播种的分片(`UNSEEDED_SHARDS`)没有文件可比。
+  // 数量取实际存在的份数而不是写死,否则播不播种会让这条断言变成一个版本号。
+  const seeded = MUTATION_SHARDS.filter((shard) => existsSync(`${repoRoot}${shard.baseline}`));
+  expect(seeded.length, "一份入库基线都没有,这条断言会什么都不比").toBeGreaterThan(0);
+  expect(seeded.length, "实际存在的基线数与未播种清单对不上").toBe(
+    MUTATION_SHARDS.length - UNSEEDED_SHARDS.length,
+  );
+  const before = seeded.map((shard) => ({
+    path: shard.baseline,
+    bytes: readFileSync(`${repoRoot}${shard.baseline}`),
+  }));
+
+  // 入口的后半段(`stryker run` + 棘轮门禁)在 12 条入口里是同一段代码,所以它只跑一遍就够:
+  // 逐片跑一次,顺带证明每片的默认报告与默认基线路径都指得对(读不到基线会落进「首次」
+  // 而不是「ok」)。未播种的两片也跑:它们落进「首次」,同样不许写文件。
+  for (const shard of MUTATION_SHARDS) {
+    const compared = run("node", [gate, `--shard=${shard.name}`, `--report=${report}`]);
+    expect(compared.status, `${shard.name} 的棘轮比较没跑起来:\n${compared.output}`).toBe(0);
+    expect(compared.output, compared.output).toContain(`变异棘轮 [${shard.name}]`);
+  }
+
+  for (const { path, bytes } of before) {
+    expect(
+      readFileSync(`${repoRoot}${path}`).equals(bytes),
+      `跑完变异入口的比较后入库基线被改写了:${path}`,
+    ).toBe(true);
+  }
+});
+
+// ticket 08 的字面要求是「跑完**变异入口**后基线文件字节不变」:上面那条只跑了入口的棘轮那半。
+// 这一条真跑一次完整的命名入口(`stryker run` + 棘轮门禁)。
+// 之所以可以是 replay:它是全仓最小的分片(338 个变异体,本机实测约 30s),而这条断言只证明
+// 「字节不变」,不证明「分数没退」——后者靠夹具报告已经验过,不需要真跑一次半夜的变异。
+// 大分片(engine / runner / tools:半小时到一小时)不在门禁自测的预算里;抬基线命令更不跑。
+it("真实跑一次 mutate:replay 之后,stryker/baseline/replay.json 的字节逐字不变", () => {
+  const baseline = "stryker/baseline/replay.json";
+  const before = readFileSync(`${repoRoot}${baseline}`);
+
+  const mutation = script("mutate:replay");
+
+  // 0 = 不低于基线,1 = 退化(棘轮红了)——两个退出码都说明变异跑完了、比较也跑了。
+  // spawn 失败(没有 stryker、进程起不来)会由 `run` 直接抛出,不会落在下面的 allowlist 里。
+  // 分数高低不是这条用例的断言对象:那一半由夹具报告那条用例负责。
+  expect(
+    [0, 1],
+    `mutate:replay 的退出码不是棘轮的两种判决(0/1):${String(mutation.status)}\n${mutation.output}`,
+  ).toContain(mutation.status);
+  // 「跑完了」这件事得在输出里有痕迹:没有它,一个什么都没跑的命令也能退 0。
+  expect(mutation.output, `mutate:replay 没有跑完棘轮比较:\n${mutation.output}`).toContain(
+    "变异棘轮 [replay]",
+  );
+
+  expect(
+    readFileSync(`${repoRoot}${baseline}`).equals(before),
+    `真实跑完 mutate:replay 之后入库基线被改写了:${baseline}`,
+  ).toBe(true);
+}, 180_000);
+
+it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线", () => {
+  const entry = "packages/tools/src/mutation/accept-baseline.ts";
+  const fixture = (name: string): string => `packages/tools/src/mutation/fixtures/${name}`;
+  const accept = (...args: readonly string[]): Outcome => run("node", [entry, ...args]);
+
+  // 无参数 → 非零,而且不许有「全量重写」这种默认行为。
+  const noArgs = accept();
+  expect(noArgs.status, noArgs.output).toBe(1);
+  expect(noArgs.output).toContain("--shard=<name>");
+  // 未知分片 → 非零(拼错的分片名不能落进「抬一个默认分片」)。
+  const unknown = accept("--shard=no-such-shard");
+  expect(unknown.status, unknown.output).toBe(1);
+  expect(unknown.output).toContain("未知分片");
+  // 拼错的开关 → 非零:静默忽略会去写默认路径,而这是唯一会写入库基线的命令。
+  const typo = accept("--shard=replay", "--baselin=/tmp/x.json");
+  expect(typo.status, typo.output).toBe(1);
+  expect(typo.output).toContain("不认识的参数");
+
+  // 写口只指向临时目录:测试永远不碰 `stryker/baseline/`(AGENTS.md《门禁纪律》)。
+  const dir = mkdtempSync(join(tmpdir(), "mw-baseline-"));
+  try {
+    const target = join(dir, "replay.json");
+    const raised = accept(
+      "--shard=replay",
+      `--report=${fixture("report-higher.json")}`,
+      `--baseline=${target}`,
+    );
+    expect(raised.status, raised.output).toBe(0);
+    expect(raised.output, "没打印抬了哪一片").toContain("抬升 [replay]");
+    expect(raised.output, "没打印旧 → 新").toContain("旧 → 新:无 → 100.00%");
+
+    // 写出来的是一份合法基线:与门禁读的是同一个形状守卫。
+    const written: unknown = JSON.parse(readFileSync(target, "utf8"));
+    expect(isShardBaseline(written), `临时基线的形状不对:${String(written)}`).toBe(true);
+    expect(written).toMatchObject({ shard: "replay", detected: 10, valid: 10, score: 100 });
+    // `source` 如实记下「这个数字打哪来」。
+    expect((written as { readonly source?: string }).source).toBe(fixture("report-higher.json"));
+
+    // 再抬一次:旧基线在场时打印的旧值是上一次的数字,下降要被点出来。
+    const lowered = accept(
+      "--shard=replay",
+      `--report=${fixture("report-lower.json")}`,
+      `--baseline=${target}`,
+    );
+    expect(lowered.status, lowered.output).toBe(0);
+    expect(lowered.output).toContain("旧 → 新:100.00%");
+    expect(lowered.output, "基线下降没有被点出来").toContain("棘轮从此更松");
+
+    // 空转报告拒绝入基线:valid 0 的基线会让棘轮从此对任何真实报告都判绿。
+    const vacuousTarget = join(dir, "vacuous.json");
+    const vacuous = accept(
+      "--shard=replay",
+      `--report=${fixture("report-vacuous.json")}`,
+      `--baseline=${vacuousTarget}`,
+    );
+    expect(vacuous.status, vacuous.output).toBe(1);
+    expect(vacuous.output).toContain("空转");
+    expect(existsSync(vacuousTarget), "空转的报告被写成了基线").toBe(false);
+
+    // 报告缺失 → 非零,不写。
+    const missingTarget = join(dir, "missing.json");
+    const missing = accept(
+      "--shard=replay",
+      `--report=${fixture("no-such-report.json")}`,
+      `--baseline=${missingTarget}`,
+    );
+    expect(missing.status, missing.output).toBe(1);
+    expect(existsSync(missingTarget), "没有报告也写出了基线").toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("抬基线命令只抬本分片:指到别的分片的基线上 → 非零,且那份文件原样不动", () => {
+  const entry = "packages/tools/src/mutation/accept-baseline.ts";
+  const victim = "stryker/baseline/runner.json";
+  const original = readFileSync(`${repoRoot}${victim}`);
+  let crossed: Outcome;
+  try {
+    crossed = run("node", [
+      entry,
+      "--shard=replay",
+      "--report=packages/tools/src/mutation/fixtures/report-higher.json",
+      `--baseline=${victim}`,
+    ]);
+  } finally {
+    // 守卫挡住时下面这行是空操作;挡不住时它保证「测试弄脏真实基线」不留在工作区里。
+    writeFileSync(`${repoRoot}${victim}`, original);
+  }
+  expect(crossed.status, crossed.output).toBe(1);
+  expect(crossed.output).toContain("不是本分片的基线");
+  expect(readFileSync(`${repoRoot}${victim}`).equals(original)).toBe(true);
+});
+
+it("棘轮门禁:低一分夹具 → 红,等于/高于 → 绿,无基线 → 首次,判不了 → 红", () => {
+  const gate = "packages/tools/src/mutation/run-mutation-ratchet-gate.ts";
+  const fixture = (name: string): string => `packages/tools/src/mutation/fixtures/${name}`;
+  const ratchet = (...args: readonly string[]): Outcome => run("node", [gate, ...args]);
+
+  // 红:比基线低一个变异体(Killed 7 vs 8)。这一条就是「低一分即红」的字面实现,
+  // 而且全程不调用真实变异——门禁只读两份 JSON。
+  const regressed = ratchet(
+    "--shard=replay",
+    `--report=${fixture("report-lower.json")}`,
+    `--baseline=${fixture("baseline.json")}`,
+  );
+  expect(regressed.status, regressed.output).toBe(1);
+  expect(regressed.output).toContain("regressed");
+  // 输出里必须带「分片之间不可横向比较」:并排读两个分片的数字是这条判据最容易被误用的地方。
+  expect(regressed.output).toContain("分片之间不可横向比较");
+
+  // 绿:等于基线。相等判绿是刻意的——棘轮只拦退化。
+  const equal = ratchet(
+    "--shard=replay",
+    `--report=${fixture("report-equal.json")}`,
+    `--baseline=${fixture("baseline.json")}`,
+  );
+  expect(equal.status, equal.output).toBe(0);
+  expect(equal.output).toContain("判定:ok");
+  expect(equal.output).toContain("分片之间不可横向比较");
+
+  // 绿:高于基线。
+  const improved = ratchet(
+    "--shard=replay",
+    `--report=${fixture("report-higher.json")}`,
+    `--baseline=${fixture("baseline.json")}`,
+  );
+  expect(improved.status, improved.output).toBe(0);
+  expect(improved.output).toContain("高于基线");
+
+  // 首次:无基线不判红。这与「报告缺失」是两件事,必须分开验。
+  const firstRun = ratchet(
+    "--shard=replay",
+    `--report=${fixture("report-equal.json")}`,
+    `--baseline=${fixture("no-such-baseline.json")}`,
+  );
+  expect(firstRun.status, firstRun.output).toBe(0);
+  expect(firstRun.output).toContain("首次");
+
+  // 红:报告缺失——变异没跑成,判不了就是红(不是「首次」)。
+  const missingReport = ratchet(
+    "--shard=replay",
+    `--report=${fixture("no-such-report.json")}`,
+    `--baseline=${fixture("baseline.json")}`,
+  );
+  expect(missingReport.status, missingReport.output).toBe(1);
+  expect(missingReport.output).toContain("报告缺失");
+
+  // 红:报告里没有一个有效变异体 = 空转(共享件 vacuous.ts 的口径)。
+  const vacuous = ratchet(
+    "--shard=replay",
+    `--report=${fixture("report-vacuous.json")}`,
+    `--baseline=${fixture("baseline.json")}`,
+  );
+  expect(vacuous.status, vacuous.output).toBe(1);
+  expect(vacuous.output).toContain("什么也没断言");
+
+  // 红:分片名写错不能悄悄落进「首次」,那会变成一条永远绿的门禁。
+  const unknownShard = ratchet("--shard=no-such-shard");
+  expect(unknownShard.status, unknownShard.output).toBe(1);
+  expect(unknownShard.output).toContain("未知分片");
 });
 
 it("变异 / 扫描只在夜间:不进任何常跑入口,但有独立脚本", () => {
@@ -1491,7 +1981,8 @@ it("变异 / 扫描只在夜间:不进任何常跑入口,但有独立脚本", ()
   expect(scripts["mutate"] ?? "", "mutate 脚本没了").toContain("stryker run");
   expect(scripts["scan"] ?? "", "scan 脚本没了").toContain("run-scan-gate.ts");
 
-  // 缺席:观测项不混进任何一个常跑入口——它们没有红线,挂在快链上只会拖慢反馈回路。
+  // 缺席:它们不进任何一个常跑入口。`mutate` 是棘轮(有红线),但它的红线单位是分片、
+  // 成本是分钟到小时级;`scan` 仍是观测。两者挂在快链上都只会拖慢反馈回路。
   for (const entry of ["check", "check:quick", "check:types", "test", "verify:fast"] as const) {
     const command = scripts[entry] ?? "";
     expect(command, `变异测试被放进常跑入口 ${entry}`).not.toContain("mutate");

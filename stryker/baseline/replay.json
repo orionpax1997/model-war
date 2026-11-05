@@ -1,0 +1,8 @@
+{
+  "shard": "replay",
+  "detected": 236,
+  "valid": 338,
+  "score": 69.82,
+  "coverageBased": 71.52,
+  "source": "reports/mutation/replay.json"
+}

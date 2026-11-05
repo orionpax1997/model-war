@@ -25,7 +25,7 @@
 | [0007](./0007-runtime-bundle-artifact-is-committed.md) | 沙箱 runtime bundle 以确切字节进版本库,漂移门禁判「现算 == 入库」 | accepted | — |
 | [0008](./0008-contract-prose-revision-does-not-bump-version.md) | 契约散文修订不升版本号,版本号只锚定规则集取值 | accepted | — |
 | [0009](./0009-budget-final-values-are-revocable.md) | 预算终值可失效,但不可就地修改 | accepted | — |
-| [0010](./0010-minimal-ci-pipelines.md) | 最小主/夜间流水线建成,ADR-0002 的「不建 CI/CD」条款作废 | accepted | — |
+| [0010](./0010-minimal-ci-pipelines.md) | 最小主/夜间流水线建成,ADR-0002 的「不建 CI/CD」条款作废 | partially superseded | `mutate` 只观测不设红线一条被 ADR-0026 取代(改为棘轮);主链成员、无凭证离线、`scan` 口径仍现行 |
 | [0011](./0011-v1-scripts-migrate-to-v2-without-regen.md) | v1 冻结脚本直迁 v2:只改版本标签,不重新生成 | accepted | — |
 | [0012](./0012-strip-fence-before-compile.md) | 编译前剥模型输出的围栏包装:管线改,不动提示词 | accepted | — |
 | [0013](./0013-free-strategy-no-injected-line.md) | 自由策略:本季起不再向模型注入统一策略句 | accepted | — |
@@ -41,6 +41,7 @@
 | [0023](./0023-sparring-scripts-replace-benchmarks-as-opponents.md) | 优化与选拔的对手换成能力阶梯,基准脚本退回契约回归 | accepted | — |
 | [0024](./0024-single-evaluation-grid-and-selection-as-recompute.md) | 一次生成只定义一张评测网格,选拔是排序加独立复算 | accepted | 局部取代 ADR-0018 / ADR-0019 的选拔独立性表述;限定 ADR-0020 的版本适用范围 |
 | [0025](./0025-feedback-aggregates-and-cross-stage-gap.md) | 事实回喂分三层:聚合对差表、逐场一行、最差三场展开 | accepted | 演进 ADR-0017;局部取代 ADR-0019 的逐场全展开边界 |
+| [0026](./0026-mutation-score-is-a-ratchet.md) | 变异分数是棘轮:不许比上次低,基线抬升必须显式为之 | accepted | 取代 ADR-0010 的「`mutate` 只观测」条款 |
 
 ## 写一份新 ADR
 

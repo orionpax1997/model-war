@@ -161,8 +161,16 @@ it("注入面的名字集合恰好是真源包符号表:一个不多一个不少
   disposers.push(session.dispose);
   const after = session.probe("Object.getOwnPropertyNames(globalThis)") as string[];
 
-  const added = after.filter((name) => !before.includes(name) && name !== SCRIPT_ENTRY).sort();
-  // 这一条同时钉住两件事:名字集合与符号表逐字相同,且 `__setup` / 两个桥都没残留。
+  // Stryker 的插桩器会把自己那个命名空间写上 `globalThis`(默认 `__stryker__`),
+  // 而 runtime bundle 是测试现用 esbuild 从磁盘上的**被插桩**源码打的,于是它会出现在 guest
+  // 全局里。它不属于产品注入面,是 harness 污染物,故白名单排除一个名字。
+  // 排除后本条的判据不变:`__setup` / 两个桥 / 任何多余符号仍然一律红。
+  const HARNESS_GLOBAL = "__stryker__";
+  const added = after
+    .filter(
+      (name) => !before.includes(name) && name !== SCRIPT_ENTRY && !name.startsWith(HARNESS_GLOBAL),
+    )
+    .sort(); // 这一条同时钉住两件事:名字集合与符号表逐字相同,且 `__setup` / 两个桥都没残留。
   // (`loop` 是载入脚本时它自己新建的全局,不是注入面,故排除。)
   expect(added).toEqual(INJECTED);
 });
