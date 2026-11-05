@@ -194,8 +194,8 @@ _Avoid_: 流水线(那是多道门禁的触发编排)、检查(过于口语,掩�
 _Avoid_: 门禁(单条断言)、CI/CD(那是建在哪里的实现位置,不是它是什么)。
 
 **主流水线**:
-PR 与合入触发的快链,只装 `check:quick` 与 `test`,无凭证离线可跑。
-_Avoid_: 夜间流水线(定时触发的慢链,不是同一条)。
+PR 与合入触发的快链,装 `check:quick`、`lint:types` 与 `test`,无凭证离线可跑;成员真源见 `.github/workflows/fast.yml` 与 `packages/tools/src/ci.test.ts` 的清单断言。它与本地默认入口 `verify:fast` 不是同一个集合:`lint:types` 只挂在链上,不进本地每轮链(理由见 hld §2.2.7)。
+_Avoid_: 夜间流水线(定时触发的慢链,不是同一条)、`verify:fast`(本地实现与收口入口,不是那条链)。
 
 **夜间流水线**:
 定时触发的慢链,装慢门禁与观测项两组成员,产物落盘供复核;成员真源见 `.github/workflows/nightly.yml`。

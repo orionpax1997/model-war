@@ -100,4 +100,9 @@ export {
 // 失败记录的形状家已下沉到真源包(§2.2.5):对外名字一个不少,只换来源。
 export { FAILURE_RECORD_PREFIX, type FailureIdentity, type FailureRecord } from "@model-war/schema";
 
-export { runSelection, type SelectionProbe, type SelectionArtifact } from "./selection.js";
+export {
+  runSelection,
+  type SelectionProbe,
+  type SelectionProbeOutput,
+  type SelectionArtifact,
+} from "./selection.js";

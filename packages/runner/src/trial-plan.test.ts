@@ -107,7 +107,7 @@ it("网格形状：4 组合 × 4 座位 × 2 图 = 32 场，场序连续且种�
 
 it("组合枚举完整：四个组合各轮空一份陪练，每种组合 8 场且每个在座陪练出场 8 次", () => {
   const combos = new Set(plan.matches.map((match) => match.comboIndex));
-  expect([...combos].sort()).toEqual([0, 1, 2, 3]);
+  expect([...combos].sort((left, right) => left - right)).toEqual([0, 1, 2, 3]);
   for (const comboIndex of [0, 1, 2, 3]) {
     const matches = plan.matches.filter((match) => match.comboIndex === comboIndex);
     expect(matches).toHaveLength(8);
@@ -144,7 +144,7 @@ it("座位轮转：候选在四个座位各 8 场，两张图各 16 场", () => 
       match.map === TRIAL_GRID_MAP_NAMES[0] ? maps[0].sha256 : maps[1].sha256,
     );
   }
-  expect([...seats.keys()].sort()).toEqual([0, 1, 2, 3]);
+  expect([...seats.keys()].sort((left, right) => left - right)).toEqual([0, 1, 2, 3]);
   expect([...seats.values()]).toEqual([8, 8, 8, 8]);
   expect(mapCounts.get(TRIAL_GRID_MAP_NAMES[0])).toBe(16);
   expect(mapCounts.get(TRIAL_GRID_MAP_NAMES[1])).toBe(16);

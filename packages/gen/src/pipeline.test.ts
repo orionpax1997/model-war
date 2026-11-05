@@ -2444,7 +2444,9 @@ it.each([false, true])(
             5000, 5001, 5002,
           ]);
           expect(
-            [...new Set(options.expectedPlan.matches.map((match) => match.candidateSeat))].sort(),
+            [...new Set(options.expectedPlan.matches.map((match) => match.candidateSeat))].sort(
+              (left, right) => left - right,
+            ),
           ).toEqual([0, 1, 2, 3]);
           return gridSelectionFixture(options);
         },
@@ -2505,9 +2507,11 @@ it.each([false, true])(
     );
     // 第三阶段候选全败：四方名次是 1/2/3/4 各一，领土分随名次递减（不是四方并列）。
     for (const reading of finalReadings)
-      expect(reading.terminalSummary.players.map((player) => player.rank).sort()).toEqual([
-        1, 2, 3, 4,
-      ]);
+      expect(
+        reading.terminalSummary.players
+          .map((player) => player.rank)
+          .sort((left, right) => left - right),
+      ).toEqual([1, 2, 3, 4]);
     if (outcome.kind !== "frozen") throw new Error("终局反馈未完成定版");
     expect(outcome.meta.optimization?.feedbackRounds).toBe(2);
     expect(outcome.meta.optimization?.candidates).toHaveLength(3);

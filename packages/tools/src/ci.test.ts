@@ -36,8 +36,8 @@ const workflowText = (name: string): string =>
 const fast = workflowText("fast.yml");
 const nightly = workflowText("nightly.yml");
 
-/** 主链成员(ADR-0010:PR/合入触发的快链 = `check:quick` + `test`)。 */
-const FAST_MEMBERS = ["check:quick", "test"] as const;
+/** 主链成员(ADR-0010:PR/合入触发的快链 = `check:quick` + `lint:types` + `test`)。 */
+const FAST_MEMBERS = ["check:quick", "lint:types", "test"] as const;
 
 /** 夜间硬门禁:任一红 = 夜间链红。 `mutate` 在这里而不是观测项,因为它是棘轮(ADR-0026):
  * 不设绝对阈值,但「同一分片比入库基线低」是退化,退化即红。 */
@@ -110,7 +110,7 @@ it("正例:一份只调命名脚本的最小 workflow 判绿", () => {
 
 // ── 成员清单:主链 / 夜间硬门禁 / 夜间观测项 ─────────────────────────────────
 
-it("主链成员 = check:quick + test", () => {
+it("主链成员 = check:quick + lint:types + test", () => {
   expect(sorted(namedScripts(fast))).toEqual(sorted(FAST_MEMBERS));
 });
 

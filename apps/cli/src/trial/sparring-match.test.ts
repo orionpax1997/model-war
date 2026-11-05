@@ -166,7 +166,7 @@ it("候选 vs 存档脚本：真实引擎跑通一场，观测行与终局事实
         }),
       );
     }
-    outcome = await runTrialMatch({
+    outcome = runTrialMatch({
       runners: handles.map((handle) => handle.runner),
       players,
       ruleset,

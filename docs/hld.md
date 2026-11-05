@@ -108,11 +108,12 @@
 |---|---|---|
 | 编辑循环(每轮) | `check:quick` | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁;**零构建**,贴得住每轮编辑循环 |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
+| 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
 | 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑 |
 | 按需 → 夜间 | `mutate` / `mutate:<分片>` / `scan` | `mutate*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`scan` 仍**只观测、不设红线** |
 
-> **快反馈优先**:类型感知 lint 超过 ~10s,agent 就会「写完一起跑」,反馈回路断掉。门禁耗时是**基线不是承诺**——把它写成硬约束,后来者会为了凑数字改门禁覆盖面,那比慢几秒坏得多。
+> **快反馈优先**:`lint:types` 进主流水线、不进 `verify:fast`——本地每轮都跑一遍全仓类型感知 lint,agent 就会「写完一起跑」,反馈回路断掉。门禁耗时是**基线不是承诺**,本机实测(`tsc -b` 增量 0.74s + `oxlint --type-aware` 3.03s)是这一归属判断的依据,但它不是承诺:干净克隆首次全量编译的耗时未测,把它写成硬约束,后来者会为了凑数字改门禁覆盖面,那比慢几秒坏得多。
 
 #### 2.2.8 依赖策略
 
