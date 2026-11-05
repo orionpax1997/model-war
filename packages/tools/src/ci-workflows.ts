@@ -137,17 +137,22 @@ export const namedScripts = (yaml: string): readonly string[] => {
   return scripts;
 };
 
-/** 矩阵里的一条腿:跑哪个脚本、是不是观测项(观测项红不阻断)。 */
-export type MatrixLeg = { readonly script: string; readonly advisory: boolean };
+/** 矩阵里的一条腿:跑哪个脚本、产物名用哪个 slug、是不是观测项(观测项红不阻断)。 */
+export type MatrixLeg = {
+  readonly script: string;
+  readonly slug: string;
+  readonly advisory: boolean;
+};
 
-/** `include:` 里的流式映射条目 `- { script: "...", advisory: <bool>, ... }`。 */
-const MATRIX_LEG = /-\s*\{\s*script:\s*["']([^"']+)["']\s*,\s*advisory:\s*(true|false)\b/gu;
+/** `include:` 里的流式映射条目 `- { script: "...", slug: "...", advisory: <bool>, ... }`。 */
+const MATRIX_LEG =
+  /-\s*\{\s*script:\s*["']([^"']+)["']\s*,\s*slug:\s*["']([^"']+)["']\s*,\s*advisory:\s*(true|false)\b/gu;
 
 /** 读出夜间链 matrix 的全部腿(顺序即 yaml 里的书写顺序)。 */
 export const matrixLegs = (yaml: string): readonly MatrixLeg[] => {
   const legs: MatrixLeg[] = [];
   for (const match of yaml.matchAll(MATRIX_LEG)) {
-    legs.push({ script: match[1] ?? "", advisory: match[2] === "true" });
+    legs.push({ script: match[1] ?? "", slug: match[2] ?? "", advisory: match[3] === "true" });
   }
   return legs;
 };
@@ -163,3 +168,35 @@ export const observationalScripts = (yaml: string): readonly string[] =>
   matrixLegs(yaml)
     .filter((leg) => leg.advisory)
     .map((leg) => leg.script);
+
+// ── 产物名 ───────────────────────────────────────────────────────────────────
+
+/**
+ * GitHub 产物名允许的字符:字母、数字与 `._-`。
+ *
+ * 禁用面来自 upload-artifact 自身的校验(`:` `*` `?` `"` `<` `>` `|` `/` `\r` `\n` `\`),
+ * 它按 NTFS 兼容口径拦一道。夜间矩阵的脚本名天然带 `:`(`check:limits` 这种命名形态),
+ * 所以产物名不能直接拼 `matrix.script`。
+ */
+const ARTIFACT_NAME = /^[A-Za-z0-9._-]+$/u;
+
+/**
+ * 校验一批**具体**产物名(模板已代入):名字非法或多个腿重名都会让上传步失败。
+ *
+ * 返回问题清单(空 = 干净)。名字为空也计入非法:`slug` 漏写时矩阵腿会静默丢名,
+ * 与「产物传上去了但看不出是哪条腿」相比,直接红更好。
+ */
+export const artifactNameViolations = (names: readonly string[]): readonly string[] => {
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!ARTIFACT_NAME.test(name)) {
+      problems.push(`产物名含非法字符(只允许字母数字与 ._-):${name}`);
+    }
+    if (seen.has(name)) {
+      problems.push(`产物名重复(同名会让上传步失败):${name}`);
+    }
+    seen.add(name);
+  }
+  return problems;
+};

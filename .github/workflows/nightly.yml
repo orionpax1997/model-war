@@ -42,18 +42,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `slug` 是 `script` 的产物名形态:脚本名带 `:`(命名脚本的包/子命令分隔符),而
+          # upload-artifact 的产物名不许出现 `: * ? " < > | / \`(NTFS 兼容限制),带冒号直接失败。
+          # 于是两条腿各带一份:script 用于执行与记录,slug 只用于产物名与落盘文件名。
           # ---- 硬门禁:红 = 该 job 红 ----
-          - { script: "check", advisory: false, timeout: 60 }
-          - { script: "test:gates", advisory: false, timeout: 60 }
-          - { script: "test:slow", advisory: false, timeout: 120 }
-          - { script: "check:selfproof", advisory: false, timeout: 60 }
-          - { script: "check:cross-process", advisory: false, timeout: 60 }
-          - { script: "check:limits", advisory: false, timeout: 60 }
-          - { script: "check:budget-recheck", advisory: false, timeout: 60 }
+          - { script: "check", slug: "check", advisory: false, timeout: 60 }
+          - { script: "test:gates", slug: "test-gates", advisory: false, timeout: 60 }
+          - { script: "test:slow", slug: "test-slow", advisory: false, timeout: 120 }
+          - { script: "check:selfproof", slug: "check-selfproof", advisory: false, timeout: 60 }
+          - { script: "check:cross-process", slug: "check-cross-process", advisory: false, timeout: 60 }
+          - { script: "check:limits", slug: "check-limits", advisory: false, timeout: 60 }
+          - { script: "check:budget-recheck", slug: "check-budget-recheck", advisory: false, timeout: 60 }
           # 棘轮:变异跑完就地比入库基线,低于基线即红(ADR-0026;不设绝对阈值)。
-          - { script: "mutate", advisory: false, timeout: 300 }
+          - { script: "mutate", slug: "mutate", advisory: false, timeout: 300 }
           # ---- 观测项:红不阻断,只把 outcome 落盘(ADR-0010:只落盘不设红线)----
-          - { script: "scan", advisory: true, timeout: 30 }
+          - { script: "scan", slug: "scan", advisory: true, timeout: 30 }
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -85,15 +88,16 @@ jobs:
         if: always()
         run: |
           mkdir -p reports/legs
-          printf 'script=%s\nadvisory=%s\noutcome=%s\nconclusion=%s\n' '${{ matrix.script }}' '${{ matrix.advisory }}' '${{ steps.run.outcome }}' '${{ steps.run.conclusion }}' > 'reports/legs/${{ matrix.script }}.txt'
-          cat 'reports/legs/${{ matrix.script }}.txt'
+          printf 'script=%s\nadvisory=%s\noutcome=%s\nconclusion=%s\n' '${{ matrix.script }}' '${{ matrix.advisory }}' '${{ steps.run.outcome }}' '${{ steps.run.conclusion }}' > 'reports/legs/${{ matrix.slug }}.txt'
+          cat 'reports/legs/${{ matrix.slug }}.txt'
 
-      # 门禁红了也要传产物——红的那次往往最需要看报告。artifact 名必须唯一(v4+ 同名直接失败)。
+      # 门禁红了也要传产物——红的那次往往最需要看报告。artifact 名必须唯一(v4+ 同名直接失败),
+      # 且只能用 `slug`:这里若拼 `matrix.script`,冒号会让上传步失败、把绿腿也判成红。
       - name: Upload leg reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: nightly-${{ matrix.script }}-${{ github.run_number }}
+          name: nightly-${{ matrix.slug }}-${{ github.run_number }}
           path: reports/
           if-no-files-found: warn
           retention-days: 14

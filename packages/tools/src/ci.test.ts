@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
 import {
+  artifactNameViolations,
   hardGateScripts,
   matrixLegs,
   namedScripts,
@@ -124,9 +125,28 @@ it("夜间链硬门禁齐全,观测项恰为 scan", () => {
   }
 });
 
+// ── 产物名 ───────────────────────────────────────────────────────────────────
+
+/** 夜间链的产物名模板(`github.run_number` 用固定假值代入即可:判据只看字符面与唯一性)。 */
+const nightlyArtifactNames = (yaml: string): readonly string[] =>
+  matrixLegs(yaml).map((leg) => `nightly-${leg.slug}-42`);
+
+it("夜间链产物名合法且唯一(upload-artifact 不许冒号等字符,同名直接失败)", () => {
+  // 一共九条腿,九份产物:名字字符面与唯一性都靠 slug 承担。
+  expect(nightlyArtifactNames(nightly)).toHaveLength(9);
+  expect(artifactNameViolations(nightlyArtifactNames(nightly))).toEqual([]);
+  // 产物名只能取 slug:一旦有人改回 `matrix.script`,上传步会以非法字符失败。
+  expect(nightly).not.toContain("nightly-${{ matrix.script }}");
+});
+
+it("反例:拿脚本名直接拼产物名会被判红", () => {
+  expect(artifactNameViolations(["nightly-test:gates-42"])[0]).toContain("test:gates");
+  expect(artifactNameViolations(["nightly-scan-42", "nightly-scan-42"])[0]).toContain("重复");
+});
+
 it("反例:夜间链抽掉一道硬门禁,成员清单立即不符", () => {
   const tampered = nightly.replace(
-    '          - { script: "check:limits", advisory: false, timeout: 60 }\n',
+    '          - { script: "check:limits", slug: "check-limits", advisory: false, timeout: 60 }\n',
     "",
   );
   expect(sorted(hardGateScripts(tampered))).not.toEqual(sorted(NIGHTLY_HARD_GATES));
