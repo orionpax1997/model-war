@@ -68,12 +68,28 @@ const parseTamper = (argv: readonly string[]): Tamper => {
   return baseline ? "baseline" : null;
 };
 
+/**
+ * 只从**失败行**里取用例名。
+ *
+ * 为什么不能直接拿整段输出做 `includes`:门禁用 `--reporter=verbose` 跑,输出里**绿用例也带名字**。
+ * 于是一个探针用例全绿、只有基准用例红的复算,会先命中探针那个名字片段,把红归错侧——
+ * 而反例语义(哪侧失配)正是本门禁唯一要说的那句话。
+ * 两种失败行都要认:verbose reporter 的 `× |unit| … > 用例名`,以及汇总段的 `FAIL |unit| … > 用例名`。
+ */
+const failedCaseNames = (output: string): readonly string[] =>
+  output
+    .split("\n")
+    .filter((line) => /(?:^|\s)(?:×|FAIL)\s.*>/u.test(line))
+    .map((line) => line.slice(line.lastIndexOf(">") + 1).trim());
+
 /** 红的原因归到失配语义的哪一侧。 */
 const reasonOf = (output: string): string => {
-  if (output.includes(PROBE_FAILURE_MARK)) {
+  const failed = failedCaseNames(output);
+  const failedWith = (mark: string): boolean => failed.some((name) => name.includes(mark));
+  if (failedWith(PROBE_FAILURE_MARK)) {
     return "探针未被截停";
   }
-  if (output.includes(BASELINE_FAILURE_MARK) || output.includes(HONEST_FAILURE_MARK)) {
+  if (failedWith(BASELINE_FAILURE_MARK) || failedWith(HONEST_FAILURE_MARK)) {
     return "基准被截停";
   }
   return "复算不通过";
