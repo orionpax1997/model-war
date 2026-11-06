@@ -1,9 +1,9 @@
 {
   "shard": "engine-processor",
-  "detected": 897,
-  "valid": 1155,
-  "score": 77.66,
-  "coverageBased": 81.62,
-  "source": "reports/mutation/mutation.json",
-  "note": "这是分片改造之前默认配置(pnpm run mutate → engine-processor 分片)的一次完整跑,覆盖本分片的 mutate 范围:19 个 processor 文件、1155 个变异体(Killed 896 + Timeout 1 / Survived 202 / NoCoverage 56)。报告路径 reports/mutation/mutation.json 是旧产物名,不是当前的 reports/mutation/engine-processor.json;壳换了名字,跑的是同一份 mutate scope 与同一份 testFiles,所以数字可以直接当本分片的基线。与当前范围的唯一差别是 processor/action-effects.ts(后加的类型再导出文件,零变异体)。"
+  "detected": 945,
+  "valid": 1246,
+  "score": 75.84,
+  "coverageBased": 80.7,
+  "source": "reports/mutation/engine-processor.json",
+  "note": "2026-11-05 一次完整跑的口径:20 个 processor 文件、1246 个变异体(Killed 944 + Timeout 1 / Survived 226 / NoCoverage 75)。上一版基线是 2026-10-10 的报告(1155 个变异体),此后 processor 范围又落了 91 个新变异体(step0-dispatch +41、index +14、step4-object-tick +12 等),所以那份数字已不代表当前代码:它量的是一个月前的树。这次抬升是**下降**的(原始分 77.66 → 75.84、覆盖内分 81.62 → 80.70),棘轮从此更松——理由是让棘轮从此量当前树,而不是把新代码的覆盖缺口当成基线的错默默带着。覆盖缺口确实存在:新增代码里 step0-dispatch(29 存活)、step4-object-tick(9 存活)、economy(16 存活)、intent-verdicts(90 存活)是下一轮补测试的主要目标;把它们补上后应显式再抬一次把水位收回 81% 以上。抬升由仓库所有者决定并执行(按《门禁纪律》,这条命令不进任何常跑入口、不由 agent 发起;本次为所有者明确指示后执行,数字如实记录在这里)。"
 }
