@@ -2117,6 +2117,50 @@ it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核
   expect(baselineRaiseIn('{"scripts":{"check:quick":"pnpm run check:prose"}}')).toBeUndefined();
 });
 
+// ── 可解释性诊断:在场,但只在按需层 ──────────────────────────────────────────
+//
+// 诊断脚本(`pnpm run mutation:diagnose`)回答的是「这片分数低,是因为测试弱、测不到、
+// 还是口径不对」。它是**观测**:只读报告、只写一份 Markdown 报告。
+// 所以它的位置与抬基线命令相反但同形——
+//   抬基线命令:能改判据,所以必须**不在**任何自动路径上;
+//   诊断脚本:不改判据,但它是按需工具,挂在常跑链上只会白占预算(它要读十几 MB 报告)。
+// 两条纪律合起来是同一句:能改判据的开关不能进判据路径,纯观测的按需工具也不必进。
+it("变异诊断入口在场,但不在任何常跑入口与流水线上,且不改判据", () => {
+  const scripts = manifest().scripts;
+  const diagnose = scripts["mutation:diagnose"] ?? "";
+  // 在场:它是「为什么低」这件事的唯一入口。缺了它,低分片就只能靠猜。
+  expect(diagnose, "诊断入口没落进可手工调用的脚本").toContain("run-mutation-diagnose.ts");
+
+  // 缺席①:五个常跑入口。
+  const frequent = frequentEntryCommands();
+  const onFrequent = Object.entries(frequent)
+    .filter(([, command]) => command.includes("mutation:diagnose"))
+    .map(([name]) => name);
+  expect(onFrequent, "诊断入口被接进了常跑入口").toEqual([]);
+
+  // 缺席②:两条流水线。
+  for (const [name, text] of workflowTexts()) {
+    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("mutation:diagnose");
+  }
+
+  // 缺席③:它不改判据。诊断里出现抬基线入口,就是「观测顺手改了判据」——
+  // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
+  expect(diagnose, "诊断入口里出现了抬基线命令").not.toContain("accept-baseline");
+  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutation:baseline:raise");
+
+  // 反例:把诊断接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run mutation:diagnose`,
+  };
+  expect(
+    Object.entries(tampered)
+      .filter(([, command]) => command.includes("mutation:diagnose"))
+      .map(([name]) => name),
+    "诊断接进 check:quick 却没被判红",
+  ).toEqual(["check:quick"]);
+});
+
 it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯文本,不真改 package.json)", () => {
   const frequent = frequentEntryCommands();
   expect(raiseViolationsIn(frequent), "还原状态下就已经是红").toEqual([]);
