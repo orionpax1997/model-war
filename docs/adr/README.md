@@ -42,6 +42,7 @@
 | [0024](./0024-single-evaluation-grid-and-selection-as-recompute.md) | 一次生成只定义一张评测网格,选拔是排序加独立复算 | accepted | 局部取代 ADR-0018 / ADR-0019 的选拔独立性表述;限定 ADR-0020 的版本适用范围 |
 | [0025](./0025-feedback-aggregates-and-cross-stage-gap.md) | 事实回喂分三层:聚合对差表、逐场一行、最差三场展开 | accepted | 演进 ADR-0017;局部取代 ADR-0019 的逐场全展开边界 |
 | [0026](./0026-mutation-score-is-a-ratchet.md) | 变异分数是棘轮:不许比上次低,基线抬升必须显式为之 | accepted | 取代 ADR-0010 的「`mutate` 只观测」条款 |
+| [0027](./0027-mutation-history-lives-in-the-baseline.md) | 变异分数的历史住在入库基线里,不住在产物里 | accepted | 演进 ADR-0026 的「历史归基线」判断 |
 
 ## 写一份新 ADR
 

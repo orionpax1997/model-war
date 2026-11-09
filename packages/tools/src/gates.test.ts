@@ -2214,6 +2214,58 @@ it("测试纪律规则的诊断入口在场,但不在任何常跑入口与流水
   ).toEqual(["check:quick"]);
 });
 
+it("三个观测入口都在场,但不在任何常跑入口与流水线上,且不改判据", () => {
+  const scripts = manifest().scripts;
+  // 这三个都是**观测**:只读、只写报告,不判定任何东西。
+  //   · `lint:diagnose`   —— 测试纪律规则的命中到底有没有风险(纯读源码,秒级);
+  //   · `test:report`     —— 慢测试长尾与不稳定用例(**要跑两遍全量测试**,分钟级);
+  //   · `mutation:history` —— 变异分数的趋势(纯读基线,秒级)。
+  // 「按需工具不进任何链」是已被断言钉死的纪律:观测挂在常跑链上只会白占反馈预算
+  // (`test:report` 尤其——它每轮要跑两遍测试),而它的产物默认不被任何门禁消费。
+  const observers = ["lint:diagnose", "test:report", "mutation:history"];
+
+  // 在场:每一个都要能被手工调到。缺了它,对应的问题就只能靠回忆回答。
+  for (const name of observers) {
+    expect(scripts[name] ?? "", `${name} 没落进可手工调用的脚本`).not.toBe("");
+  }
+
+  // 缺席①:五个常跑入口。
+  const frequent = frequentEntryCommands();
+  for (const name of observers) {
+    const onFrequent = Object.entries(frequent)
+      .filter(([, command]) => command.includes(name))
+      .map(([entry]) => entry);
+    expect(onFrequent, `${name} 被接进了常跑入口`).toEqual([]);
+  }
+
+  // 缺席②:两条流水线。
+  for (const [name, text] of workflowTexts()) {
+    for (const observer of observers) {
+      expect(text, `流水线 ${name} 里出现了 ${observer}`).not.toContain(observer);
+    }
+  }
+
+  // 缺席③:它们不改判据。观测里出现抬基线入口,就是「观测顺手改了判据」——
+  // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
+  for (const name of observers) {
+    const command = scripts[name] ?? "";
+    expect(command, `${name} 里出现了抬基线命令`).not.toContain("accept-baseline");
+    expect(command, `${name} 里出现了抬基线脚本名`).not.toContain("mutation:baseline:raise");
+  }
+
+  // 反例:把其中一个接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run test:report`,
+  };
+  expect(
+    Object.entries(tampered)
+      .filter(([, command]) => command.includes("test:report"))
+      .map(([name]) => name),
+    "观测接进 check:quick 却没被判红",
+  ).toEqual(["check:quick"]);
+});
+
 it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯文本,不真改 package.json)", () => {
   const frequent = frequentEntryCommands();
   expect(raiseViolationsIn(frequent), "还原状态下就已经是红").toEqual([]);
@@ -2335,6 +2387,13 @@ it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临
     // `source` 如实记下「这个数字打哪来」。
     expect((written as { readonly source?: string }).source).toBe(fixture("report-higher.json"));
 
+    // 历史(ADR-0027):抬升把这一次的数字记进基线文件里的 `history`。
+    // 首次抬升(旧基线不在场)→ 历史从这一条开始。
+    const firstHistory = (written as { readonly history?: readonly { detected: number }[] })
+      .history;
+    expect(firstHistory, "抬升没有把历史写进基线").toHaveLength(1);
+    expect(firstHistory?.[0]?.detected).toBe(10);
+
     // 再抬一次:旧基线在场时打印的旧值是上一次的数字,下降要被点出来。
     const lowered = accept(
       "--shard=replay",
@@ -2344,6 +2403,16 @@ it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临
     expect(lowered.status, lowered.output).toBe(0);
     expect(lowered.output).toContain("旧 → 新:100.00%");
     expect(lowered.output, "基线下降没有被点出来").toContain("棘轮从此更松");
+
+    // 再抬一次:历史续上一条,旧条目不动(历史是追加的,不是覆盖的)。
+    const secondWritten: unknown = JSON.parse(readFileSync(target, "utf8"));
+    const secondHistory = (
+      secondWritten as { readonly history?: readonly { detected: number; score: number }[] }
+    ).history;
+    expect(secondHistory, "第二次抬升没有续上历史").toHaveLength(2);
+    expect(secondHistory?.[0]?.detected).toBe(10);
+    expect(secondHistory?.[1]?.detected).toBe(7);
+    expect(secondHistory?.[1]?.score).toBe(70);
 
     // 空转报告拒绝入基线:valid 0 的基线会让棘轮从此对任何真实报告都判绿。
     const vacuousTarget = join(dir, "vacuous.json");
