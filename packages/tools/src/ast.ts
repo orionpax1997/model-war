@@ -58,3 +58,39 @@ export const walk = (value: unknown, visit: (node: AstNode) => void): void => {
     walk(child, visit);
   }
 };
+
+/**
+ * 深度优先遍历,并把**祖先链**交给访问者:访问节点时,`ancestors` 是从根到该节点的父链
+ * (不含该节点自身),由外到内。
+ *
+ * 为什么需要它:有些判据问的不是「这个节点是什么」,而是「这个节点**处在什么上下文里**」——
+ * 比如「这条 `expect` 写在 `if` 的分支里」,只拿到节点本身判不出来。有了祖先链,
+ * 「是否条件执行」这类问题就变成一次链上的查找,不必每个规则各写一遍带栈的遍历器。
+ *
+ * 祖先链是**新数组**,不共享可变状态:访问者改它不会影响别的访问者。
+ */
+export const walkWithAncestors = (
+  value: unknown,
+  visit: (node: AstNode, ancestors: readonly AstNode[]) => void,
+): void => {
+  const step = (current: unknown, ancestors: readonly AstNode[]): void => {
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        step(item, ancestors);
+      }
+      return;
+    }
+    if (!isAstNode(current)) {
+      return;
+    }
+    visit(current, ancestors);
+    const next = [...ancestors, current];
+    for (const [key, child] of Object.entries(current)) {
+      if (key === "parent" || key === "range") {
+        continue;
+      }
+      step(child, next);
+    }
+  };
+  step(value, []);
+};

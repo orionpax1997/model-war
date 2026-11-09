@@ -62,6 +62,25 @@ export type StrykerJsonReport = {
   readonly files?: Readonly<Record<string, { readonly mutants?: readonly StrykerMutant[] }>>;
 };
 
+/**
+ * 历史里的一条:某个时刻这个分片的基线数字。
+ *
+ * **为什么历史住在基线文件里**(ADR-0027):ADR-0026 把「历史」判给了入库基线
+ * ——「产物(`reports/mutation/`)可以过期,基线不能」。时间序列若落在产物里,14 天的
+ * artifact 保留期一过它就没了;落在基线里,它随仓库走、随 diff 可见、随代码评审被看见。
+ *
+ * 写入只有一条路:抬升命令(`accept-baseline.ts`)。它是显式动作,所以历史不会被
+ * 自动路径偷偷改写——这与「抬基线只能显式为之」是同一条纪律。
+ */
+export type BaselineHistoryEntry = {
+  /** ISO 时间戳。旧基线建立的时间没有被记下来,那一条记 `"unknown"`。 */
+  readonly at: string;
+  readonly detected: number;
+  readonly valid: number;
+  /** 原始分(百分比)。给人读的副本,不参与判决。 */
+  readonly score: number;
+};
+
 /** 入库基线文件的形状。`score` / `coverageBased` / `source` / `note` 全是参考字段。 */
 export type ShardBaseline = MutationRatio & {
   /** 这份基线属于哪个分片。只用于打印与自证合理性,不参与判决。 */
@@ -74,6 +93,13 @@ export type ShardBaseline = MutationRatio & {
   readonly source?: string;
   /** 需要额外说明的事(例如来源报告并不覆盖本分片的 mutate 范围)。 */
   readonly note?: string;
+  /**
+   * 这个分片的基线历史(按时间升序)。**只由抬升命令写**,判决不读它。
+   *
+   * 缺省表示「这个基线是在历史机制之前立的」——旧基线文件没有这个字段,
+   * 读到缺省时不算错:下一次抬升会把旧值补成第一条。
+   */
+  readonly history?: readonly BaselineHistoryEntry[];
 };
 
 /** 三种判定。`first-run` 不是「绿」也不是「红」:它只说明这个分片还没有可比的上一次。 */
@@ -215,5 +241,66 @@ export const isShardBaseline = (value: unknown): value is ShardBaseline => {
   if (typeof candidate["shard"] !== "string") {
     return false;
   }
-  return ["score", "coverageBased"].every((key) => typeof candidate[key] === "number");
+  if (!["score", "coverageBased"].every((key) => typeof candidate[key] === "number")) {
+    return false;
+  }
+  // 历史(若存在)必须是形状正确的条目:一份坏掉的历史不会静默通过——
+  // 它会被趋势报告读成「这段历史不存在」,而没人知道它坏过。
+  const history = candidate["history"];
+  if (history === undefined) {
+    return true;
+  }
+  if (!Array.isArray(history)) {
+    return false;
+  }
+  return history.every(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as Record<string, unknown>)["at"] === "string" &&
+      typeof (entry as Record<string, unknown>)["detected"] === "number" &&
+      typeof (entry as Record<string, unknown>)["valid"] === "number" &&
+      typeof (entry as Record<string, unknown>)["score"] === "number",
+  );
+};
+
+/**
+ * 推进历史:给定旧基线与这一次的新数字,算出新的历史序列。
+ *
+ * 规则(每条都有理由):
+ *   · 旧基线不在场 → 历史就是这一条(首次播种)。
+ *   · 旧基线在场但没有历史(它是历史机制之前立的) → **先把旧值补成第一条**,
+ *     再追加新的。否则第一次抬升会把旧值抹掉,序列从「跳变」开始,看不出是抬升还是突变。
+ *   · 旧基线在场且已有历史 → 直接追加。
+ *
+ * `at` 由调用方传入(本函数不读时钟):同一份输入永远得到同一份结论。
+ */
+export const nextHistory = (
+  previous: ShardBaseline | undefined,
+  next: MutationCounts,
+  at: string,
+): readonly BaselineHistoryEntry[] => {
+  const entry: BaselineHistoryEntry = {
+    at,
+    detected: next.detected,
+    valid: next.valid,
+    score: round2(mutationScore(next)),
+  };
+  if (previous === undefined) {
+    return [entry];
+  }
+  const existing = previous.history ?? [];
+  if (existing.length > 0) {
+    return [...existing, entry];
+  }
+  return [
+    {
+      // 旧基线建立的时间没有被记下来:不猜,写 `"unknown"`。
+      at: "unknown",
+      detected: previous.detected,
+      valid: previous.valid,
+      score: previous.score,
+    },
+    entry,
+  ];
 };
