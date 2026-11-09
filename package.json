@@ -24,6 +24,7 @@
     "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
     "lint": "oxlint apps packages",
     "lint:types": "tsc -b --pretty false && oxlint --type-aware apps packages",
+    "lint:diagnose": "node packages/tools/src/vitest/run-vitest-rules-diagnose.ts",
     "coupling": "node packages/tools/src/toolchain-coupling.ts",
     "coupling:quickjs": "node packages/tools/src/gate/run-quickjs-coupling-gate.ts",
     "probes:sandbox": "node packages/tools/src/sandbox-probes/run-probes.ts",

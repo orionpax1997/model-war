@@ -1597,6 +1597,23 @@ it("测试纪律门禁:集中测试 / 禁用测试 / 用例体内无断言各自
   expect(script("lint").status, "撤掉探针后门禁没有回到绿").toBe(0);
 });
 
+it("测试纪律门禁:断言写在用例体之外 → 变红(它属于每条用例的前提时除外)", () => {
+  // 探针:一条 `expect` 写在 `it` 之外——它不属于任何用例,失败时归属也说不清。
+  // 这条规则 2026-11-06 起是 error(此前整条关闭);例外只有 `apps/cli/src/cli.test.ts`
+  // 一个文件(模块级 `beforeAll` 里的共享夹具准备),见 `.oxlintrc.json` 的 `overrides`。
+  const probe = 'import { expect } from "vitest";\n\nexpect(1).toBe(1);\n';
+  const violated = withProbeFile(VITEST_PROBE_PATH, probe, () => script("lint"));
+  expect(violated.status, `no-standalone-expect 没有让门禁非零退出:\n${violated.output}`).toBe(1);
+  expect(violated.output, violated.output).toContain("vitest(no-standalone-expect)");
+
+  // 还原:把同一句断言塞进用例体内就放行——红线是「在用例外」,不是「不许有断言」。
+  const restored =
+    'import { expect, it } from "vitest";\n\nit("规矩的用例", () => {\n  expect(1).toBe(1);\n});\n';
+  const restoredOutcome = withProbeFile(VITEST_PROBE_PATH, restored, () => script("lint"));
+  expect(restoredOutcome.status, `还原后仍被拦下:\n${restoredOutcome.output}`).toBe(0);
+  expect(script("lint").status, "撤掉探针后门禁没有回到绿").toBe(0);
+});
+
 // ── 抛了异常但不检查消息 ───────────────────────────────────────────────────
 
 it("测试纪律门禁:抛了异常但不检查消息变红,补上期望消息后放行", () => {
@@ -2156,6 +2173,42 @@ it("变异诊断入口在场,但不在任何常跑入口与流水线上,且不�
   expect(
     Object.entries(tampered)
       .filter(([, command]) => command.includes("mutation:diagnose"))
+      .map(([name]) => name),
+    "诊断接进 check:quick 却没被判红",
+  ).toEqual(["check:quick"]);
+});
+
+it("测试纪律规则的诊断入口在场,但不在任何常跑入口与流水线上,且不改判据", () => {
+  const scripts = manifest().scripts;
+  const diagnose = scripts["lint:diagnose"] ?? "";
+  // 在场:它是「那 99 处命中到底有没有风险」这件事的唯一入口。缺了它,这个问题只能靠回忆回答。
+  expect(diagnose, "诊断入口没落进可手工调用的脚本").toContain("run-vitest-rules-diagnose.ts");
+
+  // 缺席①:五个常跑入口。它是观测,不该占每轮反馈的预算。
+  const frequent = frequentEntryCommands();
+  const onFrequent = Object.entries(frequent)
+    .filter(([, command]) => command.includes("lint:diagnose"))
+    .map(([name]) => name);
+  expect(onFrequent, "诊断入口被接进了常跑入口").toEqual([]);
+
+  // 缺席②:两条流水线。
+  for (const [name, text] of workflowTexts()) {
+    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("lint:diagnose");
+  }
+
+  // 缺席③:它不改判据。诊断里出现抬基线入口,就是「观测顺手改了判据」——
+  // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
+  expect(diagnose, "诊断入口里出现了抬基线命令").not.toContain("accept-baseline");
+  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutation:baseline:raise");
+
+  // 反例:把诊断接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run lint:diagnose`,
+  };
+  expect(
+    Object.entries(tampered)
+      .filter(([, command]) => command.includes("lint:diagnose"))
       .map(([name]) => name),
     "诊断接进 check:quick 却没被判红",
   ).toEqual(["check:quick"]);
