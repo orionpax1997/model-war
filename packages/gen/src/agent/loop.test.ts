@@ -456,6 +456,74 @@ it("执行器起不来是基础设施失败:直接抛,不折成一条「模型�
   await expect(runAgentSession(requestOf({ model, executor }))).rejects.toThrow(/沙箱执行器起不来/);
 });
 
+it("单入口与调用计数:有动作的步数 == 执行器被调用次数 == 模型被调用次数", async () => {
+  const model = stubClient([reply(ACTION), reply(ACTION), reply(ACTION)]);
+  const executor = fakeExecutor([OK, OK, OK]);
+  const result = await runAgentSession(
+    requestOf({ model, executor: executor.executor, maxSteps: 3 }),
+  );
+
+  expect(result.steps).toHaveLength(3);
+  expect(executor.requests).toHaveLength(3);
+  expect(model.calls).toHaveLength(3);
+  // 步号从 1 起、连续、与协议轮号一一对应(报告侧左连接的前提)。
+  expect(executor.requests.map((request) => request.step)).toEqual([1, 2, 3]);
+  expect(result.turns.map((turn) => (turn.kind === "response" ? turn.round : -1))).toEqual([
+    1, 2, 3,
+  ]);
+});
+
+it("零步会话:maxSteps 为 0 时一次调用都没有,形状仍然合法", async () => {
+  const model = stubClient([]);
+  const result = await runAgentSession(
+    requestOf({ model, executor: fakeExecutor([]).executor, maxSteps: 0 }),
+  );
+
+  expect(result.termination).toBe("max-steps");
+  expect(result.atStep).toBe(0);
+  expect(result.steps).toEqual([]);
+  expect(result.prompts).toEqual([]);
+  expect(model.calls).toHaveLength(0);
+});
+
+it("atMs 是相对会话起点的偏移,harnessMs 是 sendMs 的补集", async () => {
+  const clock = clockOf();
+  const model = {
+    send: async (): Promise<ModelResponse> => {
+      clock.advance(100);
+      return { text: ACTION, finishReason: "stop", usage: {} };
+    },
+  };
+  const executor = fakeExecutor([
+    () => {
+      clock.advance(30);
+      return OK;
+    },
+    () => {
+      clock.advance(30);
+      return OK;
+    },
+  ]);
+  const result = await runAgentSession(
+    requestOf({ model, executor: executor.executor, maxSteps: 2, now: clock.now }),
+  );
+
+  // 第一步:起点 0,模型 100ms,沙箱 30ms。
+  expect(result.steps[0]).toMatchObject({ atMs: 0, harnessMs: 30 });
+  // 第二步:起点就是第一步结束的时刻(130)。
+  expect(result.steps[1]).toMatchObject({ atMs: 130, harnessMs: 30 });
+  // sendMs + harnessMs 就是整步。
+  for (const [index, step] of result.steps.entries()) {
+    const turn = result.turns[index];
+    expect(turn?.kind).toBe("response");
+    if (turn?.kind !== "response") return;
+    const nextAt = result.steps[index + 1]?.atMs;
+    if (nextAt !== undefined) {
+      expect(nextAt - step.atMs).toBe(turn.sendMs + step.harnessMs);
+    }
+  }
+});
+
 it("默认步数上限取自常量(不在这里写第二个 120)", async () => {
   expect(AGENT_MAX_STEPS).toBe(120);
 });
