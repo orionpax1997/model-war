@@ -16,6 +16,7 @@
  */
 
 import {
+  AGENT_ARCHIVE_REQUIRED_KEYS,
   ARCHIVE_META_JSON_SCHEMA,
   MAP_JSON_SCHEMA,
   MATCH_INPUT_JSON_SCHEMA,
@@ -1057,10 +1058,12 @@ it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有�
     "scriptSha256",
     "sandboxRuntimeHash",
   ]);
-  // 统一两轮优化新增可选 `optimization`（跨进程候选契约，见 two-feedback spec D3）：
-  // optimization 与版本化 selection 均可选，必填保持十一项，旧档继续通过。
+  // 统一两轮优化新增可选 `optimization`（跨进程候选契约，见 two-feedback spec D3）；
+  // 档案形状 v3（ADR-0031）再新增七个可选键，必填仍是十一项——新档写、老档不迁移。
+  // 注意这七个键**在 v3 档里是必写的**：JSON Schema 表达不了条件必填，那条断言在装载期
+  // （runner 的 `archiveShapeIssuesOf`），这里只断言它们不会挤进 `required`。
   expect(Object.keys(ARCHIVE_META_JSON_SCHEMA.properties).sort()).toEqual(
-    [...required, "channelId", "optimization", "selection"].sort(),
+    [...required, "channelId", "optimization", "selection", ...AGENT_ARCHIVE_REQUIRED_KEYS].sort(),
   );
 });
 

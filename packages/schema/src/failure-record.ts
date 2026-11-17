@@ -27,7 +27,12 @@
 
 import type { SelectionCandidateIdentity, SelectionPlan } from "./selection-plan.js";
 import type { TrialPlan } from "./trial-plan.js";
-import type { ArchiveOptimizationCandidate } from "./archive-meta.js";
+import type {
+  AnyArchiveOptimizationCandidate,
+  ArchiveStep,
+  ArchiveTermination,
+  ARCHIVE_SCHEMA_VERSION,
+} from "./archive-meta.js";
 
 /** 失败记录文件名的前缀:`failed-<runId>.json` 与存档目录 `<runId>/` 在同一父目录下并列。 */
 export const FAILURE_RECORD_PREFIX = "failed-";
@@ -74,8 +79,7 @@ export type FailureRecord = FailureIdentity & {
   /** 失败分类:`tsc` / `contract` / `transport`。 */
   readonly classification: FailureClassification;
   /** 已收敛的协议轮数,恒等于 `prompts.length`(镜像 `meta.json` 的轮数不变量)。 */
-  readonly protocolRounds: number;
-  /** 逐轮**完整发出**的 prompt 链(键与含义同 `ModelFailure.prompts`)。 */
+  readonly protocolRounds: number /** 逐轮**完整发出**的 prompt 链(键与含义同 `ModelFailure.prompts`)。 */;
   readonly prompts: readonly string[];
   /** 逐轮一行 `JSON.stringify(GenerationLogEntry)`。 */
   readonly generationLog: readonly string[];
@@ -88,11 +92,27 @@ export type FailureRecord = FailureIdentity & {
    * 同形状；缺席 = 无有效候选或旧记录）。报告侧据此分别标识初次/中间候选并核对 hash，
    * selection 失败可以保留三个有效阶段；失败档没有冻结脚本。
    */
-  readonly candidates?: readonly ArchiveOptimizationCandidate[];
+  readonly candidates?: readonly AnyArchiveOptimizationCandidate[];
   /** 完成三阶段后选拔失败的预定输入与不可变候选身份，不伪造部分胜者。 */
   readonly selectionFailure?: {
     /** 预定计划：v1 选拔是它自己的 12 场计划，v2 是生成阶段那张网格（`TrialPlan`）。 */
     readonly plan: SelectionPlan | TrialPlan;
     readonly candidates: readonly SelectionCandidateIdentity[];
   };
+  /**
+   * ── 以下是 agent（v3）形态的字段：与成功档**同键集合、同一公式** ────────
+   *
+   * 失败档恰恰是校准 harness 的主要证据（读契约读了几步、命令全挂在编译上、动作没解析出来），
+   * 所以「失败档存少点」这条特殊化被 ADR-0031 否掉了：它与成功档同形，读侧才不需要长分支。
+   *
+   * 七格同进同出；缺 `archiveSchemaVersion` = one-shot 形态的历史记录。
+   */
+  readonly archiveSchemaVersion?: typeof ARCHIVE_SCHEMA_VERSION;
+  /** 过程记录：一步一条；零步会话为空数组。 */
+  readonly steps?: readonly ArchiveStep[];
+  readonly contextLength?: number;
+  readonly harnessVersion?: string;
+  readonly harnessDigest?: string;
+  readonly termination?: ArchiveTermination;
+  readonly atStep?: number;
 };

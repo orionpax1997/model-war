@@ -66,6 +66,7 @@ import { cpus } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { parseReplay, readLinesOf } from "@model-war/replay";
 import {
+  OPTIMIZATION_AGENT_VERSION,
   OPTIMIZATION_GRID_VERSION,
   TRIAL_SEEDS,
   type JsonValue,
@@ -508,6 +509,11 @@ export const scheduleSeason = async (
   // 种子读哪一栏**按优化档版本分派**：v1 档读 `trialSeeds`（三场单图试跑的固定三值），
   // v2 档读网格计划里的逐场种子（`plan.matches[].seed`，每格一个）。v2 档没有 `trialSeeds`，
   // 从它读种子会读到 `undefined` 而静默放行——那正是 hld §8.1「不静默替换种子」要防的事。
+  //
+  // v3 档（分步形态）的**档里没有种子可读**：ADR-0031 把优化段收成 `{version, candidates}`，
+  // 网格计划不进档案（胜者与分数在候选上，计划在生成期的那一张）。所以这里显式写出「这一版
+  // 没有已记录的种子」，只靠固定默认那一栏兜底——不拿 `undefined` 去 spread 出一个空集合
+  // 再假装查过，也不从别的版本那一栏借读。若要连生成期种子一起隔离，得先让计划进档案。
   for (const archivePath of season.participants) {
     const meta = optimizationMetaOf(JSON.parse(readText(join(root, archivePath, META_NAME))));
     const optimization = meta?.optimization;
@@ -515,7 +521,9 @@ export const scheduleSeason = async (
     const recordedSeeds =
       optimization.version === OPTIMIZATION_GRID_VERSION
         ? optimization.plan.matches.map((match) => match.seed)
-        : optimization.trialSeeds;
+        : optimization.version === OPTIMIZATION_AGENT_VERSION
+          ? []
+          : optimization.trialSeeds;
     const forbidden = new Set(
       [
         ...TRIAL_SEEDS,

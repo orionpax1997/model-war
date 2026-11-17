@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   ARCHIVE_SELECTION_JSON_SCHEMA,
+  SELECTION_AGENT_VERSION,
   SELECTION_GRID_VERSION,
   SELECTION_VERSION,
   SELECTION_SEEDS,
@@ -16,7 +17,7 @@ import {
 import { hashOf, same } from "./canonical.js";
 import { rotateSeats } from "./enumerate.js";
 import { competitiveRankingIssue, perMatchScores, rankSeason } from "./ranker.js";
-import { validateGridSelection } from "./selection-grid.js";
+import { validateAgentSelection, validateGridSelection } from "./selection-grid.js";
 import { compareSelectionCandidates, selectionReasonOf } from "./selection-order.js";
 
 export type BuildSelectionPlanInput = Pick<
@@ -152,13 +153,15 @@ const selectionSchema = z.fromJSONSchema(
  * 存档 `selection` 段的读入端：**按 `version` 分派**（历史档不迁移）。
  *
  * v1（12 场 / 三基准 / 种子 401–403）走本文件的冻结路径——它必须继续能读、能校验，因为
- * `archive/` 里那些档已经是那个形状；v2（评测网格）走 `selection-grid.ts`。两版的决胜顺序
- * 是同一处写法（`selection-order.ts`），差别只在「分数从哪来」与「证据长什么样」。
+ * `archive/` 里那些档已经是那个形状；v2（评测网格）与 v3（分步形态，`step` 取代 `stage`）
+ * 走 `selection-grid.ts`。三版的决胜顺序是同一处写法（`selection-order.ts`），差别只在
+ * 「分数从哪来」与「证据长什么样」。
  */
 export const validateSelection = (value: unknown): ArchiveSelection => {
   if (typeof value === "object" && value !== null) {
     const version = Reflect.get(value, "version");
     if (version === SELECTION_GRID_VERSION) return validateGridSelection(value);
+    if (version === SELECTION_AGENT_VERSION) return validateAgentSelection(value);
   }
   return validateSelectionV1(value);
 };
@@ -236,8 +239,12 @@ export const buildArchiveSelection = (
  * v1 是三个固定种子，v2 是网格逐场种子（32 个，每格一个）——两者的「种子」不是同一个形状，
  * 所以读种子必须按版本分派：从 v2 的 `plan.seeds` 读会读到 `undefined`，那会让隔离门静默放行，
  * 正是 `docs/hld.md` §8.1「不静默替换种子」要防的事。
+ *
+ * v3 的选拔计划同样是那张网格（`plan.matches[].seed`），所以它与 v2 读同一栏；`v1` 那一栏
+ * 才需要 `plan.seeds`。两个数组的语义不同，形状也不同——写成一个 `??` 的合集就会在版本之间
+ * 静默切换语义。
  */
 export const selectionSeedsOf = (selection: ArchiveSelection): readonly number[] =>
-  selection.version === SELECTION_GRID_VERSION
-    ? selection.plan.matches.map((match) => match.seed)
-    : [...selection.plan.seeds];
+  selection.version === SELECTION_VERSION
+    ? [...selection.plan.seeds]
+    : selection.plan.matches.map((match) => match.seed);
