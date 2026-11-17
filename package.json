@@ -40,6 +40,7 @@
     "check:drift": "node packages/tools/src/generate/run-drift-gate.ts",
     "check:bench": "node packages/tools/src/benchmarks/run-benchmarks-gate.ts",
     "check:runtime": "node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts",
+    "check:sandbox-rootfs": "node packages/tools/src/sandbox-rootfs/run-rootfs-drift-gate.ts",
     "check:selfproof": "pnpm run build && node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "check:cross-process": "node --disable-warning=ExperimentalWarning packages/tools/src/cross-process/run-cross-process-gate.ts",
     "check:limits": "node --disable-warning=ExperimentalWarning packages/tools/src/limits/run-limits-gate.ts",
@@ -61,7 +62,7 @@
     "mutation:baseline:raise": "node packages/tools/src/mutation/accept-baseline.ts",
     "scan": "node packages/tools/src/gate/run-scan-gate.ts",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
-    "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget && pnpm run check:prose && pnpm run check:contract && pnpm run check:landings",
+    "check:quick": "pnpm run fmt && pnpm run lint && pnpm run coupling && pnpm run coupling:quickjs && pnpm run check:no-float && pnpm run check:budget && pnpm run check:prose && pnpm run check:contract && pnpm run check:landings && pnpm run check:sandbox-rootfs",
     "check:types": "pnpm run check:quick && pnpm run lint:types",
     "check:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
     "check": "pnpm run check:types && vitest run --project unit --project property && pnpm run check:deps && pnpm run check:declared-deps && pnpm run check:drift && pnpm run check:bench && pnpm run check:runtime"
