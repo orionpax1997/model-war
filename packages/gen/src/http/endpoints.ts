@@ -21,9 +21,39 @@
  * 遇到缺字段就退到安全缺省,而不是抛"取属性时 undefined"的下游崩溃。
  */
 
-import type { ChatMessage, ModelParams, ModelResponse } from "../model-client.js";
+import type {
+  ChatMessage,
+  ModelParams,
+  ModelResponse,
+  ReasoningCarry,
+  ReasoningEcho,
+} from "../model-client.js";
 import type { EndpointFamily, ModelConfig } from "../config.js";
 import { isRecord } from "../record.js";
+import {
+  chatReasoningStream,
+  messagesReasoningStream,
+  readChatReasoning,
+  readMessagesReasoning,
+  readResponsesReasoning,
+  writeChatReasoning,
+  writeMessagesReasoning,
+  writeResponsesReasoning,
+  type ReasoningPayload,
+} from "./reasoning.js";
+
+/**
+ * 一条端点族的**推理回传能力声明**(ADR-0032)。
+ *
+ * 三族三份策略,写成声明而不是调用点上的条件分支:谁要回传、回传什么形状,由族自己说;
+ * 序列化动作仍只在那族的 `buildBody` 里发生(读法/写法在 `reasoning.ts`)。
+ */
+export type ReasoningCapability = {
+  /** 这一族的策略。`drop` = 该族没有可回传的东西(读了也丢)。 */
+  readonly carry: ReasoningCarry;
+  /** 从一份普通(非流式)响应里读出可回传的条目。 */
+  readonly read: (root: Record<string, unknown>) => ReasoningEcho | undefined;
+};
 
 /**
  * 一条端点族的翻译规则。`path` 相对 `baseUrl` 拼;`buildBody` 造请求体;`parseResponse` 读回统一形状。
@@ -39,6 +69,13 @@ export type EndpointSpec = {
     params: ModelParams,
   ) => Record<string, unknown>;
   readonly parseResponse: (json: unknown) => ModelResponse;
+  /**
+   * 推理回传的能力声明(ADR-0032「reasoning 按端点族分家」)。**每族必填**。
+   *
+   * 必填而不是可选:可选会让「这一族忘了声明」与「这一族声明了丢弃」在代码里长得一样,
+   * 而前者是一个应该当场响的接错。
+   */
+  readonly reasoning: ReasoningCapability;
   /** 可选流式能力;不声明即非流式(响应按 content-type 回退到一次性 JSON)。见 `StreamingEndpoint`。 */
   readonly streaming?: StreamingEndpoint;
 };
@@ -96,7 +133,7 @@ const stringField = (record: Record<string, unknown>, key: string): string | und
   return typeof value === "string" ? value : undefined;
 };
 
-/** 线上一条消息的形状:`{ role, content }`(`chat-completions` / `messages` / `responses` 三族共用)。 */
+/** 线上一条消息的形状:`{ role, content }`(`messages` / `responses` 两族里没有推理可带的那些消息)。 */
 const toWireMessage = (message: ChatMessage): Record<string, unknown> => ({
   role: message.role,
   content: message.content,
@@ -105,11 +142,68 @@ const toWireMessage = (message: ChatMessage): Record<string, unknown> => ({
 /** 把值收窄成键值对记录;不是记录就给空记录,免得下游取属性崩。 */
 const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
 
+// ── 推理回传的能力声明(ADR-0032「reasoning 按端点族分家」)────────────────────
+//
+// 三份声明跟在族的那一节之前,`buildBody`、累积器、`parseResponse` 都从它们取策略:
+// 「这一族怎么回传」因此只有一个家,而不是「声明一处、写死另一处」。
+
+/** 读出来的条目挂上这一族声明的策略;一条都没有时缺席(不挂空壳)。 */
+const echoWith = (
+  capability: ReasoningCapability,
+  payload: ReasoningPayload | undefined,
+): ReasoningEcho | undefined =>
+  payload === undefined ? undefined : { carry: capability.carry, ...payload };
+
+/** chat 族:普通推理内容丢、加密条目原样回传。 */
+const CHAT_REASONING: ReasoningCapability = {
+  carry: "encrypted",
+  read: (root) =>
+    echoWith(
+      CHAT_REASONING,
+      readChatReasoning(asRecord(asRecord(asArray(root.choices)[0]).message)),
+    ),
+};
+
+/** messages 族:thinking 块连签名原样送回;缺签名的块丢弃。 */
+const MESSAGES_REASONING: ReasoningCapability = {
+  carry: "signed",
+  read: (root) => echoWith(MESSAGES_REASONING, readMessagesReasoning(asArray(root.content))),
+};
+
+/** responses 族:加密推理条目原样送回。 */
+const RESPONSES_REASONING: ReasoningCapability = {
+  carry: "encrypted",
+  read: (root) => echoWith(RESPONSES_REASONING, readResponsesReasoning(asArray(root.output))),
+};
+
+/**
+ * generate-content 族:显式丢弃。
+ *
+ * ADR-0032 只裁了三族(签名回传 / 加密回传 / 普通推理丢弃),这一族的思考段(`part.thought`)
+ * 既没有签名也没有加密块,所以不发明一种回传:声明成 `drop`,让「这一族不回传」成为一条
+ * 写下来的事实,而不是一处省略。
+ */
+const GENERATE_CONTENT_REASONING: ReasoningCapability = { carry: "drop", read: () => undefined };
+
 // ── chat-completions(OpenAI 系)─────────────────────────────────────────────
+
+/**
+ * chat 族的一条请求消息:推理回传落在 `reasoning_details` 里,与端点吐出来的位置一致。
+ *
+ * 只有带条目的消息才多那一格:历史里其余消息仍是 `{role, content}`。
+ */
+const chatWireMessage = (message: ChatMessage): Record<string, unknown> => {
+  const wire = toWireMessage(message);
+  const echo = message.reasoning;
+  if (echo !== undefined) {
+    writeChatReasoning(wire, echo, CHAT_REASONING.carry);
+  }
+  return wire;
+};
 
 const chatCompletionsBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
   model: config.modelId,
-  messages: messages.map(toWireMessage),
+  messages: messages.map(chatWireMessage),
   ...params,
 });
 
@@ -130,13 +224,15 @@ const chatCompletionsStreamBody: EndpointSpec["buildBody"] = (config, messages, 
  * 逐帧累积 chat-completions 的流:正文增量拼 `text`,终点帧的 `finish_reason` 定 `finishReason`,
  * 最后一个非空 `usage` 帧定 `usage`。
  *
- * 只认 `delta.content`:**不认 `delta.reasoning_content`**。推理增量不是产物(实测推理型模型先吐
- * 一大段 `reasoning_content` 再吐正文),把它拼进 `text` 等于把半截思维链当脚本写盘、并回喂给下一轮。
+ * 只把 `delta.content` 拼进正文:**明文推理增量(`reasoning_content`)不是产物**——实测推理型模型
+ * 先吐一大段它再吐正文,拼进去等于把半截思维链当脚本写盘、并回喂给下一轮。它对回传也没有用:
+ * chat 族唯一能回传的是加密条目(`reasoning_details` 里的 `reasoning.encrypted`),二者同一份读法。
  */
 const createChatCompletionsAccumulator = (): StreamAccumulator => {
   let text = "";
   let finishReason: string | undefined;
   let usage: unknown;
+  const reasoning = chatReasoningStream(CHAT_REASONING.carry);
 
   return {
     push: (frame) => {
@@ -144,6 +240,7 @@ const createChatCompletionsAccumulator = (): StreamAccumulator => {
       const choice = asRecord(asArray(root.choices)[0]);
       const delta = asRecord(choice.delta);
       text += stringField(delta, "content") ?? "";
+      reasoning.push(delta);
 
       // 首帧与中途帧都带 `finish_reason: null`;只被「最后一个非空值」覆盖(终点帧 / 截断的 length)。
       const frameFinish = stringField(choice, "finish_reason");
@@ -157,12 +254,16 @@ const createChatCompletionsAccumulator = (): StreamAccumulator => {
         usage = root.usage;
       }
     },
-    result: () => ({
-      text,
-      finishReason: finishReason ?? "unknown",
-      usage,
-      stopDetails: finishReason === undefined ? {} : { reason: finishReason },
-    }),
+    result: () => {
+      const echo = reasoning.result();
+      return {
+        text,
+        finishReason: finishReason ?? "unknown",
+        usage,
+        stopDetails: finishReason === undefined ? {} : { reason: finishReason },
+        ...(echo === undefined ? {} : { reasoning: echo }),
+      };
+    },
   };
 };
 
@@ -171,11 +272,13 @@ const parseChatCompletions: EndpointSpec["parseResponse"] = (json) => {
   const choice = asRecord(asArray(root.choices)[0]);
   const message = asRecord(choice.message);
   const rawStop = stringField(choice, "finish_reason");
+  const echo = CHAT_REASONING.read(root);
   return {
     text: stringField(message, "content") ?? "",
     finishReason: rawStop ?? "unknown",
     usage: root.usage,
     stopDetails: rawStop === undefined ? {} : { reason: rawStop },
+    ...(echo === undefined ? {} : { reasoning: echo }),
   };
 };
 
@@ -200,33 +303,57 @@ const cacheControlOf = (config: ModelConfig): Record<string, unknown> | undefine
   return cache.mode === "ephemeral-1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
 };
 
+/**
+ * messages 族的一条对话消息。
+ *
+ * 三种形状，由「带不带推理」与「是不是断点位置」两个事实决定，而这两个都是**这条消息自己的**
+ * 属性，所以形状判断就住在这里，不往上层扩散:
+ * - 都不带 → `{role, content}` 字符串（普通消息都是这一种）;
+ * - 带签名块 → content 变成块数组，签名块在前、正文块在后;
+ * - 断点位置 → content 是块数组，`cache_control` 挂在正文块上（标记只属于前缀末尾）。
+ */
+const messagesWireMessage = (
+  message: ChatMessage,
+  cacheControl: Record<string, unknown> | undefined,
+): Record<string, unknown> => {
+  const echo = message.reasoning;
+  if ((echo === undefined || echo.blocks.length === 0) && cacheControl === undefined) {
+    return toWireMessage(message);
+  }
+  const blocks = writeMessagesReasoning(echo, message.content, MESSAGES_REASONING.carry);
+  if (cacheControl !== undefined) {
+    const last = blocks[blocks.length - 1];
+    if (isRecord(last)) {
+      blocks[blocks.length - 1] = { ...last, cache_control: cacheControl };
+    }
+  }
+  return { role: message.role, content: blocks };
+};
+
 const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
   const cacheControl = cacheControlOf(config);
   // Anthropic 没有 `role: "system"` 的消息:system 提示抽到顶层 `system` 字段,不进 `messages`。
   const systemParts: string[] = [];
-  const dialog: Record<string, unknown>[] = [];
-  let lastDialog: ChatMessage | undefined;
+  const dialog: ChatMessage[] = [];
   for (const message of messages) {
     if (message.role === "system") {
       systemParts.push(message.content);
     } else {
-      lastDialog = message;
-      dialog.push(toWireMessage(message));
+      dialog.push(message);
     }
-  }
-  // 断点打在前缀末尾：中间消息保持字符串载荷，只有最后一条消息的最后一个块挂标记。
-  if (cacheControl !== undefined && lastDialog !== undefined) {
-    dialog[dialog.length - 1] = {
-      role: lastDialog.role,
-      content: [{ type: "text", text: lastDialog.content, cache_control: cacheControl }],
-    };
   }
 
   const body: Record<string, unknown> = {
     model: config.modelId,
     max_tokens: typeof params.max_tokens === "number" ? params.max_tokens : DEFAULT_MAX_TOKENS,
     ...params,
-    messages: dialog,
+    // 断点打在前缀末尾：中间消息保持字符串载荷，只有最后一条消息的正文块挂标记。
+    messages: dialog.map((message, index) =>
+      messagesWireMessage(
+        message,
+        cacheControl !== undefined && index === dialog.length - 1 ? cacheControl : undefined,
+      ),
+    ),
   };
   if (systemParts.length > 0) {
     const system = systemParts.join("\n\n");
@@ -250,24 +377,31 @@ const messagesStreamBody: EndpointSpec["buildBody"] = (config, messages, params)
 });
 
 /**
- * 逐帧累积 Anthropic SSE:正文只拼 `text_delta`,推理 `thinking_delta` / 签名等绝不进 `text`;
- * 停止原因取 `message_delta` 的 `stop_reason`(与非流式同一归一表);usage 把起止两处合并。
+ * 逐帧累积 Anthropic SSE:正文只拼 `text_delta`,推理 `thinking_delta` / `signature_delta` 不进 `text`,
+ * 而是拼回可回传的签名块（ADR-0032「签名回传」）；停止原因取 `message_delta` 的
+ * `stop_reason`（与非流式同一归一表）；usage 把起止两处合并。
  *
- * 收尾认 `message_stop` 事件(Anthropic 流没有 `[DONE]`),由 `done()` 告诉读流循环提前结束。
+ * 收尾认 `message_stop` 事件（Anthropic 流没有 `[DONE]`）,由 `done()` 告诉读流循环提前结束。
  */
 const createMessagesAccumulator = (): StreamAccumulator => {
   let text = "";
   let rawStop: string | undefined;
   let usage: unknown;
   let stopped = false;
+  const reasoning = messagesReasoningStream(MESSAGES_REASONING.carry);
   return {
     push: (frame) => {
       const root = asRecord(frame);
       const type = stringField(root, "type");
-      if (type === "content_block_delta") {
+      if (type === "content_block_start") {
+        reasoning.pushStart(asRecord(root.content_block));
+      } else if (type === "content_block_delta") {
         const delta = asRecord(root.delta);
         if (stringField(delta, "type") === "text_delta") {
           text += stringField(delta, "text") ?? "";
+        } else {
+          // `thinking_delta` / `signature_delta`:进不透明字段,不进正文。
+          reasoning.pushDelta(delta);
         }
       } else if (type === "message_delta") {
         const stop = stringField(asRecord(root.delta), "stop_reason");
@@ -286,20 +420,26 @@ const createMessagesAccumulator = (): StreamAccumulator => {
         stopped = true;
       }
     },
-    result: () => ({
-      text,
-      finishReason: rawStop === undefined ? "unknown" : (MESSAGES_STOP_REASONS[rawStop] ?? rawStop),
-      usage,
-      stopDetails: rawStop === undefined ? {} : { reason: rawStop },
-    }),
+    result: () => {
+      const echo = reasoning.result();
+      return {
+        text,
+        finishReason:
+          rawStop === undefined ? "unknown" : (MESSAGES_STOP_REASONS[rawStop] ?? rawStop),
+        usage,
+        stopDetails: rawStop === undefined ? {} : { reason: rawStop },
+        ...(echo === undefined ? {} : { reasoning: echo }),
+      };
+    },
     done: () => stopped,
   };
 };
 
 const parseMessages: EndpointSpec["parseResponse"] = (json) => {
   const root = asRecord(json);
+  const content = asArray(root.content);
   let text = "";
-  for (const block of asArray(root.content)) {
+  for (const block of content) {
     if (isRecord(block) && block.type === "text") {
       text += stringField(block, "text") ?? "";
     }
@@ -307,26 +447,41 @@ const parseMessages: EndpointSpec["parseResponse"] = (json) => {
   const rawStop = stringField(root, "stop_reason");
   const finishReason =
     rawStop === undefined ? "unknown" : (MESSAGES_STOP_REASONS[rawStop] ?? rawStop);
+  const echo = MESSAGES_REASONING.read(root);
   return {
     text,
     finishReason,
     usage: root.usage,
     stopDetails: rawStop === undefined ? {} : { reason: rawStop },
+    ...(echo === undefined ? {} : { reasoning: echo }),
   };
 };
 
 // ── responses(OpenAI Responses API)──────────────────────────────────────────
 
+/**
+ * responses 族的一条消息展开成的 input 条目。
+ *
+ * 没有推理时就是一条普通消息;带加密推理条目时，条目排在它自己之前（端点要求）。
+ */
+const responsesWireItems = (message: ChatMessage): unknown[] => {
+  const item = toWireMessage(message);
+  return message.reasoning === undefined
+    ? [item]
+    : writeResponsesReasoning(message.reasoning, item, RESPONSES_REASONING.carry);
+};
+
 const responsesBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
   model: config.modelId,
   ...params,
-  input: messages.map(toWireMessage),
+  input: messages.flatMap(responsesWireItems),
 });
 
 const parseResponses: EndpointSpec["parseResponse"] = (json) => {
   const root = asRecord(json);
+  const output = asArray(root.output);
   let text = "";
-  for (const item of asArray(root.output)) {
+  for (const item of output) {
     if (!isRecord(item) || item.type !== "message") {
       continue;
     }
@@ -348,6 +503,7 @@ const parseResponses: EndpointSpec["parseResponse"] = (json) => {
   } else {
     finishReason = status ?? "unknown";
   }
+  const echo = RESPONSES_REASONING.read(root);
   return {
     text,
     finishReason,
@@ -356,6 +512,7 @@ const parseResponses: EndpointSpec["parseResponse"] = (json) => {
       ...(status === undefined ? {} : { status }),
       ...(incompleteReason === undefined ? {} : { reason: incompleteReason }),
     },
+    ...(echo === undefined ? {} : { reasoning: echo }),
   };
 };
 
@@ -508,6 +665,7 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         path: () => "/chat/completions",
         buildBody: chatCompletionsBody,
         parseResponse: parseChatCompletions,
+        reasoning: CHAT_REASONING,
         streaming: {
           buildBody: chatCompletionsStreamBody,
           createAccumulator: createChatCompletionsAccumulator,
@@ -518,6 +676,7 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         path: () => "/messages",
         buildBody: messagesBody,
         parseResponse: parseMessages,
+        reasoning: MESSAGES_REASONING,
         streaming: {
           buildBody: messagesStreamBody,
           createAccumulator: createMessagesAccumulator,
@@ -528,12 +687,14 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         path: () => "/responses",
         buildBody: responsesBody,
         parseResponse: parseResponses,
+        reasoning: RESPONSES_REASONING,
       };
     case "generate-content":
       return {
         path: (config) => `/models/${config.modelId}:generateContent`,
         buildBody: generateContentBody,
         parseResponse: parseGenerateContent,
+        reasoning: GENERATE_CONTENT_REASONING,
         streaming: {
           // Google 把「流式」写进路径而不是 body;`alt=sse` 才把分块响应当 SSE 返回。
           path: (config) => `/models/${config.modelId}:streamGenerateContent?alt=sse`,
