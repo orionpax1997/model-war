@@ -30,7 +30,7 @@ ADR-0029 把禁令的落点定成**沙箱内容物**(不放引擎、不放试跑
 
 ### 隔离机制是 bubblewrap,只用它
 
-每一步是一次 `bwrap` 调用,不是「进一个沙箱」。形态是:**根文件系统从空开始**(`--tmpfs /`),宿主根目录一个 inode 都不出现;只 `--ro-bind` 进入库 rootfs、四个薄壳与只读契约,`--bind` 进 `/workspace`;`--unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-net --unshare-cgroup-try`、`--cap-drop ALL`、`--new-session`、`--die-with-parent`、`--clearenv`。
+每一步是一次 `bwrap` 调用,不是「进一个沙箱」。形态是:**根文件系统从空开始**(`--tmpfs /`),宿主根目录一个 inode 都不出现;只 `--ro-bind` 进入库 rootfs、受限工具的薄壳与只读契约,`--bind` 进 `/workspace`;`--unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-net --unshare-cgroup-try`、`--cap-drop ALL`、`--new-session`、`--die-with-parent`、`--clearenv`。
 
 四条互不替代的性质:
 
@@ -53,7 +53,7 @@ ADR-0029 把禁令的落点定成**沙箱内容物**(不放引擎、不放试跑
 
 这条选择的实质是把「容器」唯一真实的优势搬了过来:**镜像的价值是「内容物可钉」,不是「隔离更强」**。钉住内容物之后,等价基线的可比性不再依赖「两台机器的发行版恰好一样」,`ldd` 闭包门禁整条消失。
 
-顺带缩小了沙箱的职责:因为 `check`/`smoke`/`evaluate` 全在宿主侧执行,沙箱里**不需要** `node`、`tsc`、`node_modules`、`rulesets/`、测试框架。它只需要 `bash` 加三个读文件的命令。
+顺带缩小了沙箱的职责:因为 `check`/`evaluate` 全在宿主侧执行,沙箱里**不需要** `node`、`tsc`、`node_modules`、`rulesets/`、测试框架。它只需要 `bash` 加三个读文件的命令。
 
 ### 资源上限靠 `ulimit`,不靠 cgroup——而且要承认它不完整
 
