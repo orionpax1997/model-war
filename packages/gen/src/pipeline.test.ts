@@ -29,10 +29,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  OPTIMIZATION_AGENT_VERSION,
   RULESET_VERSION,
   SANDBOX_RUNTIME_HASH,
+  SELECTION_AGENT_VERSION,
   TRIAL_GRID_SUMMARY_SUFFIX,
   type ActionErrorCounts,
+  type AnyArchiveOptimizationCandidate,
   type ArchiveMeta,
   type TrialObservationLine,
   type TrialPlan,
@@ -57,6 +60,29 @@ import { TransportError } from "./transport-error.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
 import { gridPlanFixture } from "./trial-plan.fixture.js";
+
+/**
+ * 这批用例断言的是 one-shot 形态（v1 / v2）的优化段与选拔段：v3 的候选没有 `stage`、
+ * 优化段也没有 `feedbackRounds`，所以读这些栏之前先按版本收窄——「这不是 v3」本身也是一条判据。
+ */
+/** 失败记录 / `ModelFailure` 里的候选：这批用例造的都是 one-shot 形态（带 `stage`）。 */
+const legacyStageOf = (candidate: AnyArchiveOptimizationCandidate): 0 | 1 | 2 => {
+  if (!("stage" in candidate)) throw new Error("这条用例只断言 one-shot 形态的候选");
+  return candidate.stage;
+};
+
+const legacyOptimizationOf = (meta: ArchiveMeta) => {
+  const optimization = meta.optimization;
+  if (optimization === undefined || optimization.version === OPTIMIZATION_AGENT_VERSION)
+    throw new Error("这条用例只断言 one-shot 形态的优化段");
+  return optimization;
+};
+const legacySelectionOf = (meta: ArchiveMeta) => {
+  const selection = meta.selection;
+  if (selection !== undefined && selection.version === SELECTION_AGENT_VERSION)
+    throw new Error("这条用例只断言 one-shot 形态的选拔段");
+  return selection;
+};
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-gen-pipeline-`);
@@ -1292,9 +1318,9 @@ it(
     }
     // 成绩与反馈同源：每个候选记录里的分数就是它那一轮 `.grid.json` 里的分数。
     if (outcome.kind !== "frozen") return;
-    const optimization = outcome.meta.optimization;
-    expect(optimization?.version).toBe(2);
-    for (const [stage, candidate] of (optimization?.candidates ?? []).entries()) {
+    const optimization = legacyOptimizationOf(outcome.meta);
+    expect(optimization.version).toBe(2);
+    for (const [stage, candidate] of optimization.candidates.entries()) {
       const summary = JSON.parse(
         readFileSync(
           join(
@@ -1336,7 +1362,7 @@ it(
     // 三份候选字节完全相同 → 网格只跑了一次（后两阶段复用第 0 阶段的那一份）。
     expect(invocations).toHaveLength(1);
     if (outcome.kind !== "frozen") return;
-    const candidates = outcome.meta.optimization?.candidates ?? [];
+    const candidates = legacyOptimizationOf(outcome.meta).candidates;
     expect(candidates.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
     expect(candidates.map((candidate) => candidate.reusedFromStage)).toEqual([undefined, 0, 0]);
     // 成绩与反馈同源：复用阶段的分数不是另算的，而是与来源逐位相同。
@@ -1413,7 +1439,7 @@ it(
     );
     expect(outcome.kind).toBe("frozen");
     if (outcome.kind !== "frozen") return;
-    const final = outcome.meta.optimization?.candidates[2];
+    const final = legacyOptimizationOf(outcome.meta).candidates[2];
     const roundThree = join(root, "archive", "alpha", `observed-${runId}-round-3.jsonl`);
     const summary = JSON.parse(
       readFileSync(`${roundThree}${TRIAL_GRID_SUMMARY_SUFFIX}`, "utf8"),
@@ -1876,7 +1902,7 @@ it(
     expect(trialCount).toBe(4);
     expect(outcome.meta.protocolRounds).toBe(6);
     expect(
-      outcome.meta.optimization?.candidates.map(({ stage, protocolRound }) => [
+      legacyOptimizationOf(outcome.meta).candidates.map(({ stage, protocolRound }) => [
         stage,
         protocolRound,
       ]),
@@ -2155,7 +2181,7 @@ it("opt-in 存档拒绝撞名时不发布最终观测，既有最终候选旁证
   );
   expect(outcome.kind).toBe("failed");
   if (outcome.kind === "failed") {
-    expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1]);
+    expect(outcome.failure.candidates?.map(legacyStageOf)).toEqual([0, 1]);
   }
   expect(readFileSync(finalPath, "utf8")).toBe(previous);
 });
@@ -2559,9 +2585,11 @@ it.each([false, true])(
           .sort((left, right) => left - right),
       ).toEqual([1, 2, 3, 4]);
     if (outcome.kind !== "frozen") throw new Error("终局反馈未完成定版");
-    expect(outcome.meta.optimization?.feedbackRounds).toBe(2);
-    expect(outcome.meta.optimization?.candidates).toHaveLength(3);
-    expect(outcome.meta.selection?.selected.stage).toBe(selectBestCandidate ? 1 : undefined);
+    expect(legacyOptimizationOf(outcome.meta).feedbackRounds).toBe(2);
+    expect(legacyOptimizationOf(outcome.meta).candidates).toHaveLength(3);
+    expect(legacySelectionOf(outcome.meta)?.selected.stage).toBe(
+      selectBestCandidate ? 1 : undefined,
+    );
   },
 );
 
@@ -2602,9 +2630,9 @@ it.each([0, 1, 2])(
     expect(outcome.kind).toBe("frozen");
     expect(stub.calls).toHaveLength(3);
     if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
-    expect(outcome.meta.selection?.selected.stage).toBe(winner);
-    expect(outcome.meta.selection?.reason).toBe("highest-average-points");
-    expect(outcome.meta.optimization?.candidates[2]?.stage).toBe(2);
+    expect(legacySelectionOf(outcome.meta)?.selected.stage).toBe(winner);
+    expect(legacySelectionOf(outcome.meta)?.reason).toBe("highest-average-points");
+    expect(legacyOptimizationOf(outcome.meta).candidates[2]?.stage).toBe(2);
     expect(readFileSync(join(outcome.dir, "script.ts"))).toEqual(Buffer.from(sources[winner]!));
     for (const ext of ["ts", "js"])
       expect(readFileSync(join(outcome.dir, `script.${ext}`))).toEqual(
@@ -2691,7 +2719,7 @@ it.each([
   expect(existsSync(join(root, "archive", "alpha", "select-failed"))).toBe(false);
   if (outcome.kind !== "failed") throw new Error("意外发布");
   expect(outcome.failure.classification).toBe("selection");
-  expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+  expect(outcome.failure.candidates?.map(legacyStageOf)).toEqual([0, 1, 2]);
   expect(outcome.failure.selectionFailure?.candidates).toHaveLength(3);
   expect(JSON.stringify([outcome.failure.message, outcome.failure.diagnostics])).not.toMatch(
     /credential|provider-body|PROMPT-SECRET/,
@@ -2720,13 +2748,15 @@ it("重复 JS 不合并三个 TS/阶段身份，同分冻结最终阶段的确�
   );
   expect(outcome.kind).toBe("frozen");
   if (outcome.kind !== "frozen") throw new Error(outcome.failure.message);
-  expect(outcome.meta.selection?.selected.stage).toBe(2);
-  expect(outcome.meta.selection?.reason).toBe("later-stage");
+  expect(legacySelectionOf(outcome.meta)?.selected.stage).toBe(2);
+  expect(legacySelectionOf(outcome.meta)?.reason).toBe("later-stage");
   expect(
-    new Set(outcome.meta.selection?.candidates.map((candidate) => candidate.scriptSha256)).size,
+    new Set(legacySelectionOf(outcome.meta)?.candidates.map((candidate) => candidate.scriptSha256))
+      .size,
   ).toBe(1);
   expect(
-    new Set(outcome.meta.selection?.candidates.map((candidate) => candidate.sourceSha256)).size,
+    new Set(legacySelectionOf(outcome.meta)?.candidates.map((candidate) => candidate.sourceSha256))
+      .size,
   ).toBe(3);
   expect(readFileSync(join(outcome.dir, "script.ts"), "utf8")).toBe(sources[2]);
 });
@@ -2780,7 +2810,7 @@ it("批次编排把选拔失败安全落盘，三个阶段与 TS 身份均保留
   );
   expect(record.classification).toBe("selection");
   expect(record.protocolRounds).toBe(3);
-  expect(record.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+  expect(record.candidates?.map(legacyStageOf)).toEqual([0, 1, 2]);
   expect(
     record.selectionFailure?.candidates.map((candidate) => candidate.sourceSha256),
   ).toHaveLength(3);
@@ -2815,7 +2845,7 @@ it(
     if (outcome.kind !== "failed") throw new Error("安装面缺陪练档时不得发布");
     expect(stub.calls).toHaveLength(3);
     expect(outcome.failure.classification).toBe("selection");
-    expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1, 2]);
+    expect(outcome.failure.candidates?.map(legacyStageOf)).toEqual([0, 1, 2]);
     expect(existsSync(join(root, "archive", "alpha", "real-selection"))).toBe(false);
     // 三阶段证据仍在（选拔失败不改写候选旁挂），消息里不出现路径与陪练档细节。
     expect(
@@ -2849,7 +2879,7 @@ it("未完成第三阶段的传输失败不调用选拔救回旧候选，保留 
   expect(probe).not.toHaveBeenCalled();
   expect(stub.calls).toHaveLength(3);
   expect(outcome.failure.classification).toBe("transport");
-  expect(outcome.failure.candidates?.map((candidate) => candidate.stage)).toEqual([0, 1]);
+  expect(outcome.failure.candidates?.map(legacyStageOf)).toEqual([0, 1]);
   expect(outcome.failure.prompts).toHaveLength(2);
   expect(outcome.failure.generationLog).toHaveLength(3);
   expect(JSON.parse(outcome.failure.generationLog[2]!)).toMatchObject({

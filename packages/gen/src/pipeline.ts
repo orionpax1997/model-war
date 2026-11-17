@@ -70,6 +70,7 @@ import {
   type ArchiveGridSelection,
   type ArchiveMeta,
   type TrialPlan,
+  type AnyArchiveOptimizationCandidate,
   type ArchiveOptimizationCandidate,
   type ArchiveOptimizationGrid,
   type ArchiveValidation,
@@ -179,7 +180,7 @@ export type ModelFailure = {
    * 统一优化中途失败时已验证的有效候选描述（缺席 = 无有效候选或未开启优化）；
    * 写盘时原样进失败记录，供报告标识已有阶段；选拔失败保留全部三个候选。
    */
-  readonly candidates?: readonly ArchiveOptimizationCandidate[];
+  readonly candidates?: readonly AnyArchiveOptimizationCandidate[];
   readonly selectionFailure?: FailureRecord["selectionFailure"];
 };
 
