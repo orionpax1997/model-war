@@ -43,6 +43,9 @@
 | [0025](./0025-feedback-aggregates-and-cross-stage-gap.md) | 事实回喂分三层:聚合对差表、逐场一行、最差三场展开 | accepted | 演进 ADR-0017;局部取代 ADR-0019 的逐场全展开边界 |
 | [0026](./0026-mutation-score-is-a-ratchet.md) | 变异分数是棘轮:不许比上次低,基线抬升必须显式为之 | accepted | 取代 ADR-0010 的「`mutate` 只观测」条款 |
 | [0027](./0027-mutation-history-lives-in-the-baseline.md) | 变异分数的历史住在入库基线里,不住在产物里 | accepted | 演进 ADR-0026 的「历史归基线」判断 |
+| [0028](./0028-channel-identity-and-commandcode-migration.md) | 渠道身份进榜键:同一个 baseUrl 下档位决定能跑什么 | accepted | — |
+| [0029](./0029-bash-mini-harness-identity.md) | 自建 bash-only harness,且它的身份由行为清单而非源码定义 | accepted | 与 ADR-0028 合成四维榜键 |
+| [0030](./0030-agent-tool-surface.md) | agent 的工具面:三档、无提交动作、观测外置 | accepted | 演进 ADR-0025 的观测落点(三层不变,后两层从 stdout 移到文件)
 
 ## 写一份新 ADR
 
