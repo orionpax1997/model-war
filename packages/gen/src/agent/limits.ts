@@ -15,6 +15,10 @@
  * 不在这里再写一个。
  */
 
+import { USAGE_READING_PATHS } from "@model-war/schema";
+
+import { isRecord } from "../record.js";
+
 /** 会话的步数上限。一步 = 一次模型调用 = 一条过程记录条目。 */
 export const AGENT_MAX_STEPS = 120;
 
@@ -43,3 +47,23 @@ export const CONTEXT_GUARD = { numerator: 4, denominator: 5 } as const;
  */
 export const contextGuardTrips = (inputTokens: number, contextLength: number): boolean =>
   inputTokens * CONTEXT_GUARD.denominator >= contextLength * CONTEXT_GUARD.numerator;
+
+/**
+ * 从一次响应的原始用量里读「输入 token 数」。
+ *
+ * 读法**借用报告侧的同一份字段优先级**(`USAGE_READING_PATHS.input`,真源在 schema):同一份
+ * 原始 usage,loop 与报告读出的必须是同一个数,否则守卫的触发点会与事后复核对不上。读不到就
+ * `undefined`——那一步不触发守卫,而不是当成 0。
+ */
+export const inputTokensOf = (usage: unknown): number | undefined => {
+  if (!isRecord(usage)) {
+    return undefined;
+  }
+  for (const key of USAGE_READING_PATHS.input) {
+    const value = usage[key];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+      return value;
+    }
+  }
+  return undefined;
+};
