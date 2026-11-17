@@ -34,12 +34,21 @@ const readFile = (path: string): string => {
 };
 
 /**
+ * 契约目录 `<root>/docs/rules-<RULESET_VERSION>` 的绝对路径。
+ *
+ * 目录名由版本常量拼出、不扫目录(理由见文件头注的「三处一致」)。它单独有名字,是因为目录里
+ * 除了 `rules.md` / `api.md` 还有**目录说明**(`README.md`)——首条消息全量内联的是后者,它由
+ * `agent-prompt.ts` 读,但也必须与两份文档同住一处,不得各拼一遍。
+ */
+export const ruleDocsDir = (root: string): string => join(root, "docs", `rules-${RULESET_VERSION}`);
+
+/**
  * 从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘。
  *
  * 目录不存在、或两份文档缺任一份 → 抛错(由 CLI 处理器转成非零退出),不内嵌副本。
  */
 export const readRuleDocs = (root: string): RuleDocs => {
-  const dir = join(root, "docs", `rules-${RULESET_VERSION}`);
+  const dir = ruleDocsDir(root);
   if (!existsSync(dir)) {
     throw new Error(
       `找不到规则契约目录 ${dir}(当前 RULESET_VERSION = ${RULESET_VERSION};目录名须与版本常量一致)`,

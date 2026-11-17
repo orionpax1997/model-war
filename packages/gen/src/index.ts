@@ -9,7 +9,21 @@
  * CLI 从 `@model-war/gen` 取 `generateAndFreeze`;后续只**追加**导出,不改既有名字。
  */
 
-export { readRuleDocs, type RuleDocs } from "./contract.js";
+export { readRuleDocs, ruleDocsDir, type RuleDocs } from "./contract.js";
+export {
+  AGENT_SYSTEM_TEMPLATE_NAME,
+  AGENT_TEMPLATE_NAME,
+  CONTRACT_INDEX_NAME,
+  DEFAULT_CONTRACT_IDENTITY,
+  contractIdentityTrailer,
+  loadAgentPrompt,
+  loadAgentSystemTemplate,
+  loadAgentTemplate,
+  readContractIndex,
+  renderAgentTemplate,
+  type AgentPrompt,
+  type ContractIdentity,
+} from "./agent-prompt.js";
 export {
   ENDPOINT_FAMILIES,
   loadModelsConfig,
