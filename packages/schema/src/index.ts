@@ -44,6 +44,17 @@ export {
   SANDBOX_RUNTIME_HASH,
 } from "./sandbox-runtime.js";
 
+// 入库沙箱 rootfs 的工程常量:产物路径 / 期望文件清单 / 整棵树的哈希。
+// 供 `packages/gen` 的执行器(rootfs 就是沙箱的根)与 `packages/tools` 的漂移门禁共享;
+// 形状照 ADR-0007 对 runtime bundle 的处理:产物以字节为准,哈希是手写回来的常量。
+export {
+  SANDBOX_ROOTFS_BIN_DIR,
+  SANDBOX_ROOTFS_CONTRACT_DIR,
+  SANDBOX_ROOTFS_DIR,
+  SANDBOX_ROOTFS_FILES,
+  SANDBOX_ROOTFS_TREE_HASH,
+} from "./sandbox-rootfs.js";
+
 /** 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
  */
