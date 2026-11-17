@@ -50,6 +50,7 @@ const NIGHTLY_HARD_GATES = [
   "check:cross-process",
   "check:limits",
   "check:budget-recheck",
+  "check:sandbox",
   "mutate",
 ] as const;
 
@@ -132,8 +133,8 @@ const nightlyArtifactNames = (yaml: string): readonly string[] =>
   matrixLegs(yaml).map((leg) => `nightly-${leg.slug}-42`);
 
 it("夜间链产物名合法且唯一(upload-artifact 不许冒号等字符,同名直接失败)", () => {
-  // 一共九条腿,九份产物:名字字符面与唯一性都靠 slug 承担。
-  expect(nightlyArtifactNames(nightly)).toHaveLength(9);
+  // 一共十条腿,十份产物:名字字符面与唯一性都靠 slug 承担。
+  expect(nightlyArtifactNames(nightly)).toHaveLength(10);
   expect(artifactNameViolations(nightlyArtifactNames(nightly))).toEqual([]);
   // 产物名只能取 slug:一旦有人改回 `matrix.script`,上传步会以非法字符失败。
   expect(nightly).not.toContain("nightly-${{ matrix.script }}");
