@@ -46,6 +46,7 @@
 | [0028](./0028-channel-identity-and-commandcode-migration.md) | 渠道身份进榜键:同一个 baseUrl 下档位决定能跑什么 | accepted | — |
 | [0029](./0029-bash-mini-harness-identity.md) | 自建 bash-only harness,且它的身份由行为清单而非源码定义 | accepted | 与 ADR-0028 合成四维榜键 |
 | [0030](./0030-agent-tool-surface.md) | agent 的工具面:三档、无提交动作、观测外置 | accepted | 演进 ADR-0025 的观测落点(三层不变,后两层从 stdout 移到文件)
+| [0031](./0031-agent-archive-shape.md) | agent 形态的档案形状:过程记录、候选序与形状版本 | accepted | 收窄 ADR-0029「档案不含模型原始输出」的适用范围;取代「候选恰好三个 + 阶段下标」的旧档案前提 |
 
 ## 写一份新 ADR
 
