@@ -31,10 +31,14 @@
 
 import { z } from "zod";
 import {
+  ARCHIVE_AGENT_SELECTION_JSON_SCHEMA,
   ARCHIVE_GRID_SELECTION_JSON_SCHEMA,
   SELECTION_GRID_VERSION,
+  type ArchiveAgentSelection,
   type ArchiveGridSelection,
   type JsonValue,
+  type SelectionAgentCandidate,
+  type SelectionAgentIdentity,
   type SelectionCandidateIdentity,
   type SelectionGridCandidate,
   type SelectionGridMatch,
@@ -45,7 +49,11 @@ import {
 
 import { canonicalJson, hashOf, same } from "./canonical.js";
 import { competitiveRankingIssue, perMatchScores } from "./ranker.js";
-import { selectionReasonOf, compareSelectionCandidates } from "./selection-order.js";
+import {
+  selectionReasonOf,
+  compareSelectionCandidates,
+  type SelectionOrdering,
+} from "./selection-order.js";
 import { checkTrialPlan, trialMatchInputSha256 } from "./trial-plan.js";
 
 /** 复算比对与证据落档只吃这两样：这个格子是哪一格、跑出来的一行观测。 */
@@ -393,4 +401,109 @@ export const buildArchiveGridSelection = (
     candidates,
     ...decisionOf(candidates),
   });
+};
+
+const agentSelectionSchema = z.fromJSONSchema(
+  JSON.parse(JSON.stringify(ARCHIVE_AGENT_SELECTION_JSON_SCHEMA)) as z.core.JSONSchema.JSONSchema,
+);
+
+/** v3 决胜：把候选序映射成决胜用的四项——`stage` 读作**位置**，`protocolRound` 读作步号。 */
+const agentOrderingOf = (
+  candidate: SelectionAgentCandidate,
+  position: number,
+): SelectionOrdering & { readonly averagePoints: number } => ({
+  averagePoints: candidate.score.averagePoints,
+  stage: position,
+  protocolRound: candidate.step,
+  scriptSha256: candidate.scriptSha256,
+});
+
+/**
+ * v3 选拔记录的读入端（**只做读形状**：ADR-0031 定的「胜者指向候选序里的某一位」）。
+ *
+ * 判据与 v2 同源、只差「阶段下标」这一处：`stage !== index` 换成 `step` 严格递增，
+ * `reusedFromStage` 换成 `reusedFromStep`（候选序里的下标）。1..3 条：三次评测是配额，
+ * 不是下限，所以「只有一条候选的选拔」是合法形状。
+ *
+ * 复算「与生成阶段逐场相同」那一层不在本票范围（A1 不产 v3 选拔档案）；它将来落在
+ * `compareSelectionGridRecompute` 的同一条缝上，只是身份换成了 `step`。
+ */
+export const validateAgentSelection = (value: unknown): ArchiveAgentSelection => {
+  const parsed = agentSelectionSchema.safeParse(value);
+  if (!parsed.success) fail("记录形状不合法或缺少完整网格证据");
+  const selection = parsed.data as ArchiveAgentSelection;
+  checkTrialPlan(selection.plan);
+  const { plan } = selection;
+  if (selection.candidates.length < 1 || selection.candidates.length > 3)
+    fail("候选条数必须在 1..3 之间");
+  for (const [index, candidate] of selection.candidates.entries()) {
+    if (candidate.step <= (selection.candidates[index - 1]?.step ?? 0))
+      fail("候选步号必须严格递增");
+    if (candidate.score.countedMatches !== plan.matchesPerCandidate)
+      fail(
+        `第 ${String(candidate.step)} 步的分数分母是 ${String(candidate.score.countedMatches)}，` +
+          `计划声明 ${String(plan.matchesPerCandidate)} 场（不缩分母、不补零）`,
+      );
+    if (candidate.score.averagePoints !== candidate.score.totalPoints / plan.matchesPerCandidate)
+      fail(`第 ${String(candidate.step)} 步的均分与总分不一致`);
+    if (candidate.matches.length !== plan.matches.length)
+      fail(`第 ${String(candidate.step)} 步的逐场证据条数与计划场数不一致（不缩分母、不补零）`);
+    let sum = 0;
+    for (const [position, match] of plan.matches.entries()) {
+      const recorded = candidate.matches[position];
+      if (recorded === undefined || recorded.matchIndex !== match.matchIndex)
+        fail(
+          `第 ${String(candidate.step)} 步的第 ${String(match.matchIndex)} 场证据缺失或场次不符`,
+        );
+      if (recorded.inputSha256 !== trialMatchInputSha256(plan, candidate.scriptSha256, match))
+        fail(
+          `第 ${String(candidate.step)} 步第 ${String(match.matchIndex)} 场的单场身份摘要不一致`,
+        );
+      sum += milliOf(recorded.candidatePoints);
+    }
+    if (sum !== milliOf(candidate.score.totalPoints))
+      fail(`第 ${String(candidate.step)} 步的逐场名次积分之和与分数总分不一致`);
+    // 复用：来源必须是更早的同字节候选，且证据与分数逐字相同。
+    const earliestSame = selection.candidates
+      .slice(0, index)
+      .findIndex((earlier) => earlier.scriptSha256 === candidate.scriptSha256);
+    if (candidate.reusedFromStep === undefined) {
+      if (earliestSame >= 0)
+        fail(`第 ${String(candidate.step)} 步与其他候选字节相同，必须复用更早候选的复算结果`);
+      continue;
+    }
+    const source = selection.candidates[candidate.reusedFromStep];
+    if (
+      candidate.reusedFromStep >= index ||
+      source === undefined ||
+      source.scriptSha256 !== candidate.scriptSha256
+    )
+      fail(`第 ${String(candidate.step)} 步的复用来源必须指向更早的同字节候选`);
+    if (candidate.reusedFromStep !== earliestSame)
+      fail(`第 ${String(candidate.step)} 步的复用来源必须是更早的同字节候选里最早的那一份`);
+    if (!same(source.matches, candidate.matches) || !sameScore(source.score, candidate.score))
+      fail(`第 ${String(candidate.step)} 步的复用证据必须与来源逐场、逐位相同`);
+  }
+  const ordered = [...selection.candidates].sort((left, right) =>
+    compareSelectionCandidates(
+      agentOrderingOf(left, selection.candidates.indexOf(left)),
+      agentOrderingOf(right, selection.candidates.indexOf(right)),
+      "later-stage",
+    ),
+  );
+  const [winner, second] = ordered;
+  if (winner === undefined || second === undefined) fail("选拔缺少两个有效候选");
+  const selected: SelectionAgentIdentity = {
+    step: winner.step,
+    scriptSha256: winner.scriptSha256,
+    sourceSha256: winner.sourceSha256,
+  };
+  const reason = selectionReasonOf(
+    agentOrderingOf(winner, selection.candidates.indexOf(winner)),
+    agentOrderingOf(second, selection.candidates.indexOf(second)),
+    "later-stage",
+  );
+  if (!same(selected, selection.selected) || reason !== selection.reason)
+    fail("胜者身份或选择理由与决胜顺序不一致");
+  return selection;
 };

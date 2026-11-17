@@ -1,7 +1,16 @@
 /**
- * 存档 `meta.json` 里优化旁证的读入端：形状 + 跨字段关系，按 `optimization.version` 分派。
+ * 存档 `meta.json` 里优化旁证的读入端：形状 + 跨字段关系，分两层分派。
  *
- * ── 两版并行，判据分开写 ──
+ * ── 分派的第一层是**档案形状版本**，不是优化段版本 ──
+ *
+ * `archiveSchemaVersion`（ADR-0031 的第一件版本号）回答「这份文件按哪种形状读」。它缺席 =
+ * 历史（one-shot）档，按 `optimization.version` 判 v1 / v2；它是 `3` = agent 形态，优化段
+ * 只能是 v3（或整个缺席——零候选的失败档就是那个形状）。两条混淆路径都拒读：
+ *
+ * - 不认识的版本号：拒读，**不猜**（猜会把它读成「差不多对」）；
+ * - 带 agent 顶层字段却缺 `archiveSchemaVersion: 3`：拒读。
+ *
+ * ── 第二层：两版 legacy 优化段并行，判据分开写 ──
  *
  * - **v1**（三场单图试跑，历史档）：候选三阶段、协议轮递增、旁挂文件命名与互异、最终 hash
  *   与 `meta.scriptSha256` 的关系。这几个判据与 v1 一起冻结在 `archive/` 里，别就地改。
@@ -11,17 +20,26 @@
  *   以及**同字节必须复用**：字节与更早阶段相同时必须写 `reusedFromStage`，且来源必须是
  *   更早的**最早**那份同字节阶段、分数必须逐位相同。
  *
- * 两版之后共用的那一截（与 `selection` 的关系）只有一处：选拔是 v1 语义（12 场、seeds 401–403），
- * 07 才改语义，所以这里既不重算网格分数，也不按网格重解释选拔。
+ * 两版 legacy 与 `selection` 的关系共用一截：选拔是 v1 语义（12 场、seeds 401–403），
+ * 07 才改语义，所以这里既不重算网格分数，也不按网格重解释选拔。v3 的候选关系单独一截：
+ * 条数 1..3、**无 `stage`**、步号递增、**末位即最终候选**。
  */
 
 import { z } from "zod";
 import {
+  AGENT_ARCHIVE_FIELD_KEYS,
+  AGENT_ARCHIVE_REQUIRED_KEYS,
   ARCHIVE_META_JSON_SCHEMA,
+  ARCHIVE_SCHEMA_VERSION,
+  OPTIMIZATION_AGENT_VERSION,
+  OPTIMIZATION_CANDIDATE_LIMIT,
   OPTIMIZATION_GRID_VERSION,
+  SELECTION_AGENT_VERSION,
   SELECTION_GRID_VERSION,
+  type ArchiveAgentSelection,
   type ArchiveMeta,
   type ArchiveOptimization,
+  type ArchiveOptimizationAgent,
   type ArchiveOptimizationCandidate,
   type ArchiveOptimizationGrid,
   type ArchiveSelection,
@@ -34,6 +52,173 @@ import { readTrialPlan } from "./trial-plan.js";
 const archiveMetaSchema = z.fromJSONSchema(
   JSON.parse(JSON.stringify(ARCHIVE_META_JSON_SCHEMA)) as z.core.JSONSchema.JSONSchema,
 );
+
+/** 档案形状版本的分派结果：`"legacy"` = 没有 `archiveSchemaVersion`（v1/v2 历史档）。 */
+export type ArchiveShapeVersion = "legacy" | typeof ARCHIVE_SCHEMA_VERSION;
+
+/**
+ * 按 `archiveSchemaVersion` 分派（ADR-0031）：旧档、v3、其余拒读。
+ *
+ * 第二个拒读分支防的是一件真会发生的事：**只写了一半升级的档**。那些 agent 字段在旧读法里
+ * 全是额外属性，`additionalProperties: false` 会拒它，但拒的理由是「多了几个键」，而真正的事实
+ * 是「形状版本没跟上」。先把事实说出来。
+ *
+ * 它读 `unknown` 而不是 `ArchiveMeta`：报告侧先拿到的是未校验的 JSON 行，分派必须在那之前发生。
+ */
+export const archiveShapeVersionOf = (record: unknown): ArchiveShapeVersion => {
+  if (typeof record !== "object" || record === null) throw new Error("档案不是 JSON 对象");
+  const declared: unknown = Reflect.get(record, "archiveSchemaVersion");
+  if (declared !== undefined) {
+    if (declared !== ARCHIVE_SCHEMA_VERSION)
+      throw new Error(`不认识的档案形状版本 ${JSON.stringify(declared)}：拒读，不猜`);
+    return ARCHIVE_SCHEMA_VERSION;
+  }
+  const stray = AGENT_ARCHIVE_FIELD_KEYS.find((key) => Object.hasOwn(record, key));
+  if (stray !== undefined)
+    throw new Error(`档案带 agent 字段 ${stray} 却缺 archiveSchemaVersion: 3：新形状必须显式声明`);
+  return "legacy";
+};
+
+/**
+ * 形状版本与协议轮数的那几条判据（ADR-0031「断言合并成一个公式」）。
+ *
+ * v3：轮数 = 过程记录条数，起始 prompt 零步为零条、否则一条；历史档：轮数 = 逐轮 prompt 条数。
+ * 写入侧的同一条公式在 `packages/gen/src/archive.ts` 的 `archiveRoundFieldsOf`，两处同源。
+ *
+ * 返回值而不是抛异常，是因为它有两个读者：`apps/cli` 要把它逐条渲染成面向模型的诊断，
+ * runner 这一侧要把它抛成拒读。判据只有这一份，措辞也只在 `message` 里写一遍。
+ */
+export type ArchiveShapeIssue = {
+  readonly kind: "archive-schema-version" | "archive-agent-fields" | "archive-protocol-rounds";
+  readonly pointer: string;
+  readonly message: string;
+};
+
+export const archiveShapeIssuesOf = (meta: ArchiveMeta): readonly ArchiveShapeIssue[] => {
+  let shape: ArchiveShapeVersion;
+  try {
+    shape = archiveShapeVersionOf(meta);
+  } catch (cause) {
+    return [
+      {
+        kind: "archive-schema-version",
+        pointer: "/archiveSchemaVersion",
+        message: cause instanceof Error ? cause.message : String(cause),
+      },
+    ];
+  }
+  if (shape === ARCHIVE_SCHEMA_VERSION) {
+    const missing = AGENT_ARCHIVE_REQUIRED_KEYS.filter((key) => !Object.hasOwn(meta, key));
+    if (missing.length > 0)
+      return [
+        {
+          kind: "archive-agent-fields",
+          pointer: "/steps",
+          message: `v3 档案缺 agent 字段：${missing.join("、")}`,
+        },
+      ];
+    const steps = meta.steps ?? [];
+    if (meta.protocolRounds !== steps.length)
+      return [
+        {
+          kind: "archive-protocol-rounds",
+          pointer: "/steps",
+          message: `协议轮数写了 ${String(meta.protocolRounds)}，而过程记录有 ${String(steps.length)} 条`,
+        },
+      ];
+    if (meta.prompts.length !== (steps.length > 0 ? 1 : 0))
+      return [
+        {
+          kind: "archive-protocol-rounds",
+          pointer: "/prompts",
+          message: `起始 prompt 应恰为 ${steps.length > 0 ? "一条" : "零条"}，实际 ${String(meta.prompts.length)} 条`,
+        },
+      ];
+    return [];
+  }
+  return meta.prompts.length === meta.protocolRounds
+    ? []
+    : [
+        {
+          kind: "archive-protocol-rounds",
+          pointer: "/prompts",
+          message: `协议轮数写了 ${String(meta.protocolRounds)}，而逐轮 prompt 有 ${String(meta.prompts.length)} 条`,
+        },
+      ];
+};
+
+/**
+ * v3 的候选关系：条数 1..3（三次评测是配额，不是下限）、**无 `stage`**、步号严格递增且不越过
+ * 总步数、旁挂文件同源且两两互异、末位即最终候选。
+ *
+ * 「末位即最终候选」是 ADR-0030「`evaluate` 即提交」的直接推论：成绩取最后一次 `evaluate`
+ * 评的那个版本，所以冻结的 `script.js` 必须等于末位候选的字节。它不是「第三阶段」——
+ * 候选可能只有一个，那时它就是末位。
+ */
+const checkAgentCandidateRelations = (
+  meta: ArchiveMeta,
+  optimization: ArchiveOptimizationAgent,
+): void => {
+  const { candidates } = optimization;
+  if (candidates.length < 1 || candidates.length > OPTIMIZATION_CANDIDATE_LIMIT)
+    throw new Error(
+      `v3 候选数必须在 1..${String(OPTIMIZATION_CANDIDATE_LIMIT)} 之间，实际 ${String(candidates.length)} 条`,
+    );
+  for (const [index, candidate] of candidates.entries()) {
+    if (
+      candidate.step > meta.protocolRounds ||
+      candidate.step <= (candidates[index - 1]?.step ?? 0) ||
+      candidate.scriptFile !== `${candidate.observationsFile}.candidate.js` ||
+      !candidate.observationsFile.endsWith(`-round-${String(candidate.step)}.jsonl`)
+    )
+      throw new Error("v3 候选步号或独占文件关系不合法");
+  }
+  if (
+    new Set(candidates.flatMap((candidate) => [candidate.scriptFile, candidate.observationsFile]))
+      .size !==
+    candidates.length * 2
+  )
+    throw new Error("v3 候选的旁挂文件必须两两互异");
+  const last = candidates[candidates.length - 1]!;
+  if (last.scriptSha256 !== meta.scriptSha256) throw new Error("优化最终 hash 关系不合法");
+};
+
+/**
+ * v3 选拔与候选序的关系：胜者指向候选序里的某一位（不是阶段），它的 hash 就是冻结 hash。
+ *
+ * 胜负的复算归 `validateSelection`（`selection-grid.ts` 的 v3 分支）；这里只核两层对位：
+ * 选拔里的候选与优化段逐位同源（步号 + 编译产物摘要 + 分数），胜者就在这些候选里且就是
+ * 冻结的那份字节。
+ */
+const checkAgentSelection = (
+  meta: ArchiveMeta,
+  optimization: ArchiveOptimizationAgent,
+  selection: ArchiveAgentSelection,
+): void => {
+  if (
+    selection.plan.ruleset !== meta.ruleset ||
+    selection.plan.sandboxRuntimeHash !== meta.sandboxRuntimeHash
+  )
+    throw new Error("选拔计划与存档的规则集或运行时摘要不一致");
+  if (selection.candidates.length !== optimization.candidates.length)
+    throw new Error("选拔候选条数与优化段候选条数不一致");
+  selection.candidates.forEach((candidate, index) => {
+    const generated = optimization.candidates[index];
+    if (
+      generated === undefined ||
+      generated.step !== candidate.step ||
+      generated.scriptSha256 !== candidate.scriptSha256 ||
+      generated.score.totalPoints !== candidate.score.totalPoints ||
+      generated.score.averagePoints !== candidate.score.averagePoints ||
+      generated.score.countedMatches !== candidate.score.countedMatches
+    )
+      throw new Error("选拔候选与优化段候选不同源或分数不一致");
+  });
+  if (selection.selected.scriptSha256 !== meta.scriptSha256)
+    throw new Error("选拔胜者与冻结 hash 不一致");
+  if (!selection.candidates.some((candidate) => candidate.step === selection.selected.step))
+    throw new Error("选拔胜者不在候选序里");
+};
 
 /**
  * 两版共用的候选关系：三阶段、协议轮严格递增且不越过总轮数、旁挂文件同源且六个名字互异。
@@ -151,13 +336,37 @@ const checkGridSelection = (
   });
 };
 
-/** 形状通过之后的共享身份判据；CLI、赛季及报告共用。 */
+/**
+ * 形状通过之后的共享身份判据；CLI、赛季及报告共用。
+ *
+ * 分派顺序：先看档案形状版本（旧档 / v3 / 拒读），再看优化段版本。两者各管一件事，
+ * 而「档案形状版本为 3 时优化段版本必须是 3 或优化段缺席」这条关系就坐在这里——它是关系，
+ * 不是形状，JSON Schema 的条件分支表达不了（runner 的 `z.fromJSONSchema` 不支持 `if/then`）。
+ */
 export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
+  // 形状版本与轮数公式归 `archiveShapeIssuesOf`（CLI 把它渲染成诊断，runner 把它抛成拒读）；
+  // 这里只按版本分派候选关系，不重复报同一件事。
+  const shape = archiveShapeVersionOf(meta);
   const optimization = meta.optimization;
   if (optimization === undefined) {
-    if (meta.selection !== undefined) throw new Error("选拔存档必须包含三个优化阶段");
+    if (meta.selection !== undefined) throw new Error("选拔存档必须包含优化段");
     return;
   }
+  if (shape === ARCHIVE_SCHEMA_VERSION) {
+    if (optimization.version !== OPTIMIZATION_AGENT_VERSION)
+      throw new Error("档案形状版本 3 要求优化段版本为 3");
+    checkAgentCandidateRelations(meta, optimization);
+    const selection = meta.selection;
+    if (selection !== undefined) {
+      // 形状上三种选拔记录都合 schema；形状版本 3 只接受 v3 那一种。
+      if (selection.version !== SELECTION_AGENT_VERSION)
+        throw new Error("档案形状版本 3 要求选拔段版本为 3");
+      checkAgentSelection(meta, optimization, selection);
+    }
+    return;
+  }
+  if (optimization.version === OPTIMIZATION_AGENT_VERSION)
+    throw new Error("优化段版本 3 必须同时声明 archiveSchemaVersion: 3");
   checkCandidateRelations(meta, optimization.candidates);
   // v1 没有额外关系要判：三个固定试跑种子由 schema 的 v1 分支钉住，与赛季种子的隔离
   // 由调度器负责（`scheduler.ts`）。不为了「对称」给历史档加新判据——那会让旧档读不进来。
@@ -169,6 +378,9 @@ export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
   }
   const selection = validateSelection(meta.selection);
   if (selection.version === SELECTION_GRID_VERSION) checkGridSelection(optimization, selection);
+  // v3 的选拔已在上面分派出去；能走到这里的只有 v1 / v2，而两者都有 `stage` 与 `protocolRound`。
+  if (selection.version === SELECTION_AGENT_VERSION)
+    throw new Error("档案形状版本不到 3 时不得带 v3 选拔记录");
   if (
     selection.plan.ruleset !== meta.ruleset ||
     selection.plan.sandboxRuntimeHash !== meta.sandboxRuntimeHash ||
@@ -185,7 +397,15 @@ export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
     throw new Error("选拔候选、冻结 hash 或执行环境与优化存档不一致");
 };
 
+/**
+ * 优化旁证的读入端：按**档案形状版本**分派之后再过 zod 形状与跨字段关系。
+ *
+ * 没有 `optimization` 也没有 `selection` 的记录（纯历史逐轮档、零步失败档）返回 `undefined`——
+ * 但分派本身仍要先跑：带 agent 字段却缺 `archiveSchemaVersion: 3` 的档不能因为「没有优化段」
+ * 就跟着放行。
+ */
 export const optimizationMetaOf = (value: unknown): ArchiveMeta | undefined => {
+  archiveShapeVersionOf(value);
   if (
     typeof value !== "object" ||
     value === null ||
@@ -195,6 +415,8 @@ export const optimizationMetaOf = (value: unknown): ArchiveMeta | undefined => {
   const parsed = archiveMetaSchema.safeParse(value);
   if (!parsed.success) throw new Error("优化存档元数据形状不合法");
   const meta = parsed.data as ArchiveMeta;
+  const [issue] = archiveShapeIssuesOf(meta);
+  if (issue !== undefined) throw new Error(issue.message);
   validateArchiveCandidateRelations(meta);
   return meta;
 };
