@@ -46,6 +46,7 @@ import { compileScript } from "./compile.js";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { generationParams } from "./generation-policy.js";
 import { policyFixture } from "./generation-policy.fixture.js";
+import { usageCaliberOf } from "./generation-evidence.js";
 import { readRuleDocs } from "./contract.js";
 import { generateOneModel, type ModelOutcome } from "./pipeline.js";
 import { loadBaseTemplate } from "./prompt.js";
@@ -2201,21 +2202,29 @@ it.each(["chat-completions", "messages", "responses", "generate-content"] as con
       expect(callAt(stub, 2).messages).toEqual(callAt(stub, 0).messages);
       expect(callAt(stub, 3).messages[2]?.content).toContain("TS2304");
       expect(outcome.meta.protocolRounds).toBe(2);
+      // 规范配置自报用量口径；Google 族没有对应枚举，不写——不往枚举里塞第四个值。
+      const caliber = usageCaliberOf(family);
+      const caliberFields =
+        caliber === undefined ? {} : { usage_semantic: caliber, usage_source: caliber };
       const logs = parsedLog(outcome.meta);
-      expect(logs[0]?.usage).toEqual({ input_tokens: 10, output_tokens: 4 });
+      expect(logs[0]?.usage).toEqual({
+        input_tokens: 10,
+        output_tokens: 4,
+        ...caliberFields,
+      });
       expect(logs[0]?.attemptEvidence).toEqual([
         {
           attempt: 1,
           outcome: "response",
           finishReason: "length",
-          usage: { output_tokens: 8192, total_tokens: 8200 },
+          usage: { output_tokens: 8192, total_tokens: 8200, ...caliberFields },
         },
         { attempt: 2, outcome: "transport-error" },
         {
           attempt: 3,
           outcome: "response",
           finishReason: "stop",
-          usage: { input_tokens: 10, output_tokens: 4 },
+          usage: { input_tokens: 10, output_tokens: 4, ...caliberFields },
         },
       ]);
       expect(logs[1]).not.toHaveProperty("usage");

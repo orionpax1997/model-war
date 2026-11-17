@@ -47,7 +47,10 @@ export const USAGE_ENUM_FIELDS = {
   "billing_usage.source": ["claude_messages"],
 } as const;
 
-/** 每项是同一指标的备选来源，不相加；顺序保持旧档报告的优先级。 */
+/**
+ * 每项是同一指标的备选来源，不相加；顺序保持旧档报告的优先级。
+ * `cacheWrite5m` / `cacheWrite1h` 是例外：它们是写入量的组成明细，不是总量的备选来源。
+ */
 export const USAGE_READING_PATHS = {
   input: ["prompt_tokens", "input_tokens", "promptTokenCount"],
   output: [
@@ -69,6 +72,16 @@ export const USAGE_READING_PATHS = {
     "input_tokens_details.cache_write_tokens",
     "cache_creation_input_tokens",
     "billing_usage.claude_usage.cache_creation_input_tokens",
+  ],
+  // 写入量的 TTL 分档是**组成明细，不是备选来源**：总量 = 5m + 1h，
+  // 跟总量放进同一个路径列会让每个正常响应都被判成「冲突」。
+  cacheWrite5m: [
+    "cache_creation.ephemeral_5m_input_tokens",
+    "billing_usage.claude_usage.cache_creation.ephemeral_5m_input_tokens",
+  ],
+  cacheWrite1h: [
+    "cache_creation.ephemeral_1h_input_tokens",
+    "billing_usage.claude_usage.cache_creation.ephemeral_1h_input_tokens",
   ],
   reasoning: [
     "completion_tokens_details.reasoning_tokens",

@@ -140,7 +140,13 @@ const fixtures = [
   },
 ];
 
-it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$name", async ({ usage, readings }) => {
+const evidence = {
+  official: { status: "documented" as const, source: "offline-fixture/official-contract" },
+  channel: { status: "accepted" as const, source: "offline-fixture/channel-contract" },
+};
+
+/** 一次生成需要的最小工作区：契约文档、模板、规则集（其余走仓库内链接）。 */
+const makeRoot = (): string => {
   const root = mkdtempSync(join(scratch, "root-"));
   for (const relative of ["node_modules", "packages", "tsconfig.scripts.json"])
     symlinkSync(join(repoRoot, relative), join(root, relative));
@@ -154,10 +160,11 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
     join(root, `rulesets/${RULESET_VERSION}.json`),
     readFileSync(join(repoRoot, `rulesets/${RULESET_VERSION}.json`)),
   );
-  const evidence = {
-    official: { status: "documented" as const, source: "offline-fixture/official-contract" },
-    channel: { status: "accepted" as const, source: "offline-fixture/channel-contract" },
-  };
+  return root;
+};
+
+it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$name", async ({ usage, readings }) => {
+  const root = makeRoot();
   const config: ModelConfig = {
     slug: "alpha",
     endpointFamily: "chat-completions",
@@ -214,8 +221,13 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
       readFileSync(join(root, "archive/alpha/r1/meta.json"), "utf8"),
     );
     const log = JSON.parse(meta.generationLog[0]!);
-    expect(log.usage).toEqual(usage);
-    expect(log.attemptEvidence[0].usage).toEqual(usage);
+    // 端点族在服务端没给口径时补一个（chat 族 → openai）；回显了任一字段就整对保留。
+    const echoed = Object.hasOwn(usage, "usage_semantic") || Object.hasOwn(usage, "usage_source");
+    const expectedUsage = echoed
+      ? usage
+      : { ...usage, usage_semantic: "openai", usage_source: "openai" };
+    expect(log.usage).toEqual(expectedUsage);
+    expect(log.attemptEvidence[0].usage).toEqual(expectedUsage);
     expect(JSON.stringify(meta.generationLog)).not.toContain(secret);
     const [report] = readArchiveReports(root);
     expect(report?.rounds[0]?.usage).toMatchObject(readings);
@@ -242,6 +254,114 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
       if (json) expect(JSON.parse(output.join(""))[0].rounds[0].usage).toMatchObject(readings);
       else expect(output.join("")).toContain("不相加作账单");
     }
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h 分档与命中率", async () => {
+  const root = makeRoot();
+  const config: ModelConfig = {
+    slug: "alpha",
+    endpointFamily: "messages",
+    modelId: "fixture/model",
+    baseUrl: "https://offline.invalid/v1",
+    credentialEnvVar: "USAGE_REPORT_TEST_KEY",
+    generationPolicy: {
+      endpoint: { family: "messages", ...evidence },
+      reasoning: {
+        intent: "high",
+        control: "unverified",
+        ...evidence,
+        channel: { status: "unverified", source: "offline-fixture/unverified-channel" },
+      },
+      output: { field: "max_tokens", maxTokens: 16384, includesReasoning: "yes", ...evidence },
+      cache: { mode: "ephemeral-1h", ...evidence },
+      transport: { authentication: "bearer" },
+    },
+  };
+  // 真实 Anthropic 响应形状：写入量拆 5m / 1h 两档，总量与分档同时出现。
+  const usage = {
+    input_tokens: 4,
+    output_tokens: 5,
+    cache_creation_input_tokens: 14024,
+    cache_read_input_tokens: 0,
+    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 14024 },
+    output_tokens_details: { thinking_tokens: 0 },
+  };
+  const fetch = vi.fn(
+    async (_url: unknown, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: script }],
+          stop_reason: "end_turn",
+          usage: { ...usage, prompt: secret, provider_error: secret },
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  vi.stubEnv("USAGE_REPORT_TEST_KEY", secret);
+  try {
+    const outcome = await generateOneModel(
+      {
+        root,
+        runId: "r1",
+        docs: readRuleDocs(root),
+        template: loadBaseTemplate(root),
+        createClient: createHttpModelClient,
+        now: () => new Date("2026-10-13T00:00:00Z"),
+        trial: () => ({ passed: true, stdout: "" }),
+      },
+      config,
+    );
+    expect(outcome.kind).toBe("frozen");
+    const requestBody = fetch.mock.calls[0]?.[1]?.body;
+    if (typeof requestBody !== "string") throw new Error("请求体不是字符串");
+    const body = JSON.parse(requestBody) as {
+      messages: {
+        role: string;
+        content: { type: string; text: string; cache_control?: unknown }[];
+      }[];
+      system?: unknown;
+      stream?: unknown;
+    };
+    // 断点打在前缀末尾：唯一一条 user 消息的最后一个（也是唯一）内容块。
+    expect(body.stream).toBe(true);
+    expect(body.system).toBeUndefined();
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0]?.content).toHaveLength(1);
+    expect(body.messages[0]?.content[0]).toMatchObject({
+      type: "text",
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    });
+    const meta: ArchiveMeta = JSON.parse(
+      readFileSync(join(root, "archive/alpha/r1/meta.json"), "utf8"),
+    );
+    const log = JSON.parse(meta.generationLog[0]!) as { usage: Record<string, unknown> };
+    // 服务端没回显口径，按端点族补 anthropic。
+    expect(log.usage).toMatchObject({ ...usage, usage_semantic: "anthropic" });
+    expect(JSON.stringify(meta.generationLog)).not.toContain(secret);
+    const [report] = readArchiveReports(root);
+    expect(report?.rounds[0]?.usage.cacheWrite).toMatchObject({ value: 14024 });
+    expect(report?.rounds[0]?.usage.cacheWrite1h).toMatchObject({
+      value: 14024,
+      source: "usage.cache_creation.ephemeral_1h_input_tokens",
+    });
+    expect(report?.rounds[0]?.cacheHitRate).toBe(0);
+    expect(report?.cacheHitRate).toMatchObject({ value: 0, recordedRounds: 1, expectedRounds: 1 });
+    expect(report?.rounds[0]?.requestEvidence?.cache).toEqual({
+      mode: "ephemeral-1h",
+      official: "documented",
+      channel: "accepted",
+    });
+    const output: string[] = [];
+    await runArchiveReport(["--root", root], {
+      stdout: (text) => output.push(text),
+      stderr: () => {},
+    });
+    expect(output.join("")).toContain("缓存写 1h");
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

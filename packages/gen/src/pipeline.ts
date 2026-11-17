@@ -94,6 +94,7 @@ import { generationParams, generationRequestEvidence } from "./generation-policy
 import {
   projectUsage,
   responseAttemptEvidence,
+  usageCaliberOf,
   type AttemptEvidence,
 } from "./generation-evidence.js";
 import type { ChatMessage, ModelParams } from "./model-client.js";
@@ -309,12 +310,15 @@ const sendOneRound = async (options: {
   const client = request.createClient(config);
   const startedAt = performance.now();
   const attemptEvidence: AttemptEvidence[] = [];
+  // 规范配置自报用量口径；旧配置保持原样透传，不事后改口径。
+  const usageCaliber =
+    config.generationPolicy === undefined ? undefined : usageCaliberOf(config.endpointFamily);
   const attempt = await retryTransport({
     send: async () => {
       const number = attemptEvidence.length + 1;
       try {
         const response = await client.send(messages, params);
-        attemptEvidence.push(responseAttemptEvidence(number, response));
+        attemptEvidence.push(responseAttemptEvidence(number, response, usageCaliber));
         return response;
       } catch (cause) {
         attemptEvidence.push({ attempt: number, outcome: "transport-error" });
@@ -350,14 +354,17 @@ const sendOneRound = async (options: {
     round,
     model: config.modelId,
     params,
-    usage: config.generationPolicy === undefined ? response.usage : projectUsage(response.usage),
+    usage:
+      config.generationPolicy === undefined
+        ? response.usage
+        : projectUsage(response.usage, usageCaliber),
     finishReason: response.finishReason,
     ...(config.generationPolicy === undefined
       ? {}
       : {
           requestEvidence: generationRequestEvidence(config),
           responseConverged: true as const,
-          stopDetails: responseAttemptEvidence(1, response).stopDetails,
+          stopDetails: responseAttemptEvidence(1, response, usageCaliber).stopDetails,
           attemptEvidence,
         }),
     sendMs,

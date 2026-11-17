@@ -188,16 +188,38 @@ const MESSAGES_STOP_REASONS: Record<string, string> = {
   stop_sequence: "stop",
 };
 
+/**
+ * 本模型的缓存断点；`undefined` = 不发断点。
+ *
+ * 只认 `messages` 族的 policy：chat / responses 族默认缓存前缀，加参数是多余干预。
+ * TTL 选 1 小时的理由在配置侧（单轮生成可能超过 5 分钟，5m 断点在下一轮之前就失效）。
+ */
+const cacheControlOf = (config: ModelConfig): Record<string, unknown> | undefined => {
+  const cache = config.generationPolicy?.cache;
+  if (cache === undefined || cache.mode === "none") return undefined;
+  return cache.mode === "ephemeral-1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+};
+
 const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
+  const cacheControl = cacheControlOf(config);
   // Anthropic 没有 `role: "system"` 的消息:system 提示抽到顶层 `system` 字段,不进 `messages`。
   const systemParts: string[] = [];
   const dialog: Record<string, unknown>[] = [];
+  let lastDialog: ChatMessage | undefined;
   for (const message of messages) {
     if (message.role === "system") {
       systemParts.push(message.content);
     } else {
+      lastDialog = message;
       dialog.push(toWireMessage(message));
     }
+  }
+  // 断点打在前缀末尾：中间消息保持字符串载荷，只有最后一条消息的最后一个块挂标记。
+  if (cacheControl !== undefined && lastDialog !== undefined) {
+    dialog[dialog.length - 1] = {
+      role: lastDialog.role,
+      content: [{ type: "text", text: lastDialog.content, cache_control: cacheControl }],
+    };
   }
 
   const body: Record<string, unknown> = {
@@ -207,7 +229,11 @@ const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
     messages: dialog,
   };
   if (systemParts.length > 0) {
-    body.system = systemParts.join("\n\n");
+    const system = systemParts.join("\n\n");
+    body.system =
+      cacheControl === undefined
+        ? system
+        : [{ type: "text", text: system, cache_control: cacheControl }];
   }
   return body;
 };
