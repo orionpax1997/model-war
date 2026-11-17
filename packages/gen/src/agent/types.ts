@@ -128,4 +128,6 @@ export type AgentTurnEvidence =
        */
       readonly kind: "transport";
       readonly round: number;
+      /** 死之前用了几枪(1 = 一次就死;2 = 第一枪被截断、第二枪死在连接上)。 */
+      readonly attempts: number;
     };

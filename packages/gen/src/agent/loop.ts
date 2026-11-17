@@ -187,13 +187,20 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
       }
     } catch {
       // 传输重试耗尽(重试预算在传输层,不在 loop):这一次调用不进过程记录、不进协议轮数。
-      turns.push({ kind: "transport", round: step });
+      //
+      // `attempts` 仍要记:一枪就死与「第一枪被截断、第二枪死在连接上」在诊断上是两件事,
+      // 而后者只有这里知道——它没有过程记录条目可挂(ADR-0031)。
+      turns.push({ kind: "transport", round: step, attempts });
       termination = "transport";
       atStep = steps.length;
       break;
     }
     const sendMs = now() - turnStart;
     const harnessStart = now();
+    // 原文**只算一次**：落进 `steps.raw` 的字节与下一步发回历史里的字节必须是同一份
+    // （ADR-0032「与发回去的字节同源」）。分两处各取一次 `response.text` 会在病态保护边界上
+    // 悄悄造出两个字节串，而那种不一致在读侧根本看不出来。
+    const raw = clampRaw(response.text);
     const observedInputTokens = inputTokensOf(response.usage);
     if (observedInputTokens !== undefined) {
       lastInputTokens = observedInputTokens;
@@ -245,12 +252,11 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
       exitCode: observation.exitCode,
       atMs,
       harnessMs,
-      // 原文与发回去的字节同源;病态保护只在 64 KiB 之外生效。
-      raw: clampRaw(response.text),
+      raw,
       ...(result === undefined ? {} : { result }),
     });
     turnHistory.push({
-      raw: response.text,
+      raw,
       observation,
       ...(response.reasoning === undefined ? {} : { reasoning: response.reasoning }),
     });

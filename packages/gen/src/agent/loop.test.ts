@@ -215,7 +215,7 @@ it("传输耗尽立即停:那次调用不进过程记录、不进协议轮数,�
   expect(result.atStep).toBe(0);
   expect(result.steps).toEqual([]);
   expect(result.prompts).toEqual([]);
-  expect(result.turns).toEqual([{ kind: "transport", round: 1 }]);
+  expect(result.turns).toEqual([{ kind: "transport", round: 1, attempts: 1 }]);
 });
 
 it("跑过几步之后才传输耗尽:已跑完的步留着,传输末行不进 steps", async () => {
@@ -394,6 +394,32 @@ it("结果侧证据原样落步,没有结果时不写空壳", async () => {
   expect("result" in (result.steps[1] ?? {})).toBe(false);
 });
 
+it("原文与发回去的字节同源:病态保护生效时两处仍是同一份", async () => {
+  const huge = `\`\`\`bash\n${"x".repeat(70_000)}\n\`\`\``;
+  const calls: (readonly ChatMessage[])[] = [];
+  const responses: ModelResponse[] = [
+    { text: huge, finishReason: "stop", usage: {} },
+    { text: "```bash\ndone\n```", finishReason: "stop", usage: {} },
+  ];
+  const model = {
+    send: async (messages: readonly ChatMessage[]): Promise<ModelResponse> => {
+      calls.push([...messages]);
+      const next = responses[calls.length - 1];
+      if (next === undefined) throw new Error("剧本已用尽");
+      return next;
+    },
+  };
+  const executor = fakeExecutor([OK, { ...OK, done: true }]);
+  const result = await runAgentSession(requestOf({ model, executor: executor.executor }));
+
+  const raw = result.steps[0]?.raw ?? "";
+  expect(raw).toContain("病态保护上限");
+  // 落盘的那一份与下一步发回去的那一份逐字节相同(不是「两份都各自 clamp 过」)。
+  expect(calls[1]?.[2]?.content).toBe(raw);
+  // 观测仍是完整跑出来的输出,没有被原文的病态保护牵连。
+  expect(result.steps[0]?.stdout).toBe("");
+});
+
 it("推理随消息带走但不落过程记录", async () => {
   const reasoning: ModelResponse["reasoning"] = {
     carry: "signed",
@@ -461,4 +487,17 @@ it("有没有候选就是成功档与失败档的分界(与终止原因无关)",
   );
   expect(empty.termination).toBe("max-steps");
   expect(hasCandidates(empty)).toBe(false);
+});
+
+it("截断重试那一枪死在连接上:transport 末行仍记下用了两枪", async () => {
+  const model = stubClient([
+    reply("```bash\nls", { finishReason: "length" }),
+    fail(new Error("ECONNRESET")),
+  ]);
+  const result = await runAgentSession(requestOf({ model, executor: fakeExecutor([]).executor }));
+
+  expect(result.termination).toBe("transport");
+  expect(result.steps).toEqual([]);
+  // 与「一枪就死」在诊断上是两件事:后者是运气,前者先说「模型话太多」。
+  expect(result.turns).toEqual([{ kind: "transport", round: 1, attempts: 2 }]);
 });
