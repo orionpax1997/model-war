@@ -31,6 +31,7 @@
 import { apiOutcomeTable, apiSurfaceTables } from "./api-surface.ts";
 import { builtinGlobalsAllowlist } from "./builtin-globals.ts";
 import type { GeneratedArtifact } from "./artifact.ts";
+import { contractMinimalSkeleton } from "./minimal-skeleton.ts";
 import {
   apiV2ValueTable,
   apiValueTable,
@@ -52,6 +53,10 @@ import { scriptSurfaceNames } from "./script-surface.ts";
  * 合成一整块:漂移的报告要能指认是哪一句判据下的那一段漂了,合成一块就分不出来了。它们各自
  * 展开成当前 active 契约与历史快照两份(v2 / v1):API 面与规则集取值无关,内容逐字节相同,
  * 但两份都必须被漂移检查覆盖——模型读的是 active 那一份。
+ *
+ * 末尾一件是**跨文件派生**:`/contract` 里那份最小骨架从 API 文档 §6 的围栏块抽出,真源是
+ * 另一份**同样受本表管辖**的文档。它的真源不是代码也不是数据文件,而是契约散文;这类派生的
+ * 一致性只能由构造保证(抽出来的字节就是 §6 那一块),判据落在 `minimal-skeleton.ts`。
  */
 export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [
   builtinGlobalsAllowlist,
@@ -62,4 +67,5 @@ export const GENERATED_ARTIFACTS: readonly GeneratedArtifact[] = [
   apiV2ValueTable,
   ...apiSurfaceTables,
   ...apiOutcomeTable,
+  contractMinimalSkeleton,
 ];
