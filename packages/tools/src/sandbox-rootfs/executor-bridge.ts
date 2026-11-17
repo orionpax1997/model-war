@@ -24,6 +24,12 @@ import { join } from "node:path";
 /** 执行器的编译形态入口(相对仓库根)。`check:sandbox` 的命名脚本先 `pnpm run build`。 */
 export const EXECUTOR_ENTRY = "packages/gen/dist/agent/sandbox/index.js";
 
+/**
+ * 宿主侧工具服务的编译形态入口(相对仓库根)。与执行器同一个包、同一棵树的两个位置:
+ * 执行器是「跑一步」,这个是「这一步里的薄壳该找谁」。
+ */
+export const HOST_ENTRY = "packages/gen/dist/agent/host/index.js";
+
 /** 一次驱动请求。`action` 只有两种:自证与跑一步。 */
 export type BridgeRequest =
   | { readonly action: "preflight"; readonly rootfsDir: string }
@@ -34,12 +40,14 @@ export type BridgeRequest =
       readonly command: string;
       readonly wallClockMs: number;
       /**
-       * 通道的宿主侧要从「不接」还是「接上」:`echo` 会把收到的每一行原样写回。
+       * 通道的宿主侧要从「不接」、「回显」还是「接真的工具服务」:
        *
-       * 回显不是协议:本票只证明 fd 3 **开得出来、关得掉**(请求到得了宿主、响应回得到沙箱)。
-       * 请求与响应的字段集归票 04,回显刻意不碰字段。
+       * - `none`:fd 3 不开;
+       * - `echo`:回显收到的每一行——只证明 fd 3 **开得出来、关得掉**;
+       * - `tools`:接 `packages/gen/dist/agent/host` 的真 dispatcher(真 `check` 服务)。
+       *   这条是「薄壳 → fd → 宿主服务」整条链的唯一真跑路径。
        */
-      readonly channel: "none" | "echo";
+      readonly channel: "none" | "echo" | "tools";
     };
 
 /** 一次驱动结果。`ok: false` 时 `message` 是执行器抛出来的那段文本(自证失败就是它)。 */
@@ -61,9 +69,14 @@ export type BridgeReply =
  *
  * 顶层 `await` 可用(`--input-type=module`)。任何异常都折成 `{ ok: false, message }`,
  * 让门禁读到的是「执行器说了什么」,而不是一段没有上下文的栈。
+ *
+ * `channel: "tools"` 那一路在这里造**真**的会话工具面(dispatcher + check 服务);它的
+ * `evaluate` 接一个假试跑(真网格归票 06)。断言全在门禁那边，这段胶水只负责装配。
  */
 export const EXECUTOR_ADAPTER = `
 const entry = process.argv[1];
+const hostEntry = process.argv[2];
+const repoRoot = process.argv[3];
 let input = "";
 process.stdin.setEncoding("utf8");
 for await (const chunk of process.stdin) input += chunk;
@@ -75,15 +88,30 @@ try {
     reply({ ok: true, version: sandbox.preflight({ rootfsDir: request.rootfsDir }).version });
   } else {
     const received = [];
+    let requestHandler;
+    if (request.channel === "echo") {
+      requestHandler = (line) => { received.push(line); return line; };
+    } else if (request.channel === "tools") {
+      const host = await import(hostEntry);
+      const tools = host.createSessionTools({
+        workspaceDir: request.workspaceDir,
+        deadlineAtMs: Date.now() + 600000,
+        check: host.createCheckService({ root: repoRoot }),
+        evaluate: host.createEvaluateService({
+          root: repoRoot,
+          model: "gate",
+          trial: () => ({ passed: true, stdout: "gate 假试跑（真网格归票 06）" }),
+        }),
+      });
+      requestHandler = (line) => { received.push(line); return tools.requestHandler(line); };
+    }
     const started = performance.now();
     const result = await sandbox.run({
       command: request.command,
       workspaceDir: request.workspaceDir,
       rootfsDir: request.rootfsDir,
       wallClockMs: request.wallClockMs,
-      ...(request.channel === "echo"
-        ? { requestHandler: (line) => { received.push(line); return line; } }
-        : {}),
+      ...(requestHandler === undefined ? {} : { requestHandler }),
     });
     reply({ ok: true, ...result, channelRequests: received, wallClockMs: Math.round(performance.now() - started) });
   }
@@ -105,7 +133,14 @@ export const driveExecutor = async (
 ): Promise<BridgeReply> => {
   const child = spawn(
     process.execPath,
-    ["--input-type=module", "-e", EXECUTOR_ADAPTER, join(repoRoot, EXECUTOR_ENTRY)],
+    [
+      "--input-type=module",
+      "-e",
+      EXECUTOR_ADAPTER,
+      join(repoRoot, EXECUTOR_ENTRY),
+      join(repoRoot, HOST_ENTRY),
+      repoRoot,
+    ],
     { cwd: repoRoot },
   );
   const stdout: Buffer[] = [];
