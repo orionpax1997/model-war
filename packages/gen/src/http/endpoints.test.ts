@@ -15,6 +15,7 @@ const config = (family: ModelConfig["endpointFamily"]): ModelConfig => ({
   baseUrl: "https://example.invalid/v1",
   modelId: "vendor/model-x",
   credentialEnvVar: "TEST_KEY",
+  channelId: "test-channel",
 });
 
 /** Google 族的模型 id 直接进路径,用真实形状的 id 才能看见路径是不是拼对了。 */

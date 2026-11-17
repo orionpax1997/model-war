@@ -66,6 +66,7 @@ const entry = (slug: string, extra: readonly string[] = []): readonly string[] =
   "    baseUrl: https://example.test/v1",
   `    modelId: provider/${slug}`,
   "    credentialEnvVar: GEN_TEST_KEY",
+  "    channelId: gen-test-channel",
   ...extra,
 ];
 

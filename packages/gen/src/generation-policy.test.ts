@@ -17,6 +17,7 @@ const canonical = `models:
     baseUrl: https://fixture.invalid/v1
     modelId: fixture/model
     credentialEnvVar: UNREAD_KEY
+    channelId: fixture-channel
     generationPolicy:
       endpoint:
         family: chat-completions
@@ -93,6 +94,7 @@ const fixtureModel = (family: ModelConfig["endpointFamily"]): ModelConfig => ({
   baseUrl: "https://fixture.invalid/v1",
   modelId: "fixture/model",
   credentialEnvVar: "UNREAD_KEY",
+  channelId: "fixture-channel",
   generationPolicy: policyFixture(family),
 });
 

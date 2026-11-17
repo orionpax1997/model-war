@@ -19,6 +19,17 @@
  * | `script.js` 的 sha256 | `scriptSha256` | 复算认的是**编译产物**,不是定版源码 |
  * | sandbox-runtime hash | `sandboxRuntimeHash` | 同一个脚本换一副沙箱跑,结果不保证一致 |
  *
+ * ── 可选的 `channelId`:渠道身份,历史档没有它是事实而不是缺陷 ──────────────────
+ *
+ * 榜键四维是 `rulesetVersion + modelVersion + harnessVersion + channelId`(票 03 的裁决)。
+ * `modelVersion` 那一格回答「哪一版模型」,`channelId` 回答「从哪条渠道、哪个档位调到的」——
+ * 同一个 `baseUrl`(如 `/provider/v1`)可以挂多个档位,差别在可用 modelId 与配额窗口,
+ * 所以它推不出来,必须写入档。
+ *
+ * **它不进 `required`**:2026-11 之前冻结的档源自还没有这个字段的渠道(opencode),那些档
+ * 没有它,回填等于伪造证据。装载期因此不得因缺它拒跑——与 `optimization` / `selection`
+ * 同一条纪律:新档写,老档不迁移。
+ *
  * ── 形状一次定死:生成管线落地时只填值,不改形状 ───────────────────────────────
  *
  * 这十一项与它们的嵌套形状**由本文件定死**,生成管线(gen 侧那一票)落地时**只填值**。
@@ -154,6 +165,13 @@ export type ArchiveValidation = {
 export type ArchiveMeta = {
   readonly model: string;
   readonly modelVersion: string;
+  /**
+   * 渠道身份(含档位,如 `commandcode-goat-2026-11`)。
+   *
+   * 可选:本字段出现前冻结的历史档没有它,那些档仍要能装载、能回放、能进报告。
+   * 新档由生成管线必写(配置里的 `channelId` 是必填项)。
+   */
+  readonly channelId?: string;
   readonly generatedAt: string;
   /** 协议迭代轮数,与 `prompts` 的长度双存,装载期断言两者相等。 */
   readonly protocolRounds: number;
@@ -324,6 +342,12 @@ export const ARCHIVE_META_JSON_SCHEMA = {
       minLength: 1,
       description:
         "模型版本/快照标识。模型侧按**快照**冻结而不按 git tag 冻结,故这是一格而不是两格:同一个版本号对应多份快照时,复算要认的是后者。",
+    },
+    channelId: {
+      type: "string",
+      minLength: 1,
+      description:
+        "渠道身份(含档位,如 commandcode-goat-2026-11)。榜键四维之一:同一 baseUrl 可以挂多个档位,差别在可用 modelId 与配额窗口,从 URL 推不出来。**刻意不进 required**:本字段出现前冻结的历史档没有它,回填等于伪造证据。",
     },
     generatedAt: {
       type: "string",

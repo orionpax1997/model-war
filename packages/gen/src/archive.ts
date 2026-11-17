@@ -64,15 +64,20 @@ export const sha256Hex = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 /**
- * 组装 `meta.json` 的十一项(形状真源:`packages/schema/src/archive-meta.ts`,一字不改)。
+ * 组装 `meta.json`(形状真源:`packages/schema/src/archive-meta.ts`,一字不改)。
  *
- * 只填值:字段序即 schema 的书写序,`protocolRounds` 由 `prompts.length` 推得(两者相等是
- * 装载期不变量),`ruleset` / `sandboxRuntimeHash` 从本仓常量填,`scriptSha256` 由调用方现场
- * 读 `script.js` 字节算出后传入。
+ * 十一项必填写死,另有可选的 `channelId` / `optimization` / `selection`。只填值:字段序即
+ * schema 的书写序,`protocolRounds` 由 `prompts.length` 推得(两者相等是装载期不变量),
+ * `ruleset` / `sandboxRuntimeHash` 从本仓常量填,`scriptSha256` 由调用方现场读 `script.js` 字节算出后传入。
  */
 export type BuildArchiveMetaInput = {
   readonly model: string;
   readonly modelVersion: string;
+  /**
+   * 渠道身份(含档位)。必填:生成侧从来都知道自己走的是哪条渠道——
+   * 存档里缺它才需要事后靠 `generatedAt` 猜。历史档的 `channelId` 缺席由读入侧的可选类型承担。
+   */
+  readonly channelId: string;
   readonly generatedAt: string;
   readonly prompts: readonly string[];
   readonly generationLog: readonly string[];
@@ -86,6 +91,7 @@ export type BuildArchiveMetaInput = {
 export const buildArchiveMeta = (input: BuildArchiveMetaInput): ArchiveMeta => ({
   model: input.model,
   modelVersion: input.modelVersion,
+  channelId: input.channelId,
   generatedAt: input.generatedAt,
   protocolRounds: input.prompts.length,
   prompts: input.prompts,

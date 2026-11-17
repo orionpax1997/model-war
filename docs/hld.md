@@ -401,10 +401,11 @@ intent 由 processor 的统一校验裁决:属主正确、参数在界、目标�
 archive/<modelSlug>/<runId>/
   script.ts      # 定版源码,一字不改
   script.js      # 定版前用 tsc 编译为 script-mode JS;文本 + sha256 入 meta.json
-  meta.json      # 十一项必填 + 可选的 optimization / selection
+  meta.json      # 十一项必填 + 可选的 channelId / optimization / selection
 ```
 
-- **十一项必填**(`packages/schema/src/archive-meta.ts` 是形状的家):`model`、`modelVersion`、`generatedAt`、`protocolRounds`、`prompts`、`generationLog`、`ruleset`、`validation`、`tscVersion`、`scriptSha256`、`sandboxRuntimeHash`。形状不再改,生成管线**只填值、不改形状**。
+- **十一项必填**(`packages/schema/src/archive-meta.ts` 是形状的家):`model`、`modelVersion`、`generatedAt`、`protocolRounds`、`prompts`、`generationLog`、`ruleset`、`validation`、`tscVersion`、`scriptSha256`、`sandboxRuntimeHash`。必填集不再改,生成管线**只填值、不改形状**。
+- **可选 `channelId`(渠道身份含档位)**:新档必写、历史档缺席照过。它回答「从哪条渠道、哪个档位调到的」,而 `baseUrl` 答不了——同一 URL 可挂多个档位,差别在可用 modelId 与配额窗口。票 03 把它列为榜键四维之一,回填历史档等于伪造证据,故它不进必填集、装载期不因缺它拒跑。
 - **runner 启动即校验元数据完整性,缺档报错退出**(不跳过)。这里指第一个执行脚本的进程(装载段),不是赛季调度器那个包。
 - **写盘原子、一跑一目录**:三件套先在临时目录组装,冻结期校验全过才 rename 到目标目录;目标已存在即拒绝。失败不留半截目录,因此「目录存在 ⇔ 三件套完整」是不变量。`runId` 是生成时间戳,旧目录不删——这是「定版副本不可变」的落地方式。
 - **失败的模型不写 `archive/`**:只写 `archive/<modelSlug>/failed-<runId>.json`(逐轮 prompt 链 + 生成日志 + 最终诊断 + 失败分类),供报告侧读成失败名单。

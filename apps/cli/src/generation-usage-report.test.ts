@@ -171,6 +171,7 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
     modelId: "fixture/model",
     baseUrl: "https://offline.invalid/v1",
     credentialEnvVar: "USAGE_REPORT_TEST_KEY",
+    channelId: "usage-report-test-channel",
     generationPolicy: {
       endpoint: { family: "chat-completions", ...evidence },
       reasoning: {
@@ -268,6 +269,7 @@ it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h
     modelId: "fixture/model",
     baseUrl: "https://offline.invalid/v1",
     credentialEnvVar: "USAGE_REPORT_TEST_KEY",
+    channelId: "usage-report-test-channel",
     generationPolicy: {
       endpoint: { family: "messages", ...evidence },
       reasoning: {

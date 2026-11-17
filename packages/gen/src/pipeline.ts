@@ -830,6 +830,7 @@ export const generateOneModel = async (
             model: slug,
             // modelId 是带 provider 前缀的快照标识(配置里唯一能标识「哪一版模型」的字段)。
             modelVersion: config.modelId,
+            channelId: config.channelId,
             generatedAt: request.now().toISOString(),
             prompts,
             generationLog,

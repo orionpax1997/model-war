@@ -123,6 +123,7 @@ const metaOf = (winner: 0 | 1 | 2, scripts = products): ArchiveMeta => {
   return buildArchiveMeta({
     model: "alpha",
     modelVersion: "test",
+    channelId: "test-channel",
     generatedAt: "2026-10-13T00:00:00Z",
     prompts: ["initial", "feedback1", "feedback2"],
     generationLog: [],
@@ -772,6 +773,7 @@ const gridMetaOf = (options: { readonly mutateSelection?: boolean } = {}): Archi
   const meta = buildArchiveMeta({
     model: "alpha",
     modelVersion: "test",
+    channelId: "test-channel",
     generatedAt: "2026-10-13T00:00:00Z",
     prompts: ["initial", "feedback1", "feedback2"],
     generationLog: [],

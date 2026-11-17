@@ -126,6 +126,7 @@ const config = (family: ModelConfig["endpointFamily"], baseUrl: string): ModelCo
   baseUrl,
   modelId: "vendor/model-x",
   credentialEnvVar: TEST_KEY_ENV,
+  channelId: "test-channel",
 });
 
 const user = (content: string): ChatMessage => ({ role: "user", content });

@@ -46,6 +46,8 @@ import type { ModelFailure } from "./pipeline.js";
 
 /** 组装失败记录所需的一切(不带 `root`:组装与落盘是两件事,便于纯函数直测形状)。 */
 export type BuildFailureRecordInput = FailureIdentity & {
+  /** 渠道身份(含档位);与 `meta.json` 同一格,失败记录同样不能缺这一维。 */
+  readonly channelId: string;
   readonly failure: ModelFailure;
 };
 
@@ -56,6 +58,7 @@ export type BuildFailureRecordInput = FailureIdentity & {
 export const buildFailureRecord = (input: BuildFailureRecordInput): FailureRecord => ({
   model: input.model,
   modelVersion: input.modelVersion,
+  channelId: input.channelId,
   generatedAt: input.generatedAt,
   runId: input.runId,
   ruleset: RULESET_VERSION,
@@ -79,8 +82,9 @@ export type WriteFailureRecordResult =
   | { readonly ok: true; readonly path: string }
   | { readonly ok: false; readonly reason: string };
 
-/** 写盘入参:身份字段见 `FailureIdentity`,另加写盘根与失败结论。 */
+/** 写盘入参:身份字段见 `FailureIdentity`,另加渠道身份、写盘根与失败结论。 */
 export type WriteFailureRecordInput = FailureIdentity & {
+  readonly channelId: string;
   readonly root: string;
   readonly failure: ModelFailure;
 };
@@ -101,6 +105,7 @@ export const writeFailureRecord = (options: WriteFailureRecordInput): WriteFailu
     const record = buildFailureRecord({
       model: options.model,
       modelVersion: options.modelVersion,
+      channelId: options.channelId,
       generatedAt: options.generatedAt,
       runId: options.runId,
       failure: options.failure,
