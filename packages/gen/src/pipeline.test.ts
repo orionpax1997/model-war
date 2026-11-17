@@ -91,6 +91,7 @@ const modelsYaml = (protocolRounds?: number): string =>
     "    baseUrl: https://example.test/v1",
     "    modelId: provider/alpha-1",
     "    credentialEnvVar: GEN_TEST_KEY",
+    "    channelId: gen-test-channel",
     ...(protocolRounds === undefined ? [] : [`    protocolRounds: ${String(protocolRounds)}`]),
     "",
   ].join("\n");
@@ -205,7 +206,7 @@ const requestWith = (
   trialPlan: () => gridPlanFixture(),
 });
 
-it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退出码 0", async () => {
+it("顺利路径:三件套 + 十一项必填 meta(另带 channelId),协议轮数 = prompt 条数 = 1,退出码 0", async () => {
   const root = mkRoot();
   const stub = stubClient([reply(VALID_SCRIPT)]);
   const code = await runGeneration({
@@ -229,6 +230,7 @@ it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退
   expect(Object.keys(meta)).toEqual([
     "model",
     "modelVersion",
+    "channelId",
     "generatedAt",
     "protocolRounds",
     "prompts",
@@ -241,6 +243,8 @@ it("顺利路径:三件套 + 十一项 meta,协议轮数 = prompt 条数 = 1,退
   ]);
   expect(meta.model).toBe("alpha");
   expect(meta.modelVersion).toBe("provider/alpha-1");
+  // 渠道身份随档落盘(榜键四维之一);值来自配置,不由 baseUrl 推。
+  expect(meta.channelId).toBe("gen-test-channel");
   expect(meta.protocolRounds).toBe(1);
   expect(meta.prompts).toHaveLength(1);
   expect(meta.prompts[0]).toContain(CONTRACT_RULES);

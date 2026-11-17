@@ -77,6 +77,7 @@ const entry = (slug: string, extra: readonly string[] = []): readonly string[] =
   "    baseUrl: https://example.test/v1",
   `    modelId: provider/${slug}`,
   "    credentialEnvVar: GEN_TEST_KEY",
+  "    channelId: gen-test-channel",
   ...extra,
 ];
 
@@ -113,10 +114,11 @@ it("用尽轮数:写失败记录(逐轮 prompt 链 + 逐轮日志 + 最终诊断
   expect(name).toMatch(/^failed-.*\.json$/);
 
   const record = readRecord(slugDir, name);
-  // 形状家契约(迁移后仍成立):键序即书写序——schema `FailureRecord` 的 11 键按此序序列化。
+  // 形状家契约(迁移后仍成立):键序即书写序——schema `FailureRecord` 的键按此序序列化。
   expect(Object.keys(record)).toEqual([
     "model",
     "modelVersion",
+    "channelId",
     "generatedAt",
     "runId",
     "ruleset",
@@ -132,6 +134,8 @@ it("用尽轮数:写失败记录(逐轮 prompt 链 + 逐轮日志 + 最终诊断
   expect(raw).toBe(`${JSON.stringify(record, null, 2)}\n`);
   expect(record.model).toBe("alpha");
   expect(record.modelVersion).toBe("provider/alpha");
+  // 失败也是数据:缺渠道身份就无法区分「S5 渠道下的失败」与更早渠道的历史记录。
+  expect(record.channelId).toBe("gen-test-channel");
   expect(record.ruleset).toBe(RULESET_VERSION);
   expect(record.classification).toBe("contract");
   // 轮数自洽:已收敛轮数 = prompt 条数 = 日志条数 = 2。
@@ -161,6 +165,7 @@ it("buildFailureRecord 中途失败携带已有候选描述，无候选时不新
   const identity = {
     model: "alpha",
     modelVersion: "provider/alpha",
+    channelId: "gen-test-channel",
     generatedAt: "2026-01-01T00:00:00Z",
     runId: "r1",
   };
@@ -171,10 +176,11 @@ it("buildFailureRecord 中途失败携带已有候选描述，无候选时不新
     diagnostics: ["d1"],
     message: "优化阶段 1 预算失败",
   };
-  // 无候选：键序仍是 schema 的 11 键，旧记录字节兼容。
+  // 无候选：键序仍是 schema 的顺序（identity 四键 + channelId，再加结论）。
   expect(Object.keys(buildFailureRecord({ ...identity, failure }))).toEqual([
     "model",
     "modelVersion",
+    "channelId",
     "generatedAt",
     "runId",
     "ruleset",
@@ -200,6 +206,7 @@ it("buildFailureRecord 中途失败携带已有候选描述，无候选时不新
   expect(Object.keys(record)).toEqual([
     "model",
     "modelVersion",
+    "channelId",
     "generatedAt",
     "runId",
     "ruleset",

@@ -37,13 +37,21 @@ export const ENDPOINT_FAMILIES: readonly EndpointFamily[] = [
   "generate-content",
 ];
 
-/** 一条模型条目。必填五项之外,其余是可选项(缺省语义见各自注释)。 */
+/** 一条模型条目。必填六项之外,其余是可选项(缺省语义见各自注释)。 */
 export type ModelConfig = {
   readonly slug: string;
   readonly endpointFamily: EndpointFamily;
   readonly baseUrl: string;
   readonly modelId: string;
   readonly credentialEnvVar: string;
+  /**
+   * 渠道身份,**含档位**(如 `commandcode-goat-2026-11`)。
+   *
+   * 与 `baseUrl` 不是同一格:GOAT / Pro+ / Provider+ 打的是同一个 `/provider/v1`,
+   * 差别在可用 modelId 与配额窗口。榜键四维之一是它(`modelVersion` 之外的渠道那一维),
+   * 所以从 URL 推不出来,必须逐条写。缺了就拒跑——不能靠 `generatedAt` 事后猜哪批属于哪个渠道。
+   */
+  readonly channelId: string;
   /** 契约 + prompt 的 token 预算核对用;缺省即不核对。 */
   readonly contextLength?: number;
   /** 未开启事实优化时的总响应上限（默认5）；opt-in统一每阶段五次响应，不读此逐模型值。 */
@@ -159,6 +167,7 @@ const parseEntry = (entry: unknown, index: number, issues: string[]): ModelConfi
   const baseUrl = requiredString(entry, "baseUrl", label, issues);
   const modelId = requiredString(entry, "modelId", label, issues);
   const credentialEnvVar = requiredString(entry, "credentialEnvVar", label, issues);
+  const channelId = requiredString(entry, "channelId", label, issues);
   const contextLength = optionalPositiveInteger(entry, "contextLength", label, issues);
   const protocolRounds = optionalPositiveInteger(entry, "protocolRounds", label, issues);
   const strategy = entry.strategy;
@@ -189,6 +198,7 @@ const parseEntry = (entry: unknown, index: number, issues: string[]): ModelConfi
     baseUrl === undefined ||
     modelId === undefined ||
     credentialEnvVar === undefined ||
+    channelId === undefined ||
     (strategy !== undefined && typeof strategy !== "string") ||
     (entry.params !== undefined && params === undefined)
   ) {
@@ -201,6 +211,7 @@ const parseEntry = (entry: unknown, index: number, issues: string[]): ModelConfi
     baseUrl,
     modelId,
     credentialEnvVar,
+    channelId,
     ...(contextLength !== undefined ? { contextLength } : {}),
     ...(protocolRounds !== undefined ? { protocolRounds } : {}),
     ...(strategy !== undefined ? { strategy } : {}),
@@ -226,7 +237,8 @@ const assertUniqueSlugs = (models: readonly ModelConfig[], filePath: string): vo
 /**
  * 从 `models.yaml` 读入并校验本季参赛配置。
  *
- * 缺必填字段 / `endpointFamily` 未知 / 缺 `credentialEnvVar` / 条目为空 / slug 重复 → 抛错,
+ * 缺必填字段 / `endpointFamily` 未知 / 缺 `credentialEnvVar` / 缺 `channelId` / 条目为空 /
+ * slug 重复 → 抛错,
  * 消息里逐条点名是哪个条目的哪个字段。
  */
 export const loadModelsConfig = (filePath: string): ModelsConfig => {

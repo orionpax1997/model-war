@@ -168,6 +168,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
         root,
         model: model.slug,
         modelVersion: model.modelId,
+        channelId: model.channelId,
         generatedAt: startedAt.toISOString(),
         runId: outcome.runId,
         failure: outcome.failure,

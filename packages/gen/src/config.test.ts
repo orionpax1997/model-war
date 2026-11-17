@@ -21,6 +21,7 @@ const fullEntry = [
   "    baseUrl: https://example.test/provider/v1",
   "    modelId: provider/alpha",
   "    credentialEnvVar: ALPHA_KEY",
+  "    channelId: test-channel-2026-11",
 ].join("\n");
 
 it("读入一条含全部可选字段的模型", () => {
@@ -44,6 +45,7 @@ it("读入一条含全部可选字段的模型", () => {
     baseUrl: "https://example.test/provider/v1",
     modelId: "provider/alpha",
     credentialEnvVar: "ALPHA_KEY",
+    channelId: "test-channel-2026-11",
     contextLength: 128000,
     protocolRounds: 3,
     strategy: "稳",
@@ -51,7 +53,7 @@ it("读入一条含全部可选字段的模型", () => {
   expect(models[0]?.params).toEqual({ temperature: 0.2 });
 });
 
-it("只写必填五项也合法,可选字段缺席(不是 undefined 键)", () => {
+it("只写六个必填字段也合法,可选字段缺席(不是 undefined 键)", () => {
   const { models } = loadModelsConfig(writeConfig(`models:\n${fullEntry}\n`));
   const model = models[0];
   expect(model).toBeDefined();
@@ -71,6 +73,7 @@ it("四条端点族都认", () => {
         "    baseUrl: https://example.test/v1",
         `    modelId: provider/m${String(index)}`,
         "    credentialEnvVar: KEY",
+        "    channelId: test-channel",
       ].join("\n"),
     ),
   ].join("\n");
@@ -90,6 +93,37 @@ it("缺必填字段:逐字段点名 `models[序号]` 与字段名", () => {
     ].join("\n"),
   );
   expect(() => loadModelsConfig(path)).toThrow(/models\[0\].*endpointFamily/s);
+});
+
+it("缺 channelId 明确报错(渠道身份不能靠 baseUrl 反推)", () => {
+  const path = writeConfig(
+    [
+      "models:",
+      "  - slug: alpha",
+      "    endpointFamily: messages",
+      "    baseUrl: https://x/v1",
+      "    modelId: p/a",
+      "    credentialEnvVar: ALPHA_KEY",
+      "",
+    ].join("\n"),
+  );
+  expect(() => loadModelsConfig(path)).toThrow(/models\[0\].*channelId/s);
+});
+
+it("channelId 必须是非空字符串", () => {
+  const path = writeConfig(
+    [
+      "models:",
+      "  - slug: alpha",
+      "    endpointFamily: messages",
+      "    baseUrl: https://x/v1",
+      "    modelId: p/a",
+      "    credentialEnvVar: ALPHA_KEY",
+      '    channelId: ""',
+      "",
+    ].join("\n"),
+  );
+  expect(() => loadModelsConfig(path)).toThrow(/channelId/);
 });
 
 it("缺 credentialEnvVar 明确报错", () => {

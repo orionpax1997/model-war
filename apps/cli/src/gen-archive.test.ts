@@ -48,6 +48,7 @@ const MODELS_YAML = [
   "    baseUrl: https://example.test/v1",
   "    modelId: provider/alpha-1",
   "    credentialEnvVar: GEN_TEST_KEY",
+  "    channelId: gen-test-channel",
   "",
 ].join("\n");
 

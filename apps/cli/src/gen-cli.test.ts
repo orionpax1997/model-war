@@ -204,6 +204,7 @@ const mkRoot = (baseUrl: string): string => {
       `    baseUrl: ${baseUrl}`,
       "    modelId: provider/alpha-1",
       `    credentialEnvVar: ${CREDENTIAL_ENV_VAR}`,
+      "    channelId: gen-test-channel",
       "    protocolRounds: 1",
       "",
     ].join("\n"),

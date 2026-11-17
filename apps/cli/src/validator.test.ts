@@ -1029,7 +1029,18 @@ it("v2 网格档：计划与档的规则集/运行时不一致、或计划被改
   );
 });
 
-it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有可选 optimization 与 selection", () => {
+it("meta:channelId 是可选身份字段——历史档缺它照过,新档带它照过,非字符串被拒", () => {
+  // 老档(2026-11 之前的 102 份)源自没有这个字段的渠道,缺它是配置代差而不是坏档:
+  // 回填等于伪造证据,所以 schema 只把它列成可选属性。
+  expect(validateArchiveMeta(GOOD_META, GOOD_META_PROVENANCE).ok).toBe(true);
+  const withChannel: ArchiveMeta = { ...GOOD_META, channelId: "commandcode-goat-2026-11" };
+  expect(validateArchiveMeta(withChannel, GOOD_META_PROVENANCE).ok).toBe(true);
+  // 形状仍要判:空串与数字都不是渠道身份。
+  expect(metaKeywords(rejectMeta(badMeta(GOOD_META, { channelId: "" })))).toEqual(["minLength"]);
+  expect(metaPointers(rejectMeta(badMeta(GOOD_META, { channelId: 7 })))).toEqual(["/channelId"]);
+});
+
+it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有可选 channelId / optimization / selection", () => {
   // 名单是**抄 hld 的措辞**抄下来的,不是抄 schema 的:抄 schema 的话,少一项时两边一起少,
   // 这条断言就恒真了。逐项对照的是 hld.md §7.4 的十一项。
   const required = [...ARCHIVE_META_JSON_SCHEMA.required];
@@ -1049,7 +1060,7 @@ it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有�
   // 统一两轮优化新增可选 `optimization`（跨进程候选契约，见 two-feedback spec D3）：
   // optimization 与版本化 selection 均可选，必填保持十一项，旧档继续通过。
   expect(Object.keys(ARCHIVE_META_JSON_SCHEMA.properties).sort()).toEqual(
-    [...required, "optimization", "selection"].sort(),
+    [...required, "channelId", "optimization", "selection"].sort(),
   );
 });
 

@@ -11,7 +11,7 @@
  *
  * ── 键序即书写序 ──────────────────────────────────────────────────────────────
  *
- * 先标识(哪个模型 / 哪一跑 / 哪一版规则),再结论(分类 / 已收敛轮数 / 逐轮 prompt / 日志 /
+ * 先标识(哪个模型 / 哪一版 / 哪条渠道 / 哪一跑 / 哪一版规则),再结论(分类 / 已收敛轮数 / 逐轮 prompt / 日志 /
  * 诊断 / 原因 / 已有候选(仅统一优化中途失败时有))。`writeFailureRecord`(住 `packages/gen/src/failure.ts`)按此序序列化,
  * `2` 空格缩进且末尾换行——键序是本文件承诺的对外契约,不是 gen 侧的实现细节。
  *
@@ -36,7 +36,7 @@ export const FAILURE_RECORD_PREFIX = "failed-";
 export type FailureClassification = "tsc" | "contract" | "transport" | "selection";
 
 /**
- * 失败记录的**身份字段**(哪个模型 / 哪一版 / 哪一跑 / 何时):生成侧 `buildFailureRecord` 与
+ * 失败记录的**身份字段**(哪个模型 / 哪一版 / 哪一跑 / 何时,渠道身份见 `FailureRecord.channelId`):生成侧 `buildFailureRecord` 与
  * `writeFailureRecord` 的共同前缀。抽出来只为一件事——两处不再各列一遍这四项,免得其一漏改时
  * 两边的身份字段悄悄分叉。
  *
@@ -61,6 +61,14 @@ export type FailureIdentity = {
  * 逐轮 prompt / 日志 / 诊断 / 原因)。`writeFailureRecord` 按此序序列化,保证稳定格式化。
  */
 export type FailureRecord = FailureIdentity & {
+  /**
+   * 渠道身份(含档位,如 `commandcode-goat-2026-11`),与 `meta.json` 同格。
+   *
+   * **可选**:本字段出现前写下的 `failed-*.json` 没有它,那些记录仍要能被报告侧读。
+   * 新记录由 `writeFailureRecord` 必写——失败也是数据,缺了这一维就分不清哪次失败
+   * 属于哪条渠道,只能靠 `generatedAt` 猜。
+   */
+  readonly channelId?: string;
   /** 生成时所用的规则集版本(本仓常量)。 */
   readonly ruleset: string;
   /** 失败分类:`tsc` / `contract` / `transport`。 */
