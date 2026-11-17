@@ -12,15 +12,19 @@
  * (`examples/minimal.ts` 没有生成头注释——它必须逐字节等于 API 文档 §6,多一行注释就不再相等)。
  * 日常入口是 `pnpm run verify:fast`,抓不到它等于没有。
  *
- * ── 判据分两块,报告分开列 ──
+ * ── 判据分三块,报告合在一处列 ──
  *
  * - **字节**:骨架 == `api.md` §6 那一块。抽不出来(小节标题被改写 / 骨架被移走)、抽出两块
  *   (又贴了一段完整脚本),都按失败报——抽取器不替人猜「哪个才是骨架」。
+ * - **身份**:那四条的整树 sha256 == `packages/schema/src/contract-identity.ts` 的入库常量
+ *   (口径见 ADR-0037,算法在同包的 `contract-tree.ts`)。它守的是「档案里记的身份还指不指得到眼前的
+ *   字节」——改契约字节、改挂载清单都会让它红,而它红是**对的**。它读真源包的**源码文本**而不是
+ *   import 它:快门禁零构建(`@model-war/schema` 的 exports 指向 `dist`)。
  * - **散文**:详见 `contract-package.ts` 头注的三条。它们守的是「模型读到的目录说明」,
  *   而它同时是首条消息的全部内容(ADR-0030),档案里只存这一条(ADR-0031)。
  *
- * **防假绿**:契约目录读到 0 个文件、目录说明为空、挂载清单为空,三条都按失败处理——此时报
- * 「干净」什么也没断言(空转检测的共享件在 `gate/vacuous.ts`)。
+ * **防假绿**:契约目录读到 0 个文件、目录说明为空、挂载清单为空、入库身份常量读不出来,四条都按
+ * 失败处理——此时报「干净」什么也没断言(空转检测的共享件在 `gate/vacuous.ts`)。
  *
  * 退出码是这个门禁对外的全部契约:0 = 干净,1 = 有违规(或门禁本身失效)。
  */
@@ -37,6 +41,11 @@ import {
   indexCoverageFindings,
   writableWorldFindings,
 } from "../contract-package.ts";
+import {
+  CONTRACT_IDENTITY_SOURCE,
+  contractTreeFindings,
+  type ContractTreeEntry,
+} from "../contract-tree.ts";
 import {
   SKELETON_API_DOC,
   SKELETON_ARTIFACT_PATH,
@@ -105,6 +114,44 @@ const skeletonFindings = (): readonly ContractFinding[] => {
       ];
 };
 
+/**
+ * 那四条在盘上的字节。任一条读不到就返回 `undefined`——不是抛错:读不到文件是「身份无从计算」,
+ * 该按违规报,而不是让进程带着栈退出(那看起来像工具坏了,而不是判据失明)。
+ */
+const contractTreeEntries = (): readonly ContractTreeEntry[] | undefined => {
+  const entries: ContractTreeEntry[] = [];
+  for (const path of CONTRACT_FILES) {
+    try {
+      entries.push({ path, bytes: readFileSync(resolve(repoRoot, CONTRACT_DIR, path)) });
+    } catch {
+      return undefined;
+    }
+  }
+  return entries;
+};
+
+/** 判据「身份」:现算的整树哈希 == 入库常量。口径见 ADR-0037,算法在 `contract-tree.ts`。 */
+const identityFindings = (): readonly ContractFinding[] => {
+  const entries = contractTreeEntries();
+  if (entries === undefined) {
+    return [
+      {
+        where: CONTRACT_DIR,
+        detail:
+          "挂载清单里的某一条读不到字节,整树身份无从计算。先修 `pnpm run check:contract` 报的缺文件。",
+      },
+    ];
+  }
+  const identitySource = existsSync(resolve(repoRoot, CONTRACT_IDENTITY_SOURCE))
+    ? read(CONTRACT_IDENTITY_SOURCE)
+    : "";
+  try {
+    return contractTreeFindings({ entries, identitySource });
+  } catch (error) {
+    return [{ where: CONTRACT_IDENTITY_SOURCE, detail: (error as Error).message }];
+  }
+};
+
 const main = (): number => {
   const present = contractFilesPresent();
   const readme = existsSync(resolve(repoRoot, CONTRACT_INDEX_PATH))
@@ -129,6 +176,7 @@ const main = (): number => {
 
   const findings: readonly ContractFinding[] = [
     ...skeletonFindings(),
+    ...identityFindings(),
     ...directoryFindings(present),
     ...indexCoverageFindings(readme),
     ...writableWorldFindings(readme),
@@ -140,7 +188,7 @@ const main = (): number => {
   const scale = `${String(CONTRACT_FILES.length)} 条挂载、目录 ${String(present.length)} 个文件`;
   const summary =
     findings.length === 0
-      ? `契约挂载门禁:${scale},骨架与 §6 逐字节相同,无违规。`
+      ? `契约挂载门禁:${scale},骨架与 §6 逐字节相同、整树身份与入库常量一致,无违规。`
       : `契约挂载门禁:${scale},${String(findings.length)} 处违规。`;
   process.stdout.write(`${summary}\n`);
   return findings.length === 0 ? 0 : 1;

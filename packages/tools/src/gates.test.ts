@@ -1115,6 +1115,9 @@ const SKELETON_FILE = "docs/rules-v2/examples/minimal.ts";
 /** 那四条共用的目录说明。它同时是首条消息的全部内容(ADR-0030)。 */
 const CONTRACT_INDEX_FILE = "docs/rules-v2/README.md";
 
+/** 契约包身份的入库常量。它的书写真源是那四条的字节,门禁证明「现算 == 入库」。 */
+const CONTRACT_IDENTITY_FILE = "packages/schema/src/contract-identity.ts";
+
 it("契约挂载门禁:骨架被手改时变红,还原变绿", () => {
   const clean = script("check:contract");
   expect(clean.status, clean.output).toBe(0);
@@ -1130,6 +1133,20 @@ it("契约挂载门禁:骨架被手改时变红,还原变绿", () => {
   expect(violated.status, "骨架与 §6 不一致时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("不是同一份字节");
 
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁:入库整树身份常量与现算不一致时变红", () => {
+  // 身份(ADR-0037)是「档案里那串 hex 还指不指得到眼前的字节」的唯一凭据。改契约字节、改挂载清单、
+  // 或改生成骨架的 §6 都会让它漂——而漂了没人拦,档案就会被一个错的版本号“背书”。反例改的是常量本身
+  // (最能代表「档案指向了另一批字节」),同时兼验门禁从真源包**源码文本**抽取常量那条缝没退化。
+  const violated = withPatchedText(
+    CONTRACT_IDENTITY_FILE,
+    (source) => source.replace(/"[0-9a-f]{64}"/, `"${"0".repeat(64)}"`),
+    () => script("check:contract"),
+  );
+  expect(violated.status, "身份漂了但门禁没红").toBe(1);
+  expect(violated.output).toContain("契约整树身份与入库常量不一致");
   expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
 });
 
