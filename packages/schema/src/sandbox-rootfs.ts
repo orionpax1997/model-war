@@ -56,7 +56,7 @@ export const SANDBOX_ROOTFS_FILES = [
  * 门禁证明「现算 == 这里写的」。它是「模型看见的世界还是不是那份字节」的唯一判据。
  */
 export const SANDBOX_ROOTFS_TREE_HASH =
-  "5a2e2738336040187d29dd7c80442a3ca807c4a6ad442642b5b6e000b6b39b56";
+  "10b0e32b275e0aafb2c421b4fbc0441b8b7889c4e47af3b036cca0289ed18270";
 
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const SANDBOX_ROOTFS_BIN_DIR = "bin";
