@@ -60,6 +60,30 @@ export {
   SANDBOX_ROOTFS_TREE_HASH,
 } from "./sandbox-rootfs.js";
 
+// 薄壳—宿主通道的协议体(ADR-0032「受限工具不是二进制,是宿主侧的服务」):一行 JSON 一请求
+// 一响应,跨进程交换。宿主侧的 dispatcher / 服务与 gate、单测读同一份;沙箱里那一侧是 bash,
+// 它按本模块定死的键序与转义表切字段(`packages/gen/src/agent/shim/shim.sh`)。
+export {
+  EVALUATE_CALL_LIMIT,
+  TOOL_CHANNEL_FD,
+  TOOL_NAMES,
+  TOOL_REQUEST_JSON_SCHEMA,
+  TOOL_RESPONSE_JSON_SCHEMA,
+  escapePayload,
+  parseToolRequest,
+  parseToolResponse,
+  serializeToolRequest,
+  serializeToolResponse,
+} from "./tool-channel.js";
+export type {
+  ToolName,
+  ToolRequest,
+  ToolRequestParse,
+  ToolResponse,
+  ToolResponseParse,
+  ToolResult,
+} from "./tool-channel.js";
+
 /** 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
  */
