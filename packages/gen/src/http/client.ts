@@ -86,6 +86,28 @@ const joinUrl = (baseUrl: string, path: string): string => {
 /** 429 与 5xx 是「过一会儿可能成功」的一类;其余 4xx 是请求本身的问题,重发无益。 */
 const isRetryableStatus = (status: number): boolean => status === 429 || status >= 500;
 
+/**
+ * 把 `Retry-After` 换算成毫秒;缺席或读不懂就返回 `undefined`。
+ *
+ * RFC 9110 允许两种形态:秒数,或 HTTP-date。读不懂时**静默作废**而不是抛错——这个头是服务端的
+ * 建议,不是请求的一部分;因为一个畸形的头打断一次已经花了几十分钟的生成,不划算。
+ * 策略层(ADR-0036)只把它当「下限 + 单次封顶」的输入,所以读不到就退化成纯指数退避。
+ */
+const retryAfterMsOf = (headers: Headers): number | undefined => {
+  const raw = headers.get("retry-after")?.trim();
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+  if (/^\d+$/.test(raw)) {
+    return Number(raw) * 1_000;
+  }
+  const at = Date.parse(raw);
+  if (Number.isNaN(at)) {
+    return undefined;
+  }
+  return Math.max(0, at - Date.now());
+};
+
 /** 响应体片段:只用于让错误可诊断,截断到定长,绝不含请求头里的凭证。 */
 const bodySnippet = (body: string): string => {
   const trimmed = body.trim();
@@ -257,7 +279,7 @@ const readEventStream = async (options: EventStreamRead): Promise<ModelResponse>
       timedOut
         ? `端点 ${url} 的流空闲超过 ${String(idle.timeoutMs)}ms 没有数据,已中断`
         : `读 ${url} 的流失败:${reasonOf(cause)}`,
-      { retryable: true, ...(timedOut ? {} : { status: response.status }) },
+      { retryable: true, timedOut, ...(timedOut ? {} : { status: response.status }) },
     );
   } finally {
     // 已在 `[DONE]` 处提前退出时,去掉尾部未处理的数据并关掉连接;读失败时 cancel 会 reject,忽略。
@@ -334,11 +356,12 @@ export const createHttpModelClient = (
       } catch (cause) {
         // 网络失败 / DNS / 连接被拒 / 空闲超时(手动 abort)都到这里,一律可重试。
         idle.stop();
+        const timedOut = idle.didTimeout();
         throw new TransportError(
-          idle.didTimeout()
+          timedOut
             ? `请求 ${url} 后 ${String(idle.timeoutMs)}ms 没有收到响应头(空闲超时)`
             : `请求 ${url} 失败:${reasonOf(cause)}`,
-          { retryable: true },
+          { retryable: true, timedOut },
         );
       }
       // 响应头到了:从这一时刻起重新计空闲。
@@ -359,10 +382,11 @@ export const createHttpModelClient = (
         try {
           rawBody = await response.text();
         } catch (cause) {
-          throw idle.didTimeout()
+          const timedOut = idle.didTimeout();
+          throw timedOut
             ? new TransportError(
                 `端点 ${url} 在 ${String(idle.timeoutMs)}ms 内没有读完响应(空闲超时)`,
-                { retryable: true },
+                { retryable: true, timedOut },
               )
             : new TransportError(`读 ${url} 的响应失败:${reasonOf(cause)}`, {
                 retryable: true,
@@ -371,9 +395,14 @@ export const createHttpModelClient = (
         }
 
         if (!response.ok) {
+          const retryAfterMs = retryAfterMsOf(response.headers);
           throw new TransportError(
             `端点 ${url} 返回 ${String(response.status)} ${response.statusText}: ${bodySnippet(rawBody)}`,
-            { retryable: isRetryableStatus(response.status), status: response.status },
+            {
+              retryable: isRetryableStatus(response.status),
+              status: response.status,
+              ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+            },
           );
         }
 

@@ -173,6 +173,35 @@ it("单模型失败不吞:退出码非零", async () => {
   expect(code).toBe(1);
 });
 
+it(
+  "单模型失败不中止同批:其余模型照常生成,失败落失败档、成功落存档",
+  { timeout: 30_000 },
+  async () => {
+    const root = writeRoot(configOf(entry("alpha"), entry("beta")));
+    const asked: string[] = [];
+    const code = await runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: (config) => {
+        asked.push(config.slug);
+        return config.slug === "alpha"
+          ? stubClient([fail(new Error("缺凭证:GENTEST_KEY 未设置"))])
+          : stubClient([reply(VALID_SCRIPT)]);
+      },
+    });
+
+    // 一个失败、一个成功:退出码非零(这批不干净),但两个模型都被真的走过(ADR-0036)。
+    expect(code).toBe(1);
+    expect(asked).toEqual(["alpha", "beta"]);
+    expect(
+      readdirSync(join(root, "archive", "alpha")).filter((n) => n.startsWith("failed-")),
+    ).toHaveLength(1);
+    expect(
+      readdirSync(join(root, "archive", "beta")).filter((n) => n.startsWith("failed-")),
+    ).toHaveLength(0);
+  },
+);
+
 it("契约目录缺失即报错(不内嵌副本降级)", async () => {
   const root = writeRoot(configOf(entry("alpha")));
   rmSync(join(root, "docs"), { force: true, recursive: true });

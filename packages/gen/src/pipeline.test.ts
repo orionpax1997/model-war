@@ -510,10 +510,13 @@ it("传输韧性:429 后成功——只调 2 次、退避一次后冻结,协议�
 
     // 首次调用同步发生;第 2 次必须等满初始退避间隔才会发生(证明两次调用之间确有一次等待)。
     expect(stub.calls).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(RETRY.initialDelayMs - 1);
+    await vi.advanceTimersByTimeAsync(RETRY.rateLimited.initialDelayMs - 1);
     expect(settled).toBe(false);
     expect(stub.calls).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
+    // 抖动只往上加(ADR-0036),所以再推进一个 jitterRatio 的量必然越过后退点。
+    await vi.advanceTimersByTimeAsync(
+      Math.ceil(RETRY.rateLimited.initialDelayMs * RETRY.jitterRatio) + 1,
+    );
 
     const outcome = await outcomePromise;
     expect(stub.calls).toHaveLength(2);
@@ -531,12 +534,42 @@ it("传输韧性:429 后成功——只调 2 次、退避一次后冻结,协议�
   }
 });
 
-it("传输韧性:5xx 直到耗尽——重试 maxRetries 次后 transport 失败,不涨轮数、不建存档", async () => {
+it("规范配置下,被 429 重试救回来的轮次仍留 failureKind 证据", async () => {
+  const root = mkRoot();
+  const model = { ...firstModelConfig(root), generationPolicy: policyFixture("chat-completions") };
+  const stub = stubClient([
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    reply(VALID_SCRIPT),
+  ]);
+
+  vi.useFakeTimers();
+  try {
+    const pending = generateOneModel(requestWith(root, stub, "rate-limited-evidence"), model);
+    await vi.runAllTimersAsync();
+    const outcome = await pending;
+    expect(outcome.kind).toBe("frozen");
+    if (outcome.kind !== "frozen") {
+      return;
+    }
+    // 重试救回来的那次 429 必须留痕——否则「限流压力」在数据里不存在(ADR-0036)。
+    const [log] = parsedLog(outcome.meta);
+    expect(log).toMatchObject({
+      attemptEvidence: [
+        { attempt: 1, outcome: "transport-error", failureKind: "rate-limited" },
+        { attempt: 2, outcome: "response" },
+      ],
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("传输韧性:连接级抖动直到耗尽——两枪后 transport 失败,不涨轮数、不建存档", async () => {
   const root = mkRoot();
   const runId = "2026-01-01T00-00-00-000Z";
   const stub = stubClient(
-    Array.from({ length: RETRY.maxRetries + 1 }, () =>
-      fail(new TransportError("服务不可用", { retryable: true, status: 503 })),
+    Array.from({ length: RETRY.connection.maxRetries + 1 }, () =>
+      fail(new TransportError("请求失败:ECONNRESET", { retryable: true })),
     ),
   );
 
@@ -546,8 +579,8 @@ it("传输韧性:5xx 直到耗尽——重试 maxRetries 次后 transport 失败
     await vi.runAllTimersAsync();
     const outcome = await outcomePromise;
 
-    // 首次 + maxRetries 次重发。
-    expect(stub.calls).toHaveLength(RETRY.maxRetries + 1);
+    // 首次 + 连接级预算的 maxRetries 次重发。
+    expect(stub.calls).toHaveLength(RETRY.connection.maxRetries + 1);
     expect(outcome.kind).toBe("failed");
     if (outcome.kind !== "failed") {
       return;
@@ -556,7 +589,7 @@ it("传输韧性:5xx 直到耗尽——重试 maxRetries 次后 transport 失败
     // 一次都未收敛 → 没有 prompt、没有日志,协议轮数一点没动。
     expect(outcome.failure.prompts).toEqual([]);
     expect(outcome.failure.generationLog).toEqual([]);
-    expect(outcome.failure.diagnostics.join("\n")).toContain("503");
+    expect(outcome.failure.diagnostics.join("\n")).toContain("ECONNRESET");
     expect(outcome.failure.message).toContain("传输失败");
     // 失败只返回结构,不建存档(写盘归 `packages/gen/src/failure.ts`),也不留半截 / 临时目录。
     expect(existsSync(join(root, "archive", "alpha", runId))).toBe(false);
@@ -626,7 +659,7 @@ it("传输韧性:第 1 轮收敛、第 2 轮传输耗尽——失败链只含已
   const root = mkRoot();
   const stub = stubClient([
     reply(BLOCKING_SCRIPT),
-    ...Array.from({ length: RETRY.maxRetries + 1 }, () =>
+    ...Array.from({ length: RETRY.connection.maxRetries + 1 }, () =>
       fail(new TransportError("请求超时", { retryable: true })),
     ),
   ]);
@@ -640,8 +673,8 @@ it("传输韧性:第 1 轮收敛、第 2 轮传输耗尽——失败链只含已
     await vi.runAllTimersAsync();
     const outcome = await outcomePromise;
 
-    // 第 1 轮 1 次 + 第 2 轮 1 次首发 + maxRetries 次重发。
-    expect(stub.calls).toHaveLength(1 + RETRY.maxRetries + 1);
+    // 第 1 轮 1 次 + 第 2 轮 1 次首发 + 连接级预算的 maxRetries 次重发。
+    expect(stub.calls).toHaveLength(RETRY.connection.maxRetries + 2);
     expect(outcome.kind).toBe("failed");
     if (outcome.kind !== "failed") {
       return;
@@ -1647,8 +1680,8 @@ it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或�
   const runId = "optimization-transport";
   const stub = stubClient([
     reply(VALID_SCRIPT),
-    ...Array.from({ length: RETRY.maxRetries + 1 }, () =>
-      fail(new TransportError("服务不可用", { retryable: true, status: 503 })),
+    ...Array.from({ length: RETRY.connection.maxRetries + 1 }, () =>
+      fail(new TransportError("请求失败:ECONNRESET", { retryable: true })),
     ),
   ]);
   vi.useFakeTimers();
@@ -1670,7 +1703,7 @@ it("后阶段传输失败标明阶段，重试耗尽不产生新有效候选或�
     const outcome = await pending;
     expect(outcome.kind).toBe("failed");
     if (outcome.kind !== "failed") return;
-    expect(stub.calls).toHaveLength(RETRY.maxRetries + 2);
+    expect(stub.calls).toHaveLength(RETRY.connection.maxRetries + 2);
     expect(outcome.failure.classification).toBe("transport");
     expect(outcome.failure.message).toContain("优化阶段 1");
     expect(outcome.failure.prompts).toHaveLength(1);
@@ -2189,7 +2222,7 @@ it.each(["chat-completions", "messages", "responses", "generate-content"] as con
         finishReason: "length",
         usage: { output_tokens: 8192, total_tokens: 8200, provider_error: "PRIVATE" },
       }),
-      fail(new TransportError("PRIVATE provider error body", { retryable: true, status: 503 })),
+      fail(new TransportError("PRIVATE provider error body", { retryable: true })),
       reply(TSC_FAIL_SCRIPT, { usage: { input_tokens: 10, output_tokens: 4 } }),
       reply(VALID_SCRIPT),
     ]);
@@ -2223,7 +2256,7 @@ it.each(["chat-completions", "messages", "responses", "generate-content"] as con
           finishReason: "length",
           usage: { output_tokens: 8192, total_tokens: 8200, ...caliberFields },
         },
-        { attempt: 2, outcome: "transport-error" },
+        { attempt: 2, outcome: "transport-error", failureKind: "network" },
         {
           attempt: 3,
           outcome: "response",
@@ -2243,7 +2276,7 @@ it("规范传输耗尽保留全部尝试的白名单证据，不增加已收敛�
   const root = mkRoot();
   const model = { ...firstModelConfig(root), generationPolicy: policyFixture("chat-completions") };
   const stub = stubClient(
-    Array.from({ length: RETRY.maxRetries + 1 }, () =>
+    Array.from({ length: RETRY.truncation.maxRetries + 1 }, () =>
       reply("PRIVATE", {
         finishReason: "length",
         usage: { output_tokens: 8192, provider_error: "PRIVATE" },
@@ -2267,7 +2300,7 @@ it("规范传输耗尽保留全部尝试的白名单证据，不增加已收敛�
       responseConverged: false,
       params: generationParams(model),
       requestEvidence: { configId: model.slug },
-      attemptEvidence: Array.from({ length: RETRY.maxRetries + 1 }, (_, index) => ({
+      attemptEvidence: Array.from({ length: RETRY.truncation.maxRetries + 1 }, (_, index) => ({
         attempt: index + 1,
         outcome: "response",
         finishReason: "length",
