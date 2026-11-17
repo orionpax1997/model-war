@@ -23,6 +23,14 @@ export type OutputField =
   | "max_completion_tokens"
   | "max_output_tokens";
 
+/**
+ * 前缀缓存断点的档位。`none` = 不发断点，跟随服务端默认。
+ *
+ * 只对 `messages` 族有意义：chat / responses 族的服务端默认就缓存前缀，加参数是多余干预；
+ * Messages 族默认不缓存，不显式打 `cache_control` 就永远是 0。
+ */
+export type CacheMode = "none" | "ephemeral" | "ephemeral-1h";
+
 /** 规范配置的唯一参数入口；旧 params 配置仍可读取，不自动迁移历史产物。 */
 export type GenerationPolicy = {
   readonly endpoint: EvidencePair & { readonly family: EndpointFamily };
@@ -43,6 +51,12 @@ export type GenerationPolicy = {
     readonly authentication: "bearer" | "api-key" | "both";
     readonly anthropicVersion?: string;
   };
+  /**
+   * 前缀缓存意图。缺省即「不干预」——这是 chat 族与未配置模型的正确缺省。
+   * 断点本身由端点族摆进请求体（`endpoints.ts`），不进 `params`：
+   * 它是请求形状，与 `stream` 同性质，不是可被模型配置覆盖的采样参数。
+   */
+  readonly cache?: EvidencePair & { readonly mode: CacheMode };
 };
 
 const STATUSES = ["unverified", "documented", "accepted", "unsupported"] as const;
@@ -62,6 +76,7 @@ const OUTPUT_FIELDS = [
   "max_output_tokens",
 ] as const;
 const FAMILIES = ["chat-completions", "messages", "responses", "generate-content"] as const;
+const CACHE_MODES = ["none", "ephemeral", "ephemeral-1h"] as const;
 const supported = (evidence: SupportEvidence): boolean =>
   evidence.status === "documented" || evidence.status === "accepted";
 
@@ -125,7 +140,7 @@ export const parseGenerationPolicy = (
     issues.push(`${label}:必须是映射`);
     return undefined;
   }
-  keys(value, ["endpoint", "reasoning", "output", "transport"], label, issues);
+  keys(value, ["endpoint", "reasoning", "output", "transport", "cache"], label, issues);
   const { endpoint, reasoning, output, transport } = value;
   if (!isRecord(endpoint) || !isRecord(reasoning) || !isRecord(output) || !isRecord(transport)) {
     issues.push(`${label}:endpoint / reasoning / output / transport 必须是映射`);
@@ -174,6 +189,7 @@ export const parseGenerationPolicy = (
     typeof reasoning.forceAdaptiveThinking === "boolean"
       ? reasoning.forceAdaptiveThinking
       : undefined;
+  const cache = parseCache(value.cache, family, `${label}.cache`, issues);
   const version = transport.anthropicVersion;
   if (
     version !== undefined &&
@@ -282,7 +298,32 @@ export const parseGenerationPolicy = (
       authentication,
       ...(typeof version === "string" ? { anthropicVersion: version } : {}),
     },
+    ...(cache === undefined ? {} : { cache }),
   };
+};
+
+/** 缓存段：档位 + 官方/渠道证据；非 `messages` 族只能声明 `none`。 */
+const parseCache = (
+  value: unknown,
+  family: EndpointFamily,
+  label: string,
+  issues: string[],
+): GenerationPolicy["cache"] => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    issues.push(`${label}:必须是映射`);
+    return undefined;
+  }
+  keys(value, ["mode", "official", "channel"], label, issues);
+  const mode = enumField(value.mode, CACHE_MODES, `${label}.mode`, issues);
+  const evidence = pair(value, label, issues);
+  if (mode === undefined || evidence === undefined) return undefined;
+  if (mode !== "none") {
+    if (family !== "messages")
+      issues.push(`${label}.mode:仅 messages 族可用（其它族跟随服务端默认）`);
+    if (!supported(evidence.channel)) issues.push(`${label}:未验证的渠道不能声明缓存断点`);
+  }
+  return { mode, ...evidence };
 };
 
 /** 一次解析后整次生成复用；修复、反馈及 HTTP 重试不得扩大预算或降档。 */

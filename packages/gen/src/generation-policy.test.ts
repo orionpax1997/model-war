@@ -9,7 +9,7 @@ import {
   parseGenerationPolicy,
 } from "./generation-policy.js";
 import { policyFixture } from "./generation-policy.fixture.js";
-import { projectUsage } from "./generation-evidence.js";
+import { projectUsage, usageCaliberOf } from "./generation-evidence.js";
 
 const canonical = `models:
   - slug: fixture
@@ -336,4 +336,93 @@ it("用量对象深度与枚举闭合；已知 billing/cache/thinking 数字保�
       billing_usage: { source: secret, semantic: secret, claude_usage: { output_tokens: 3 } },
     }),
   ).toEqual({ billing_usage: { claude_usage: { output_tokens: 3 } } });
+});
+
+const cacheDecision = {
+  mode: "ephemeral-1h",
+  official: { status: "documented", source: "offline-fixture/cache-official" },
+  channel: { status: "accepted", source: "offline-fixture/cache-channel" },
+} as const;
+
+it("缓存段只对 messages 族合法，且需要渠道证据；未知键与非法档位都拦下", () => {
+  const parse = (
+    family: ModelConfig["endpointFamily"],
+    cache: unknown,
+  ): { policy: ReturnType<typeof parseGenerationPolicy>; issues: string[] } => {
+    const issues: string[] = [];
+    const policy = parseGenerationPolicy(
+      { ...policyFixture(family), cache },
+      family,
+      "fixture",
+      issues,
+    );
+    return { policy, issues };
+  };
+  expect(parse("messages", cacheDecision).policy?.cache).toEqual(cacheDecision);
+  expect(parse("messages", cacheDecision).issues).toEqual([]);
+  expect(parse("messages", { ...cacheDecision, mode: "none" }).issues).toEqual([]);
+  // cache_control 是 Messages 族的前缀断点语义；chat 族跟随服务端默认，不在这里干预。
+  expect(parse("chat-completions", cacheDecision).issues.join()).toContain("仅 messages 族");
+  expect(
+    parse("messages", {
+      ...cacheDecision,
+      channel: { status: "unverified", source: "未测" },
+    }).issues.join(),
+  ).toContain("不能声明缓存断点");
+  expect(parse("messages", { ...cacheDecision, mode: "ephemeral-2h" }).issues.join()).toContain(
+    "cache.mode",
+  );
+  expect(parse("messages", { ...cacheDecision, control: "accepted" }).issues.join()).toContain(
+    "cache.control:未知字段",
+  );
+  expect(parse("messages", { mode: "ephemeral-1h" }).issues.join()).toContain("cache.official");
+});
+
+it("缓存段进请求意图证据，不进请求参数：断点是 body 形状，由端点族自己摆", () => {
+  const model = {
+    ...fixtureModel("messages"),
+    generationPolicy: { ...policyFixture("messages"), cache: cacheDecision },
+  };
+  expect(generationParams(model)).toEqual({
+    thinking: { type: "adaptive" },
+    output_config: { effort: "high" },
+    max_tokens: 8192,
+  });
+  expect(generationRequestEvidence(model)?.policy.cache).toEqual(cacheDecision);
+  expect(generationRequestEvidence(fixtureModel("messages"))?.policy.cache).toBeUndefined();
+});
+
+it("按端点族补用量口径：messages=anthropic，chat/responses=openai，Google 族没有对应枚举不写", () => {
+  expect(
+    projectUsage({ input_tokens: 4, cache_read_input_tokens: 6 }, usageCaliberOf("messages")),
+  ).toEqual({
+    input_tokens: 4,
+    cache_read_input_tokens: 6,
+    usage_semantic: "anthropic",
+    usage_source: "anthropic",
+  });
+  for (const family of ["chat-completions", "responses"] as const) {
+    expect(projectUsage({ prompt_tokens: 11 }, usageCaliberOf(family))).toEqual({
+      prompt_tokens: 11,
+      usage_semantic: "openai",
+      usage_source: "openai",
+    });
+  }
+  expect(projectUsage({ promptTokenCount: 5 }, usageCaliberOf("generate-content"))).toEqual({
+    promptTokenCount: 5,
+  });
+  // 回显的是服务端实际采用的字段约定（线协议 ≠ 上游形状，Opus 兼容中转就是 chat 线协议 +
+  // anthropic 字段），比按端点族推断更贴近事实：回显了任一字段就整对保留，端点族只补缺省。
+  expect(
+    projectUsage(
+      { usage_semantic: "openai", usage_source: "anthropic", input_tokens: 4 },
+      "anthropic",
+    ),
+  ).toEqual({ input_tokens: 4, usage_semantic: "openai", usage_source: "anthropic" });
+  expect(projectUsage({ usage_semantic: "openai", input_tokens: 4 }, "anthropic")).toEqual({
+    input_tokens: 4,
+    usage_semantic: "openai",
+  });
+  // 空 usage 不因口径字段而变成「有读数」。
+  expect(projectUsage({}, "anthropic")).toBeUndefined();
 });

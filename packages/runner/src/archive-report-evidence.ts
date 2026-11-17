@@ -42,6 +42,7 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
   const reasoning = objectOf(policy.reasoning);
   const output = objectOf(policy.output);
   const transport = objectOf(evidence.transport);
+  const cache = policy.cache === undefined ? null : objectOf(policy.cache);
   return {
     // 身份来自目录，不接受服务端模型名或任意证据字符串。
     configId,
@@ -90,6 +91,13 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
       authentication: enumOf(transport.authentication, ["bearer", "api-key", "both"]),
       versionHeaderRecorded: typeof transport.anthropicVersion === "string",
     },
+    cache:
+      cache === null
+        ? null
+        : {
+            mode: enumOf(cache.mode, ["none", "ephemeral", "ephemeral-1h"]),
+            ...supportOf(cache),
+          },
     backendIdentity: "unverified" as const,
   };
 };

@@ -236,6 +236,19 @@ export type ReportTotal = {
   readonly expectedRounds: number;
 };
 
+/**
+ * 缓存命中率的合计。比率不可相加，分母单列：只累加「缓存读与总输入都记到」的轮，
+ * 缺项不补零；覆盖不完整时 `value` 保持 null，与加总型 `ReportTotal` 同一口径。
+ */
+export type ReportCacheHitRate = {
+  readonly value: number | null;
+  readonly recordedValue: number | null;
+  readonly cacheReadTotal: number | null;
+  readonly inputTotal: number | null;
+  readonly recordedRounds: number;
+  readonly expectedRounds: number;
+};
+
 export type UsageReading = {
   readonly value: number | null;
   readonly source: string | null;
@@ -245,8 +258,14 @@ export type UsageReading = {
   readonly candidates: readonly { readonly source: string; readonly value: number | null }[];
 };
 export type ReportUsage = Readonly<
-  Record<"input" | "output" | "cacheRead" | "cacheWrite" | "reasoning", UsageReading>
+  Record<
+    "input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite5m" | "cacheWrite1h" | "reasoning",
+    UsageReading
+  >
 >;
+
+/** 缓存写的 TTL 分档：组成明细，只对 Anthropic 族有值。 */
+const TTL_WRITE_FIELDS = ["cacheWrite5m", "cacheWrite1h"] as const;
 
 export type ArchiveReportRound = {
   readonly round: number;
@@ -259,6 +278,8 @@ export type ArchiveReportRound = {
   readonly attemptCoverage: "recorded" | "missing" | "partial";
   readonly usageState: "missing" | "null" | "recorded" | "invalid";
   readonly usage: ReportUsage;
+  /** 缓存读 / 总输入；缺任一项或分母为零时为 null（不把缺数据读成 0% 命中）。 */
+  readonly cacheHitRate: number | null;
 };
 
 export type ReportAttempt = {
@@ -500,6 +521,7 @@ export type ArchiveReport = {
   };
   readonly rounds: readonly ArchiveReportRound[];
   readonly totals: Readonly<Record<"sendMs" | keyof ReportUsage, ReportTotal>>;
+  readonly cacheHitRate: ReportCacheHitRate;
 };
 
 const total = (values: readonly (number | null)[], expectedRounds: number): ReportTotal => {
@@ -510,6 +532,31 @@ const total = (values: readonly (number | null)[], expectedRounds: number): Repo
     value: recorded.length === expectedRounds && expectedRounds > 0 ? recordedTotal : null,
     recordedTotal,
     recordedRounds: recorded.length,
+    expectedRounds,
+  };
+};
+
+const cacheHitRateTotal = (
+  rounds: readonly ArchiveReportRound[],
+  expectedRounds: number,
+): ReportCacheHitRate => {
+  const pairs = rounds
+    .map((round) => cachePairOf(round.usage))
+    .filter((pair): pair is { readonly read: number; readonly input: number } => pair !== null);
+  const cacheReadTotal =
+    pairs.length === 0 ? null : pairs.reduce((sum, pair) => sum + pair.read, 0);
+  const inputTotal = pairs.length === 0 ? null : pairs.reduce((sum, pair) => sum + pair.input, 0);
+  const recordedValue =
+    cacheReadTotal === null || inputTotal === null ? null : cacheReadTotal / inputTotal;
+  return {
+    value:
+      recordedValue !== null && pairs.length === expectedRounds && expectedRounds > 0
+        ? recordedValue
+        : null,
+    recordedValue,
+    cacheReadTotal,
+    inputTotal,
+    recordedRounds: pairs.length,
     expectedRounds,
   };
 };
@@ -544,7 +591,8 @@ const pickUsageField = (usage: unknown, paths: readonly string[]): UsageReading 
     source === "usage.cache_read_input_tokens" ||
     source === "usage.cache_creation_input_tokens" ||
     source.startsWith("usage.billing_usage.claude_usage.") ||
-    source.startsWith("usage.output_tokens_details.");
+    source.startsWith("usage.output_tokens_details.") ||
+    source.startsWith("usage.cache_creation.");
   const preferred = candidates.filter((candidate) =>
     semantic === "anthropic"
       ? anthropicPath(candidate.source)
@@ -639,8 +687,29 @@ const normalizeUsage = (raw: unknown): ReportUsage => {
     output: pickUsageField(raw, USAGE_READING_PATHS.output),
     cacheRead: pickUsageField(raw, USAGE_READING_PATHS.cacheRead),
     cacheWrite: pickUsageField(raw, USAGE_READING_PATHS.cacheWrite),
+    cacheWrite5m: pickUsageField(raw, USAGE_READING_PATHS.cacheWrite5m),
+    cacheWrite1h: pickUsageField(raw, USAGE_READING_PATHS.cacheWrite1h),
     reasoning: pickUsageField(raw, USAGE_READING_PATHS.reasoning),
   };
+};
+
+/**
+ * 命中率的分子分母对：缺任一项、分母为零、或缓存读比总输入还多是 null。
+ * 后者说明字段口径对不上（不该发生），不据它算比率。逐轮与合计共用这一处判据。
+ */
+const cachePairOf = (
+  usage: ReportUsage,
+): { readonly read: number; readonly input: number } | null => {
+  const read = usage.cacheRead.value;
+  const input = usage.input.value;
+  if (read === null || input === null || input <= 0 || read > input) return null;
+  return { read, input };
+};
+
+/** 缓存命中率 = 缓存读 / 总输入；缺数据不读成 0%。 */
+const cacheHitRateOf = (usage: ReportUsage): number | null => {
+  const pair = cachePairOf(usage);
+  return pair === null ? null : pair.read / pair.input;
 };
 
 // zod 的 JSON Schema 适配暂不支持 if/then/else；完整性关系在读入时检查。
@@ -1124,6 +1193,7 @@ const readRecord = (
             : typeof log.usage === "object" && !Array.isArray(log.usage)
               ? "recorded"
               : "invalid";
+      const usage = normalizeUsage(transport ? undefined : log.usage);
       return [
         {
           round,
@@ -1134,7 +1204,8 @@ const readRecord = (
           stop: stopEvidenceOf(transport ? undefined : log),
           ...attemptsOf(log.attemptEvidence),
           usageState,
-          usage: normalizeUsage(transport ? undefined : log.usage),
+          usage,
+          cacheHitRate: cacheHitRateOf(usage),
         },
       ];
     } catch (cause) {
@@ -1436,11 +1507,20 @@ const readRecord = (
         convergedRounds.map((round) => round.usage.cacheWrite.value),
         protocolRounds,
       ),
+      cacheWrite5m: total(
+        convergedRounds.map((round) => round.usage.cacheWrite5m.value),
+        protocolRounds,
+      ),
+      cacheWrite1h: total(
+        convergedRounds.map((round) => round.usage.cacheWrite1h.value),
+        protocolRounds,
+      ),
       reasoning: total(
         convergedRounds.map((round) => round.usage.reasoning.value),
         protocolRounds,
       ),
     },
+    cacheHitRate: cacheHitRateTotal(convergedRounds, protocolRounds),
   };
 };
 
@@ -1538,13 +1618,30 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       .join("；")}`,
     `- 逐场种子：${renderSeeds(plan.seeds)}`,
   ];
-  const fields = ["sendMs", "input", "output", "cacheRead", "cacheWrite", "reasoning"] as const;
+  const fields = [
+    "sendMs",
+    "input",
+    "output",
+    "cacheRead",
+    "cacheWrite",
+    "cacheWrite5m",
+    "cacheWrite1h",
+    "reasoning",
+  ] as const;
+  /**
+   * 百分比只用于渲染：JSON 里保留原比率，不把四舍五入后的值当读数。
+   * 缺失就是 null，不渲染成 0%——没记录和真实零命中是两件事。
+   */
+  const percent = (value: number | null): string =>
+    value === null ? "null" : `${(value * 100).toFixed(1)}%`;
   const labels = {
     sendMs: "sendMs",
     input: "输入 token",
     output: "输出 token",
     cacheRead: "缓存读",
     cacheWrite: "缓存写",
+    cacheWrite5m: "缓存写 5m",
+    cacheWrite1h: "缓存写 1h",
     reasoning: "推理",
   };
   const renderTerminal = (reading: TrialObservationLine): string[] => {
@@ -1593,7 +1690,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
   const out = [
     "# 生成归档报告",
     "",
-    "> usage 的 cache / reasoning 是组成明细，不重复加总。缺失用 null；部分数据只给已记录小计。收敛响应与全部 HTTP 尝试是重叠证据，不相加作账单；传输错误消费未知。",
+    "> usage 的 cache / reasoning 是组成明细，不重复加总。缺失用 null；部分数据只给已记录小计。缓存写再按 TTL 分 5m / 1h 两档，它们与总量是组成关系而非互相冲突；缓存命中率 = 缓存读 / 总输入，只算两项都记到的轮，合计覆盖不完整时不给值。收敛响应与全部 HTTP 尝试是重叠证据，不相加作账单；传输错误消费未知。",
     "> 三类分数互不替代：生成阶段（网格平均名次积分，分母 = 每候选场数）／选拔复算（独立子进程重跑同一张网格，只作校验读数，不是第二个排名依据）／赛季（赛季报告口径，本报告不冒充）。不属本档口径的分数写「不适用」，不补零、不留空。",
     "> 配置和渠道能力是请求意图与支持声明；HTTP 接受不证明参数执行，服务端模型回报不认证后端身份。证据来源自由文本、prompt、原响应与诊断不公开。",
     "> --run-id 显式指定本轮标识：其它记录为历史；未指定时全部未分轮，不将历史失败当作本轮失败或参赛资格。",
@@ -1613,6 +1710,23 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
   }
   out.push("");
   for (const report of reports) {
+    /**
+     * TTL 分档只在该报告真记到时出现：chat 族没有这两档，不留两列恒 null 的列/小计噪声。
+     * 判据看收敛轮与全部尝试——尝试证据里记到的分档同样不该被隐藏。
+     */
+    const ttlRecorded = report.rounds.some(
+      (round) =>
+        round.usage.cacheWrite5m.state === "recorded" ||
+        round.usage.cacheWrite1h.state === "recorded" ||
+        round.attempts.some(
+          (attempt) =>
+            attempt.usage.cacheWrite5m.state === "recorded" ||
+            attempt.usage.cacheWrite1h.state === "recorded",
+        ),
+    );
+    const shownFields = fields.filter(
+      (field) => ttlRecorded || !(TTL_WRITE_FIELDS as readonly string[]).includes(field),
+    );
     out.push(
       `## ${escape(report.model)} · ${report.kind}`,
       "",
@@ -1630,14 +1744,22 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         `- 失败分类：${escape(report.failure.classification)}`,
         `- 诊断条数：${report.failure.diagnosticsCount}（原文不公开）`,
       );
+    const ttlCells = (round: ArchiveReportRound): string =>
+      ttlRecorded
+        ? `${round.usage.cacheWrite5m.value ?? "null"} | ${round.usage.cacheWrite1h.value ?? "null"} | `
+        : "";
     out.push(
       "",
-      "| 轮次 | sendMs | 输入 token | 输出 token | 缓存读 | 缓存写 | 推理 |",
-      "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+      ttlRecorded
+        ? "| 轮次 | sendMs | 输入 token | 输出 token | 缓存读 | 缓存写 | 缓存写 5m | 缓存写 1h | 推理 | 缓存命中率 |"
+        : "| 轮次 | sendMs | 输入 token | 输出 token | 缓存读 | 缓存写 | 推理 | 缓存命中率 |",
+      ttlRecorded
+        ? "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+        : "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     );
     for (const round of report.rounds)
       out.push(
-        `| ${round.responseConverged ? round.round : `${round.round}（未收敛 transport）`} | ${round.sendMs ?? "null"} | ${round.usage.input.value ?? "null"} | ${round.usage.output.value ?? "null"} | ${round.usage.cacheRead.value ?? "null"} | ${round.usage.cacheWrite.value ?? "null"} | ${round.usage.reasoning.value ?? "null"} |`,
+        `| ${round.responseConverged ? round.round : `${round.round}（未收敛 transport）`} | ${round.sendMs ?? "null"} | ${round.usage.input.value ?? "null"} | ${round.usage.output.value ?? "null"} | ${round.usage.cacheRead.value ?? "null"} | ${round.usage.cacheWrite.value ?? "null"} | ${ttlCells(round)}${round.usage.reasoning.value ?? "null"} | ${percent(round.cacheHitRate)} |`,
       );
     out.push("", "### 参数与尝试证据", "");
     for (const round of report.rounds) {
@@ -1652,12 +1774,13 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
           `- 端点能力：official=${request.endpoint.official ?? "null"}；channel=${request.endpoint.channel ?? "null"}`,
           `- 推理意图=${request.reasoning.intent ?? "null"}；控制=${request.reasoning.control ?? "null"}；thinking 预算=${request.reasoning.budgetTokens ?? "null"}；official=${request.reasoning.official ?? "null"}；channel=${request.reasoning.channel ?? "null"}`,
           `- 输出字段=${request.output.field ?? "null"}；上限=${request.output.maxTokens ?? "null"}；含推理=${request.output.includesReasoning ?? "null"}；official=${request.output.official ?? "null"}；channel=${request.output.channel ?? "null"}`,
+          `- 缓存断点：mode=${request.cache?.mode ?? "null"}；official=${request.cache?.official ?? "null"}；channel=${request.cache?.channel ?? "null"}`,
           `- 请求头契约：authentication=${request.transport.authentication ?? "null"}；版本头有记录=${request.transport.versionHeaderRecorded}`,
         );
       out.push(`- 停止：${escape(JSON.stringify(round.stop))}；尝试证据=${round.attemptCoverage}`);
       for (const attempt of round.attempts) {
         out.push(
-          `- 第 ${round.round} 轮 attempt ${attempt.attempt}：${attempt.outcome}；停止 ${escape(JSON.stringify(attempt.stop))}；token ${fields
+          `- 第 ${round.round} 轮 attempt ${attempt.attempt}：${attempt.outcome}；停止 ${escape(JSON.stringify(attempt.stop))}；token ${shownFields
             .filter((field) => field !== "sendMs")
             .map((field) => `${labels[field]}=${attempt.usage[field].value ?? "null"}`)
             .join("；")}`,
@@ -1714,16 +1837,22 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         `- 失败选拔计划=${report.selectionFailure.planSha256}；每候选固定分母=${report.selectionFailure.matchesPerCandidate}；候选 TS/JS 身份=${escape(JSON.stringify(report.selectionFailure.candidates))}`,
       );
     out.push("", "### 合计（仅收敛响应）", "");
-    for (const field of fields) {
+    for (const field of shownFields) {
       const summary = report.totals[field];
       out.push(
         `- ${labels[field]}：${summary.value ?? "null"}（已记录小计 ${summary.recordedTotal ?? "null"}；覆盖 ${summary.recordedRounds}/${summary.expectedRounds}）`,
       );
     }
+    const hit = report.cacheHitRate;
+    const hitTotals = `缓存读 ${hit.cacheReadTotal ?? "null"} / 输入 ${hit.inputTotal ?? "null"}；覆盖 ${hit.recordedRounds}/${hit.expectedRounds}`;
+    out.push(
+      `- 缓存命中率：${percent(hit.value)}（已记录 ${percent(hit.recordedValue)}；${hitTotals}）`,
+    );
     out.push("", "### 逐轮字段来源", "");
     for (const round of report.rounds) {
       out.push(`- 第 ${round.round} 轮 sendMs：${round.sendMs ?? "null"}（generationLog.sendMs）`);
       for (const [name, usage] of Object.entries(round.usage)) {
+        if (!ttlRecorded && (TTL_WRITE_FIELDS as readonly string[]).includes(name)) continue;
         const state = usage.state === "null" ? "显式 null" : usage.state;
         const candidates = usage.conflict
           ? `；冲突：${usage.candidates.map((candidate) => `${candidate.source}=${String(candidate.value)}`).join("；")}`

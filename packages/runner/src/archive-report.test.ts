@@ -2401,3 +2401,151 @@ it("终局摘要可展示但不放宽完整候选的脚本身份与固定seed边
     finalCandidate: { scriptState: "mismatch" },
   });
 });
+
+it("Anthropic 缓存写的 TTL 分档各有读数：分档不跟总量混成「冲突」", async () => {
+  const root = rootOf();
+  writeRecord(root, "success", [
+    {
+      round: 1,
+      sendMs: 10,
+      usage: {
+        input_tokens: 4,
+        output_tokens: 2,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 14036,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 14036 },
+      },
+    },
+  ]);
+  const round = readArchiveReports(root)[0]!.rounds[0]!;
+  // 总量与分档是不同的指标：总量读总量字段，分档各读自己的路径，不互相判成冲突。
+  expect(round.usage.cacheWrite).toMatchObject({
+    value: 14036,
+    source: "usage.cache_creation_input_tokens",
+    state: "recorded",
+    conflict: false,
+  });
+  expect(round.usage.cacheWrite5m).toMatchObject({
+    value: 0,
+    source: "usage.cache_creation.ephemeral_5m_input_tokens",
+  });
+  expect(round.usage.cacheWrite1h).toMatchObject({
+    value: 14036,
+    source: "usage.cache_creation.ephemeral_1h_input_tokens",
+  });
+  const stdout: string[] = [];
+  await runArchiveReport(["--root", root], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => {},
+  });
+  const md = stdout.join("");
+  expect(md).toContain("缓存写 5m");
+  expect(md).toContain("缓存写 1h");
+  expect(md).toContain("| 1 | 10 | 14040 | 2 | 0 | 14036 | 0 | 14036 | null | 0.0% |");
+});
+
+it("逐轮与合计都渲染缓存命中率；缺项不补成 0%，覆盖不完整时合计只给已记录比率", async () => {
+  const root = rootOf();
+  writeRecord(
+    root,
+    "success",
+    [
+      {
+        round: 1,
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 5,
+          prompt_tokens_details: { cached_tokens: 40 },
+        },
+      },
+      { round: 2, usage: { prompt_tokens: 50, completion_tokens: 5 } },
+    ],
+    2,
+  );
+  const report = readArchiveReports(root)[0]!;
+  expect(report.rounds[0]?.cacheHitRate).toBe(0.4);
+  // 没有缓存读字段的轮不解释成 0% 命中。
+  expect(report.rounds[1]?.cacheHitRate).toBeNull();
+  expect(report.cacheHitRate).toEqual({
+    value: null,
+    recordedValue: 0.4,
+    cacheReadTotal: 40,
+    inputTotal: 100,
+    recordedRounds: 1,
+    expectedRounds: 2,
+  });
+  const stdout: string[] = [];
+  await runArchiveReport(["--root", root], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => {},
+  });
+  const md = stdout.join("");
+  expect(md).toContain("缓存命中率");
+  expect(md).toContain("40.0%");
+  expect(md).toContain("缓存读 40 / 输入 100");
+  expect(md).toContain("覆盖 1/2");
+});
+
+it("合计缓存命中率在覆盖完整时给出比率；分母为零保持 null", () => {
+  const root = rootOf();
+  writeRecord(root, "success", [
+    {
+      round: 1,
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 40 },
+      },
+    },
+  ]);
+  expect(readArchiveReports(root)[0]?.cacheHitRate).toEqual({
+    value: 0.4,
+    recordedValue: 0.4,
+    cacheReadTotal: 40,
+    inputTotal: 100,
+    recordedRounds: 1,
+    expectedRounds: 1,
+  });
+  const zero = rootOf();
+  writeRecord(zero, "success", [
+    {
+      round: 1,
+      usage: {
+        prompt_tokens: 0,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 0 },
+      },
+    },
+  ]);
+  expect(readArchiveReports(zero)[0]?.cacheHitRate).toEqual({
+    value: null,
+    recordedValue: null,
+    cacheReadTotal: null,
+    inputTotal: null,
+    recordedRounds: 0,
+    expectedRounds: 1,
+  });
+});
+
+it("没有 TTL 分档的报告不出 5m/1h 列与小计：缺项不等于零", async () => {
+  const root = rootOf();
+  writeRecord(root, "success", [
+    {
+      round: 1,
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 40 },
+      },
+    },
+  ]);
+  const stdout: string[] = [];
+  await runArchiveReport(["--root", root], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => {},
+  });
+  const md = stdout.join("");
+  expect(md).toContain("缓存命中率");
+  expect(md).not.toContain("缓存写 5m");
+  expect(md).not.toContain("缓存写 1h");
+});
