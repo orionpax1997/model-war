@@ -538,6 +538,7 @@ archive/<modelSlug>/<runId>/
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
 | 评测网格与选拔复算 | `packages/runner/src/trial-plan.test.ts`(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ `packages/runner/src/selection-grid.test.ts`(逐场复算比对)+ `packages/runner/src/archive-report-v2.test.ts`(生成阶段分数与赛季口径分离) |
 | 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`（`stateHash` 断言）+ `check:no-float`（禁浮点门禁是其中一轨） |
+| 档案形状版本与旧档读兼容 | `apps/cli/src/archive-v3.test.ts`（v3 写 → 装载 → 报告往返；v1/v2 旧档 fixture 照旧读出）+ `packages/runner/src/fixtures/archive/README.md`（旧档副本的来源与改写清单） |
 | 传输韧性与限流处置 | `packages/gen/src/retry.test.ts`（三套预算互不侵占、`Retry-After` 作下限、抖动只向上、单次与累计封顶、5xx 一次即收口）+ `packages/gen/src/pipeline.test.ts`（重试不涨协议轮数、`attemptEvidence.failureKind` 留痕）+ `packages/gen/src/run.test.ts`（单模型失败不中止同批） |
 
 它自己有判据:`check:landings` 逐行验落点的存在性(命名脚本必在脚本清单里、`modelwar <子命令>` 必在 CLI 的 `COMMANDS` 里、文件与目录必须存在且被版本库跟踪、一行里一个都认不出即红),并顺带断言文档里以命名脚本形态出现的 token 都真的存在。判据只读这张表,**不把它变成生成物**——它的家就是这份文档。

@@ -20,6 +20,7 @@
     "node_modules/**",
     "dist/**",
     "packages/tools/selfproof/stub/**",
-    "packages/engine/sandbox-runtime/runtime.iife.js"
+    "packages/engine/sandbox-runtime/runtime.iife.js",
+    "packages/runner/src/fixtures/**"
   ]
 }

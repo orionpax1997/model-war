@@ -17,7 +17,12 @@
     "**/*.d.ts",
     "**/coverage/**",
     "packages/tools/selfproof/stub/**",
-    "packages/engine/sandbox-runtime/runtime.iife.js"
+    "packages/engine/sandbox-runtime/runtime.iife.js",
+    // 存档字节 fixture（档案形状 v3 那一票）：它们是从真实 `archive/` 抽出来的**档案副本**，
+    // 不是源码。这里排除的理由与在上面几条不同：不是躲命中，而是**文件字节本身是被测对象**
+    // （`meta.json` 里的身份摘要拿这些字节核对），格式化或改写会让测试失去它唯一的凭据。
+    // 同一份理由也写在 `.oxfmtrc.json` 与 `packages/runner/tsconfig.json` 的对应位置。
+    "packages/runner/src/fixtures/**"
   ],
   "categories": { "correctness": "error" },
   "rules": {
