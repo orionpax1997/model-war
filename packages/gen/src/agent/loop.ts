@@ -46,9 +46,7 @@ import type {
   AgentExecutor,
   AgentStep,
   AgentTermination,
-  AgentToolHost,
   AgentTurnEvidence,
-  EvaluateProbe,
 } from "./types.js";
 import type { ArchiveStepAction } from "@model-war/schema";
 
@@ -64,8 +62,6 @@ export type AgentLoopRequest = {
   /** 首条 `user`:任务、目录与三条硬约束。 */
   readonly firstUser: string;
   readonly params?: ModelParams;
-  /** 会话的注入面:宿主服务(fd 3 的端)与评测探针。本段不传。 */
-  readonly host?: AgentToolHost;
   /** 模型席位的上下文窗口;缺席即不判守卫(不知道自己离窗口多近)。 */
   readonly contextLength?: number;
   /** 覆盖步数上限(默认 `AGENT_MAX_STEPS`);测试用它把边界压到个位数。 */
@@ -109,6 +105,8 @@ export type AgentSubmission = {
   readonly scriptSha256: string;
   readonly hostPath: string;
   readonly observationsPath: string;
+  /** 编出这份产物的 tsc 版本（冻结时要写进 `meta.tscVersion`）。 */
+  readonly tscVersion: string;
 };
 
 /** 没有动作的那一步:命令一条都没跑,但步数与过程记录照记。 */
@@ -247,7 +245,6 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
           step,
           command: parsed.command,
           ...(parsed.doneAtLine === undefined ? {} : { doneAtLine: parsed.doneAtLine }),
-          ...(request.host === undefined ? {} : { requestHandler: request.host.requestHandler }),
         });
         done = executed.done === true;
         action = actionOf(parsed.command, done);
@@ -261,6 +258,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
             scriptSha256: executed.submission.scriptSha256,
             hostPath: executed.submission.hostPath,
             observationsPath: executed.submission.observationsPath,
+            tscVersion: executed.submission.tscVersion,
           });
         }
       }
@@ -306,11 +304,3 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
 
 /** 便于接线方判断「这一步是不是有候选」:候选为空即失败档(ADR-0030)。 */
 export const hasCandidates = (result: AgentLoopResult): boolean => result.submissions.length > 0;
-
-/** `EvaluateProbe` 的最小占位实现:本段不接网格,选举时用它会得到一条明确的失败而不是空候选。 */
-export const unpluggedEvaluateProbe: EvaluateProbe = {
-  evaluate: async () => ({
-    kind: "failed",
-    stderr: "evaluate 尚未接线(票 06 才接真实网格):这一次没有产出候选。",
-  }),
-};

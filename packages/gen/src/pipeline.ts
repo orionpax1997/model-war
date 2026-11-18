@@ -43,9 +43,8 @@
  * 需要理解通道协议的字节形态。夹在中间的这一层只搬运,不判定。
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   type ArchiveMeta,
@@ -56,6 +55,7 @@ import {
   type ArchiveValidation,
   type FailureRecord,
   type TrialGridScore,
+  type TrialPlan,
 } from "@model-war/schema";
 
 import type { ModelConfig } from "./config.js";
@@ -70,6 +70,7 @@ import {
 import { generationParams, generationRequestEvidence } from "./generation-policy.js";
 import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./model-client.js";
 import {
+  SCRIPT_PRODUCT_NAME,
   SCRIPT_SOURCE_NAME,
   buildArchiveMeta,
   commitArchive,
@@ -84,13 +85,18 @@ import { runAgentSession, type AgentLoopResult } from "./agent/loop.js";
 import { sandbox } from "./agent/sandbox/index.js";
 import { splitDoneBlock } from "./agent/host/done.js";
 import { createCheckService } from "./agent/host/check-service.js";
-import { createEvaluateService } from "./agent/host/evaluate-service.js";
+import {
+  candidateObservationsFile,
+  candidateScriptFile,
+  candidateSourceFile,
+  createEvaluateService,
+} from "./agent/host/evaluate-service.js";
 import { createSessionTools } from "./agent/host/dispatcher.js";
 import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
 import { retryTransport } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
-import { runTrialScript, type TrialProbe } from "./trial.js";
-import { compileScript, type CompileResult } from "./compile.js";
+import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
+import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
 export type { FailureClassification } from "@model-war/schema";
@@ -183,7 +189,7 @@ export type ModelOutcome =
     };
 
 /**
- * 一次 `evaluate` 的**成绩**从哪来:票 06 的接缝。
+ * 一次 `evaluate` 的**成绩**从哪来:把提交身份换成成绩的那条接缝。
  *
  * ── 为什么是「给提交身份、换成绩」这样一个函数 ──
  *
@@ -191,11 +197,11 @@ export type ModelOutcome =
  * `evaluate` 服务里,成绩(分数、场数)在网格里。本文件只该知道「两半凑齐了就是一个候选」,
  * 不该知道其中任何一半怎么算。
  *
- * ── 本段的缺省实现恒为 `undefined`,这不是缺陷 ──
+ * ── 缺省实现就是真网格 ──
  *
- * 真网格归票 06:计划搬运、32 场、聚合对差表、候选快照的命名与落点都在那里。缺省实现什么都不
- * 评,于是 `evaluate` 一次也不产出候选,**零候选即失败档**(ADR-0030)。这条路径因此是完整可
- * 跑的:会话照跑、步照记、档照落,只是没有成绩。
+ * `scoreFromCandidateEvidence` 从候选证据旁的 `.grid.json` 读成绩(算术真源在 runner,生成侧只搬运)。
+ * 测试注入假实现,把「成绩」与「网格」拆开验;注入 `async () => undefined` 就是「一次都不产出
+ * 候选」的那条路径(零候选即失败档,ADR-0030)。
  */
 export type EvaluateScoring = (
   submission: EvaluateSubmission,
@@ -207,9 +213,12 @@ export type EvaluateSubmission = {
   readonly step: number;
   /** 第几次评测(1 起,dispatcher 的计数器)。 */
   readonly call: number;
+  /** 源字节的 sha256(评的是哪一版)。 */
   readonly scriptSha256: string;
   readonly hostPath: string;
-  /** 观测出口(沙箱视角的路径)。 */
+  /** 编出候选产物的 tsc 版本(冻结时写进 `meta.tscVersion`)。 */
+  readonly tscVersion: string;
+  /** 观测出口(沙箱视角的**派生视图**路径:聚合对差表 + 逐场 + 最差三场)。 */
   readonly observationsPath: string;
   /** 观测文件相对 `archive/<slug>/` 的 basename(候选条目的 `observationsFile`)。 */
   readonly observationsFile: string;
@@ -228,13 +237,23 @@ const NO_CHECK_VALIDATION: ArchiveValidation = {
  * 而那种错位在报告里看起来完全正常——所以宁可在每次执行前清一次。
  */
 type StepFacts = {
+  /** 当前步号(1 起):宿主服务要它给候选证据族起名。 */
+  step?: number;
   result?: ArchiveStep["result"];
   submission?: {
     readonly scriptSha256: string;
     readonly hostPath: string;
     readonly observationsPath: string;
+    readonly tscVersion: string;
   };
   evaluateCall?: number;
+  /**
+   * 评测基础设施失败的一句话(计划重建不符 / 试跑子进程异常)。
+   *
+   * 它不是「模型写错了」,所以**不进这一步的观测**:环境故障解释了模型也没用(ADR-0030
+   * 残余风险 3 的同一条理由)。记在这里,由执行器在沙箱返回后大声失败。
+   */
+  infra?: string;
 };
 
 const createStepFacts = (): { readonly current: StepFacts; readonly reset: () => void } => {
@@ -245,6 +264,7 @@ const createStepFacts = (): { readonly current: StepFacts; readonly reset: () =>
       delete current.result;
       delete current.submission;
       delete current.evaluateCall;
+      delete current.infra;
     },
   };
 };
@@ -254,17 +274,25 @@ const createStepFacts = (): { readonly current: StepFacts; readonly reset: () =>
  *
  * 包装器**不改语义**:原样调用、原样返回,只是在返回之前顺手记一笔。所以它在 dispatcher 眼里
  * 与没包一样,配额、墙钟、拒绝语义一个字都没动。
+ *
+ * 它额外知道两件 dispatcher 不知道的事:当前步号(候选证据族的序号)与「服务抛了」这件事。
+ * 前者由执行器在跑这一步之前写进槽里,后者是 infra 的唯一识别点——dispatcher 会把服务异常
+ * 折成一条工具响应(它不能让通道挂死),而那会让「sandbox 装坏了」看起来像模型手滑。
  */
 const observeServices = (options: {
   readonly root: string;
   readonly model: string;
+  readonly runId: string;
   readonly trial: TrialProbe;
+  readonly plan: () => TrialPlan;
   readonly facts: StepFacts;
 }) => {
   const check = createCheckService({ root: options.root });
   const evaluate = createEvaluateService({
     root: options.root,
     model: options.model,
+    runId: options.runId,
+    plan: options.plan,
     trial: options.trial,
   });
   return {
@@ -275,12 +303,26 @@ const observeServices = (options: {
       return response;
     },
     evaluate: async (request: { readonly workspaceDir: string; readonly call: number }) => {
-      const outcome = await evaluate(request);
+      let outcome: Awaited<ReturnType<typeof evaluate>>;
+      try {
+        outcome = await evaluate({
+          workspaceDir: request.workspaceDir,
+          call: request.call,
+          step: options.facts.step ?? Number.NaN,
+        });
+      } catch (cause) {
+        // 计划重建不符与试跑子进程异常都是 infra:候选不该为它背账。记下来,
+        // 执行器在沙箱返回后大声失败;这一步回一条**工具响应**只是为了让通道收得住。
+        const message = cause instanceof Error ? cause.message : String(cause);
+        options.facts.infra = message;
+        return { exitCode: 1, stdout: "", stderr: `evaluate:评测基础设施失败:${message}\n` };
+      }
       if (outcome.submission !== undefined) {
         options.facts.submission = {
           scriptSha256: outcome.submission.scriptSha256,
           hostPath: outcome.submission.hostPath,
           observationsPath: outcome.submission.observationsPath,
+          tscVersion: outcome.submission.tscVersion,
         };
         options.facts.evaluateCall = request.call;
       }
@@ -310,6 +352,7 @@ const createExecutor =
   }): AgentExecutor =>
   async (request: AgentExecRequest): Promise<AgentExecResult> => {
     options.facts.reset();
+    options.facts.current.step = request.step;
     const split = splitDoneBlock(request.command);
     // `done` 是块内第一行时 body 是空串:不跑空 shell(它的副作用只有一次 `bash` 启动)。
     const executed =
@@ -325,6 +368,11 @@ const createExecutor =
               : { wallClockMs: options.stepWallClockMs }),
           });
     const facts = options.facts.current;
+    // 宿主侧报告基础设施失败:这一刻才大声失败(loop 的 executor reject 是 infra 的专用通道),
+    // 而不是把它折成模型的一次手滑。既然这次会话的网格身份已经不可信,后面的步也没意义了。
+    if (facts.infra !== undefined) {
+      throw new Error(`第 ${String(request.step)} 步的评测基础设施失败:${facts.infra}`);
+    }
     return {
       stdout: executed.stdout,
       stderr: executed.stderr,
@@ -386,32 +434,38 @@ const nonEmptyLines = (text: string): readonly string[] =>
     .filter((line) => line.length > 0);
 
 /**
- * 一条恒不产出成绩的评分接缝:本段的占位(票 06 换掉它)。
+ * 真网格的评分接缝:成绩逐字来自候选证据旁的 `.grid.json`。
  *
- * ── 占位的是**成绩**,不是试跑 ──
+ * ── 为什么读盘而不是算 ──
  *
- * 一次 `evaluate` 由两半组成:试跑(真跑整张网格,给出观测与拦下明细)与成绩(分数与场数)。
- * 本段缺的是后者——`score` 要由网格汇总读出来,那是票 06 的活。试跑本身**照跑真子进程**
- * (`runTrialScript`),否则「evaluate 说拦下」与「evaluate 说未接线」在读侧同形,而前者才是
- * 模型与人都需要看见的那件事。
+ * 分数的算术唯一真源在 runner 的 `trial-score.ts`(生成侧不得跨过去,门禁钉死),所以这里只
+ * 做三件事:按候选证据族找到那份汇总、拿它跟本会话的 expected plan 逐字对(换图/换座位/换
+ * 种子/换陪练摘要即 infra)、把 `score` 与场数原样交给候选条目。
+ *
+ * ── 两个摘要,两件事 ──
+ *
+ * 汇总里那个 `scriptSha256` 是候选**产物**(`.candidate.js`)的字节摘要——它是网格输入的身份;
+ * 这里从盘上重算一遍再交给读入端,于是「盘上那份产物」与「网格说的那份产物」不一致时立即拒。
  */
-const unpluggedScoring: EvaluateScoring = async () => undefined;
-
-/** 观测路径 → 档案里的 basename(候选条目的 `observationsFile` 要与旁挂文件同名)。 */
-const observationsFileOf = (observationsPath: string): string =>
-  basename(observationsPath).replace(/\.md$/u, "");
-
-/**
- * 候选快照在 `archive/<slug>/` 下的名字。
- *
- * ── 为什么用这个族 ──
- *
- * 它是既有逐候选产物的命名族(`observed-<runId>-round-<步号>`),报告侧读档时按它判完整性:
- * `scriptFile` 必须恰为 `${observationsFile}.candidate.js`、`observationsFile` 必须以
- * `-round-<step>.jsonl` 结尾。本票**不新建目录**(ADR-0031「快照沿用既有命名族」)。
- */
-const candidateObservationsFile = (runId: string, step: number): string =>
-  `observed-${runId}-round-${String(step)}.jsonl`;
+export const scoreFromCandidateEvidence = (deps: {
+  readonly root: string;
+  readonly slug: string;
+  readonly plan: () => TrialPlan;
+}): EvaluateScoring => {
+  const archiveDir = join(deps.root, "archive", deps.slug);
+  return async (submission: EvaluateSubmission) => {
+    const plan = deps.plan();
+    const productSha256 = sha256Hex(
+      readFileSync(join(archiveDir, candidateScriptFile(submission.observationsFile))),
+    );
+    const summary = readTrialGridSummary({
+      path: gridSummaryPathOf(join(archiveDir, submission.observationsFile)),
+      expectedPlan: plan,
+      scriptSha256: productSha256,
+    });
+    return { score: summary.score, matchCount: summary.plan.matchesPerCandidate };
+  };
+};
 
 /**
  * 单模型生成:读首条 prompt、跑单会话、按「有没有候选」落成功档或失败档。
@@ -451,20 +505,37 @@ export const generateOneModel = async (
   let committed = false;
   const generationLog: string[] = [];
   const candidates: ArchiveOptimizationCandidateAgent[] = [];
-  /** 每个候选在那次 evaluate 时那份**源**文本的哈希:用于「评完之后又改过」的判据。 */
-  const evaluatedSources = new Map<number, string>();
+  /** 每个候选产物是用哪一版 tsc 编出来的(冻结时要写进 `meta.tscVersion`)。 */
+  const candidateTscVersions = new Map<number, string>();
   let validation: ArchiveValidation = NO_CHECK_VALIDATION;
 
   const maxSteps = request.maxSteps ?? AGENT_MAX_STEPS;
   const totalWallClockMs = request.totalWallClockMs ?? AGENT_TOTAL_WALL_CLOCK_MS;
   const startedAt = request.now().getTime();
 
+  /**
+   * 本次会话的那一张网格(一次会话一张,`evaluate` 与评分接缝共用同一份对象)。
+   *
+   * **惰性**:搬计划要 spawn 一次试跑入口(`--plan`),而一次会话可能一次 `evaluate` 都不做;
+   * 也不在会话起点就把「装不出来」变成整场失败——那会把一次没用到网格的会话也一起赔进去。
+   */
+  let plan: TrialPlan | undefined;
+  const planOf = (): TrialPlan => {
+    plan ??= (request.trialPlan ?? ((options) => prepareTrialPlan(options.root, options.model)))({
+      root: request.root,
+      model: slug,
+    });
+    return plan;
+  };
+
   // 宿主工具面(票 04):配额、会话墙钟、两个服务都在这里,一次会话一份实例。
   const facts = createStepFacts();
   const services = observeServices({
     root: request.root,
     model: slug,
-    // 缺省走真试跑子进程(与 one-shot 时代同一个入口):本段缺的只有成绩(见 `unpluggedScoring`)。
+    runId,
+    plan: planOf,
+    // 缺省走真试跑子进程(与 one-shot 时代同一个入口):`evaluate` 因此是真网格。
     trial: request.trial ?? runTrialScript,
     facts: facts.current,
   });
@@ -554,39 +625,28 @@ export const generateOneModel = async (
     }
 
     // ── 候选:每一次真评出成绩的 evaluate 产出一个(顺序 = 第几次评测)。──
-    const scoring = request.evaluateScoring ?? unpluggedScoring;
+    //
+    // 快照本身已经由 `evaluate` 服务在评测那一刻落进 `archive/<slug>/`(「快照即提交」),
+    // 这里只做三件事:找它、读它的**字节**算产物摘要、把成绩拼进候选条目。重读工作区会把
+    // 「评完之后又改过」混进成绩里,而模型可能只是想清理一下(ADR-0030)。
+    const scoring =
+      request.evaluateScoring ??
+      scoreFromCandidateEvidence({ root: request.root, slug, plan: planOf });
+    const archiveDir = join(request.root, "archive", slug);
     for (const step of loop.steps) {
-      const submission = submissionOfStep(loop, step);
+      const submission = submissionOfStep(loop, step, runId);
       if (submission === undefined) continue;
       const scored = await scoring(submission);
       if (scored === undefined) continue;
-      // 快照真的写到 `archive/<slug>/`:报告侧按 `scriptFile` 读字节并复算哈希,名字对不上
-      // 或文件不在,那份档就装载不了。票 06 会把这两份换成真网格的候选产物,名字不变。
-      //
       // `scriptSha256` 是**产物**的哈希(报告侧复算的就是 `.candidate.js` 的字节),不是
       // `evaluate` 报的那份源哈希——两者不是同一个数,混用会让每份档都读成 `mismatch`。
-      const observationsFile = candidateObservationsFile(runId, step.step);
-      const snapshotSource = readFileSync(join(workspaceDir, SCRIPT_SOURCE_NAME), "utf8");
-      const snapshot = compileScript({
-        root: request.root,
-        stagingDir: mkdtempSync(join(tmpdir(), "model-war-candidate-")),
-        source: snapshotSource,
-      });
-      if (!snapshot.ok) continue;
-      writeFileSync(
-        join(request.root, "archive", slug, `${observationsFile}.candidate.ts`),
-        snapshotSource,
-      );
-      writeFileSync(
-        join(request.root, "archive", slug, `${observationsFile}.candidate.js`),
-        readFileSync(snapshot.jsPath),
-      );
-      evaluatedSources.set(step.step, submission.scriptSha256);
+      const scriptFile = candidateScriptFile(submission.observationsFile);
+      candidateTscVersions.set(step.step, submission.tscVersion);
       candidates.push({
         step: step.step,
-        scriptFile: `${observationsFile}.candidate.js`,
-        observationsFile,
-        scriptSha256: sha256Hex(readFileSync(snapshot.jsPath)),
+        scriptFile,
+        observationsFile: submission.observationsFile,
+        scriptSha256: sha256Hex(readFileSync(join(archiveDir, scriptFile))),
         params: JSON.parse(JSON.stringify(params)) as never,
         score: scored.score,
         matchCount: scored.matchCount,
@@ -630,12 +690,18 @@ export const generateOneModel = async (
     }
 
     // 成绩取最后一次 evaluate 的那一版:候选序的末位(ADR-0030)。
+    //
+    // 冻结的是**评估时那份快照**,不是会话停下时的工作区:模型在最后一次 `evaluate` 之后又改坏
+    // 文件不影响成绩(它可能只是想清理一下)。屏幕上的 `script.ts` / `script.js` 与候选条目的
+    // `scriptSha256` 因此字节同源。
     const final = candidates[candidates.length - 1]!;
     const frozen = freezeFromCandidate({
       root: request.root,
+      slug,
       stagingDir,
-      source: readFileSync(join(workspaceDir, SCRIPT_SOURCE_NAME), "utf8"),
-      evaluatedSourceSha256: evaluatedSources.get(final.step) ?? "",
+      scriptFile: final.scriptFile,
+      observationsFile: final.observationsFile,
+      tscVersion: candidateTscVersions.get(final.step) ?? "",
     });
     if (!frozen.ok) {
       return {
@@ -704,6 +770,7 @@ export const generateOneModel = async (
 const submissionOfStep = (
   loop: AgentLoopResult,
   step: ArchiveStep,
+  runId: string,
 ): EvaluateSubmission | undefined => {
   const recorded = loop.submissions.find((item) => item.step === step.step);
   if (recorded === undefined) return undefined;
@@ -712,35 +779,40 @@ const submissionOfStep = (
     call: recorded.call,
     scriptSha256: recorded.scriptSha256,
     hostPath: recorded.hostPath,
+    tscVersion: recorded.tscVersion,
     observationsPath: recorded.observationsPath,
-    observationsFile: observationsFileOf(recorded.observationsPath),
+    // 候选证据族的名字由**步号**与 runId 定,不由派生视图的路径推:两者现在不在一处
+    // (观测原料进档案,派生视图留在工作区),从 `.md` 的名字反推会直接拼出一个不存在的 basename。
+    observationsFile: candidateObservationsFile(runId, step.step),
   };
 };
 
 /**
- * 把「最后一次 evaluate 的那一版」编译并落成三件套。
+ * 把「最后一次 evaluate 评的那一版」从候选快照搬成三件套。
  *
- * ── 两个哈希,两件事 ──
+ * ── 搬快照,不重读工作区 ──
  *
- * - **源** 的 sha256(`submission.scriptSha256`):`evaluate` 服务看到的那份 `script.ts` 的哈希。
- *   它回答「评的是哪一版」——当前源码重算一遍,兩個不相等就是「评完之后又改了」。
- * - **产物** 的 sha256(`meta.scriptSha256`):`script.js` 的字节哈希。档案契约要的是它
- *   (「复算认编译产物,不认 script.ts」),所以它不是候选条目里那一个。
+ * 成绩取**最后一次 `evaluate` 评的那个版本**(ADR-0030):模型可能在评完之后又改坏文件,而它
+ * 可能只是想清理一下。所以冻结的字节只能是那次评测当场落下来的两份快照(「快照即提交」),
+ * 不是会话停下时工作区里躺着的东西。
  *
- * 把两个哈希分开写清,是因为它们看着都是「sha256」,而谁替谁都读侧看不出来。
+ * 也不在这里重新编译:重编一次等于把「评的是哪份产物」换成「现在这段源码编出来是什么」,
+ * 而两者一旦不等(编译器换了、配置换了),档案里的 `scriptSha256` 就不再指向被评过的那份。
+ * 冻结期静态校验仍然真跑一遍:它是「冻结前最后一栏」的既有判据。
  *
- * ── 为什么不是「会话结束时的文件内容」──
- *
- * ADR-0030 的判据是成绩取**最后一次 `evaluate` 评的那个版本**:模型可能在评完之后改坏文件,
- * 而它可能只是想清理一下。所以这里比「此刻的源」与「评的那份源」——不相等就**明确失败**,
- * 而不是默默用其中一个冒充另一个。
+ * 两个哈希在这里各归各位:**源**的 sha256 只在候选快照的文件名里(报告侧对不上时自己算),
+ * 而档案契约要的 `meta.scriptSha256` 是**产物**的字节哈希(契约§3「复算认编译产物」)。
  */
 const freezeFromCandidate = (options: {
   readonly root: string;
+  readonly slug: string;
   readonly stagingDir: string;
-  readonly source: string;
-  /** `evaluate` 服务看到的那份 **源** 的 sha256(不是产物哈希)。 */
-  readonly evaluatedSourceSha256: string;
+  /** 候选条目的 `scriptFile`(产物快照的 basename)。 */
+  readonly scriptFile: string;
+  /** 候选条目的 `observationsFile`:用它找到同一族里的源码快照。 */
+  readonly observationsFile: string;
+  /** 那份产物是用哪一版 tsc 编出来的(评测时记的)。 */
+  readonly tscVersion: string;
 }):
   | {
       readonly ok: true;
@@ -749,48 +821,41 @@ const freezeFromCandidate = (options: {
       readonly scriptSha256: string;
     }
   | { readonly ok: false; readonly diagnostics: readonly string[]; readonly message: string } => {
-  const currentSourceSha256 = sha256Hex(Buffer.from(options.source, "utf8"));
-  if (currentSourceSha256 !== options.evaluatedSourceSha256) {
+  const archiveDir = join(options.root, "archive", options.slug);
+  const sourcePath = join(archiveDir, candidateSourceFile(options.observationsFile));
+  const scriptPath = join(archiveDir, options.scriptFile);
+  const staged: { readonly source: string; readonly script: string } = {
+    source: join(options.stagingDir, SCRIPT_SOURCE_NAME),
+    script: join(options.stagingDir, SCRIPT_PRODUCT_NAME),
+  };
+  try {
+    copyFileSync(sourcePath, staged.source);
+    copyFileSync(scriptPath, staged.script);
+  } catch (cause) {
     return {
       ok: false,
-      message:
-        "最后一次 evaluate 之后 /workspace/script.ts 又改过:成绩属于评过的那版,而会话停下时的文件已不是它",
-      diagnostics: [
-        `评的那份源 sha256 ${options.evaluatedSourceSha256},此刻 ${currentSourceSha256}`,
-      ],
-    };
-  }
-  const compiled: CompileResult = compileScript({
-    root: options.root,
-    stagingDir: options.stagingDir,
-    source: options.source,
-  });
-  if (!compiled.ok) {
-    return {
-      ok: false,
-      message: "最后一次 evaluate 时那份 script.ts 编译不过",
-      diagnostics: nonEmptyLines(compiled.diagnostics),
+      message: "最后一次 evaluate 的候选快照读不到(源码或产物缺了一件)",
+      diagnostics: [cause instanceof Error ? cause.message : String(cause)],
     };
   }
   const validated = validateScript({
     root: options.root,
-    artifactPath: compiled.jsPath,
+    artifactPath: staged.script,
     maxBytes: scriptSizeLimit(options.root),
     phase: "freeze",
   });
   if (!validated.passed) {
     return {
       ok: false,
-      message: "最后一次 evaluate 时那份 script.ts 未通过冻结期静态校验",
+      message: "最后一次 evaluate 的那份脚本未通过冻结期静态校验",
       diagnostics: nonEmptyLines(validated.stdout),
     };
   }
   return {
     ok: true,
-    tscVersion: compiled.tscVersion,
+    tscVersion: options.tscVersion,
     validation: { passed: true, errors: nonEmptyLines(validated.stdout) },
-    // 档案里的 `scriptSha256` 是**产物**的字节哈希(契约 §3),与上面那个源哈希不是同一个数。
-    scriptSha256: sha256Hex(readFileSync(compiled.jsPath)),
+    scriptSha256: sha256Hex(readFileSync(staged.script)),
   };
 };
 
