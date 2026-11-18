@@ -152,6 +152,14 @@ const withHostBash = async <T>(
 ): Promise<T> => {
   const mod = await import("./agent/sandbox/index.js");
   const original = mod.sandbox.run;
+  // 启动自证也换掉:它要真跑 bwrap,而本文件的每一条用例都不依赖内核能力(ADR-0033 的
+  // 自证位置由 `run.test.ts` 的注入失败用例验,这里只需要它恒过)。
+  const originalPreflight = mod.sandbox.preflight;
+  Object.defineProperty(mod.sandbox, "preflight", {
+    configurable: true,
+    writable: true,
+    value: () => ({ version: "test" }),
+  });
   Object.defineProperty(mod.sandbox, "run", {
     configurable: true,
     writable: true,
@@ -185,6 +193,11 @@ const withHostBash = async <T>(
   try {
     return await run();
   } finally {
+    Object.defineProperty(mod.sandbox, "preflight", {
+      configurable: true,
+      writable: true,
+      value: originalPreflight,
+    });
     Object.defineProperty(mod.sandbox, "run", {
       configurable: true,
       writable: true,

@@ -25,6 +25,7 @@ import type { AgentPrompt } from "./agent-prompt.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
 import type { ModelClient } from "./model-client.js";
+import { sandbox } from "./agent/sandbox/index.js";
 import { generateOneModel, type EvaluateScoring } from "./pipeline.js";
 
 /**
@@ -109,6 +110,13 @@ export type GenerationOptions = {
   readonly trial?: TrialProbe;
   readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
   readonly evaluateScoring?: EvaluateScoring;
+  /**
+   * 沙箱启动自证(ADR-0033「执行器启动时先自证」)。缺省即真的 `sandbox.preflight()`。
+   *
+   * 缺省之外只有测试会注入它:自证要真跑 bwrap,而单测不允许依赖内核能力(常跑链不装
+   * bubblewrap)。注入的失败实现是「不可用就整批失败」那条路径的唯一验法。
+   */
+  readonly preflight?: () => void;
 };
 
 const messageOf = (cause: unknown): string =>
@@ -135,6 +143,9 @@ const sessionIdOf = (runId: string, slug: string): string => `modelwar-gen-${run
 /**
  * 多模型编排:读配置 + 契约 + 模板,逐模型串行跑 `generateOneModel`。
  *
+ * 第一件事是**沙箱启动自证**(`sandbox.preflight`,一批一次):执行器起不来就整批失败,一个
+ * 会话都不启动、不回落宿主进程(ADR-0033)。自证通过之后才进模型循环。
+ *
  * 返回进程退出码:全部模型冻结成功 = 0,任一失败 = 1。单模型失败不中断整批(失败的模型把诊断
  * 打到 stderr,并写一条 `archive/<slug>/failed-<runId>.json` 失败记录,其余照跑)。三类失败
  * (`tsc` / `contract` / `transport`)都写失败记录;写失败记录本身出错也按该模型失败记账,不崩整批。
@@ -158,6 +169,26 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
   // runId 与 generatedAt 取同一个时刻:前者进目录名 / 失败记录文件名,后者进记录里的留档位。
   const startedAt = now();
   const runId = runIdOf(startedAt);
+  // 由安装根推 rootfs:打包形态下执行器的模块位置上溯不可用(见 `GenerationRequest.rootfsDir`)。
+  const rootfsDir = options.rootfsDir ?? join(root, SANDBOX_ROOTFS_DIR);
+
+  // ── 启动自证:一批一次,失败即整批失败(ADR-0033) ──
+  //
+  // 位置在**第一次模型调用之前**:等到第一步 `sandbox.run` 才炸,钱已经花了、模型已经跑了
+  // 一步,而失败会以「这一步怎么了」的面目出现——那是最容易归错因的一种红。放在这里,整批
+  // 一个会话都不会启动,报错就是「这台机器的沙箱起不来」本身(文本里带三种已知成因)。
+  //
+  // 粒度是**每批一次**而不是每步一次:自证问的是「这台机器的内核能力够不够」,它在一批之内
+  // 不会变;逐步重做只是把同一件事问 N 遍,而它要真起一次 bwrap。
+  //
+  // 也**不降级**:拿不到沙箱就换宿主进程跑,等于造出第二套威胁模型(ADR-0033「不可用就失败,
+  // 不降级」)。所以这里直接抛,编排层把它收成非零退出。
+  (
+    options.preflight ??
+    ((): void => {
+      sandbox.preflight({ rootfsDir });
+    })
+  )();
   // 默认客户端包一层,把会话 ID 传进去(测试注入桩保持原样)。绑定必须在 runId 就绪之后,
   // 且 ID 由 runId + slug 确定性派生——pipeline 每轮现造客户端,重试重走 send,若在里面
   // 现生成随机 ID,多轮回喂会拿到不同会话,直接违反服务端的缓存要求。
@@ -170,8 +201,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     runId,
     createClient,
     now,
-    // 由安装根推 rootfs:打包形态下执行器的模块位置上溯不可用(见 `GenerationRequest.rootfsDir`)。
-    rootfsDir: join(root, SANDBOX_ROOTFS_DIR),
+    rootfsDir,
     ...(options.agentPrompt === undefined ? {} : { agentPrompt: options.agentPrompt }),
     ...(options.workspaceDir === undefined ? {} : { workspaceDir: options.workspaceDir }),
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
@@ -179,7 +209,6 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
       ? {}
       : { totalWallClockMs: options.totalWallClockMs }),
     ...(options.stepWallClockMs === undefined ? {} : { stepWallClockMs: options.stepWallClockMs }),
-    ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
     ...(options.trialPlan === undefined ? {} : { trialPlan: options.trialPlan }),
     ...(options.evaluateScoring === undefined ? {} : { evaluateScoring: options.evaluateScoring }),

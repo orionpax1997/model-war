@@ -8,8 +8,9 @@
  * - `requestHandler` 是薄壳—宿主通道(fd 3)的**唯一入口**:给了就按「一行进、一行出」把请求
  *   转给它。协议体在 `@model-war/schema` 的 `tool-channel.ts`,应答端是
  *   `agent/host` 的 `createSessionTools(...).requestHandler`;执行器只负责那条 fd 的开关。
- * - `sandbox.preflight()` 是启动自证:失败即抛,**不降级**到宿主进程。任何一场会话在第一步之前
- *   都应该先跑它一次(票 05 的接线)。
+ * - `sandbox.preflight()` 是启动自证:失败即抛,**不降级**到宿主进程。它的接线位置是**批入口**
+ *   (`run.ts` 的 `runGeneration`,一批一次、在第一次模型调用之前):自证问的是「这台机器的
+ *   内核能力够不够」,一批之内不会变,而每步重做只是把同一件事问 N 遍。
  *
  * ── 为什么默认 rootfs 路径从模块自身位置往上数 ──
  * rootfs 是入库产物,路径真源在 `@model-war/schema`(`SANDBOX_ROOTFS_DIR`,相对仓库根)。
