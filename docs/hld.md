@@ -106,11 +106,11 @@
 
 | 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick` | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、验收落点门禁;**零构建**,贴得住每轮编辑循环 |
+| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
 | 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
-| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑 |
+| 按需 → 夜间 | `check:sandbox`、`check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑。`check:sandbox` 要内核能力(非特权 user namespace)与系统装的 `bubblewrap`,所以它自己一条腿:先跑隔离那四件事,再跑真 bwrap 下的一场真会话(vitest 的 `sandbox` project) |
 | 按需(本机,不进任何链) | `check:gen-grid` | **一次 `evaluate` 真跑满一张网格**:它的前提是四份钉死的陪练存档,而 `archive/` 不入库——干净克隆上跑不起来,所以它不进夜间矩阵(那会让「CI 红」与「这台机器没有本地档案」同形)。单测里的真网格判据由 `packages/gen/src/agent/host/evaluate-service.test.ts` 与 `pipeline.test.ts` 用形状真实的假试跑承担 |
 | 按需 → 夜间 | `mutate` / `mutate:<分片>` / `scan` | `mutate*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`scan` 仍**只观测、不设红线** |
 | 按需(不进任何链) | `lint:diagnose` | **测试纪律规则的诊断**:把 oxlint 那几条 vitest 规则报的命中拆成形态与风险(「整条用例的断言都在守卫里」= 可能零断言执行;「部分守卫」= 盲区;循环体 = 逐元素检查),落 `reports/lint/vitest-rules.md`。规则只报位置不报风险,位置与风险不是一回事——命中数本身说明不了有没有假绿来源,这份报告把它变成可复算的判定 |
