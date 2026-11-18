@@ -55,9 +55,12 @@ import {
 import { archiveShapeVersionOf, optimizationMetaOf } from "./archive-optimization.js";
 import {
   archiveShapeOf,
+  contaminationOf,
+  CONTAMINATION_THRESHOLDS,
   stepsOf,
   stepGroupsOf,
   type ReportArchiveShape,
+  type ReportContamination,
   type ReportPercentiles,
   type ReportSteps,
 } from "./archive-report-steps.js";
@@ -585,6 +588,10 @@ export type ArchiveReport = {
    * 零步会话是 `steps` 在场、`entries: []`（ADR-0031 的合法形状），两者不混用。
    */
   readonly steps: ReportSteps | null;
+  /**
+   * 受污染会话的分层（ADR-0036）。`null` = 这一档不属本口径（one-shot 档读不到不完整会话）。
+   */
+  readonly contamination: ReportContamination | null;
   readonly failure: {
     readonly classification: string;
     readonly diagnosticsCount: number;
@@ -1554,6 +1561,7 @@ const readRecord = (
     modelVersion: typeof record.modelVersion === "string" ? record.modelVersion : null,
     shape: archiveShapeOf(record, shape),
     steps,
+    contamination: contaminationOf({ shape, rounds }),
     runId,
     source,
     runScope:
@@ -1885,6 +1893,17 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     reading.count === 0
       ? "不适用"
       : `${reading.p50} / ${reading.p95} / ${reading.max}（n=${reading.count}）`;
+  /**
+   * 受污染那一格的三态：`null`（one-shot 档不属本口径）/ `clean` / `contaminated`。
+   * 累计退避是 `null` 时写 null 并注明原因，不写成 0 秒。
+   */
+  const renderContamination = (reading: ReportContamination | null): string => {
+    if (reading === null)
+      return "不适用（one-shot 档该列恒 null：`readFailureRecords` 刻意跳过参赛模型，本报告不改那条口径——不是「没撞过限流」）";
+    const backoff =
+      reading.backoffMs === null ? "null（生成侧日志行还不记退避时延）" : `${reading.backoffMs} ms`;
+    return `${reading.state}（429 尝试 ${reading.rateLimitedAttempts} 次；累计退避 ${backoff}；命中判据=${reading.reasons.length === 0 ? "无" : reading.reasons.join(" / ")}）`;
+  };
   const labels = {
     sendMs: "sendMs",
     input: "输入 token",
@@ -1995,6 +2014,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       // 分组维度与形状事实：步级分位的分组键就是这两格（ADR-0035）。
       `- 分组键：modelVersion=${escape(report.modelVersion ?? "null")}；harnessDigest=${escape(report.shape.harnessDigest ?? "null")}`,
       `- 形状：archiveSchemaVersion=${report.shape.archiveSchemaVersion}；harness=${escape(report.shape.harnessVersion ?? "null")}；上下文窗口=${report.shape.contextLength ?? "null"}；终止=${report.shape.termination ?? "null"}${report.shape.atStep === null ? "" : `（第 ${report.shape.atStep} 步）`}`,
+      `- 受污染：${renderContamination(report.contamination)}`,
     );
     if (report.failure !== null)
       out.push(
@@ -2238,15 +2258,39 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       "",
       "## 步级分位（按 modelVersion + harnessDigest 分组）",
       "",
-      "> 分位按会话里每一步的读数汇总（最近秩，不插值）；会话中位数是各会话中位数的中位数。步级成本全是诊断列，不是排名主指标。",
+      "> 分位按会话里每一步的读数汇总（最近秩，不插值）；会话中位数是各会话中位数的中位数。受污染会话按 ADR-0036 单列在下一张表、不参与本表分位——「已单列」一列把排除做成可见，而不是让它静默地少几行。步级成本全是诊断列，不是排名主指标。",
       "",
-      "| modelVersion | harnessDigest | 会话 | 步数 | stepMs p50/p95/max | sendMs p50/p95/max | 会话中位数 stepMs |",
-      "| --- | --- | ---: | ---: | --- | --- | ---: |",
+      "| modelVersion | harnessDigest | 干净会话 | 步数 | stepMs p50/p95/max | sendMs p50/p95/max | 会话中位数 stepMs | 已单列（受污染） |",
+      "| --- | --- | ---: | ---: | --- | --- | ---: | ---: |",
       ...groups.map(
         (group) =>
-          `| ${escape(group.modelVersion ?? "null")} | ${escape(group.harnessDigest ?? "null")} | ${group.sessions} | ${group.steps} | ${renderPercentiles(group.stepMs)} | ${renderPercentiles(group.sendMs)} | ${group.sessionMedianStepMs ?? "null"} |`,
+          `| ${escape(group.modelVersion ?? "null")} | ${escape(group.harnessDigest ?? "null")} | ${group.sessions} | ${group.steps} | ${renderPercentiles(group.stepMs)} | ${renderPercentiles(group.sendMs)} | ${group.sessionMedianStepMs ?? "null"} | ${group.contaminatedSessions} |`,
       ),
     );
+  }
+  /** 受污染会话：成绩保留，但单列。阈值由常量渲染进脚注，不藏在代码里。 */
+  const contaminated = reports.filter((report) => report.contamination?.state === "contaminated");
+  if (reports.length > 0) {
+    out.push(
+      "",
+      "## 受污染会话（单列，成绩保留）",
+      "",
+      `> 判据在报告侧（ADR-0036）：累计退避 > ${CONTAMINATION_THRESHOLDS.backoffMs} ms 或 429 次数 ≥ ${CONTAMINATION_THRESHOLDS.rateLimitedAttempts} 即受污染。两个数都是估值不是实测；返第一季数据时改的只是报告侧阈值，不动采集。撞过限流的会话**成绩不作废**：步数、被挡次数、等了多少秒、分数都在下面的表里。`,
+      "> one-shot 档这一格恒 null：`readFailureRecords` 刻意跳过参赛模型（`reporter.ts`），本报告不为封存的历史榜改那条口径——所以「没有受污染会话」不等于「所有会话都干净」。累计退避今天没有落点（生成侧日志行还不记 `backoffMs`），那一格写 null 而不是 0：缺数据不补零，此时判据实际由 429 次数承担。",
+      "",
+    );
+    if (contaminated.length === 0)
+      out.push("- 本次报告里没有受污染会话（one-shot 档该列恒 null，不代表干净）。");
+    else
+      out.push(
+        "| 模型 | 运行标识 | modelVersion | harnessDigest | 步数 | 429 次数 | 累计退避 | stepMs p50 | 最终候选成绩 | 终止 |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
+        ...contaminated.map((report) => {
+          const contamination = report.contamination!;
+          const finalScore = report.scores[report.scores.length - 1];
+          return `| ${escape(report.model)} | ${escape(report.runId)} | ${escape(report.modelVersion ?? "null")} | ${escape(report.shape.harnessDigest ?? "null")} | ${report.steps?.entries.length ?? "null"} | ${contamination.rateLimitedAttempts} | ${contamination.backoffMs ?? "null"} | ${report.steps?.stats.stepMs.p50 ?? "null"} | ${finalScore === undefined ? "不适用" : renderScore(finalScore.generation)} | ${report.shape.termination ?? "null"} |`;
+        }),
+      );
   }
   return `${out.join("\n")}\n`;
 };

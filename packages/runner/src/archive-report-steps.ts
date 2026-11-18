@@ -124,16 +124,53 @@ export type ReportSteps = {
   readonly stats: ReportStepStats;
 };
 
+/**
+ * 受污染会话的判定阈值（ADR-0036）。
+ *
+ * **它在这里是命名的，不是藏起来的**：报告脚注由这两个数渲染，读者不必猜「60 s 是哪来的」。
+ * 两个数都是估值而不是实测（ADR-0036 残余风险 4），回第一季数据时改的只是这里。
+ */
+export const CONTAMINATION_THRESHOLDS = {
+  /** 累计退避超过它 = 不是抖动。 */
+  backoffMs: 60_000,
+  /** 429 次数达到它 = 被反复挡住。 */
+  rateLimitedAttempts: 3,
+} as const;
+
+export type ReportContaminationReason = "rate-limited>=3" | "backoff>60s";
+
+/**
+ * 「这个会话撞过限流」——数据的分层，不是数据的注解（ADR-0036）。
+ *
+ * 成绩不因此作废：受污染会话照常进报告（成绩、步数、被挡几次、等了多少秒都在），只是单列。
+ * one-shot 档这一格恒 `null`：`readFailureRecords` 刻意跳过参赛模型，本报告不为封存的历史榜
+ * 改那条口径（ADR-0036 的代价条款）。
+ */
+export type ReportContamination = {
+  readonly state: "clean" | "contaminated";
+  /** `failureKind: "rate-limited"` 的尝试次数；`0` 是真实零次，不是缺数据。 */
+  readonly rateLimitedAttempts: number;
+  /**
+   * 累计退避毫秒。生成侧今天的日志行还**不记**这一格（ADR-0036 定的记账字段，采集归传输那一票），
+   * 所以今天读出来是 `null`：缺数据不补零，也不会被当成 0 秒。
+   */
+  readonly backoffMs: number | null;
+  readonly reasons: readonly ReportContaminationReason[];
+};
+
 /** 步级分位的一个分组：键是 `modelVersion + harnessDigest`（与榜键同一套维度）。 */
 export type ReportStepGroup = {
   readonly modelVersion: string | null;
   readonly harnessDigest: string | null;
+  /** 参与分位的会话数（**干净**会话）。 */
   readonly sessions: number;
   readonly steps: number;
   readonly stepMs: ReportPercentiles;
   readonly sendMs: ReportPercentiles;
   /** 会话级中位数：先取每个会话的中位数，再取这些中位数的中位数。 */
   readonly sessionMedianStepMs: number | null;
+  /** 同一分组里被单列的受污染会话数：排除是**可见**的，不是静默的。 */
+  readonly contaminatedSessions: number;
 };
 
 const EMPTY_PERCENTILES: ReportPercentiles = { p50: null, p95: null, max: null, count: 0 };
@@ -305,9 +342,41 @@ export const stepsOf = (input: {
 };
 
 /**
+ * 受污染判定（ADR-0036）。判据在**报告侧**，采集侧只负责把 `failureKind` 写进尝试证据。
+ *
+ * `null` = 这一档不属本口径：one-shot 档读不到「不完整会话」（`readFailureRecords` 跳过参赛
+ * 模型），所以这一列在历史档上恒为 `null`，不是「没有撞过限流」。
+ */
+export const contaminationOf = (input: {
+  readonly shape: "legacy" | typeof ARCHIVE_SCHEMA_VERSION;
+  readonly rounds: readonly ArchiveReportRound[];
+}): ReportContamination | null => {
+  if (input.shape !== ARCHIVE_SCHEMA_VERSION) return null;
+  let rateLimitedAttempts = 0;
+  let backoffMs: number | null = null;
+  for (const round of input.rounds) {
+    for (const attempt of round.attempts)
+      if (attempt.failureKind === "rate-limited") rateLimitedAttempts += 1;
+    if (round.backoffMs !== null) backoffMs = (backoffMs ?? 0) + round.backoffMs;
+  }
+  const reasons: ReportContaminationReason[] = [];
+  if (rateLimitedAttempts >= CONTAMINATION_THRESHOLDS.rateLimitedAttempts)
+    reasons.push("rate-limited>=3");
+  if (backoffMs !== null && backoffMs > CONTAMINATION_THRESHOLDS.backoffMs)
+    reasons.push("backoff>60s");
+  return {
+    state: reasons.length === 0 ? "clean" : "contaminated",
+    rateLimitedAttempts,
+    backoffMs,
+    reasons,
+  };
+};
+
+/**
  * 步级分位按 `modelVersion + harnessDigest` 分组（ADR-0035：与榜键同一套维度）。
  *
- * 没有步的档（v1 / v2）不进任何分组：它们没有可比的步。
+ * **受污染会话不参与分位**（ADR-0036「主排名只放干净会话」），但分组里仍报出被单列了几场——
+ * 把排除做可见，而不是让读者以为这一组就只有这么多会话。没有步的档（v1 / v2）不进任何分组。
  */
 export const stepGroupsOf = (reports: readonly ArchiveReport[]): readonly ReportStepGroup[] => {
   const groups = new Map<string, ArchiveReport[]>();
@@ -321,6 +390,7 @@ export const stepGroupsOf = (reports: readonly ArchiveReport[]): readonly Report
   const entriesOf = (report: ArchiveReport): readonly ReportStep[] => report.steps?.entries ?? [];
   const result: ReportStepGroup[] = [];
   for (const bucket of groups.values()) {
+    const clean = bucket.filter((report) => report.contamination?.state !== "contaminated");
     const valuesOf = (
       reportsIn: readonly ArchiveReport[],
       pick: (entry: ReportStep) => number | null,
@@ -331,7 +401,7 @@ export const stepGroupsOf = (reports: readonly ArchiveReport[]): readonly Report
           return value === null ? [] : [value];
         }),
       );
-    const sessionMedians = bucket.flatMap((report) => {
+    const sessionMedians = clean.flatMap((report) => {
       const median = report.steps?.stats.sessionMedianStepMs ?? null;
       return median === null ? [] : [median];
     });
@@ -339,11 +409,12 @@ export const stepGroupsOf = (reports: readonly ArchiveReport[]): readonly Report
     result.push({
       modelVersion: first.modelVersion,
       harnessDigest: first.shape.harnessDigest,
-      sessions: bucket.length,
-      steps: bucket.reduce((sum, report) => sum + entriesOf(report).length, 0),
-      stepMs: percentilesOf(valuesOf(bucket, (entry) => entry.stepMs)),
-      sendMs: percentilesOf(valuesOf(bucket, (entry) => entry.sendMs)),
+      sessions: clean.length,
+      steps: clean.reduce((sum, report) => sum + entriesOf(report).length, 0),
+      stepMs: percentilesOf(valuesOf(clean, (entry) => entry.stepMs)),
+      sendMs: percentilesOf(valuesOf(clean, (entry) => entry.sendMs)),
       sessionMedianStepMs: percentilesOf(sessionMedians).p50,
+      contaminatedSessions: bucket.length - clean.length,
     });
   }
   return result.sort(

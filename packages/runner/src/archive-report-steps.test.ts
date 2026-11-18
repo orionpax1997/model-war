@@ -24,7 +24,7 @@ import { TRIAL_MATCHES_PER_CANDIDATE } from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 
 import { readArchiveReports, runArchiveReport } from "./archive-report.js";
-import { stepGroupsOf } from "./archive-report-steps.js";
+import { CONTAMINATION_THRESHOLDS, stepGroupsOf } from "./archive-report-steps.js";
 
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-archive-steps-"));
 afterAll(() => rmSync(scratch, { force: true, recursive: true }));
@@ -329,6 +329,7 @@ it("v3 单候选：候选只有一位时步列照旧，末位即最终候选", (
   expect(report?.steps?.entries[0]?.inputGrowth).toBeNull();
   // 最近秩：两值时 p50 取较低的那个中位数（71 = 70 + 1）。
   expect(report?.steps?.stats.stepMs).toEqual({ p50: 71, p95: 100, max: 100, count: 2 });
+  expect(report?.contamination?.state).toBe("clean");
 });
 
 // ── 左连接的体检 ───────────────────────────────────────────────────────────────
@@ -433,6 +434,7 @@ it("v1 旧档（入库 fixture）：没有步列，日志行里的结果侧 kind
   const [report] = readArchiveReports(root);
   expect(report?.shape.archiveSchemaVersion).toBe("legacy");
   expect(report?.steps).toBeNull();
+  expect(report?.contamination).toBeNull();
   // 旧档的行里带 `kind: "tsc"|"contract"` 与 `errorCodes`——v3 才禁这两个键，旧档照旧读。
   expect(report?.rounds.length).toBe(report?.protocolRounds);
   expect(report?.log.issues).toEqual([]);
@@ -440,6 +442,7 @@ it("v1 旧档（入库 fixture）：没有步列，日志行里的结果侧 kind
   const md = await markdownOf(root);
   expect(md).not.toContain("### 步级度量");
   expect(md).not.toContain("| 步 | 动作 |");
+  expect(md).toContain("受污染：不适用（one-shot 档该列恒 null");
   expect(md).toContain("分组键：modelVersion=");
   // 没有步的档不进分位分组。
   expect(stepGroupsOf(readArchiveReports(root))).toEqual([]);
@@ -452,6 +455,7 @@ it("v2 旧档（入库 fixture）：照旧读出，且渲染格式与非 v3 档�
   expect(report?.shape.archiveSchemaVersion).toBe("legacy");
   expect(report?.steps).toBeNull();
   expect(report?.shape.termination).toBeNull();
+  expect(report?.contamination).toBeNull();
 });
 
 it("零步失败档（steps: []）：不渲染步列，也不把零步读成「缺数据」", async () => {
@@ -554,6 +558,145 @@ it("v3 日志行的 kind 只能是行类型标记：写成结果侧驱动来源�
   expect(report?.log.issues).toEqual([{ line: 1, reason: "v3 日志行的 kind 只能是行类型标记" }]);
 });
 
+// ── 受污染分层（ADR-0036） ────────────────────────────────────────────────────
+
+const rateLimitAttempts = (count: number): readonly Record<string, unknown>[] =>
+  Array.from({ length: count }, (_, index) => ({
+    attempt: index + 1,
+    outcome: "transport-error",
+    failureKind: "rate-limited",
+  }));
+
+it("受污染会话：429 次数达到阈值即单列，成绩与步数保留", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "contaminated",
+    runId: "2026-01-06T00-00-00-001Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 10 },
+      { action: "done", atMs: 600, harnessMs: 1 },
+    ],
+    logs: [
+      {
+        round: 1,
+        kind: "converged",
+        responseConverged: true,
+        sendMs: 500,
+        usage: usageOf(100, 0),
+        attemptEvidence: [
+          ...rateLimitAttempts(CONTAMINATION_THRESHOLDS.rateLimitedAttempts),
+          { attempt: CONTAMINATION_THRESHOLDS.rateLimitedAttempts + 1, outcome: "response" },
+        ],
+      },
+      { round: 2, kind: "converged", responseConverged: true, sendMs: 100, usage: usageOf(200, 0) },
+    ],
+    evaluateSteps: [1],
+    termination: "max-steps",
+  });
+  const [report] = readArchiveReports(root);
+  expect(report?.contamination).toEqual({
+    state: "contaminated",
+    rateLimitedAttempts: CONTAMINATION_THRESHOLDS.rateLimitedAttempts,
+    // 累计退避今天没有落点：缺数据不补零。
+    backoffMs: null,
+    reasons: ["rate-limited>=3"],
+  });
+  // 成绩不作废：候选与步数照旧可读。
+  expect(report?.candidateStages).toBe(1);
+  expect(report?.steps?.entries).toHaveLength(2);
+  // 尝试细分进了报告（ADR-0036「失败必须可读」）。
+  expect(report?.rounds[0]?.attempts.map((attempt) => attempt.failureKind)).toEqual([
+    "rate-limited",
+    "rate-limited",
+    "rate-limited",
+    null,
+  ]);
+
+  const md = await markdownOf(root);
+  expect(md).toContain("## 受污染会话（单列，成绩保留）");
+  expect(md).toContain(
+    `累计退避 > ${CONTAMINATION_THRESHOLDS.backoffMs} ms 或 429 次数 ≥ ${CONTAMINATION_THRESHOLDS.rateLimitedAttempts}`,
+  );
+  expect(md).toContain("| contaminated | 2026-01-06T00-00-00-001Z |");
+  // 受污染会话不参与干净会话的分位。
+  const groups = stepGroupsOf(readArchiveReports(root));
+  expect(groups).toEqual([
+    {
+      modelVersion: "fixture/v3-model",
+      harnessDigest: "3".repeat(64),
+      sessions: 0,
+      steps: 0,
+      stepMs: { p50: null, p95: null, max: null, count: 0 },
+      sendMs: { p50: null, p95: null, max: null, count: 0 },
+      sessionMedianStepMs: null,
+      contaminatedSessions: 1,
+    },
+  ]);
+  expect(md).toContain(
+    "| fixture/v3-model | " + "3".repeat(64) + " | 0 | 0 | 不适用 | 不适用 | null | 1 |",
+  );
+});
+
+it("受污染会话：累计退避超过阈值同样单列（日志行记了 backoffMs 时）", () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "backoff-heavy",
+    runId: "2026-01-06T00-00-00-002Z",
+    steps: [{ action: "done", atMs: 0, harnessMs: 1 }],
+    logs: [
+      {
+        round: 1,
+        kind: "converged",
+        responseConverged: true,
+        sendMs: 90_000,
+        backoffMs: CONTAMINATION_THRESHOLDS.backoffMs + 1,
+      },
+    ],
+  });
+  const [report] = readArchiveReports(root);
+  expect(report?.rounds[0]?.backoffMs).toBe(CONTAMINATION_THRESHOLDS.backoffMs + 1);
+  expect(report?.contamination).toEqual({
+    state: "contaminated",
+    rateLimitedAttempts: 0,
+    backoffMs: CONTAMINATION_THRESHOLDS.backoffMs + 1,
+    reasons: ["backoff>60s"],
+  });
+});
+
+it("干净会话：429 次数不到阈值、退避未记录 → clean，退避读成 null", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "clean",
+    runId: "2026-01-06T00-00-00-003Z",
+    steps: [{ action: "done", atMs: 0, harnessMs: 1 }],
+    logs: [
+      {
+        round: 1,
+        kind: "converged",
+        responseConverged: true,
+        sendMs: 10,
+        usage: usageOf(100, 0),
+        attemptEvidence: [
+          { attempt: 1, outcome: "transport-error", failureKind: "rate-limited" },
+          { attempt: 2, outcome: "response" },
+        ],
+      },
+    ],
+  });
+  const [report] = readArchiveReports(root);
+  expect(report?.contamination).toEqual({
+    state: "clean",
+    rateLimitedAttempts: 1,
+    backoffMs: null,
+    reasons: [],
+  });
+  const md = await markdownOf(root);
+  expect(md).toContain(
+    "受污染：clean（429 尝试 1 次；累计退避 null（生成侧日志行还不记退避时延）；命中判据=无）",
+  );
+  expect(md).toContain("- 本次报告里没有受污染会话（one-shot 档该列恒 null，不代表干净）。");
+});
+
 // ── 分组维度 ──────────────────────────────────────────────────────────────────
 
 it("步级分位按 modelVersion + harnessDigest 分组，会话中位数取各会话中位数的中位数", () => {
@@ -607,6 +750,7 @@ it("步级分位按 modelVersion + harnessDigest 分组，会话中位数取各�
     stepMs: { p50: 210, p95: 420, max: 420, count: 4 },
     // 会话中位数：110（较低中位数）与 320 → 再取中位数 110。
     sessionMedianStepMs: 110,
+    contaminatedSessions: 0,
   });
   expect(groups[1]).toMatchObject({
     modelVersion: "fixture/version-y",
