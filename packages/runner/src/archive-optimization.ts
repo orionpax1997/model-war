@@ -36,6 +36,7 @@ import {
   OPTIMIZATION_GRID_VERSION,
   SELECTION_AGENT_VERSION,
   SELECTION_GRID_VERSION,
+  SELECTION_VERSION,
   type ArchiveAgentSelection,
   type ArchiveMeta,
   type ArchiveOptimization,
@@ -377,10 +378,12 @@ export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
     return;
   }
   const selection = validateSelection(meta.selection);
-  if (selection.version === SELECTION_GRID_VERSION) checkGridSelection(optimization, selection);
-  // v3 的选拔已在上面分派出去；能走到这里的只有 v1 / v2，而两者都有 `stage` 与 `protocolRound`。
+  // v3 的选拔已在上面分派出去：能走到这里的只有 v1 / v2，而两者都有 `stage` 与 `protocolRound`。
+  // 先拒 v3 再分派读法，顺序是**判据**而不是排版：拒读那一条说的是「这份档案自相矛盾」，
+  // 它比「网格关系不合法」更靠近成因。
   if (selection.version === SELECTION_AGENT_VERSION)
     throw new Error("档案形状版本不到 3 时不得带 v3 选拔记录");
+  if (!isLegacySelection(selection)) checkGridSelection(optimization, selection);
   if (
     selection.plan.ruleset !== meta.ruleset ||
     selection.plan.sandboxRuntimeHash !== meta.sandboxRuntimeHash ||
@@ -396,6 +399,23 @@ export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
   )
     throw new Error("选拔候选、冻结 hash 或执行环境与优化存档不一致");
 };
+
+/**
+ * 选拔段是 **v1**（12 场单图）还是**网格**（v2 / v3）。
+ *
+ * ── 为什么单独成判据而不是各写一处比较 ──
+ *
+ * 同一个问题有三处要回答：报告的候选分数读法、报告的计划读法、以及装载期的关系校验。三份
+ * `selection.version === SELECTION_VERSION` 在将来出第四版（比如 v4 也走网格）时会各自漂成
+ * 不同的答案，而它们读的是同一件事——「这份选拔记录按 12 场单图读，还是按网格读」。
+ *
+ * 类型守卫而不是返回字符串：调用点的两侧各自拿到**收窄后的**类型（v1 的 `plan.seeds` 与
+ * 网格的 `plan.matches` 是两个形状，用一句 `??` 合成一个就会在版本之间静默切换语义）。
+ */
+export const isLegacySelection = (
+  selection: ArchiveSelection,
+): selection is Extract<ArchiveSelection, { version: typeof SELECTION_VERSION }> =>
+  selection.version === SELECTION_VERSION;
 
 /**
  * 优化旁证的读入端：按**档案形状版本**分派之后再过 zod 形状与跨字段关系。

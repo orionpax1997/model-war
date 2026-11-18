@@ -53,7 +53,11 @@ import {
   type TrialObservationLine,
 } from "@model-war/schema";
 
-import { archiveShapeVersionOf, optimizationMetaOf } from "./archive-optimization.js";
+import {
+  archiveShapeVersionOf,
+  isLegacySelection,
+  optimizationMetaOf,
+} from "./archive-optimization.js";
 import {
   archiveShapeOf,
   contaminationOf,
@@ -110,10 +114,6 @@ const selectionCandidateScoreOf = (
  * 一个类型,把它写成 `as 0 | 1 | 2` 会让越界静默读成一个不存在的阶段。这里逐个认,认不出就
  * 大声失败。
  */
-const projectAgentCandidate = (
-  candidate: ArchiveOptimizationCandidateAgent,
-  position: number,
-): ArchiveOptimizationCandidate => ({
 const stageOfPosition = (position: number): 0 | 1 | 2 => {
   if (position === 0) return 0;
   if (position === 1) return 1;
@@ -123,6 +123,10 @@ const stageOfPosition = (position: number): 0 | 1 | 2 => {
   );
 };
 
+const projectAgentCandidate = (
+  candidate: ArchiveOptimizationCandidateAgent,
+  position: number,
+): ArchiveOptimizationCandidate => ({
   stage: stageOfPosition(position),
   protocolRound: candidate.step,
   scriptFile: candidate.scriptFile,
@@ -217,7 +221,7 @@ const candidateScoresOf = (
     const selectionReading =
       selection === undefined
         ? NOT_APPLICABLE_SCORE
-        : selection.version === SELECTION_VERSION
+        : isLegacySelection(selection)
           ? legacyScoreReadingOf(selection.candidates[index])
           : gridScoreOf(selection.candidates[index]?.score);
     return {
@@ -1712,10 +1716,9 @@ const readRecord = (
             rulesetSha256: selection.plan.rulesetSha256,
             sandboxRuntimeHash: selection.plan.sandboxRuntimeHash,
             // 选拔计划本身（不搬 32 场明文）：v2 / v3 = 生成阶段那张网格，v1 = 12 场单图。
-            plan:
-              selection.version === SELECTION_VERSION
-                ? legacySelectionPlanReportOf(selection.plan, `${source}#selection.plan`)
-                : gridPlanReportOf(selection.plan, `${source}#selection.plan`),
+            plan: isLegacySelection(selection)
+              ? legacySelectionPlanReportOf(selection.plan, `${source}#selection.plan`)
+              : gridPlanReportOf(selection.plan, `${source}#selection.plan`),
           },
     protocolRounds,
     rounds,
