@@ -22,12 +22,7 @@
  * 在这里重写一份同名类型,等于给同一个事实两个家。
  */
 
-import type {
-  ArchiveOptimizationCandidateAgent,
-  ArchiveStep,
-  ArchiveStepResult,
-  ArchiveTermination,
-} from "@model-war/schema";
+import type { ArchiveStep, ArchiveStepResult, ArchiveTermination } from "@model-war/schema";
 
 import type { RequestHandler } from "./sandbox/index.js";
 
@@ -64,16 +59,27 @@ export type AgentExecResult = {
   readonly done?: boolean;
   /** 结果侧证据(`tsc` / `contract` 与错误码);没有结果时缺席,不写空壳。 */
   readonly result?: ArchiveStepResult;
-  /** 这一步里那次 `evaluate` 评出的候选(由宿主服务产出)。 */
-  readonly candidate?: ArchiveOptimizationCandidateAgent;
+  /**
+   * 这一步里**真评出过成绩**的那次 `evaluate` 的提交身份。
+   *
+   * 它是宿主服务的事实,loop 只搬运(见 `pipeline.ts` 的「宿主侧的事实怎么回到步骤上」)。
+   * 候选条目的 `step` 由 loop 填(步号),`score` 与 `matchCount` 由网格填(票 06)。
+   */
+  readonly submission?: {
+    readonly scriptSha256: string;
+    readonly hostPath: string;
+    readonly observationsPath: string;
+  };
+  /** 这是第几次 `evaluate`(1 起,由 dispatcher 的计数器给)。 */
+  readonly evaluateCall?: number;
 };
 
 /** 执行一步。 */
 export type AgentExecutor = (request: AgentExecRequest) => Promise<AgentExecResult>;
 
 /** 一次评测的结论。`failed` 是「跑了但没产出候选」,不是「沙箱坏了」。 */
-export type EvaluateOutcome =
-  | { readonly kind: "candidate"; readonly candidate: ArchiveOptimizationCandidateAgent }
+export type EvaluateProbeOutcome =
+  | { readonly kind: "scored" }
   | { readonly kind: "failed"; readonly stderr: string };
 
 /**
@@ -86,7 +92,7 @@ export type EvaluateOutcome =
  * 接线时看不出自己在接哪一个,而 ADR-0030 已裁掉「冒烟试跑」那一档——所以这里按概念命名。
  */
 export interface EvaluateProbe {
-  evaluate(): Promise<EvaluateOutcome>;
+  evaluate(): Promise<EvaluateProbeOutcome>;
 }
 
 /**

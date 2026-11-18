@@ -1,187 +1,169 @@
 /**
- * 单模型的生成轮:发一次 → 编译 → 静态校验 → 冻结期试跑 → 原子冻结,失败则**只回喂校验/试跑文本**再试
- * (hld §2.2.6 / §7.4;契约 §2.2 / §4)。
+ * 单模型生成:**一个单会话 loop**,一次模型调用一步(ADR-0032)。
  *
- * ── 边界:≤N 轮只回喂校验文本;试跑轮次追加试跑文本 ──
+ * ── 外循环是**替换**,不是包裹 ──
  *
- * 一轮的全部动作(发 → 编译 → 迭代期校验 → 冻结期校验 → 冻结期试跑)收在 `sendOneRound` 里,吃**这一轮
- * 完整发出的 messages**,吐这一轮的结论(`RoundResult`)。`generateOneModel` 把它包进
- * `for` 循环:第 1 轮 = 初次生成;第 r>1 轮把上一轮驱动失败的**面向模型文本**逐字追加为一条
- * **新增的 user 消息**(前置一条 `assistant` = 上一轮模型回文本),每轮把**整个 messages 全量
- * 重发**——不依赖 provider 会话状态(契约 §2.2)。
+ * 旧形态的那条 `for (round)` 与它的四项产出(阶段推进、反馈轮数、跨阶段复用、网格计划与陪练
+ * 身份)在 v3 里一个都不剩:它们是 one-shot 形态的产物,留着等于每加一个字段、每条断言都要
+ * 维护两遍。这里只有一条线性链:送历史 → 解析动作 → 执行 → 记一步 → 再送。
  *
- * 回喂内容**只有**校验/试跑文本:合约静态校验失败 = 校验器 stdout;编译失败 = tsc 诊断文本;
- * 试跑拦下 = 试跑子进程 stdout（第几场、第几 tick、哪项预算、超了多少）。不加
- * 前后缀、不加引擎诊断、不含任何对局信息（试跑 stdout 本身就是面向模型的，不含胜负与名次）。轮数上限 `protocolRounds` 是**模型调用总轮数,
- * 含第 1 轮**(`config.protocolRounds ?? request.maxRounds ?? 5`),用尽即止。
+ * 于是「阶段」这个概念整个消失(ADR-0031):`evaluate` 就是提交,三次是配额上限而不是时序,
+ * 候选的数组下标就是「第几次评测」。`stage` / `protocolRound` / `feedbackRounds` / `plan` /
+ * `reusedFromStage` 都不进 v3 的优化段。
  *
- * 显式 `scoreSourceFeedback` 固定生成三个有效候选，前两个各回喂自身事实。
- * 编译、静态与预算失败只消耗当前阶段诊断额度，每阶段统一沿用原默认五次响应；
- * 逐模型 `protocolRounds` 与测试注入的 `maxRounds` 只影响未启用时的总轮数。
+ * ── 唯一生成入口 ──
  *
- * ── `prompts` / `generationLog` 逐轮追加 ──
+ * `generateOneModel` 仍是唯一入口,`run.ts` 只调它一次一个模型。**不保留「步数为一」的退化
+ * 路径**:它没有消费者,只有维护成本。
  *
- * `meta.prompts[r]` = 第 r 轮那整份 transcript 的 `messages.map((m) => m.content).join("\n\n")`,
- * 长度 === 已收敛协议轮数(`buildArchiveMeta` 由它推 `protocolRounds`,两者相等是装载期不变量)。
- * `generationLog` 逐收敛轮一行；规范配置传输失败另有未收敛的末行证据。轮数用尽仍失败时,**不建** `archive/<slug>/<runId>/`,只返回
- * `{ kind: "failed", failure }`——失败记录写盘是 `packages/gen/src/failure.ts` 的活。
+ * ── 终止与落档正交 ──
  *
- * ── 传输层错误的边界 ──
+ * 循环只回答「怎么停」(六个原因,见 `agent/loop.ts`),落档只看「有没有候选」:有候选就是成功
+ * 档(成绩取**最后一次** `evaluate` 评的那个版本),一个候选都没有就是失败档。所以墙钟耗尽
+ * 不会被判成失败——那是拿资源约束当成绩判据。
  *
- * 一次 `send` 由 `retry.ts` 的 `retryTransport` 包住:429 / 网络失败 / 空闲超时(可重试的
- * `TransportError`)与截断(`finishReason === "length"`)按各自预算重发**同一轮**,不追加 messages、
- * 不占用 `protocolRounds`;5xx 与其余 4xx 立即收口(ADR-0036)。规范配置在轮日志的 attemptEvidence
- * 保留各次尝试及其 `failureKind`;旧配置日志语义不变。重试到上限或遇到不可重试的错误(5xx / 400 /
- * 缺凭证)→ 轮循环停在该轮,返回 `transport` 分类的 `failed`(写盘归 `packages/gen/src/failure.ts`)。
+ * ── 本文件只做接线,判据在各自的家里 ──
  *
- * ── `kind` 与 `errorCodes` 的取值 ──
+ * | 判据 | 家 |
+ * |---|---|
+ * | 动作语法、`done` 语义、截断、守卫、步数、历史 | `agent/{action,truncate,limits,loop,history}.ts` |
+ * | 配额、会话墙钟、`check` / `evaluate` 服务、块切分 | `agent/host/`(票 04) |
+ * | 沙箱隔离与单步墙钟 | `agent/sandbox/`(票 03) |
+ * | 档案形状与轮数公式 | `archive.ts` + `packages/schema`(票 01) |
  *
- * `kind` 取「驱动本轮结论的那一栏」:编译没过 → `tsc`;编译过了 → `contract`(校验与试跑阶段,
- * 过或不过都算它驱动,所以**成功轮的 kind 也是 `contract`**)。试跑拦下的轮与静态校验拦下的轮
- * 同属 `contract`（日志形状不为试跑另开一栏）；两者的区分只在人类可读的 `message`（见 `messageOfFailure`），
- * 不进机器字段。这一栏是「哪一栏驱动」的唯一可读标记。
+ * 本文件因此只说一件事:**这些零件怎么装在一起**。
  *
- * `errorCodes` 的来源**只有一处**:编译失败时从 tsc 诊断文本里拾取 `TS####`(可复算:同一份
- * 诊断文本总能捞出同一组码)。合约失败时**留空数组**,这是**有意写死的决定**,不是留白:
- * 校验器对本包只暴露三样——退出码、stdout、参数;stdout 是**面向模型的合并中文文本**,
- * 每条违规渲染成 `- [拦截|提示] <面向模型的说法> · …`,**没有机器码**。规则层的机器类别名
- * (`forbidden-global` 等)按渲染层的设计**刻意不进 stdout**(「类别名属于机器层……不进面向模型
- * 层的文字」,见 `packages/tools/src/validate/render-violations.ts` 头注),所以从 stdout 里取不到
- * 一个稳定的机器码;渲染层那张 `RULE_LABELS` 中文标签表是「面向模型的说法」而不是机器码,把它抬进
- * 这个机器字段等于把刻意分开的两侧又拆了回去。故本包不猜、不硬编码:合约轮 `errorCodes` 为空,
- * 靠 `kind` 告诉读者哪些轮由 `tsc` 驱动、哪些轮由 `contract` 驱动。
+ * ── 宿主侧的事实怎么回到步骤上 ──
  *
- * `meta.validation` 记的是**判定本轮通过的相位**——迭代期(`--phase iteration`):通过判据就是它
- * (hld §2.2.6;契约 §3):tsc 零错误 **且** 迭代期无 blocking 违规;**只剩非 blocking 提示也算通过**,
- * 那些提示必须进 `validation.errors`(所以这里取 `iteration` 而不是 `freeze`;后述冻结期那一相
- * 的 blocking 判定已经把体积超限挡在提交前,故走到这里时迭代期也不会有 blocking 违规)。
+ * `check` 的 `result`(tsc / 契约错误码)与 `evaluate` 的提交身份都产生在**宿主侧的服务**里,
+ * 而 loop 只看得见沙箱那一步的 stdout / stderr。所以本文件把两个服务**包一层**再交给
+ * dispatcher:包装器把这次调用的事实记进一个「当前步」的槽,`sandbox.run` 一返回就取走。
+ *
+ * 这样切的好处是两个方向都干净:票 04 的服务不知道有人在观察它(它们的签名不变),loop 也不
+ * 需要理解通道协议的字节形态。夹在中间的这一层只搬运,不判定。
  */
 
-import { randomUUID } from "node:crypto";
-
-import { constants, copyFileSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
-
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import {
-  OPTIMIZATION_GRID_VERSION,
-  OPTIMIZATION_FEEDBACK_ROUNDS,
-  OPTIMIZATION_STAGES,
-  type ArchiveGridSelection,
   type ArchiveMeta,
-  type TrialPlan,
-  type AnyArchiveOptimizationCandidate,
-  type ArchiveOptimizationCandidate,
-  type ArchiveOptimizationGrid,
+  type ArchiveOptimizationAgent,
+  type ArchiveOptimizationCandidateAgent,
+  type ArchiveStep,
+  type ArchiveTermination,
   type ArchiveValidation,
-  type FailureClassification,
   type FailureRecord,
-  type JsonValue,
+  type TrialGridScore,
 } from "@model-war/schema";
 
-import {
-  buildArchiveMeta,
-  commitArchive,
-  discardStagingDir,
-  openStagingDir,
-  sha256Hex,
-  SCRIPT_SOURCE_NAME,
-  SCRIPT_PRODUCT_NAME,
-} from "./archive.js";
-import { compileScript } from "./compile.js";
-import { extractScriptSource } from "./extract.js";
 import type { ModelConfig } from "./config.js";
-import { generationParams, generationRequestEvidence } from "./generation-policy.js";
 import {
   projectUsage,
   responseAttemptEvidence,
   transportFailureAttemptEvidence,
   usageCaliberOf,
   type AttemptEvidence,
+  type UsageCaliber,
 } from "./generation-evidence.js";
-import type { ChatMessage, ModelParams } from "./model-client.js";
+import { generationParams, generationRequestEvidence } from "./generation-policy.js";
+import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./model-client.js";
 import {
-  missingTrialGridMatches,
-  observationsPathOf,
-  readTrialObservations,
-  renderScoreSourceFeedback,
-} from "./observations.js";
-import { renderBaseTemplate } from "./prompt.js";
-import { retryTransport, type TransportFailure } from "./retry.js";
+  SCRIPT_SOURCE_NAME,
+  buildArchiveMeta,
+  commitArchive,
+  discardStagingDir,
+  openStagingDir,
+  sha256Hex,
+} from "./archive.js";
+import { loadAgentPrompt, type AgentPrompt } from "./agent-prompt.js";
+import { harnessIdentity } from "./agent/identity.js";
+import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS } from "./agent/limits.js";
+import { runAgentSession, type AgentLoopResult } from "./agent/loop.js";
+import { sandbox } from "./agent/sandbox/index.js";
+import { splitDoneBlock } from "./agent/host/done.js";
+import { createCheckService } from "./agent/host/check-service.js";
+import { createEvaluateService } from "./agent/host/evaluate-service.js";
+import { createSessionTools } from "./agent/host/dispatcher.js";
+import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
+import { retryTransport } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
-import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
-import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
-import { gridEvidenceDigests, reuseTrialGrid, type ReusableGridEvidence } from "./trial-reuse.js";
-import { runSelection, verifySelection, type SelectionArtifact } from "./selection.js";
+import type { TrialProbe } from "./trial.js";
+import { compileScript, type CompileResult } from "./compile.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
-/** 未在配置里给 `protocolRounds` 时的 gen 内部默认:模型调用总轮数,含第 1 轮。 */
-const DEFAULT_PROTOCOL_ROUNDS = 5;
-
-/** opt-in 批次统一：每阶段一次候选生成，再允许最多四次诊断修复。 */
-const REPAIR_CALLS_PER_STAGE = 4;
+export type { FailureClassification } from "@model-war/schema";
 
 /**
- * `meta.generationLog` 的收敛行形状(hld §2.2.6;契约 §2)。`kind`
- * 与 `errorCodes` 沿用既有取值；规范配置增加白名单请求与逐尝试证据。
+ * 生成日志一行:一次模型调用一行,只装**发送侧**证据(ADR-0031)。
+ *
+ * 「这一轮被什么驱动」「编译错误码」属于结果侧,真源在过程记录的条目里——日志不再复写一份。
+ * 唯一保留的行内判别符是 `kind`:传输末行与收敛行形状本就不同,它需要说明「这一行按哪种形状读」。
  */
 export type GenerationLogEntry = {
-  /** 1 起;第 1 轮 = 初次生成。 */
   readonly round: number;
-  /** 驱动本轮结论的那一栏:编译没过是 `tsc`,否则是 `contract`(校验阶段)。 */
-  readonly kind: "tsc" | "contract";
-  /** 实际调用的模型标识(与 `meta.model` / `meta.modelVersion` 的分工见 `generateOneModel`)。 */
+  readonly kind: "converged" | "transport";
   readonly model: string;
   readonly params: ModelParams;
-  readonly usage: unknown;
-  readonly finishReason: string;
+  /** 原始用量;规范配置下按口径投影(与既有的 `usage_semantic` / `usage_source` 一脉相承)。 */
+  readonly usage?: unknown;
+  readonly finishReason?: string;
+  /**
+   * 这一步用了几次模型调用。
+   *
+   * 第二次只可能是**截断重试**(ADR-0035):它作为同一步的第二个尝试,日志仍一行。传输重试的
+   * 枪数另记在 `attemptEvidence` 里——那是另一件事(退避与状态码分类,ADR-0036)。
+   */
+  readonly attempts?: number;
+  /**
+   * 收敛标记:`true` = 这一行是收敛行,`false` = 传输末行。
+   *
+   * 读侧靠它区分「未收敛日志只能是传输失败末行」这条判据(报告侧 `archive-report.ts` 的那一条
+   * 与 `kind` 一起用)。ADR-0031 已裁「行类型」是唯一保留的行内判别符;它是那个判别的既有形状,
+   * 不是第二个事实。
+   */
+  readonly responseConverged: boolean;
   readonly requestEvidence?: ReturnType<typeof generationRequestEvidence>;
-  readonly responseConverged?: true;
-  readonly stopDetails?: import("./model-client.js").ModelResponse["stopDetails"];
-  /** 收敛响应和所有尝试分别计数；逐尝试字段可能重叠，不作为账单求和。 */
   readonly attemptEvidence?: readonly AttemptEvidence[];
-  /**
-   * 本轮模型调用段的墙钟毫秒(整数):从发出第一次 `send` 到拿到回文本,**含退避重试的等待**
-   * (重试是模型端延迟的一部分,也是用户真等的时间)。不含编译、校验与冻结期试跑——那些是本地
-   * 动作,计进来会把对局时长灌进「模型耗时」。规范配置传输耗尽的耗时另记在传输末行。
-   */
-  readonly sendMs: number;
-  /** 编译失败时是诊断里的 `TS####`;合约轮为空(来源与理由见文件头注)。 */
-  readonly errorCodes: readonly string[];
-};
-
-/** 仅规范配置的失败记录可带此末行；不增加 prompts / protocolRounds，也不伪造收敛 usage。 */
-export type GenerationTransportLogEntry = {
-  readonly round: number;
-  readonly kind: "transport";
-  readonly model: string;
-  readonly params: ModelParams;
-  readonly requestEvidence: ReturnType<typeof generationRequestEvidence>;
-  readonly responseConverged: false;
-  readonly attemptEvidence: readonly AttemptEvidence[];
+  /** 模型段墙钟(含退避)。只作记录,deadline 按不含退避的口径判(ADR-0036)。 */
   readonly sendMs: number;
 };
 
-// 取值域的家在真源包(报告侧要按它分节渲染,是跨进程数据形状而非 gen 私有参数);
-// 这里只是别名,不重列第二份取值表(同 `replay/index.ts` 的 `TickPayload = ReplayTickPayload` 先例)。
-export type { FailureClassification };
+/** 传输末行:形状上的差别只有 `kind` 与缺少用量/停止原因。 */
+export type GenerationTransportLogEntry = GenerationLogEntry & { readonly kind: "transport" };
 
+/**
+ * 失败结论。
+ *
+ * agent 形态下 `prompts` **恒为空**:轮数与起始 prompt 由 `steps` 与首条消息推导(ADR-0031 的
+ * 同一个公式)。这一栏留在类型里是因为 `FailureRecord` 的形状共用,而 `buildFailureRecord` 会
+ * 把「agent 形态又填了 prompts」当成两份会漂的奇据拒掉——所以这里只放空数组。
+ */
 export type ModelFailure = {
-  readonly classification: FailureClassification;
-  /** 该模型逐轮**完整发出**的 prompt 链(每轮一条 `messages.map(m => m.content).join("\n\n")`)。 */
+  readonly classification: "tsc" | "contract" | "transport" | "selection";
   readonly prompts: readonly string[];
-  /** 收敛日志；规范配置在传输失败时可另有一行 GenerationTransportLogEntry。 */
   readonly generationLog: readonly string[];
-  /** 最终诊断(tsc 诊断行,或校验器 stdout 的非空行)。 */
   readonly diagnostics: readonly string[];
-  /** 一行人类可读原因。 */
   readonly message: string;
-  /**
-   * 统一优化中途失败时已验证的有效候选描述（缺席 = 无有效候选或未开启优化）；
-   * 写盘时原样进失败记录，供报告标识已有阶段；选拔失败保留全部三个候选。
-   */
-  readonly candidates?: readonly AnyArchiveOptimizationCandidate[];
+  readonly candidates?: readonly ArchiveOptimizationCandidateAgent[];
   readonly selectionFailure?: FailureRecord["selectionFailure"];
+};
+
+/**
+ * v3 档案里那组「模型面对的世界」与「这次会话怎么走完」的字段。
+ *
+ * 成功档与失败档**同键集合**(ADR-0031):「零候选」是这次会话的结论,不是「少写几个键」的
+ * 理由。所以失败档也带这一组,写盘由 `run.ts` 交给 `writeFailureRecord({ agent })`。
+ */
+export type AgentArchiveFields = {
+  readonly steps: readonly ArchiveStep[];
+  readonly firstPrompt: string;
+  readonly contextLength: number;
+  readonly harnessVersion: string;
+  readonly harnessDigest: string;
+  readonly termination: ArchiveTermination;
+  readonly atStep: number;
 };
 
 export type ModelOutcome =
@@ -197,7 +179,202 @@ export type ModelOutcome =
       readonly slug: string;
       readonly runId: string;
       readonly failure: ModelFailure;
+      readonly agent: AgentArchiveFields;
     };
+
+/**
+ * 一次 `evaluate` 的**成绩**从哪来:票 06 的接缝。
+ *
+ * ── 为什么是「给提交身份、换成绩」这样一个函数 ──
+ *
+ * 一次评测的结论由两半拼成,而两半来自不同的地方:提交身份(**评的是哪份字节**)在宿主侧的
+ * `evaluate` 服务里,成绩(分数、场数)在网格里。本文件只该知道「两半凑齐了就是一个候选」,
+ * 不该知道其中任何一半怎么算。
+ *
+ * ── 本段的缺省实现恒为 `undefined`,这不是缺陷 ──
+ *
+ * 真网格归票 06:计划搬运、32 场、聚合对差表、候选快照的命名与落点都在那里。缺省实现什么都不
+ * 评,于是 `evaluate` 一次也不产出候选,**零候选即失败档**(ADR-0030)。这条路径因此是完整可
+ * 跑的:会话照跑、步照记、档照落,只是没有成绩。
+ */
+export type EvaluateScoring = (
+  submission: EvaluateSubmission,
+) => Promise<{ readonly score: TrialGridScore; readonly matchCount: number } | undefined>;
+
+/** 一次 `evaluate` 的提交身份(服务算的)与它在会话里的位置(loop 算的)。 */
+export type EvaluateSubmission = {
+  /** 步号(1 起):候选条目里的 `step` 就是它。 */
+  readonly step: number;
+  /** 第几次评测(1 起,dispatcher 的计数器)。 */
+  readonly call: number;
+  readonly scriptSha256: string;
+  readonly hostPath: string;
+  /** 观测出口(沙箱视角的路径)。 */
+  readonly observationsPath: string;
+  /** 观测文件相对 `archive/<slug>/` 的 basename(候选条目的 `observationsFile`)。 */
+  readonly observationsFile: string;
+};
+
+/** 一次都没跑过 `check` 时的校验结论:记「没查」,而不是伪造一次「查过且干净」。 */
+const NO_CHECK_VALIDATION: ArchiveValidation = {
+  passed: false,
+  errors: ["本会话没有跑过 check:没有校验结论可记(这不是「查过且干净」)。"],
+};
+
+/**
+ * 当前步的事实槽:宿主侧的服务在应答时往里写,`sandbox.run` 一返回就取走。
+ *
+ * 槽只活一步:每次执行前清空、之后取走。跨步残留会让「上一步的 tsc 错误码」出现在这一步上,
+ * 而那种错位在报告里看起来完全正常——所以宁可在每次执行前清一次。
+ */
+type StepFacts = {
+  result?: ArchiveStep["result"];
+  submission?: {
+    readonly scriptSha256: string;
+    readonly hostPath: string;
+    readonly observationsPath: string;
+  };
+  evaluateCall?: number;
+};
+
+const createStepFacts = (): { readonly current: StepFacts; readonly reset: () => void } => {
+  const current: StepFacts = {};
+  return {
+    current,
+    reset: () => {
+      delete current.result;
+      delete current.submission;
+      delete current.evaluateCall;
+    },
+  };
+};
+
+/**
+ * 把 `check` / `evaluate` 包一层,让它们的事实落进当前步的槽。
+ *
+ * 包装器**不改语义**:原样调用、原样返回,只是在返回之前顺手记一笔。所以它在 dispatcher 眼里
+ * 与没包一样,配额、墙钟、拒绝语义一个字都没动。
+ */
+const observeServices = (options: {
+  readonly root: string;
+  readonly model: string;
+  readonly trial: TrialProbe;
+  readonly facts: StepFacts;
+}) => {
+  const check = createCheckService({ root: options.root });
+  const evaluate = createEvaluateService({
+    root: options.root,
+    model: options.model,
+    trial: options.trial,
+  });
+  return {
+    check: async (request: { readonly workspaceDir: string }) => {
+      const response = await check(request);
+      // 结果侧证据只在这一步的槽里;`result` 缺席 = 没有可归纳的东西(与服务自己的口径一致)。
+      if (response.result !== undefined) options.facts.result = response.result;
+      return response;
+    },
+    evaluate: async (request: { readonly workspaceDir: string; readonly call: number }) => {
+      const outcome = await evaluate(request);
+      if (outcome.submission !== undefined) {
+        options.facts.submission = {
+          scriptSha256: outcome.submission.scriptSha256,
+          hostPath: outcome.submission.hostPath,
+          observationsPath: outcome.submission.observationsPath,
+        };
+        options.facts.evaluateCall = request.call;
+      }
+      return outcome;
+    },
+  };
+};
+
+/**
+ * 把执行器接到沙箱上。
+ *
+ * 一次调用 = 一次 `sandbox.run`,块在**宿主侧**先按 `done` 切开(ADR-0032「切掉后半段,整块一次
+ * `bash -c`」):切开而不是跑两段,是为了让 shell 状态(`cd`、`set -e`、heredoc)在 `done` 那一行
+ * 前后保持连续。
+ *
+ * 通道端(`requestHandler`)是票 04 的 dispatcher:它是配额的唯一判据源,超限时回一份伪造
+ * stderr 且**真执行函数一次都不调**。
+ */
+const createExecutor =
+  (options: {
+    readonly workspaceDir: string;
+    readonly tools: ReturnType<typeof createSessionTools>;
+    readonly facts: { readonly current: StepFacts; readonly reset: () => void };
+    readonly stepWallClockMs?: number;
+  }): AgentExecutor =>
+  async (request: AgentExecRequest): Promise<AgentExecResult> => {
+    options.facts.reset();
+    const split = splitDoneBlock(request.command);
+    // `done` 是块内第一行时 body 是空串:不跑空 shell(它的副作用只有一次 `bash` 启动)。
+    const executed =
+      split.body.trim() === ""
+        ? { stdout: "", stderr: "", exitCode: 0, timedOut: false }
+        : await sandbox.run({
+            command: split.body,
+            workspaceDir: options.workspaceDir,
+            requestHandler: options.tools.requestHandler,
+            ...(options.stepWallClockMs === undefined
+              ? {}
+              : { wallClockMs: options.stepWallClockMs }),
+          });
+    const facts = options.facts.current;
+    return {
+      stdout: executed.stdout,
+      stderr: executed.stderr,
+      exitCode: executed.exitCode,
+      timedOut: executed.timedOut,
+      ...(split.ended ? { done: true } : {}),
+      ...(facts.result === undefined ? {} : { result: facts.result }),
+      ...(facts.submission === undefined
+        ? {}
+        : { submission: facts.submission, evaluateCall: facts.evaluateCall ?? 1 }),
+    };
+  };
+
+/**
+ * 一次 `send` 的传输层包装:`retryTransport` 负责 429 / 连接级两套预算(ADR-0036)。
+ *
+ * ── 截断**不**在这里重试 ──
+ *
+ * 传输层的截断重试是「半截响应直接丢掉、重发同一份 messages」,它不知道模型能不能自我修正。
+ * 而 ADR-0032 要求 agent 形态在**第二次仍截断**时转格式反馈而不是继续退避——所以截断被摘出来
+ * 原样交回 loop,由 loop 的「重试一枪 → 转格式反馈」承担。两条裁决因此各落在自己的家里。
+ */
+const sendWithTransportRetry = async (options: {
+  readonly client: ModelClient;
+  readonly messages: readonly ChatMessage[];
+  readonly params: ModelParams;
+  readonly evidence: AttemptEvidence[];
+  readonly caliber: UsageCaliber | undefined;
+}): Promise<
+  | { readonly ok: true; readonly response: ModelResponse }
+  | { readonly ok: false; readonly message: string; readonly diagnostics: readonly string[] }
+> => {
+  const attempt = await retryTransport({
+    send: async () => {
+      const number = options.evidence.length + 1;
+      try {
+        const response = await options.client.send(options.messages, options.params);
+        options.evidence.push(responseAttemptEvidence(number, response, options.caliber));
+        return response;
+      } catch (cause) {
+        options.evidence.push(transportFailureAttemptEvidence(number, cause));
+        throw cause;
+      }
+    },
+    // 截断归 loop:本层把它当一次成功响应交回。
+    truncation: "caller",
+  });
+  return attempt.ok
+    ? { ok: true, response: attempt.response }
+    : { ok: false, message: attempt.failure.message, diagnostics: attempt.failure.diagnostics };
+};
+
+const logLine = (entry: GenerationLogEntry): string => JSON.stringify(entry);
 
 const nonEmptyLines = (text: string): readonly string[] =>
   text
@@ -205,779 +382,421 @@ const nonEmptyLines = (text: string): readonly string[] =>
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
 
-/** 从 tsc 诊断文本里拾取 `TS####` 错误码(去重,保持出现序)。 */
-const tsErrorCodes = (diagnostics: string): readonly string[] => [
-  ...new Set(diagnostics.match(/TS\d+/g) ?? []),
-];
-
-/** 一行日志条目(`meta.generationLog` 的每条一行就是这个序列化结果)。 */
-const logLine = (entry: GenerationLogEntry): string => JSON.stringify(entry);
-
-/** 契约 §2.2:一轮「完整发出的 prompt 文本」= 该轮整份 transcript 的 content 拼接。 */
-const transcriptOf = (messages: readonly ChatMessage[]): string =>
-  messages.map((message) => message.content).join("\n\n");
-
-/** 一轮的结论:要么走到「冻结期校验通过」,要么在某一栏失败并带上**回喂文本**与诊断,
- * 要么一次 `send` 退避重试后仍失败(传输层收口,不消耗协议轮数)。 */
-type RoundResult =
-  | {
-      readonly kind: "passed";
-      /** 本轮模型回文本(下一轮把它当前置 `assistant` 消息)。 */
-      readonly text: string;
-      readonly tscVersion: string;
-      readonly jsPath: string;
-      /** 试跑前实际编译 JS 字节的身份，归属校验与冻结前复核共用。 */
-      readonly scriptSha256: string;
-      readonly sourceSha256: string;
-      /** 记的迭代期(`--phase iteration`)那一次的结论:非 blocking 提示只在这一相存在。 */
-      readonly validation: ArchiveValidation;
-      readonly log: GenerationLogEntry;
-      readonly observationsPath: string;
-      /**
-       * 本轮没有重跑网格：证据来自这一阶段的同字节候选（`reusedFromStage` 落进存档）。
-       * 缺席 = 本轮自己跑满了整张网格。
-       */
-      readonly reusedFromStage?: 0 | 1 | 2;
-    }
-  | {
-      readonly kind: "failed";
-      /** 本轮模型回文本(下一轮把它当前置 `assistant` 消息)。 */
-      readonly text: string;
-      readonly classification: "tsc" | "contract";
-      /**
-       * 失败发生在哪一段：`static` = 试跑之前的任一栏（编译/tsc 与静态校验），
-       * `trial` = 冻结期试跑。只决定人类可读的 `message`（见 `messageOfFailure`），
-       * 不进 `generationLog`（那一栏的取值是两档）。
-       */
-      readonly stage: "static" | "trial";
-      readonly log: GenerationLogEntry;
-      /** 逐字回喂的**面向模型文本**:tsc 诊断、校验器 stdout 或试跑 stdout(契约 §2.2)。 */
-      readonly feedback: string;
-      readonly diagnostics: readonly string[];
-    }
-  | {
-      readonly kind: "transport";
-      /** 退避重试耗尽 / 不可重试的错误,由 `retry.ts` 收口(轮循环据此返回 `transport` 失败)。 */
-      readonly failure: TransportFailure;
-      readonly log?: GenerationTransportLogEntry;
-    };
-
-/**
- * 跑一轮:发一次 → 编译 → 迭代期校验 → 冻结期校验 → 冻结期试跑。
- *
- * 它吃**这一轮完整发出的 messages**(第 r>1 轮已含前置 `assistant` 与新增 `user` 回喂),
- * 把整份 transcript 全量重发。**传输层收口**:一次 `send` 由 `retryTransport` 包住,退避重试
- * 同一轮;重试耗尽 / 不可重试时返回 `kind:"transport"`(轮循环不涨轮数、不建存档)。落盘与失败
- * 清理归 `generateOneModel`。
- *
- * 试跑是冻结期校验通过之后的下一栏：用刚编译好的产物跑完整张评测网格（子进程，见 `trial.ts`），
- * 拦下即本轮失败（`contract` 分类、`trial` 段），回喂试跑 stdout 逐字。试跑子进程抛错
- *（infra，非 0/1 退出）不在这里收口——它不是候选的错，直接抛给编排层大声失败。
- */
-const sendOneRound = async (options: {
-  readonly request: GenerationRequest;
-  readonly config: ModelConfig;
-  readonly stagingDir: string;
-  readonly messages: readonly ChatMessage[];
-  readonly params: ModelParams;
-  readonly maxBytes: number;
-  readonly round: number;
-  readonly trial: TrialProbe;
-  /** 本轮 trial invocation 的观测落盘点（`observations.ts` 是路径真源）。 */
-  readonly observationsPath: string;
-  /** 本次生成共用的评测网格计划（`prepareTrialPlan` 那一次的输出，逐字交给入口）。 */
-  readonly plan?: TrialPlan;
-  /**
-   * 同字节候选的网格复用：给一个 `scriptSha256`，回答「本次生成里更早的哪一阶段跑过它」。
-   *
-   * 查得到就不调试跑入口（省下一次 32 场），而是把那阶段的观测与 `.grid.json` 搬过来；
-   * 查不到就照旧跑满整张网格。
-   */
-  readonly findReusable?: (scriptSha256: string) => ReusableGridEvidence | undefined;
-}): Promise<RoundResult> => {
-  const {
-    request,
-    config,
-    stagingDir,
-    messages,
-    params,
-    maxBytes,
-    round,
-    trial,
-    observationsPath,
-    plan,
-    findReusable,
-  } = options;
-  // 一轮一个客户端:重试在**同一次 `send` 之内**完成(同一份 messages),协议轮数不动(契约 §2.1)。
-  const client = request.createClient(config);
-  const startedAt = performance.now();
-  const attemptEvidence: AttemptEvidence[] = [];
-  // 规范配置自报用量口径；旧配置保持原样透传，不事后改口径。
-  const usageCaliber =
-    config.generationPolicy === undefined ? undefined : usageCaliberOf(config.endpointFamily);
-  const attempt = await retryTransport({
-    send: async () => {
-      const number = attemptEvidence.length + 1;
-      try {
-        const response = await client.send(messages, params);
-        attemptEvidence.push(responseAttemptEvidence(number, response, usageCaliber));
-        return response;
-      } catch (cause) {
-        attemptEvidence.push(transportFailureAttemptEvidence(number, cause));
-        throw cause;
-      }
-    },
-  });
-  const sendMs = Math.round(performance.now() - startedAt);
-  if (!attempt.ok) {
-    return {
-      kind: "transport",
-      failure: attempt.failure,
-      ...(config.generationPolicy === undefined
-        ? {}
-        : {
-            log: {
-              round,
-              kind: "transport" as const,
-              model: config.modelId,
-              params,
-              requestEvidence: generationRequestEvidence(config),
-              responseConverged: false as const,
-              attemptEvidence,
-              sendMs,
-            },
-          }),
-    };
-  }
-  const response = attempt.response;
-  const text = response.text;
-
-  const base = {
-    round,
-    model: config.modelId,
-    params,
-    usage:
-      config.generationPolicy === undefined
-        ? response.usage
-        : projectUsage(response.usage, usageCaliber),
-    finishReason: response.finishReason,
-    ...(config.generationPolicy === undefined
-      ? {}
-      : {
-          requestEvidence: generationRequestEvidence(config),
-          responseConverged: true as const,
-          stopDetails: responseAttemptEvidence(1, response, usageCaliber).stopDetails,
-          attemptEvidence,
-        }),
-    sendMs,
-  } as const;
-
-  // 模型裸文本先进剥包装再进编译(ADR-0012):围栏/引导语只包在头尾,剥后行号自第一行代码起算,
-  // 诊断仍对得上;transcript 里留原文(回喂链可解释),落盘与校验都吃剥后文本。
-  const compile = compileScript({
-    root: request.root,
-    stagingDir,
-    source: extractScriptSource(text),
-  });
-  if (!compile.ok) {
-    return {
-      kind: "failed",
-      text,
-      classification: "tsc",
-      stage: "static",
-      log: { ...base, kind: "tsc", errorCodes: tsErrorCodes(compile.diagnostics) },
-      // 编译失败的回喂文本 = tsc 诊断文本,逐字回喂(契约 §2.2)。
-      feedback: compile.diagnostics,
-      diagnostics: nonEmptyLines(compile.diagnostics),
-    };
-  }
-
-  // 迭代期:体积只提示、不拦;blocking 违规才算失败。
-  const iteration = validateScript({
-    root: request.root,
-    artifactPath: compile.jsPath,
-    maxBytes,
-    phase: "iteration",
-  });
-  if (!iteration.passed) {
-    return {
-      kind: "failed",
-      text,
-      classification: "contract",
-      stage: "static",
-      log: { ...base, kind: "contract", errorCodes: [] },
-      // 合约失败的回喂文本 = 校验器 stdout,逐字回喂(契约 §2.2)。
-      feedback: iteration.stdout,
-      diagnostics: nonEmptyLines(iteration.stdout),
-    };
-  }
-
-  // 冻结期:体积超限在这里硬拦。
-  const freeze = validateScript({
-    root: request.root,
-    artifactPath: compile.jsPath,
-    maxBytes,
-    phase: "freeze",
-  });
-  if (!freeze.passed) {
-    return {
-      kind: "failed",
-      text,
-      classification: "contract",
-      stage: "static",
-      log: { ...base, kind: "contract", errorCodes: [] },
-      feedback: freeze.stdout,
-      diagnostics: nonEmptyLines(freeze.stdout),
-    };
-  }
-
-  // 冻结期试跑：按计划跑完整张评测网格，任一场预算超限即本轮失败（`contract` 分类、`trial` 段）。
-  // 回喂试跑 stdout 逐字——它是面向模型的（第几场、第几 tick、哪项预算、超了多少），
-  // 不含胜负与名次，走既有回喂通道，不需要新格式。
-  const scriptSha256 = sha256Hex(readFileSync(compile.jsPath));
-  const sourceSha256 = sha256Hex(readFileSync(join(stagingDir, SCRIPT_SOURCE_NAME)));
-  if (request.scoreSourceFeedback === true) {
-    // 独占保存每轮候选；下一轮会重写 staging JS，但不能丢掉反馈的来源字节。
-    // 网格汇总与观测同源，也按同一条纪律：任一已存在就整轮拒绝，不覆盖既有证据。
-    if (existsSync(observationsPath) || existsSync(gridSummaryPathOf(observationsPath))) {
-      throw new Error("本轮试跑观测已存在，拒绝覆盖或复用旧候选证据");
-    }
-    copyFileSync(compile.jsPath, `${observationsPath}.candidate.js`, constants.COPYFILE_EXCL);
-    copyFileSync(
-      join(stagingDir, SCRIPT_SOURCE_NAME),
-      `${observationsPath}.candidate.ts`,
-      constants.COPYFILE_EXCL,
-    );
-  }
-  // 字节守卫之后先看能不能复用：同一次生成里更早阶段跑过**完全相同**的编译产物时，
-  // 网格的输入身份（计划摘要 + 候选摘要 + 运行时）与那次逐字相同，所以不必重跑 32 场。
-  // 复用只省「跑」不省「查」：搬证据前逐关校验（来源字节摘要、计划同源、观测完整、
-  // 搬完逐场逐字比对），见 `trial-reuse.ts` 头注。
-  const reusable = findReusable?.(scriptSha256);
-  if (reusable !== undefined && plan === undefined)
-    throw new Error("复用网格证据需要本次生成的评测计划（计划是它的身份）");
-  const trialResult =
-    reusable === undefined
-      ? trial({
-          root: request.root,
-          model: config.slug,
-          artifactPath: compile.jsPath,
-          observationsPath,
-          ...(plan === undefined ? {} : { plan }),
-        })
-      : undefined;
-  if (reusable !== undefined && plan !== undefined) {
-    reuseTrialGrid({ source: reusable, targetObservationsPath: observationsPath, plan });
-  }
-  if (sha256Hex(readFileSync(join(stagingDir, SCRIPT_SOURCE_NAME))) !== sourceSha256)
-    throw new Error("试跑期间 TS 字节改变");
-  if (sha256Hex(readFileSync(compile.jsPath)) !== scriptSha256) {
-    throw new Error("试跑期间编译 JS 字节改变，拒绝使用错配的试跑结论");
-  }
-  if (trialResult !== undefined && !trialResult.passed) {
-    return {
-      kind: "failed",
-      text,
-      classification: "contract",
-      stage: "trial",
-      log: { ...base, kind: "contract", errorCodes: [] },
-      feedback: trialResult.stdout,
-      diagnostics: nonEmptyLines(trialResult.stdout),
-    };
-  }
-
-  return {
-    kind: "passed",
-    text,
-    tscVersion: compile.tscVersion,
-    jsPath: compile.jsPath,
-    scriptSha256,
-    sourceSha256,
-    // 记迭代期的结论(不是冻结期那一相):通过判据就是迭代期,非 blocking 提示也只在这一相存在。
-    validation: { passed: iteration.passed, errors: iteration.errors },
-    log: { ...base, kind: "contract", errorCodes: [] },
-    observationsPath,
-    ...(reusable === undefined ? {} : { reusedFromStage: reusable.stage }),
-  };
-};
-
-const messageOfFailure = (slug: string, result: RoundResult & { kind: "failed" }): string => {
-  if (result.classification === "tsc") {
-    return `模型 ${slug} 第 ${String(result.log.round)} 轮 tsc 编译失败`;
-  }
-  return result.stage === "trial"
-    ? `模型 ${slug} 第 ${String(result.log.round)} 轮冻结期试跑未通过`
-    : `模型 ${slug} 第 ${String(result.log.round)} 轮静态校验未通过`;
-};
-
-/**
- * 成对发布旁挂证据：观测与它旁挂的 `.grid.json` **要么都在、要么都不在**。
- *
- * 为什么不能逐份 `copyFileSync` 然后各管各的：两份是一件事的两个面（「这份最终候选跑了哪张
- * 网格、得多少分」），只发观测会在兼容路径上留下一份没有计划的读数；只发汇总则留下一个说不清
- * 谁跑过的分数。所以先全部复制到同目录的临时名，再依次 rename 成真名：任一步失败就把本次已
- * 发布的那份与剩下所有临时文件都清掉，绝不留下半套。
- *
- * 失败不抛：发布只属**旁证**（候选已通过、存档已原子落盘），所以沿用「复制失败只警告」的语义，
- * 一行一句地写 stderr。清理失败也不掩盖原始原因。
- */
-const publishPairedEvidence = (
-  pairs: readonly (readonly [from: string, to: string])[],
-  warn: (message: string) => void,
-): void => {
-  const temporaries: string[] = [];
-  const published: string[] = [];
-  let target = pairs[0]?.[1] ?? "";
-  try {
-    for (const [from, to] of pairs) {
-      // 临时名取 `to` 的同目录兄弟：rename 不会跨设备，目标名也不会被别人的同名文件认领。
-      const temporary = `${to}.${randomUUID()}.tmp`;
-      copyFileSync(from, temporary, constants.COPYFILE_EXCL);
-      temporaries.push(temporary);
-    }
-    for (const [index, pair] of pairs.entries()) {
-      target = pair[1];
-      renameSync(temporaries[index]!, target);
-      published.push(target);
-    }
-  } catch (cause) {
-    // 已 rename 成真的那份也要撤回：留下它就是半套。
-    for (const path of [...temporaries, ...published]) {
-      try {
-        rmSync(path, { force: true });
-      } catch {
-        // 清理失败不抛，也不掩盖原始原因；下一次生成会重新写这两份。
-      }
-    }
-    const message = cause instanceof Error ? cause.message : String(cause);
-    warn(
-      `modelwar gen: 警告：最终试跑观测发布失败 ${target}（已撤回本次发布的全部旁证）：${message}\n`,
-    );
-  }
-};
-
-/**
- * 这次生成的优化旁证（v2）：整张计划与四份陪练身份入档，每个候选带网格分数与场数。
- *
- * 陪练身份**从计划的 `scripts` 搬**（不另写一份）：计划的这两栏是同一格事实，
- * 装载期会逐项比对（`archive-optimization.ts`）。
- *
- * 不写 `trialSeeds`：v1 那三个固定种子在网格里根本不是一个数（每格一个，见 `plan.matches[].seed`
- * 与 `planSha256`）。再存一份就是同一件事的第二个家，还会让人以为「种子只有三个」。
- */
-const archiveOptimizationOf = (
-  plan: TrialPlan,
-  candidates: readonly ArchiveOptimizationCandidate[],
-): ArchiveOptimizationGrid => ({
-  version: OPTIMIZATION_GRID_VERSION,
-  feedbackRounds: OPTIMIZATION_FEEDBACK_ROUNDS,
-  plan,
-  sparring: plan.scripts.map(({ id, role, source, scriptSha256 }) => ({
-    id,
-    role,
-    source,
-    scriptSha256,
-  })),
-  candidates,
+/** 一条不评任何东西的评测探针:本段的占位(票 06 换掉它)。 */
+const unpluggedTrial: TrialProbe = () => ({
+  passed: false,
+  stdout: "evaluate 尚未接线(票 06 才接真实网格):这一次没有产出候选。\n",
 });
 
+/** 一条恒不产出成绩的评分接缝:本段的占位(票 06 换掉它)。 */
+const unpluggedScoring: EvaluateScoring = async () => undefined;
+
+/** 观测路径 → 档案里的 basename(候选条目的 `observationsFile` 要与旁挂文件同名)。 */
+const observationsFileOf = (observationsPath: string): string =>
+  basename(observationsPath).replace(/\.md$/u, "");
+
 /**
- * 单模型逐轮回喂环：未启用时直到通过或用尽总尝试数；启用时每阶段独立诊断额度，
- * 前两个有效候选各提供事实回喂；第三阶段完成后可独立选拔并冻结胜者。
+ * 候选快照在 `archive/<slug>/` 下的名字。
  *
- * 失败时**不建** `archive/<slug>/<runId>/`:临时组装目录被清理,只返回 `failed` 结果(携全部
- * 已收敛轮次的 prompts / generationLog，规范配置额外保存传输失败末行证据)。传输层失败
- * (退避重试耗尽 / 不可重试)同样只返回 transport 分类的 failed，不建存档(失败写盘归
- * `packages/gen/src/failure.ts`)。
+ * ── 为什么用这个族 ──
+ *
+ * 它是既有逐候选产物的命名族(`observed-<runId>-round-<步号>`),报告侧读档时按它判完整性:
+ * `scriptFile` 必须恰为 `${observationsFile}.candidate.js`、`observationsFile` 必须以
+ * `-round-<step>.jsonl` 结尾。本票**不新建目录**(ADR-0031「快照沿用既有命名族」)。
+ */
+const candidateObservationsFile = (runId: string, step: number): string =>
+  `observed-${runId}-round-${String(step)}.jsonl`;
+
+/**
+ * 单模型生成:读首条 prompt、跑单会话、按「有没有候选」落成功档或失败档。
+ *
+ * 与旧形态的入参差异:`GenerationRequest` 不再需要 `template` 与 `docs`——契约正文**不进首条
+ * 消息**(读契约要花几步,这是设计的一部分,ADR-0030),首条 user 与 system 改成由
+ * `agentPrompt` 直接给出(`loadAgentPrompt(root, identity)` 的返回值)。
  */
 export const generateOneModel = async (
   request: GenerationRequest,
   config: ModelConfig,
 ): Promise<ModelOutcome> => {
-  if (request.selectBestCandidate === true && request.scoreSourceFeedback !== true)
-    throw new Error("--select-best-candidate 要求 --score-source-feedback");
   const slug = config.slug;
-  // 一次生成只定义一张评测网格：三份候选都按它跑，读观测与判完整性也按它（不逐轮重造）。
-  // 造计划要读盘算摘要，所以生产路径只能经子进程搬（本包不得跨到 runner 那一侧）；
-  // 测试注入同形状的纯函数，保持单测毫秒级。
-  const preparePlan =
-    request.trialPlan ??
-    ((options: { readonly root: string; readonly model: string }) =>
-      prepareTrialPlan(options.root, options.model));
-  const trialPlan =
-    request.scoreSourceFeedback === true
-      ? preparePlan({ root: request.root, model: slug })
-      : undefined;
-  /**
-   * 选拔用的计划就是生成阶段这张网格的**同一份对象**（`planSha256` 必然相等，不存在
-   * 「两份计划之间有时间窗」的坑）。选拔子进程会按安装面重建一遍并与它逐字比：
-   * 换图、换座位、换种子、换一份陪练摘要都在那里被指到具体位置。
-   */
-  const expectedPlan = request.selectBestCandidate === true ? trialPlan : undefined;
   const runId = request.runId;
   const params: ModelParams = generationParams(config);
-  // 优化机会与修复上限对全部模型统一；旧模式仍按配置优先并接受 maxRounds 替代默认值。
-  const protocolRounds =
-    request.scoreSourceFeedback === true
-      ? 1 + REPAIR_CALLS_PER_STAGE
-      : (config.protocolRounds ?? request.maxRounds ?? DEFAULT_PROTOCOL_ROUNDS);
-  const totalRounds =
-    protocolRounds * (request.scoreSourceFeedback === true ? OPTIMIZATION_STAGES.length : 1);
-  const maxBytes = scriptSizeLimit(request.root);
-  // 缺席即真子进程（`trial.ts`）：生产冻结前必跑整张网格；测试注入桩，保持单测毫秒级。
-  const trial: TrialProbe = request.trial ?? runTrialScript;
-  // 默认每轮重写原路径；opt-in trial 写独立 round 文件，最终候选才发布到原路径。
-  const observationsPath = observationsPathOf(request.root, slug, runId);
+  const identity = harnessIdentity();
+  const contextLength = config.contextLength;
+  // 守卫要窗口大小才能判「再发一次会不会越过 80%」。读不到就不跑,不静默跳过守卫。
+  if (contextLength === undefined)
+    throw new Error(
+      `模型 ${slug} 的配置缺 contextLength:agent 形态的上下文守卫需要窗口大小,读不到就不跑`,
+    );
 
-  const basePrompt = renderBaseTemplate(request.template, request.docs, config.strategy);
-  // 无状态全量重发:每轮把整个 messages 发出,后续轮在其后追加 assistant + user(契约 §2.2)。
-  let messages: readonly ChatMessage[] = [{ role: "user", content: basePrompt }];
-  const prompts: string[] = [];
-  const generationLog: string[] = [];
+  const prompt: AgentPrompt = request.agentPrompt ?? loadAgentPrompt(request.root);
+  // ── 工作区不住在 `archive/` 里 ──
+  //
+  // 那个目录的发布不变量是「目录存在 ⇔ 三件套完整」(ADR-0031),而工作区是一个**中途"留下来**的
+  // 子目录。让它们同层会让那条不变量当场变成假话——失败档那一次尤其明显:删掉失败文件之后
+  // `archive/<slug>/` 里剐下一个 `.workspace-*`,
+  // 而读侧把它当成一份没有三件套的档。
+  //
+  // 也不放 `archive/` 之外的对局产物根名字里:那个名字是 gen 的禁字(gen 不得往外看对局产物)。
+  const workspaceDir = request.workspaceDir ?? join(request.root, ".workspaces", slug, runId);
+  mkdirSync(workspaceDir, { recursive: true });
 
   const stagingDir = openStagingDir(request.root, slug);
   let committed = false;
-  const candidates: ArchiveOptimizationCandidate[] = [];
-  const selectionArtifacts: SelectionArtifact[] = [];
-  const candidateValidations: ArchiveValidation[] = [];
-  // 本次生成里已收录的网格证据：下一轮候选字节与其中哪个阶段相同，就复用那一份（不重跑网格）。
-  const acceptedGrids: ReusableGridEvidence[] = [];
-  let stageAttempts = 0;
+  const generationLog: string[] = [];
+  const candidates: ArchiveOptimizationCandidateAgent[] = [];
+  /** 每个候选在那次 evaluate 时那份**源**文本的哈希:用于「评完之后又改过」的判据。 */
+  const evaluatedSources = new Map<number, string>();
+  let validation: ArchiveValidation = NO_CHECK_VALIDATION;
+
+  const maxSteps = request.maxSteps ?? AGENT_MAX_STEPS;
+  const totalWallClockMs = request.totalWallClockMs ?? AGENT_TOTAL_WALL_CLOCK_MS;
+  const startedAt = request.now().getTime();
+
+  // 宿主工具面(票 04):配额、会话墙钟、两个服务都在这里,一次会话一份实例。
+  const facts = createStepFacts();
+  const services = observeServices({
+    root: request.root,
+    model: slug,
+    trial: request.trial ?? unpluggedTrial,
+    facts: facts.current,
+  });
+  const tools = createSessionTools({
+    workspaceDir,
+    deadlineAtMs: startedAt + totalWallClockMs,
+    check: services.check,
+    evaluate: services.evaluate,
+    // 会话墙钟与 loop 用**同一个**钟。不传的话 dispatcher 默认走真实 `Date.now()`,
+    // 而 `deadlineAtMs` 是从 `request.now()` 算出来的——两个钟一混,在注入了时钟的测试里
+    // deadline 恒已过期(而生产上恰好看不出来,因为两者都是真实时间)。
+    now: () => request.now().getTime(),
+  });
+  const executor = createExecutor({
+    workspaceDir,
+    tools,
+    facts,
+    ...(request.stepWallClockMs === undefined ? {} : { stepWallClockMs: request.stepWallClockMs }),
+  });
+
+  const client = request.createClient(config);
+  const caliber =
+    config.generationPolicy === undefined ? undefined : usageCaliberOf(config.endpointFamily);
+  /** 每次 loop 侧 `send` 的尝试证据,按发生序;与 `loop.turns` 一一对应。 */
+  const sendEvidence: AttemptEvidence[][] = [];
+
   try {
-    for (let round = 1; round <= totalRounds; round += 1) {
-      stageAttempts += 1;
-      const result = await sendOneRound({
-        request,
-        config,
-        stagingDir,
-        messages,
-        params,
-        maxBytes,
-        round,
-        trial,
-        observationsPath:
-          request.scoreSourceFeedback === true
-            ? observationsPathOf(request.root, slug, runId, round)
-            : observationsPath,
-        ...(trialPlan === undefined ? {} : { plan: trialPlan }),
-        ...(trialPlan === undefined
-          ? {}
-          : {
-              findReusable: (scriptSha256: string) =>
-                acceptedGrids.find((evidence) => evidence.scriptSha256 === scriptSha256),
-            }),
-      });
+    const loop = await runAgentSession({
+      model: {
+        send: async (messages: readonly ChatMessage[], sendParams: ModelParams) => {
+          const evidence: AttemptEvidence[] = [];
+          sendEvidence.push(evidence);
+          const outcome = await sendWithTransportRetry({
+            client,
+            messages,
+            params: sendParams,
+            evidence,
+            caliber,
+          });
+          // 抛给 loop 就是「传输重试耗尽」:那次调用不进过程记录、不进协议轮数(ADR-0031)。
+          if (!outcome.ok) throw new Error(outcome.message);
+          return outcome.response;
+        },
+      },
+      executor,
+      system: prompt.system,
+      firstUser: prompt.user,
+      params,
+      contextLength,
+      maxSteps,
+      totalWallClockMs,
+      now: () => request.now().getTime(),
+    });
 
-      // 未收敛轮不增加 prompts / protocolRounds；规范配置另记白名单传输末行。
-      if (result.kind === "transport") {
-        if (result.log !== undefined) generationLog.push(JSON.stringify(result.log));
-        return {
-          kind: "failed",
-          slug,
-          runId,
-          failure: {
-            classification: "transport",
-            prompts,
-            generationLog,
-            diagnostics: result.failure.diagnostics,
-            ...(candidates.length > 0 ? { candidates } : {}),
-            message:
-              `模型 ${slug} 第 ${String(round)} 轮传输失败:${result.failure.message}` +
-              (request.scoreSourceFeedback === true
-                ? `（优化阶段 ${String(candidates.length)}）`
-                : ""),
-          },
-        };
-      }
-
-      // 该轮已收敛(通过 / 校验失败):完整 transcript 与日志逐条对齐。
-      // 规范配置传输末行是额外尝试证据，不属于已收敛轮次。
-      prompts.push(transcriptOf(messages));
-      generationLog.push(logLine(result.log));
-
-      let feedback: string;
-      if (result.kind === "passed") {
-        const readings =
-          request.scoreSourceFeedback === true && trialPlan !== undefined
-            ? readTrialObservations(result.observationsPath, result.scriptSha256, trialPlan)
-            : undefined;
-        if (request.scoreSourceFeedback === true && trialPlan !== undefined) {
-          // 读入边界已严格验证每个存在的摘要；新优化阶段还必须有**整张网格**的完整终局。
-          // 历史观测仍可缺摘要读取，但不能据此推进本次反馈或发布最终候选。
-          // 复用路径同样跑这一道：复用不是不校验的借口（`trial-reuse.ts` 已校过来源，
-          // 这里校的是「搬到本阶段落点后的那份证据」）。
-          const missing = missingTrialGridMatches(readings ?? [], trialPlan);
-          if (readings === undefined || missing.length > 0) {
-            throw new Error(
-              `统一事实反馈缺少完整评测网格的有效终局摘要（计划 ${String(trialPlan.matches.length)} 场，缺 matchIndex ${missing.map(String).join(" / ")}），优化阶段 ${String(candidates.length)} 未完成，拒绝推进或冻结候选`,
-            );
-          }
-          // 旁挂的网格汇总必须与本次 expected plan 逐字相同：换图/换座位/换种子/换陪练即整批失败。
-          // 汇总里的 `score` 只过形状（分母恒等于计划声明的场数）：生成侧**不重算分数**，
-          // 复算与逐位比对落在选拔，落档落在存档——这一份的 `score` 就是该候选唯一的成绩。
-          const summary = readTrialGridSummary({
-            path: gridSummaryPathOf(result.observationsPath),
-            expectedPlan: trialPlan,
-            scriptSha256: result.scriptSha256,
-          });
-          const stage = OPTIMIZATION_STAGES[candidates.length];
-          if (stage === undefined) throw new Error("有效候选阶段超出优化政策");
-          candidates.push({
-            stage,
-            protocolRound: round,
-            scriptFile: basename(`${result.observationsPath}.candidate.js`),
-            observationsFile: basename(result.observationsPath),
-            scriptSha256: result.scriptSha256,
-            // 参数原样落档：日后查证「这份候选当时用什么参数生成的」不必翻四行 log，
-            // 也不必猜 mapping。与 `generationLog[].params` 同源（同一个 `params` 变量）。
-            // `JSON.parse(JSON.stringify(...))` 保证落档的是 JSON 值（不携带 undefined / 共享引用）。
-            params: JSON.parse(JSON.stringify(params)) as JsonValue,
-            // 成绩与反馈同源：分数与场数逐字来自这一轮的 `.grid.json`。
-            score: summary.score,
-            matchCount: trialPlan.matchesPerCandidate,
-            ...(result.reusedFromStage === undefined
-              ? {}
-              : { reusedFromStage: result.reusedFromStage }),
-          });
-          // 收录本阶段证据，供后续同字节候选复用（摘要取的就是刚校过的那份字节）。
-          acceptedGrids.push({
-            stage,
-            scriptSha256: result.scriptSha256,
-            observationsPath: result.observationsPath,
-            ...gridEvidenceDigests(result.observationsPath),
-          });
-          selectionArtifacts.push({
-            stage,
-            protocolRound: round,
-            scriptSha256: result.scriptSha256,
-            sourceSha256: result.sourceSha256,
-            scriptPath: `${result.observationsPath}.candidate.js`,
-            sourcePath: `${result.observationsPath}.candidate.ts`,
-            // 选拔复算的比对基准：这一阶段的观测行与它旁挂的网格汇总（分数与计划都来自它）。
-            observationsPath: result.observationsPath,
-            gridSummaryPath: gridSummaryPathOf(result.observationsPath),
-          });
-          candidateValidations.push(result.validation);
-          // 每次推进前复核已有旁证；下一阶段不能替换首次候选后仍发布成功存档。
-          for (const candidate of candidates) {
-            const savedPath = join(request.root, "archive", slug, candidate.scriptFile);
-            if (sha256Hex(readFileSync(savedPath)) !== candidate.scriptSha256) {
-              throw new Error("旁挂候选 JS 字节改变，拒绝使用错配的优化历史");
-            }
-          }
-        }
-        if (
-          readings !== undefined &&
-          trialPlan !== undefined &&
-          candidates.length <= OPTIMIZATION_FEEDBACK_ROUNDS
-        ) {
-          stageAttempts = 0;
-          // 上一层候选的读数作为「上一阶段」的对照：对差表据此给出同一格的变化。
-          // 第一次回喂（刚跑完第 0 阶段）没有上一阶段，所以传 undefined。
-          const earlier = candidates[candidates.length - 2];
-          const previousReadings =
-            earlier === undefined
-              ? undefined
-              : readTrialObservations(
-                  join(request.root, "archive", slug, earlier.observationsFile),
-                  earlier.scriptSha256,
-                  trialPlan,
-                );
-          // 对照看观测读不到就不回喂：只给本阶段数字会让「差距在缩小还是扩大」变成猜的。
-          if (earlier !== undefined && previousReadings === undefined)
-            throw new Error("上一阶段观测读不到（无法给出与上一阶段同一格的变化），拒绝回喂");
-          // 候选自己的字节摘要第四个交：反馈据此把「与某位对手字节相同」的场逐场标出来。
-          feedback = renderScoreSourceFeedback(
-            readings,
-            trialPlan,
-            previousReadings,
-            result.scriptSha256,
-          );
-        } else {
-          // 现场读编译产物字节算 sha256:复算认的是产物,不是内存里那份源文本。
-          let scriptBytes = readFileSync(result.jsPath);
-          if (sha256Hex(scriptBytes) !== result.scriptSha256) {
-            throw new Error("试跑后编译 JS 字节改变，拒绝冻结未经验证的候选");
-          }
-          let selection: ArchiveGridSelection | undefined;
-          let validation = result.validation;
-          if (expectedPlan !== undefined) {
-            const probed: unknown = await (request.selection ?? runSelection)({
-              root: request.root,
-              model: slug,
-              candidates: structuredClone(selectionArtifacts),
-              expectedPlan: structuredClone(expectedPlan),
-            });
-            selection = verifySelection({
-              root: request.root,
-              candidates: selectionArtifacts,
-              expectedPlan,
-              selection: probed,
-            });
-            const winner = selectionArtifacts[selection.selected.stage];
-            if (winner === undefined) throw new Error("选拔缺少胜者字节");
-            copyFileSync(winner.sourcePath, join(stagingDir, SCRIPT_SOURCE_NAME));
-            copyFileSync(winner.scriptPath, join(stagingDir, SCRIPT_PRODUCT_NAME));
-            const freeze = validateScript({
-              root: request.root,
-              artifactPath: join(stagingDir, SCRIPT_PRODUCT_NAME),
-              maxBytes,
-              phase: "freeze",
-            });
-            if (!freeze.passed) throw new Error("选拔胜者冻结期校验失败");
-            scriptBytes = readFileSync(join(stagingDir, SCRIPT_PRODUCT_NAME));
-            validation = candidateValidations[selection.selected.stage]!;
-          }
-          const meta = buildArchiveMeta({
-            model: slug,
-            // modelId 是带 provider 前缀的快照标识(配置里唯一能标识「哪一版模型」的字段)。
-            modelVersion: config.modelId,
-            channelId: config.channelId,
-            generatedAt: request.now().toISOString(),
-            prompts,
-            generationLog,
-            validation,
-            ...(selection === undefined ? {} : { selection }),
-            tscVersion: result.tscVersion,
-            scriptSha256: sha256Hex(scriptBytes),
-            ...(request.scoreSourceFeedback === true && trialPlan !== undefined
-              ? { optimization: archiveOptimizationOf(trialPlan, candidates) }
-              : {}),
-          });
-
-          if (selection !== undefined && expectedPlan !== undefined)
-            verifySelection({
-              root: request.root,
-              candidates: selectionArtifacts,
-              expectedPlan,
-              selection,
-            });
-          const commit = commitArchive({ root: request.root, slug, runId, stagingDir, meta });
-          if (!commit.ok) {
-            return {
-              kind: "failed",
-              slug,
-              runId,
-              failure: {
-                classification: selection === undefined ? "contract" : "selection",
-                ...(expectedPlan === undefined
-                  ? {}
-                  : {
-                      selectionFailure: {
-                        plan: expectedPlan,
-                        candidates: selectionArtifacts.map(
-                          ({ stage, protocolRound, scriptSha256, sourceSha256 }) => ({
-                            stage,
-                            protocolRound,
-                            scriptSha256,
-                            sourceSha256,
-                          }),
-                        ),
-                      },
-                    }),
-                prompts,
-                generationLog: meta.generationLog,
-                diagnostics: [selection === undefined ? commit.reason : "选拔胜者原子发布失败"],
-                ...(candidates.length > 0
-                  ? {
-                      candidates:
-                        selection === undefined
-                          ? candidates.filter((candidate) => candidate.stage < 2)
-                          : candidates,
-                    }
-                  : {}),
-                message:
-                  selection !== undefined
-                    ? "选拔胜者原子发布失败"
-                    : request.scoreSourceFeedback === true
-                      ? `${commit.reason}（优化阶段 2：候选已通过，最终存档发布失败）`
-                      : commit.reason,
+    // 生成日志:一步一行,轮号 = 步号。`attempts` 是截断重试的枪数(不占步)。
+    for (const [index, turn] of loop.turns.entries()) {
+      const evidence = sendEvidence[index] ?? [];
+      generationLog.push(
+        logLine(
+          turn.kind === "transport"
+            ? {
+                round: turn.round,
+                kind: "transport",
+                responseConverged: false,
+                model: config.modelId,
+                params,
+                requestEvidence: generationRequestEvidence(config),
+                attemptEvidence: evidence,
+                sendMs: 0,
+              }
+            : {
+                round: turn.round,
+                kind: "converged",
+                responseConverged: true,
+                model: config.modelId,
+                params,
+                usage: caliber === undefined ? turn.usage : projectUsage(turn.usage, caliber),
+                finishReason: turn.finishReason,
+                attempts: turn.attempts,
+                requestEvidence: generationRequestEvidence(config),
+                attemptEvidence: evidence,
+                sendMs: turn.sendMs,
               },
-            };
-          }
-          committed = true;
-          // 拒绝撞名时不发布：既有候选的最终观测不能被失败尝试覆盖。
-          // 发布只属旁证：复制失败只警告，不改变已通过候选的结论。
-          // `.grid.json` 与观测同源，必须**成对**发布：只发观测会让「这份最终候选跑了哪张网格、
-          // 得多少分」在兼容路径上断掉（报告侧读最终档时只剩一份没有计划的观测）。
-          if (readings !== undefined) {
-            const summaryPath = gridSummaryPathOf(result.observationsPath);
-            publishPairedEvidence(
-              [
-                [result.observationsPath, observationsPath],
-                [summaryPath, gridSummaryPathOf(observationsPath)],
-              ],
-              (message) => process.stderr.write(message),
-            );
-          }
-          return { kind: "frozen", slug, runId, dir: commit.dir, meta };
-        }
-      } else {
-        feedback = result.feedback;
-      }
-
-      // 当前阶段用尽总尝试数仍失败；诊断修复不推进有效候选阶段。
-      if (result.kind === "failed" && stageAttempts === protocolRounds) {
-        return {
-          kind: "failed",
-          slug,
-          runId,
-          failure: {
-            classification: result.classification,
-            prompts,
-            generationLog,
-            diagnostics: result.diagnostics,
-            ...(candidates.length > 0 ? { candidates } : {}),
-            message:
-              request.scoreSourceFeedback === true
-                ? `${messageOfFailure(slug, result)}（优化阶段 ${String(candidates.length)}，已用尽 ${String(protocolRounds)} 次阶段响应，含至多 ${String(REPAIR_CALLS_PER_STAGE)} 次诊断修复）`
-                : messageOfFailure(slug, result),
-          },
-        };
-      }
-
-      // 回喂:前置 assistant(上一轮回文本)+ 新增 user(上一轮驱动失败的面向模型文本),
-      // 两者都逐字入 transcript,下一轮全量重发。
-      messages = [
-        ...messages,
-        { role: "assistant", content: result.text },
-        { role: "user", content: feedback },
-      ];
+        ),
+      );
     }
-    // `protocolRounds >= 1`,循环必然在上面某轮 return;这里只是让类型收口。
-    throw new Error(`模型 ${slug} 的回喂环没有产出结论(protocolRounds=${String(protocolRounds)})`);
-  } catch (cause) {
-    if (expectedPlan !== undefined && candidates.length === 3) {
+
+    // ── 候选:每一次真评出成绩的 evaluate 产出一个(顺序 = 第几次评测)。──
+    const scoring = request.evaluateScoring ?? unpluggedScoring;
+    for (const step of loop.steps) {
+      const submission = submissionOfStep(loop, step);
+      if (submission === undefined) continue;
+      const scored = await scoring(submission);
+      if (scored === undefined) continue;
+      // 快照真的写到 `archive/<slug>/`:报告侧按 `scriptFile` 读字节并复算哈希,名字对不上
+      // 或文件不在,那份档就装载不了。票 06 会把这两份换成真网格的候选产物,名字不变。
+      //
+      // `scriptSha256` 是**产物**的哈希(报告侧复算的就是 `.candidate.js` 的字节),不是
+      // `evaluate` 报的那份源哈希——两者不是同一个数,混用会让每份档都读成 `mismatch`。
+      const observationsFile = candidateObservationsFile(runId, step.step);
+      const snapshotSource = readFileSync(join(workspaceDir, SCRIPT_SOURCE_NAME), "utf8");
+      const snapshot = compileScript({
+        root: request.root,
+        stagingDir: mkdtempSync(join(tmpdir(), "model-war-candidate-")),
+        source: snapshotSource,
+      });
+      if (!snapshot.ok) continue;
+      writeFileSync(
+        join(request.root, "archive", slug, `${observationsFile}.candidate.ts`),
+        snapshotSource,
+      );
+      writeFileSync(
+        join(request.root, "archive", slug, `${observationsFile}.candidate.js`),
+        readFileSync(snapshot.jsPath),
+      );
+      evaluatedSources.set(step.step, submission.scriptSha256);
+      candidates.push({
+        step: step.step,
+        scriptFile: `${observationsFile}.candidate.js`,
+        observationsFile,
+        scriptSha256: sha256Hex(readFileSync(snapshot.jsPath)),
+        params: JSON.parse(JSON.stringify(params)) as never,
+        score: scored.score,
+        matchCount: scored.matchCount,
+      });
+    }
+    // 校验结论取最后一次确实查过的 check(一次都没查过就记「没查」)。
+    for (const step of loop.steps) {
+      const result = step.result;
+      if (result === undefined) continue;
+      validation =
+        result.kind === "tsc"
+          ? { passed: false, errors: ["最后一次 check 的类型检查没通过", ...result.errorCodes] }
+          : { passed: result.errorCodes.length === 0, errors: [...result.errorCodes] };
+    }
+
+    const agentFields: AgentArchiveFields = {
+      steps: loop.steps,
+      firstPrompt: prompt.user,
+      contextLength,
+      harnessVersion: identity.version,
+      harnessDigest: identity.digest,
+      termination: loop.termination,
+      atStep: loop.atStep,
+    };
+
+    // ── 落档:有候选就有成绩,一个都没有就是失败档。──
+    if (candidates.length === 0) {
       return {
         kind: "failed",
         slug,
         runId,
+        agent: agentFields,
         failure: {
-          classification: "selection",
-          prompts,
+          classification: loop.termination === "transport" ? "transport" : "contract",
+          prompts: [],
           generationLog,
-          candidates,
-          diagnostics: ["选拔执行或完整证据校验失败"],
-          message: "完成三阶段后选拔失败，未发布冻结档",
-          selectionFailure: {
-            plan: expectedPlan,
-            candidates: selectionArtifacts.map(
-              ({ stage, protocolRound, scriptSha256, sourceSha256 }) => ({
-                stage,
-                protocolRound,
-                scriptSha256,
-                sourceSha256,
-              }),
-            ),
-          },
+          diagnostics: diagnosticLines(loop),
+          message: messageOfNoCandidate(slug, loop),
         },
       };
     }
-    throw cause;
+
+    // 成绩取最后一次 evaluate 的那一版:候选序的末位(ADR-0030)。
+    const final = candidates[candidates.length - 1]!;
+    const frozen = freezeFromCandidate({
+      root: request.root,
+      stagingDir,
+      source: readFileSync(join(workspaceDir, SCRIPT_SOURCE_NAME), "utf8"),
+      evaluatedSourceSha256: evaluatedSources.get(final.step) ?? "",
+    });
+    if (!frozen.ok) {
+      return {
+        kind: "failed",
+        slug,
+        runId,
+        agent: agentFields,
+        failure: {
+          classification: "contract",
+          prompts: [],
+          generationLog,
+          diagnostics: frozen.diagnostics,
+          message: `模型 ${slug}:${frozen.message}`,
+          candidates,
+        },
+      };
+    }
+    validation = frozen.validation;
+
+    const meta = buildArchiveMeta({
+      model: slug,
+      modelVersion: config.modelId,
+      channelId: config.channelId,
+      generatedAt: request.now().toISOString(),
+      generationLog,
+      validation,
+      tscVersion: frozen.tscVersion,
+      scriptSha256: frozen.scriptSha256,
+      optimization: { version: 3, candidates } satisfies ArchiveOptimizationAgent,
+      ...agentFields,
+    });
+
+    const commit = commitArchive({ root: request.root, slug, runId, stagingDir, meta });
+    if (!commit.ok) {
+      return {
+        kind: "failed",
+        slug,
+        runId,
+        agent: agentFields,
+        failure: {
+          classification: "contract",
+          prompts: [],
+          generationLog,
+          diagnostics: [commit.reason],
+          message: commit.reason,
+          candidates,
+        },
+      };
+    }
+    committed = true;
+    return { kind: "frozen", slug, runId, dir: commit.dir, meta };
   } finally {
-    // 成功时 rename 已经把临时目录搬走,这里是空操作;失败 / 抛错时整棵清掉,不留半截。
     if (!committed) {
       discardStagingDir(stagingDir);
     }
   }
 };
+
+/**
+ * 从 loop 的产出里还原那次 `evaluate` 的提交身份。
+ *
+ * 事实由执行器的回包带来(`AgentExecResult.submission`,见 `createExecutor`),但 `steps` 里只
+ * 留过程记录的形状——所以身份是**步骤之外**的事实,它随 `AgentLoopResult.submissions` 走。
+ * 这里按步号把它们对起来。
+ */
+const submissionOfStep = (
+  loop: AgentLoopResult,
+  step: ArchiveStep,
+): EvaluateSubmission | undefined => {
+  const recorded = loop.submissions.find((item) => item.step === step.step);
+  if (recorded === undefined) return undefined;
+  return {
+    step: step.step,
+    call: recorded.call,
+    scriptSha256: recorded.scriptSha256,
+    hostPath: recorded.hostPath,
+    observationsPath: recorded.observationsPath,
+    observationsFile: observationsFileOf(recorded.observationsPath),
+  };
+};
+
+/**
+ * 把「最后一次 evaluate 的那一版」编译并落成三件套。
+ *
+ * ── 两个哈希,两件事 ──
+ *
+ * - **源** 的 sha256(`submission.scriptSha256`):`evaluate` 服务看到的那份 `script.ts` 的哈希。
+ *   它回答「评的是哪一版」——当前源码重算一遍,兩個不相等就是「评完之后又改了」。
+ * - **产物** 的 sha256(`meta.scriptSha256`):`script.js` 的字节哈希。档案契约要的是它
+ *   (「复算认编译产物,不认 script.ts」),所以它不是候选条目里那一个。
+ *
+ * 把两个哈希分开写清,是因为它们看着都是「sha256」,而谁替谁都读侧看不出来。
+ *
+ * ── 为什么不是「会话结束时的文件内容」──
+ *
+ * ADR-0030 的判据是成绩取**最后一次 `evaluate` 评的那个版本**:模型可能在评完之后改坏文件,
+ * 而它可能只是想清理一下。所以这里比「此刻的源」与「评的那份源」——不相等就**明确失败**,
+ * 而不是默默用其中一个冒充另一个。
+ */
+const freezeFromCandidate = (options: {
+  readonly root: string;
+  readonly stagingDir: string;
+  readonly source: string;
+  /** `evaluate` 服务看到的那份 **源** 的 sha256(不是产物哈希)。 */
+  readonly evaluatedSourceSha256: string;
+}):
+  | {
+      readonly ok: true;
+      readonly tscVersion: string;
+      readonly validation: ArchiveValidation;
+      readonly scriptSha256: string;
+    }
+  | { readonly ok: false; readonly diagnostics: readonly string[]; readonly message: string } => {
+  const currentSourceSha256 = sha256Hex(Buffer.from(options.source, "utf8"));
+  if (currentSourceSha256 !== options.evaluatedSourceSha256) {
+    return {
+      ok: false,
+      message:
+        "最后一次 evaluate 之后 /workspace/script.ts 又改过:成绩属于评过的那版,而会话停下时的文件已不是它",
+      diagnostics: [
+        `评的那份源 sha256 ${options.evaluatedSourceSha256},此刻 ${currentSourceSha256}`,
+      ],
+    };
+  }
+  const compiled: CompileResult = compileScript({
+    root: options.root,
+    stagingDir: options.stagingDir,
+    source: options.source,
+  });
+  if (!compiled.ok) {
+    return {
+      ok: false,
+      message: "最后一次 evaluate 时那份 script.ts 编译不过",
+      diagnostics: nonEmptyLines(compiled.diagnostics),
+    };
+  }
+  const validated = validateScript({
+    root: options.root,
+    artifactPath: compiled.jsPath,
+    maxBytes: scriptSizeLimit(options.root),
+    phase: "freeze",
+  });
+  if (!validated.passed) {
+    return {
+      ok: false,
+      message: "最后一次 evaluate 时那份 script.ts 未通过冻结期静态校验",
+      diagnostics: nonEmptyLines(validated.stdout),
+    };
+  }
+  return {
+    ok: true,
+    tscVersion: compiled.tscVersion,
+    validation: { passed: true, errors: nonEmptyLines(validated.stdout) },
+    // 档案里的 `scriptSha256` 是**产物**的字节哈希(契约 §3),与上面那个源哈希不是同一个数。
+    scriptSha256: sha256Hex(readFileSync(compiled.jsPath)),
+  };
+};
+
+const messageOfNoCandidate = (slug: string, loop: AgentLoopResult): string => {
+  const head = `模型 ${slug} 的会话结束于 ${loop.termination}(第 ${String(loop.atStep)} 步),没有产出任何候选`;
+  return loop.termination === "done" ? `${head}:模型自己收工了,但从未 evaluate 出成绩` : head;
+};
+
+const diagnosticLines = (loop: AgentLoopResult): readonly string[] =>
+  loop.steps.length === 0
+    ? [`一次模型调用都没有成功(${loop.termination})`]
+    : loop.steps
+        .slice(-3)
+        .map(
+          (step) =>
+            `第 ${String(step.step)} 步(${step.action.kind}): ${step.stderr.split("\n")[0] ?? ""}`,
+        );

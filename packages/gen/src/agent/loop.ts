@@ -50,7 +50,7 @@ import type {
   AgentTurnEvidence,
   EvaluateProbe,
 } from "./types.js";
-import type { ArchiveOptimizationCandidateAgent, ArchiveStepAction } from "@model-war/schema";
+import type { ArchiveStepAction } from "@model-war/schema";
 
 /** 连续几次动作解析失败即停:一次是模型手滑,三次是它没读懂协议。 */
 export const ACTION_PARSE_FAILURE_LIMIT = 3;
@@ -79,7 +79,6 @@ export type AgentLoopRequest = {
 /** 一次会话的产出。落档那一步(票 07)只填值,不改形状。 */
 export type AgentLoopResult = {
   readonly steps: readonly AgentStep[];
-  readonly candidates: readonly ArchiveOptimizationCandidateAgent[];
   readonly termination: AgentTermination;
   /** 终止发生在第几步(0 = 一次模型调用都没有成功)。 */
   readonly atStep: number;
@@ -92,6 +91,24 @@ export type AgentLoopResult = {
   readonly prompts: readonly string[];
   /** 一步一条的发送侧证据(含那条不进步数的传输末行)。 */
   readonly turns: readonly AgentTurnEvidence[];
+  /**
+   * 这一步里**真评出过成绩**的那次 `evaluate` 的提交身份(宿主服务的事实,loop 只搬运)。
+   *
+   * 它与 `steps` 分开走:过程记录记的是「经过」(命令、两路输出、退出码),而提交身份是宿主侧
+   * 服务知道的一件**别的**事(评的是哪份字节、观测落在哪)。塞进 `steps` 就要给档案形状加格,
+   * 那是票 01 定死的契约;混在 `turns` 里又会让「一次模型调用一行」这条口径失真。
+   */
+  readonly submissions: readonly AgentSubmission[];
+};
+
+/** 一次 `evaluate` 的提交身份:宿主服务算的,按步号与过程记录对起来。 */
+export type AgentSubmission = {
+  readonly step: number;
+  /** 第几次评测(1 起,dispatcher 的计数器)。 */
+  readonly call: number;
+  readonly scriptSha256: string;
+  readonly hostPath: string;
+  readonly observationsPath: string;
 };
 
 /** 没有动作的那一步:命令一条都没跑,但步数与过程记录照记。 */
@@ -136,9 +153,9 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
 
   const startedAt = now();
   const steps: AgentStep[] = [];
-  const candidates: ArchiveOptimizationCandidateAgent[] = [];
   const turns: AgentTurnEvidence[] = [];
   const turnHistory: HistoryTurn[] = [];
+  const submissions: AgentSubmission[] = [];
   let lastInputTokens: number | undefined;
   let parseFailures = 0;
   let termination: AgentTermination = "max-steps";
@@ -147,11 +164,11 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
   /** 收口:把终止原因与步号记下来,并交回这一步为止的全部证据。 */
   const settle = (reason: AgentTermination, step: number): AgentLoopResult => ({
     steps,
-    candidates,
     termination: reason,
     atStep: step,
     prompts: steps.length === 0 ? [] : [request.firstUser],
     turns,
+    submissions,
   });
 
   for (let step = 1; step <= maxSteps; step += 1) {
@@ -236,8 +253,15 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
         action = actionOf(parsed.command, done);
         observation = observationOf(executed);
         result = executed.result;
-        if (executed.candidate !== undefined) {
-          candidates.push(executed.candidate);
+        // 宿主服务说「这一次真评出了成绩」时,把提交身份记下来(loop 只搬运)。
+        if (executed.submission !== undefined) {
+          submissions.push({
+            step,
+            call: executed.evaluateCall ?? 1,
+            scriptSha256: executed.submission.scriptSha256,
+            hostPath: executed.submission.hostPath,
+            observationsPath: executed.submission.observationsPath,
+          });
         }
       }
     }
@@ -281,7 +305,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
 };
 
 /** 便于接线方判断「这一步是不是有候选」:候选为空即失败档(ADR-0030)。 */
-export const hasCandidates = (result: AgentLoopResult): boolean => result.candidates.length > 0;
+export const hasCandidates = (result: AgentLoopResult): boolean => result.submissions.length > 0;
 
 /** `EvaluateProbe` 的最小占位实现:本段不接网格,选举时用它会得到一条明确的失败而不是空候选。 */
 export const unpluggedEvaluateProbe: EvaluateProbe = {
