@@ -230,8 +230,10 @@ it("截断重试并入同一步:第二次成功就照常执行,attempts 是 2", 
     reply(ACTION),
   ]);
   const executor = fakeExecutor([OK]);
+  // 时钟冻结:`sendMs` 的断言是「这一行记了模型的耗时」,不是「耗时恰好不是 0」——
+  // 拿真钟去断言 0 会让这条用例在机器忙的时候随机红(两次 `Date.now()` 之间过了 1 ms)。
   const result = await runAgentSession(
-    requestOf({ model, executor: executor.executor, maxSteps: 1 }),
+    requestOf({ model, executor: executor.executor, maxSteps: 1, now: () => 0 }),
   );
 
   expect(result.steps).toHaveLength(1);
