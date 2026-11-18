@@ -81,6 +81,9 @@ export {
   type ValidateResult,
 } from "./validate.js";
 export { prepareTrialPlan, runTrialScript, type TrialProbe, type TrialResult } from "./trial.js";
+// 假执行器:把「怎么跑一步」换成宿主 `bash`,通道与服务仍是真实现(理由见该文件头注)。
+// 常跑链不装 bubblewrap,而「动作 → 观测 → 候选 → 档案」那条链不该因此失去覆盖。
+export { TOOL_COMMANDS, withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
 // 评测网格的测试夹具与桩(`stubClient` 同一条纪律:测试要用的东西由本包交出来,不各自手抄)。
 export { fixtureScripts, gridPlanFixture } from "./trial-plan.fixture.js";
 export {

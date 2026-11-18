@@ -43,6 +43,7 @@ import type { ModelConfig } from "./config.js";
 import type { ChatMessage, ModelParams } from "./model-client.js";
 import { HARNESS_DIGEST, HARNESS_VERSION } from "./agent/identity.js";
 import { ACTION_REJECT_EXIT_CODE } from "./agent/action.js";
+import { withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
 import type { AgentExecResult } from "./agent/types.js";
 import { TRUNCATED_RESPONSE_FEEDBACK } from "./agent/truncate.js";
 import { completeGridTrial } from "./trial-grid.fixture.js";
@@ -137,105 +138,6 @@ const stepOk = (overrides: Partial<AgentExecResult> = {}): AgentExecResult => ({
 
 const metaOf = (root: string, slug = "alpha", runId = "r1"): ArchiveMeta =>
   JSON.parse(readFileSync(join(root, "archive", slug, runId, "meta.json"), "utf8")) as ArchiveMeta;
-
-/**
- * 把假执行器接到 `generateOneModel` 上。
- *
- * ── 为什么改 `sandbox.run` 而不是加一个 `executor` 注参 ──
- *
- * 生产路径上「怎么跑一步」只有一处(`sandbox.run`),加一个注参就是给它开第二条路,而那条只在
- * 测试里存在——那是最容易与真实路径分叉的东西。这里替掉的正是那一个调用点。
- */
-const withHostBash = async <T>(
-  handler: (command: string) => AgentExecResult | Promise<AgentExecResult>,
-  run: () => Promise<T>,
-): Promise<T> => {
-  const mod = await import("./agent/sandbox/index.js");
-  const original = mod.sandbox.run;
-  // 启动自证也换掉:它要真跑 bwrap,而本文件的每一条用例都不依赖内核能力(ADR-0033 的
-  // 自证位置由 `run.test.ts` 的注入失败用例验,这里只需要它恒过)。
-  const originalPreflight = mod.sandbox.preflight;
-  Object.defineProperty(mod.sandbox, "preflight", {
-    configurable: true,
-    writable: true,
-    value: () => ({ version: "test" }),
-  });
-  Object.defineProperty(mod.sandbox, "run", {
-    configurable: true,
-    writable: true,
-    value: async (request: {
-      command: string;
-      workspaceDir: string;
-      requestHandler?: (line: string) => Promise<string>;
-    }) => {
-      // ── 通道先于执行 ──
-      //
-      // 沙箱里那几个薄壳(`check` / `evaluate` / `done`)在真 bwrap 里会往 fd 3 写一行请求、
-      // 读一行响应，**它自己什么也不干**。所以这三个命令必须走通道，不能落到 handler 里——
-      // 后者是「其他命令」的替身。顺序反了会让 `evaluate` 变成一次「命令不存在」的失败，
-      // 而那条路径静默地把「宿主服务从没被调用」伪装成一个普通的非零退出码。
-      const tool = request.command.trim();
-      if (request.requestHandler !== undefined && TOOL_COMMANDS.has(tool)) {
-        const response = JSON.parse(
-          await request.requestHandler(JSON.stringify({ tool, args: [] })),
-        ) as { exitCode: number; stdout: string; stderr: string };
-        return {
-          stdout: response.stdout,
-          stderr: response.stderr,
-          exitCode: response.exitCode,
-          timedOut: false,
-        };
-      }
-      const result = await handler(request.command);
-      return { ...result, timedOut: result.timedOut ?? false };
-    },
-  });
-  try {
-    return await run();
-  } finally {
-    Object.defineProperty(mod.sandbox, "preflight", {
-      configurable: true,
-      writable: true,
-      value: originalPreflight,
-    });
-    Object.defineProperty(mod.sandbox, "run", {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
-  }
-};
-
-/**
- * 在宿主 `bash` 里真跑那一块命令,并把 `/workspace` 映射到那个临时目录。
- *
- * ── 为什么要把 `/workspace` 换掉 ──
- *
- * 模型写的命令里是**沙箱视角**的绝对路径(`cat > /workspace/script.ts`)。真 bwrap 把工作区
- * bind 成 `/workspace`,所以那条路径在沙箱里成立;宿主上不成立。这里把前缀改写成真实路径再跑,
- * 于是「模型写的命令」与「工作区里真的出现了什么」这两件事在测试里也连得起来。
- *
- * 改写只换 `/workspace` 这个前缀,不动命令的其余字节——包括 heredoc 与管道。那几个薄壳
- * (`check` / `evaluate` / `done`)不在这里跑:它们由 `withHostBash` 那条通道替身应答。
- */
-const withRealBash = async <T>(workspaceDir: string, run: () => Promise<T>): Promise<T> => {
-  const { spawnSync } = await import("node:child_process");
-  return await withHostBash((command) => {
-    const hostCommand = command.replaceAll("/workspace", workspaceDir);
-    const executed = spawnSync("/bin/bash", ["-c", hostCommand], {
-      cwd: workspaceDir,
-      encoding: "utf8",
-    });
-    return {
-      stdout: executed.stdout,
-      stderr: executed.stderr,
-      exitCode: executed.status ?? 1,
-    };
-  }, run);
-};
-
-/** 三个走通道的薄壳:它们的命令行本身就是要发给宿主的那个请求。 */
-const TOOL_COMMANDS = new Set(["check", "evaluate", "done"]);
 
 it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 只存一份", async () => {
   const root = mkRoot();

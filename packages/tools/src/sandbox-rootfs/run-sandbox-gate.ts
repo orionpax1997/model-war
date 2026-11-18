@@ -24,6 +24,13 @@
  * 形式出现。前一条只认形状(一行、是 JSON),后一条认结果(薄壳拿到的退出码与 stdout、以及
  * 宿主落进 `/workspace/.check.txt` 的全文)。
  *
+ * ── 第五件在本门禁之后跑,不在这份文件里 ──
+ *
+ * 「一场真会话在这套隔离里走得完」那一条住在 `apps/cli/src/agent-real-session.test.ts`
+ * (vitest 的 `sandbox` project),由根脚本 `check:sandbox` 紧跟本门禁之后跑。它必须读
+ * `packages/gen` 与 `packages/runner` 的编译形态,而工具包不得 import 它们(hld §3.2),
+ * 所以它不能写在这里。顺序是先隔离、后会话:隔离不成立时,那一条的结论没有意义。
+ *
  * ── 为什么它不挂在 `check` / `check:quick` 上 ──
  * 它需要内核能力(非特权 user namespace)与系统装的 `bubblewrap`。挂进常跑链,「全量门禁红了」
  * 会同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」——两种处方混成一条红。所以它是

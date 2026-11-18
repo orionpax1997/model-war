@@ -11,6 +11,17 @@
  * 这正是票面允许的那条替代:「有凭证缺失时用 `stubClient` + 真 bwrap 的形态验证『档案写得
  * 出来、装载得进』——但必须真跑一次 bwrap,不许全程假执行器」。
  *
+ * ── 它为什么不在常跑链上 ──
+ *
+ * 它要非特权 user namespace 与系统装的 `bubblewrap`,而常跑链(`pnpm run test`)不装。
+ * 收进 `unit` 的后果是两种处方混成一条红:全量门禁红了到底是提交内容有问题,还是这台机器
+ * 没装 bwrap(与 `check:sandbox` 那条隔离门禁同一条理由)。所以它归 vitest 的 `sandbox`
+ * project,入口是命名脚本 `pnpm run check:sandbox`(先跑隔离那四件事,再跑这一条)。
+ *
+ * 同一套断言在 unit 里有一份**假执行器**版本(`apps/cli/src/agent-session-archive.test.ts`):
+ * 沙箱只负责「命令跑在哪一层进程里」,而 `check` / `evaluate` 的答案、编译、校验、落档都不
+ * 经过它。两份一起看才是完整的:「每轮编辑循环里能通」与「真隔离里也能通」。
+ *
  * ── 它证明什么、不证明什么 ──
  *
  * 证明:一条从「模型说要做什么」到「盘上有一份可装载的 v3 档案」的路是通的,而且中间每一站
@@ -26,7 +37,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -227,5 +246,8 @@ it(
     // 第一步真的跑在沙箱里:`ls /contract` 列出了契约目录那四个文件。
     expect(outcome.agent.steps[0]?.stdout).toContain("README.md");
     expect(outcome.agent.steps[0]?.exitCode).toBe(0);
+    // 发布不变量:「失败只写 failed-<runId>.json」。这一场连失败记录都没写
+    // (`generateOneModel` 不收口),所以目录该是空的。
+    expect(readdirSync(join(root, "archive/alpha"))).toEqual([]);
   },
 );

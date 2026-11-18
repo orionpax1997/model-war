@@ -42,7 +42,7 @@
     "check:bench": "node packages/tools/src/benchmarks/run-benchmarks-gate.ts",
     "check:runtime": "node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts",
     "check:sandbox-rootfs": "node packages/tools/src/sandbox-rootfs/run-rootfs-drift-gate.ts",
-    "check:sandbox": "pnpm run build && node packages/tools/src/sandbox-rootfs/run-sandbox-gate.ts",
+    "check:sandbox": "pnpm run build && node packages/tools/src/sandbox-rootfs/run-sandbox-gate.ts && vitest run --project sandbox",
     "check:selfproof": "pnpm run build && node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "check:cross-process": "node --disable-warning=ExperimentalWarning packages/tools/src/cross-process/run-cross-process-gate.ts",
     "check:limits": "node --disable-warning=ExperimentalWarning packages/tools/src/limits/run-limits-gate.ts",
