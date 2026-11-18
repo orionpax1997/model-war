@@ -34,6 +34,7 @@ import {
   reply,
   runGeneration,
   stubClient,
+  withRealBash,
 } from "@model-war/gen";
 import { RULESET_VERSION, SANDBOX_RUNTIME_HASH, type JsonValue } from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
@@ -84,23 +85,31 @@ it("gen 产出的存档过 `validateArchiveMeta`:三件套齐、哈希与版本�
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   // agent 形态的一次会话:写脚本 → evaluate → done。三步各一次模型调用。
-  const code = await runGeneration({
-    root,
-    configPath: "models.yaml",
-    createClient: () =>
-      stubClient([
-        reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${VALID_SCRIPT}EOF\n\`\`\``),
-        reply("```bash\nevaluate\n```"),
-        reply("```bash\ndone\n```"),
-      ]),
-    agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
-    workspaceDir,
-    // 本文件不断言真试跑（真试跑由 `gen-cli` e2e 与 `check:gen-grid` 覆盖），这里走
-    // 「形状真实」的假网格：32 行观测 + 旁挂汇总。成绩走**缺省**评分（真网格那一支：
-    // 从旁挂 `.grid.json` 读），所以这条链上的分数来源与生产同一条。
-    trial: completeGridTrial(),
-    trialPlan: () => gridPlanFixture(),
-  });
+  //
+  // 执行器换成宿主 `bash`(`@model-war/gen` 的 `withRealBash`):`runGeneration` 的第一件事是
+  // 启动自证(ADR-0033),它要真跑 bwrap,而**本文件在常跑链(unit)上**——那条链不装 bubblewrap。
+  // 不换的后果是「本机装了 bwrap 所以绿、CI 上红」,两种处方混成一条红。真隔离由
+  // `apps/cli/src/agent-real-session.test.ts`(`check:sandbox`)与 `agent-session-archive.test.ts`
+  // 的同形断言分工覆盖;这条只关心「产出的存档过得了装载校验」。
+  const code = await withRealBash(workspaceDir, () =>
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: () =>
+        stubClient([
+          reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${VALID_SCRIPT}EOF\n\`\`\``),
+          reply("```bash\nevaluate\n```"),
+          reply("```bash\ndone\n```"),
+        ]),
+      agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
+      workspaceDir,
+      // 本文件不断言真试跑（真试跑由 `gen-cli` e2e 与 `check:gen-grid` 覆盖），这里走
+      // 「形状真实」的假网格：32 行观测 + 旁挂汇总。成绩走**缺省**评分（真网格那一支：
+      // 从旁挂 `.grid.json` 读），所以这条链上的分数来源与生产同一条。
+      trial: completeGridTrial(),
+      trialPlan: () => gridPlanFixture(),
+    }),
+  );
   expect(code).toBe(0);
 
   const slugDir = join(root, "archive", "alpha");
