@@ -793,6 +793,55 @@ const sessionOf = (scripts: readonly string[]): readonly string[] =>
     .flatMap((script) => [writeScript(script), "```bash\nevaluate\n```"])
     .concat(["```bash\ndone\n```"]);
 
+it("freeze 失败也清干净:`archive/<slug>/` 里只剩那一份 failed-<runId>.json", async () => {
+  const root = mkRoot();
+  // 把冻结期的体积上限压到 8 字节:评测能过(编译与网格都不看这个上限),静态校验必拦。
+  // 这就是一条真会发生的 freeze 失败:候选快照已经落盘,三件套却拼不出来。
+  const ruleset = JSON.parse(readFileSync(join(root, "rulesets", "v2.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  writeFileSync(
+    join(root, "rulesets", "v2.json"),
+    `${JSON.stringify({ ...ruleset, scriptSizeLimit: 8 })}\n`,
+  );
+  writeFileSync(
+    join(root, "models.yaml"),
+    [
+      "models:",
+      "  - slug: alpha",
+      "    endpointFamily: chat-completions",
+      "    baseUrl: https://example.invalid/v1",
+      "    modelId: vendor/alpha",
+      "    credentialEnvVar: TEST_KEY",
+      "    channelId: test-channel",
+      "    contextLength: 100000",
+    ].join("\n"),
+  );
+  const model = stubClient([reply(writeScript(SCRIPT)), reply("```bash\nevaluate\n```")]);
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const code = await withRealBash(workspaceDir, () =>
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: () => model,
+      agentPrompt: { user: FIRST_USER, system: SYSTEM },
+      workspaceDir,
+      maxSteps: 2,
+      trial: completeGridTrial(),
+      trialPlan: () => gridPlanFixture(),
+    }),
+  );
+
+  expect(code).toBe(1);
+  // 发布不变量:「失败只写 failed-<runId>.json」。候选快照、观测原料、网格汇总一个不留,
+  // 临时组装目录也不留(它是 `.tmp-*`)。
+  const entries = readdirSync(join(root, "archive/alpha"));
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatch(/^failed-.+\.json$/u);
+}, 60_000);
+
 it("候选一到三条:1 次 / 2 次 / 3 次评测各产出同等条数,下标即第几次评测", async () => {
   for (const count of [1, 2, 3] as const) {
     const root = mkRoot();
@@ -896,6 +945,8 @@ it("观测不完整不产候选:缺场的那一次不产出成绩,档落成失�
   // 「为什么没成绩」写得出来:缺场那一句在诊断里(取自那次 evaluate 的 stderr)。
   expect(outcome.failure.diagnostics.join("\n")).toContain("不完整");
   expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
+  // 失败会话不留旁挂产物:那一跑写过一整套候选证据族(先编译、先落快照、跑网格),全部撤掉。
+  expect(readdirSync(join(root, "archive/alpha"))).toEqual([]);
 }, 60_000);
 
 it("快照字节 == 评估时的工作区字节:评完之后改文件不影响成绩", async () => {

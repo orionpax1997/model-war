@@ -90,6 +90,7 @@ import {
   candidateScriptFile,
   candidateSourceFile,
   createEvaluateService,
+  discardCandidateArtifacts,
 } from "./agent/host/evaluate-service.js";
 import { createSessionTools } from "./agent/host/dispatcher.js";
 import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
@@ -645,6 +646,7 @@ export const generateOneModel = async (
     // 快照本身已经由 `evaluate` 服务在评测那一刻落进 `archive/<slug>/`(「快照即提交」),
     // 这里只做三件事:找它、读它的**字节**算产物摘要、把成绩拼进候选条目。重读工作区会把
     // 「评完之后又改过」混进成绩里,而模型可能只是想清理一下(ADR-0030)。
+    // 会话失败时这一族旁挂产物在 `finally` 里被撤掉:没有 commit 就没有留下的理由。
     const scoring =
       request.evaluateScoring ??
       scoreFromCandidateEvidence({ root: request.root, slug, plan: planOf });
@@ -772,6 +774,13 @@ export const generateOneModel = async (
   } finally {
     if (!committed) {
       discardStagingDir(stagingDir);
+      // ── 失败会话不污染 `archive/<slug>/` ──
+      //
+      // 候选快照必须在**评测那一刻**就落盘(「快照即提交」),而那时还不知道整场会话会不会
+      // 成功。所以零候选 / 冻结失败 / 落档失败这三条路上都会剩下没有主人的旁挂产物,而发布
+      // 不变量(`docs/hld.md`)是「失败只写 `failed-<runId>.json`」。清理放在 `finally`:
+      // 失败的形状有三条,而「没有 commit 就不留字节」只有一条。
+      discardCandidateArtifacts({ root: request.root, model: slug, runId });
     }
   }
 };

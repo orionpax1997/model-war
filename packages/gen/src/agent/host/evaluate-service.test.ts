@@ -22,10 +22,12 @@ import { completeGridTrial } from "../../trial-grid.fixture.js";
 import { gridPlanFixture } from "../../trial-plan.fixture.js";
 import type { CompileFn } from "./check-service.js";
 import {
+  candidateArtifactFiles,
   candidateObservationsFile,
   candidateScriptFile,
   candidateSourceFile,
   createEvaluateService,
+  isCandidateArtifactOf,
   type EvaluateServiceDeps,
 } from "./evaluate-service.js";
 
@@ -320,5 +322,25 @@ describe("基础设施:计划是网格的身份", () => {
       }),
     );
     await expect(service({ workspaceDir: dir, call: 1, step: 1 })).rejects.toThrow(/计划/);
+  });
+});
+
+describe("失败清理:按名字认出自己那一族", () => {
+  it("四份旁挂产物都算自己的;别的 runId、前缀串与三件套都不算", () => {
+    const names = candidateArtifactFiles(candidateObservationsFile("r1", 3));
+    // 观测原料 + 源快照 + 产物快照 + 网格汇总:少写一份就是一条残留。
+    expect(names).toHaveLength(4);
+    for (const name of names) expect(isCandidateArtifactOf(name, "r1")).toBe(true);
+
+    // 不是自己的:三件套目录名、失败记录、别的跑的字节。
+    for (const name of [
+      "r1",
+      "failed-r1.json",
+      ...candidateArtifactFiles(candidateObservationsFile("r2", 3)),
+    ]) {
+      expect(isCandidateArtifactOf(name, "r1")).toBe(false);
+    }
+    // 前缀串不是自己:`r1-round-2` 那一跑的档不该被 `r1` 的清掉。
+    expect(isCandidateArtifactOf(candidateObservationsFile("r1-round-2", 3), "r1")).toBe(false);
   });
 });

@@ -51,6 +51,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -58,12 +59,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ToolResponse, TrialPlan } from "@model-war/schema";
+import { TRIAL_GRID_SUMMARY_SUFFIX, type ToolResponse, type TrialPlan } from "@model-war/schema";
 
 import { SCRIPT_SOURCE_NAME, sha256Hex } from "../../archive.js";
 import { compileScript, type CompileResult } from "../../compile.js";
 import {
   candidateObservationsFileOf,
+  candidateObservationsFilePrefixOf,
   missingTrialGridMatches,
   readTrialObservations,
   renderScoreSourceFeedback,
@@ -98,6 +100,69 @@ export const candidateScriptFile = (observationsFile: string): string =>
 /** 候选源码(`.candidate.ts`)的 basename:评估时那份工作区字节的副本。 */
 export const candidateSourceFile = (observationsFile: string): string =>
   `${observationsFile}.candidate.ts`;
+
+/**
+ * 一次评测在 `archive/<slug>/` 下落下的**一族**文件:观测原料 + 两份候选快照 + 网格汇总。
+ *
+ * 名字从这一处出,调用方不各写一份字面量:失败清理要按名字认出自己那一族,而认错一个后缀
+ * 就是一个残留文件。
+ */
+export const candidateArtifactFiles = (observationsFile: string): readonly string[] => [
+  observationsFile,
+  candidateSourceFile(observationsFile),
+  candidateScriptFile(observationsFile),
+  `${observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+];
+
+/** `name` 是不是 `runId` 这一跑的候选旁挂产物(`observed-<runId>-round-<步号>.jsonl…`)。
+ *
+ * 判据是「前缀 + 纯数字步号 + 本族的后缀」三件都对上。只看前缀不够:另一次的 runId 可能是
+ * 这一跑的前缀串(`r1` 对 `r1-round`),那样会把另一份档的字节删掉。
+ */
+export const isCandidateArtifactOf = (name: string, runId: string): boolean => {
+  const head = candidateObservationsFilePrefixOf(runId);
+  if (!name.startsWith(head)) return false;
+  const rest = name.slice(head.length);
+  const dot = rest.indexOf(".");
+  if (dot <= 0) return false;
+  const step = rest.slice(0, dot);
+  if (!/^\d+$/u.test(step)) return false;
+  return candidateArtifactFiles(`${head}${step}.jsonl`).includes(name);
+};
+
+/**
+ * 失败会话的清理:把这一跑在 `archive/<slug>/` 下落下的候选旁挂产物删干净。
+ *
+ * ── 为什么需要它 ──
+ *
+ * 候选快照必须在**评测那一刻**落盘(「快照即提交」),而那时还不知道整场会话会不会成功。
+ * 所以零候选 / 冻结失败 / 落档失败这三条路上,`archive/<slug>/` 会剩下没有主人的旁挂产物。
+ * 发布不变量(`docs/hld.md`)是「失败只写 `failed-<runId>.json`」:目录里的东西要么是一份
+ * 完整的三件套,要么是一条失败记录。
+ *
+ * ── 只删自己那一跑 ──
+ *
+ * 名字按 runId 认(见 `isCandidateArtifactOf`),同目录里别的档、别的跑的字节一律不碰。
+ * 工作区里的派生视图(`/workspace/.observations/<n>.md`)不在这里:它住在会话工作区,
+ * 不在 `archive/` 的发布面上。
+ */
+export const discardCandidateArtifacts = (options: {
+  readonly root: string;
+  readonly model: string;
+  readonly runId: string;
+}): void => {
+  const archiveDir = join(options.root, "archive", options.model);
+  let names: readonly string[];
+  try {
+    names = readdirSync(archiveDir);
+  } catch {
+    // 目录不在 = 一次评测都没跑过 = 没有可清的。
+    return;
+  }
+  for (const name of names) {
+    if (isCandidateArtifactOf(name, options.runId)) rmSync(join(archiveDir, name), { force: true });
+  }
+};
 
 /** 一次提交的身份:评的是哪份字节、产物是什么、观测落在哪。 */
 export type EvaluateSubmission = {
