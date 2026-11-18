@@ -81,6 +81,16 @@ export {
   type ValidateResult,
 } from "./validate.js";
 export { prepareTrialPlan, runTrialScript, type TrialProbe, type TrialResult } from "./trial.js";
+// 评测网格的测试夹具与桩(`stubClient` 同一条纪律:测试要用的东西由本包交出来,不各自手抄)。
+export { fixtureScripts, gridPlanFixture } from "./trial-plan.fixture.js";
+export {
+  FIXTURE_AVERAGE_POINTS,
+  completeGridTrial,
+  fixtureGridSummary,
+  fixtureObservationsText,
+  fixtureReadings,
+  type CompleteGridTrialOptions,
+} from "./trial-grid.fixture.js";
 export {
   ARCHIVE_META_NAME,
   STAGING_DIR_PREFIX,
@@ -96,6 +106,7 @@ export {
 } from "./archive.js";
 export {
   generateOneModel,
+  scoreFromCandidateEvidence,
   type AgentArchiveFields,
   type EvaluateScoring,
   type EvaluateSubmission,

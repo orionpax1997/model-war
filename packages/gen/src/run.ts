@@ -20,7 +20,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { writeFailureRecord } from "./failure.js";
-import { SANDBOX_ROOTFS_DIR } from "@model-war/schema";
+import { SANDBOX_ROOTFS_DIR, type TrialPlan } from "@model-war/schema";
 import type { AgentPrompt } from "./agent-prompt.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
@@ -68,15 +68,22 @@ export type GenerationRequest = {
    */
   readonly rootfsDir?: string;
   /**
-   * 冻结期试跑探针(被 `evaluate` 服务调)。缺席即占位实现——**本段不接真网格**(票 06),
-   * 于是 `evaluate` 不产出候选,零候选即失败档。测试注入桩。
+   * 试跑探针(被 `evaluate` 服务调,一次评测一张整网格)。缺席即真子进程
+   * (`runTrialScript`):生产路径上没有「假网格」这回事。测试注入桩。
    */
   readonly trial?: TrialProbe;
   /**
+   * 评测网格计划的搬运缝(一次会话一张)。缺席即 spawn 试跑入口的 `--plan` 模式现场搬。
+   *
+   * 注入它的地方只有测试:搬计划要读盘算摘要(规则集/地图/四份陪练字节),而单测的临时根里
+   * 没有安装面。生产路径永远走真入口——**不提供「不比对计划」这一档**,因为计划是网格的身份。
+   */
+  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
+  /**
    * 一次 `evaluate` 的**成绩**从哪来(`pipeline.ts` 的 `EvaluateScoring`)。
    *
-   * 真网格归票 06。缺席即占位实现(`undefined`),这条路径因此是「会话能跑完、档能落下来、
-   * 但没有任何成绩」——本段要验的正是这条。
+   * 缺席即真网格(`scoreFromCandidateEvidence` 读候选旁挂的 `.grid.json`)。测试注入它,
+   * 把「成绩」与「网格」拆开验。
    */
   readonly evaluateScoring?: EvaluateScoring;
 };
@@ -98,8 +105,9 @@ export type GenerationOptions = {
   readonly maxSteps?: number;
   readonly totalWallClockMs?: number;
   readonly stepWallClockMs?: number;
-  /** 评测探针与成绩接缝(票 06 的真实现在那里)。 */
+  /** 评测探针、计划搬运与成绩接缝(生产路径全部走真实现)。 */
   readonly trial?: TrialProbe;
+  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
   readonly evaluateScoring?: EvaluateScoring;
 };
 
@@ -173,6 +181,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     ...(options.stepWallClockMs === undefined ? {} : { stepWallClockMs: options.stepWallClockMs }),
     ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
+    ...(options.trialPlan === undefined ? {} : { trialPlan: options.trialPlan }),
     ...(options.evaluateScoring === undefined ? {} : { evaluateScoring: options.evaluateScoring }),
   };
 

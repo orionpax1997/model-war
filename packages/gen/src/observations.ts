@@ -8,11 +8,18 @@
  * 计分依据都塞进 prompt——08 实测「三场」约 3.5 千字符，照搬 32 场就是约 25 千字符。所以回喂分三层
  * （三层之前先给一行陪练池身份与一句覆盖声明）：
  *
- * 0. **陪练池身份**：本阶段对的是哪四份（角色、`role:slug`、装载来源），以及有没有**代位**
- *    （来源带 `#substitute` 时明写「本阶段以 X 代位」）。这一块不是第四层，它是「跟谁打」的
+ * 0. **陪练池身份**：本次评测对的是哪四份（角色、`role:slug`、装载来源），以及有没有**代位**
+ *    （来源带 `#substitute` 时明写「本次评测以 X 代位」）。这一块不是第四层，它是「跟谁打」的
  *    唯一出处（与那句覆盖声明一起站在三层之外）。
  * 1. **对差表**：按 `座位 × 地图` 聚合（网格 8 格），每格给平均名次、平均名次积分、平均领土分与
- *    第一名的分差、末位局数，并给出**与上一阶段同一格的变化**（Δ 平均名次积分 / Δ 分差）。
+ *    第一名的分差、末位局数，并给出**与上一次评测同一格的变化**（Δ 平均名次积分 / Δ 分差）。
+ *
+ * 分步（agent）形态下「阶段」这个词不再存在（ADR-0031）：一次会话里的一到三次评测就是候选序，
+ * 所以对照的是**上一次评测**，不是上一个阶段。渲染规则不变，只是称呼跟着词汇表走。
+ *
+ * 另外单出一块 `renderScoreSourceSummary`：它只给覆盖声明 + 对差表，是 `evaluate` 的 **stdout**
+ * 那一块（ADR-0030「stdout 只给聚合对差表加一行指向完整观测文件的路径」）。逐场一行与最差三场
+ * 留在 `/workspace/.observations/<n>.md` 里，模型按需读。
  * 2. **逐场一行**：图、候选座位、组合（该场轮空的是哪一份陪练）、候选名次、四方领土分、结束原因；
  *    候选与该场某位对手**字节相同**时逐场加一句「本场对手与你字节相同」（确定性镜像，照跑不回避）。
  * 3. **最差三场**：只对这三场展开原有的三栏明细（行动调用数与即时错误码、独立结算效果、终局事实）。
@@ -64,6 +71,17 @@ export const observationsPathOf = (
     slug,
     `${OBSERVATIONS_FILE_PREFIX}${runId}${round === undefined ? "" : `-round-${String(round)}`}.jsonl`,
   );
+
+/**
+ * 候选证据族的 basename（`archive/<slug>/` 下），序号 = 步号。
+ *
+ * 分步形态下它就是「第几步照的那张网格」，而**不是**协议轮号：一次会话里步与轮是一回事
+ * （一次模型调用 = 一步 = 一轮），但观测文件属于**候选**，候选由 `evaluate` 产生，所以序号
+ * 取那次 `evaluate` 的步号。报告侧按这个名字判完整性（`-round-<step>.jsonl`），
+ * 服务落盘与候选条目都从这里取，不各写一份字面量。
+ */
+export const candidateObservationsFileOf = (runId: string, step: number): string =>
+  `${OBSERVATIONS_FILE_PREFIX}${runId}-round-${String(step)}.jsonl`;
 
 /**
  * 字段形状已由共享 JSON Schema 验证；这里只校验当前候选与跨字段关系。
@@ -347,12 +365,12 @@ const averageOfCell = (matches: readonly MatchFacts[]): CellAverage => {
   };
 };
 
-/** 与上一阶段同一格的变化：没有上一阶段、或任一侧该格终局未知时明确说出来。 */
+/** 与上一次评测同一格的变化：没有上一次、或任一侧该格终局未知时明确说出来。 */
 const changeOf = (current: CellAverage, previous: CellAverage | undefined): string => {
-  const head = "与上一阶段同一格：";
-  if (previous === undefined) return `${head}无上一阶段。`;
-  if (current.known === 0) return `${head}本阶段该格终局未知，不给变化。`;
-  if (previous.known === 0) return `${head}上一阶段该格终局未知，不给变化。`;
+  const head = "与上一次评测同一格：";
+  if (previous === undefined) return `${head}无上一次评测。`;
+  if (current.known === 0) return `${head}本次评测该格终局未知，不给变化。`;
+  if (previous.known === 0) return `${head}上一次评测该格终局未知，不给变化。`;
   return `${head}Δ平均名次积分 ${signed2(current.points - previous.points)}，Δ分差 ${signed2(current.gap - previous.gap)}。`;
 };
 
@@ -394,7 +412,7 @@ const renderDiffTable = (
     }
   }
   return [
-    "一、对差表（座位 × 地图聚合；Δ = 本阶段 − 上一阶段，分差 = 第一名领土分 − 候选领土分，末位 = 名次为本场最差名次、含并列、四方全并列时不算）",
+    "一、对差表（座位 × 地图聚合；Δ = 本次评测 − 上一次评测，分差 = 第一名领土分 − 候选领土分，末位 = 名次为本场最差名次、含并列、四方全并列时不算）",
     ...rows,
   ].join("\n");
 };
@@ -418,20 +436,20 @@ const nameOfScript = (id: string): string =>
   id.slice(id.indexOf(TRIAL_SCRIPT_ID_SEPARATOR) + TRIAL_SCRIPT_ID_SEPARATOR.length);
 
 /**
- * 陪练池：本阶段的对手是什么身份、从哪份存档装载、有没有代位。
+ * 陪练池：本次评测的对手是什么身份、从哪份存档装载、有没有代位。
  *
  * 代位是**来源**（`source` 带 `#substitute` 后缀）而不是另一个角色（见 runner 的
  * `sparring-pool.ts`），所以只读计划里已有的 `role` / `id` / `source`，不把身份在反馈里另存一份。
- * 于是「本阶段以 X 代位」这句话能直接从计划重建（反馈文本可从观测与计划复现）。
+ * 于是「本次评测以 X 代位」这句话能直接从计划重建（反馈文本可从观测与计划复现）。
  */
 const renderSparringPool = (plan: TrialPlan): string => {
   const rows = plan.scripts.map((script) => {
     const substitute = script.source.endsWith(TRIAL_SUBSTITUTE_SOURCE_SUFFIX);
     return `  ${ROLE_LABELS[script.role]} ${script.id} ← ${script.source}${
-      substitute ? `；本阶段以 ${nameOfScript(script.id)} 代位` : ""
+      substitute ? `；本次评测以 ${nameOfScript(script.id)} 代位` : ""
     }`;
   });
-  return ["陪练池（本阶段的对手；每个组合轮空其中一份）：", ...rows].join("\n");
+  return ["陪练池（本次评测的对手；每个组合轮空其中一份）：", ...rows].join("\n");
 };
 
 /**
@@ -529,10 +547,31 @@ const FEEDBACK_TRAILER =
   "调用、即时错误返回与结算事实分别计量；undefined 返回不代表行动生效。movedSteps 是实际格移动次数，captureEvents 是占点事件次数，productionOrdersStarted 是开始订单数。快照读数不覆盖全部结算变化。终局 tick 是已执行 tick 数；淘汰 tick 为从零开始的编号。名次积分按并列占用名次区间均分；timeout 的第一名不代表胜利。这些观测不说明原因；依据既有契约返回完整脚本。";
 
 /**
- * 事实回喂的入口：陪练池身份与覆盖声明 → 对差表 → 逐场一行 → 最差三场明细。
+ * `evaluate` 的 **stdout** 那一块：覆盖声明 + 对差表，仅此而已（ADR-0030「观测外置，而不是压缩」）。
  *
- * `previous` 是**上一阶段**同一张网格的读数（首轮没有上一阶段 → undefined，对差表写「无上一阶段」）。
- * `candidateScriptSha256` 是本阶段候选的编译产物摘要：给了才能把「候选与某位对手字节相同」的
+ * 常驻观测要压在 1k token 以内，靠的不是压缩（增量渲染拿确定性换体量、回溯时逼模型重跑），
+ * 而是**外置**：逐场一行与最差三场的全文落在 `/workspace/.observations/<n>.md`，模型按需读。
+ * 与全文共用同几个渲染函数（覆盖声明、对差表），所以两块不会是两份会漂的规则。
+ *
+ * `previous` 是上一次评测同一张网格的读数（第一次评测没有上一次 → 对差表写「无上一次评测」）。
+ */
+export const renderScoreSourceSummary = (
+  readings: readonly TrialObservationLine[],
+  plan: TrialPlan,
+  previous?: readonly TrialObservationLine[],
+): string => {
+  const facts = factsOf(plan, readings);
+  const earlier = previous === undefined ? undefined : factsOf(plan, previous);
+  return [coverageLine(plan, facts), renderDiffTable(plan, facts, earlier)].join("\n");
+};
+
+/**
+ * 完整观测（落 `/workspace/.observations/<n>.md`）：陪练池身份与覆盖声明 → 对差表 → 逐场一行 →
+ * 最差三场明细。
+ *
+ * `previous` 是**上一次评测**同一张网格的读数（第一次没有上一次 → undefined，对差表写
+ * 「无上一次评测」）。
+ * `candidateScriptSha256` 是本候选的编译产物摘要：给了才能把「候选与某位对手字节相同」的
  * 场次逐场标出来（阈值判定就是字节相等，不靠名字或分数猜）。
  * 只陈述本候选的白名单事实；不从读数推断原因或给策略建议。
  */

@@ -283,7 +283,7 @@ const runCli = (
   });
 
 it.skipIf(!archivePresent)(
-  "冒烟:假端点后端到端跑通一次会话(票 06 前零候选,落同形失败档)",
+  "冒烟:假端点后端到端跑通一次会话(真网格 32 场,有候选即成功档)",
   { timeout: 120_000 },
   async () => {
     // 一次 agent 会话三步:写脚本 → evaluate(提交并跑满整张网格) → done。
@@ -295,13 +295,9 @@ it.skipIf(!archivePresent)(
     try {
       const root = mkRoot(endpoint.baseUrl);
       const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
-      // ── 票 06 之前:CLI 路径的 `evaluateScoring` 是占位(恒 `undefined`),所以一次会话
-      // 跑得完、档落得下,但**没有成绩** → 零候选 → 失败档、退出 1(ADR-0030)。
-      //
-      // 这条用例验的是**接线**:CLI → 真 HTTP 适配器 → 假端点 → 单会话 loop → 落档。
-      // 票 06 把真网格接上之后,这里应当改成 `expect(result.status).toBe(0)` 并断言
-      // 三件套 + `optimization.version === 3`——那是同一条链,只是最后一步有了成绩。
-      expect(result.status, result.stderr).toBe(1);
+      // 这条用例验的是**接线**:CLI → 真 HTTP 适配器 → 假端点 → 单会话 loop → 真网格 → 落档。
+      // 真网格接上之后,那次 evaluate 有成绩 → 有候选 → 成功档、退出 0(ADR-0030)。
+      expect(result.status, result.stderr).toBe(0);
 
       // 真打到了假端点：POST /chat/completions，带上 Bearer 鉴权头；三步各一次调用。
       expect(endpoint.requests).toHaveLength(3);
@@ -311,65 +307,36 @@ it.skipIf(!archivePresent)(
         expect(request.authorization).toBe("Bearer smoke-fake-key");
       }
 
-      // 零候选:落的是失败档(不是三件套目录)。旁挂的观测与网格汇总仍然留着——
-      // 失败档恰恰是校准 harness 的主要证据(ADR-0031)。
+      // 有候选 → 三件套目录(不是 failed-*.json)。
       const slugDir = join(root, "archive", "alpha");
       const names = readdirSync(slugDir);
-      const failureName = names.find((name) => name.startsWith("failed-")) as string;
-      expect(failureName).toBeDefined();
-      expect(names.some((name) => /^\d/u.test(name))).toBe(false);
-      const record = JSON.parse(readFileSync(join(slugDir, failureName), "utf8")) as {
-        runId: string;
-        archiveSchemaVersion: number;
-      };
-      expect(record.archiveSchemaVersion).toBe(3);
-      const runId = record.runId;
-      // 本段一次候选都不产出,所以 `archive/<slug>/` 下只有那份失败档:
-      // 候选快照(逐候选命名族)跟候选序一起出现,那是票 06 接上成绩之后才有的东西。
-      expect(names).toEqual([failureName]);
-      // 观测与网格汇总落在**工作区**里（`/workspace/.observations/<n>.md` + `.grid.json`）:
-      // 那是 ADR-0030「观测外置」的落点（模型按需读,不常驻上下文）。把它们搬进
-      // `archive/<slug>/observed-...jsonl` 那个命名族是票 06 的事,本段不越界。
-      //
-      // 但这里仍然断言它**真的落了盘并跑满了整张网格**:一次评测不能没有痕迹。
-      const observationsDir = join(workspaceOf(root, runId), ".observations");
-      // 观测一份 + 它的网格汇总(旁挂,`<观测>.grid.json`)。
-      expect(readdirSync(observationsDir).sort()).toEqual([
-        "1.md",
-        `1.md${TRIAL_GRID_SUMMARY_SUFFIX}`,
-      ]);
-      const grid = JSON.parse(
-        readFileSync(join(observationsDir, `1.md${TRIAL_GRID_SUMMARY_SUFFIX}`), "utf8"),
-      ) as { plan: { matches: readonly { map: string }[] } };
-      expect(grid.plan.matches).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
-      expect([...new Set(grid.plan.matches.map((match) => match.map))]).toEqual([
-        ...TRIAL_GRID_MAP_NAMES,
-      ]);
+      expect(names.some((name) => name.startsWith("failed-"))).toBe(false);
+      const runId = names.find((name) => /^\d/u.test(name)) as string;
+      expect(runId).toBeDefined();
+      expect(existsSync(join(slugDir, runId, "script.js"))).toBe(true);
 
-      // 试跑观测落地：整张网格 32 场各一行（这个候选整局无所作为，场场命中「无得分来源」）。
-      // 这是「留痕进得去 gen 的记录」那一条的接线断言——不落盘，那条缺口就还在。
-      // 落点是工作区（`/workspace/.observations/<n>.md`），由模型按需读；它写的就是 JSONL 行。
-      const observations = readObservationLines(join(observationsDir, "1.md"));
-      expect(observations).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
-      expect(observations.map((line) => line.matchIndex)).toEqual(
-        Array.from({ length: TRIAL_MATCHES_PER_CANDIDATE }, (_, index) => index),
-      );
-      expect(
-        observations.every(
-          (line) => line.noScoreSource && line.delivered === 0 && line.captures === 0,
-        ),
-      ).toBe(true);
-      // 失败档与成功档同键集合(ADR-0031):过程记录、身份、终止原因都在。
-      const meta = record as unknown as {
+      const meta = JSON.parse(readFileSync(join(slugDir, runId, "meta.json"), "utf8")) as {
         archiveSchemaVersion: number;
         protocolRounds: number;
         prompts: readonly string[];
-        steps: readonly { action: { kind: string } }[];
+        steps: readonly { action: { kind: string }; stdout: string }[];
         termination: string;
         atStep: number;
         harnessDigest: string;
         harnessVersion: string;
         contextLength: number;
+        scriptSha256: string;
+        optimization: {
+          version: number;
+          candidates: readonly {
+            step: number;
+            scriptFile: string;
+            observationsFile: string;
+            scriptSha256: string;
+            score: { countedMatches: number };
+            matchCount: number;
+          }[];
+        };
       };
       expect(meta.archiveSchemaVersion).toBe(3);
       // v3 的公式:轮数 = 过程记录条数;起始 prompt 恒一条(不是每步一份)。
@@ -383,6 +350,71 @@ it.skipIf(!archivePresent)(
       expect(meta.harnessDigest).toMatch(/^[0-9a-f]{64}$/);
       expect(meta.harnessVersion).toBe("bash-mini/0.1");
       expect(meta.contextLength).toBe(100_000);
+
+      // evaluate 那一步的 stdout 只给聚合对差表与一行路径(ADR-0030「观测外置」)。
+      const evaluateStdout = meta.steps[1]?.stdout ?? "";
+      expect(evaluateStdout).toContain("evaluate:通过");
+      expect(evaluateStdout).toContain("一、对差表");
+      expect(evaluateStdout).toContain("完整观测:/workspace/.observations/1.md");
+      expect(evaluateStdout).not.toContain("二、逐场一行");
+
+      // ── 候选:一次 evaluate 一条,无 `stage`,步号即那一步 ──
+      expect(meta.optimization.version).toBe(3);
+      expect(meta.optimization.candidates).toHaveLength(1);
+      const candidate = meta.optimization.candidates[0]!;
+      expect(candidate.step).toBe(2);
+      expect(Object.hasOwn(candidate, "stage")).toBe(false);
+      expect(candidate.observationsFile).toBe(`observed-${runId}-round-2.jsonl`);
+      expect(candidate.scriptFile).toBe(`${candidate.observationsFile}.candidate.js`);
+      expect(candidate.matchCount).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+      expect(candidate.score.countedMatches).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+
+      // 快照三件套都在档案目录里(既有命名族,不新建目录)。
+      for (const name of [
+        candidate.observationsFile,
+        `${candidate.observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+        candidate.scriptFile,
+        `${candidate.observationsFile}.candidate.ts`,
+      ])
+        expect(existsSync(join(slugDir, name)), name).toBe(true);
+
+      // 胜者就是末位候选(没有 selection):冻结的三件套与候选条目字节同源。
+      const candidateBytes = readFileSync(join(slugDir, candidate.scriptFile));
+      expect(meta.scriptSha256).toBe(candidate.scriptSha256);
+      expect(readFileSync(join(slugDir, runId, "script.js")).equals(candidateBytes)).toBe(true);
+      expect(readFileSync(join(slugDir, runId, "script.ts"), "utf8")).toBe(
+        readFileSync(join(slugDir, `${candidate.observationsFile}.candidate.ts`), "utf8"),
+      );
+
+      // 网格真的跑满了整张:观测原料进档案,派生视图进工作区。
+      const grid = JSON.parse(
+        readFileSync(
+          join(slugDir, `${candidate.observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`),
+          "utf8",
+        ),
+      ) as { plan: { matches: readonly { map: string }[] }; scriptSha256: string };
+      expect(grid.plan.matches).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
+      expect([...new Set(grid.plan.matches.map((match) => match.map))]).toEqual([
+        ...TRIAL_GRID_MAP_NAMES,
+      ]);
+      expect(grid.scriptSha256).toBe(candidate.scriptSha256);
+      const observations = readObservationLines(join(slugDir, candidate.observationsFile));
+      expect(observations).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
+      expect(observations.map((line) => line.matchIndex)).toEqual(
+        Array.from({ length: TRIAL_MATCHES_PER_CANDIDATE }, (_, index) => index),
+      );
+      expect(
+        observations.every(
+          (line) => line.noScoreSource && line.delivered === 0 && line.captures === 0,
+        ),
+      ).toBe(true);
+
+      // 派生视图(聚合 + 逐场 + 最差三场)留在工作区,不进档案(ADR-0030/0031)。
+      const observationsDir = join(workspaceOf(root, runId), ".observations");
+      expect(readdirSync(observationsDir)).toEqual(["1.md"]);
+      const view = readFileSync(join(observationsDir, "1.md"), "utf8");
+      expect(view).toContain("二、逐场一行");
+      expect(view).toContain("三、最差三场");
     } finally {
       await endpoint.close();
     }

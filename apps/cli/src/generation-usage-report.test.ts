@@ -3,8 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it, vi } from "vitest";
-import { RULESET_VERSION, TRIAL_MATCHES_PER_CANDIDATE, type ArchiveMeta } from "@model-war/schema";
-import { createHttpModelClient, generateOneModel, type ModelConfig } from "@model-war/gen";
+import { RULESET_VERSION, type ArchiveMeta } from "@model-war/schema";
+import {
+  completeGridTrial,
+  createHttpModelClient,
+  generateOneModel,
+  gridPlanFixture,
+  type ModelConfig,
+} from "@model-war/gen";
 import { readArchiveReports, runArchiveReport } from "@model-war/runner";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -233,15 +239,8 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
         // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
         // 「会话已到点」,而那与被测的 usage 投影毫无关系。
         now: () => new Date(),
-        trial: () => ({ passed: true, stdout: "" }),
-        evaluateScoring: async () => ({
-          score: {
-            totalPoints: TRIAL_MATCHES_PER_CANDIDATE,
-            averagePoints: 1,
-            countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
-          },
-          matchCount: TRIAL_MATCHES_PER_CANDIDATE,
-        }),
+        trial: completeGridTrial(),
+        trialPlan: () => gridPlanFixture(),
       },
       config,
     );
@@ -374,15 +373,8 @@ it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h
         // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
         // 「会话已到点」,而那与被测的 usage 投影毫无关系。
         now: () => new Date(),
-        trial: () => ({ passed: true, stdout: "" }),
-        evaluateScoring: async () => ({
-          score: {
-            totalPoints: TRIAL_MATCHES_PER_CANDIDATE,
-            averagePoints: 1,
-            countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
-          },
-          matchCount: TRIAL_MATCHES_PER_CANDIDATE,
-        }),
+        trial: completeGridTrial(),
+        trialPlan: () => gridPlanFixture(),
       },
       config,
     );

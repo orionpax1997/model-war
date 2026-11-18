@@ -45,6 +45,9 @@ import { HARNESS_DIGEST, HARNESS_VERSION } from "./agent/identity.js";
 import { ACTION_REJECT_EXIT_CODE } from "./agent/action.js";
 import type { AgentExecResult } from "./agent/types.js";
 import { TRUNCATED_RESPONSE_FEEDBACK } from "./agent/truncate.js";
+import { completeGridTrial } from "./trial-grid.fixture.js";
+import { sha256Hex } from "./archive.js";
+import { gridPlanFixture } from "./trial-plan.fixture.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-agent-pipeline-"));
@@ -116,9 +119,11 @@ const requestWith = (
   runId: "r1",
   now: () => FIXED_NOW,
   agentPrompt: { user: FIRST_USER, system: SYSTEM },
-  // 试跑桩:这些用例验的是 loop 与落档,不是网格(真网格归票 06)。不注的话缺省会走真子进程,
-  // 一次整张 32 场网格就是分钟级——那是 `check:sandbox` 与 `agent-real-session` 的事。
-  trial: () => ({ passed: true, stdout: "" }),
+  // 试跑桩与计划桩:这些用例验的是 loop 与落档,不是网格本身(真网格在 `check:gen-grid` 与
+  // `agent-real-session` 那一侧)。桩写的是**形状真实**的一整张网格(32 行观测 + 旁挂汇总):
+  // 「跑满一场不少」是候选的入场券,写空会把这些用例变成在验一条不存在的路径。
+  trial: completeGridTrial(),
+  trialPlan: () => gridPlanFixture(),
   ...input,
 });
 
@@ -233,11 +238,8 @@ it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 
       requestWith(root, {
         createClient: () => model,
         workspaceDir,
-        // 假网格:第一次 evaluate 就产出成绩。
-        evaluateScoring: async () => ({
-          score: { totalPoints: 1, averagePoints: 0.25, countedMatches: 4 },
-          matchCount: 4,
-        }),
+        // 成绩走**缺省**评分:真网格那一支从旁挂 `.grid.json` 读，所以这条链上的分数
+        // 来源与生产同一条(试跑本身是假网格)。
       }),
       configOf(),
     ),
@@ -291,14 +293,6 @@ it("模型原文落 steps[i].raw,且与发回去的字节同源", async () => {
       requestWith(root, {
         createClient: () => recording,
         workspaceDir,
-        evaluateScoring: async () => ({
-          score: {
-            totalPoints: TRIAL_MATCHES_PER_CANDIDATE,
-            averagePoints: 1,
-            countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
-          },
-          matchCount: TRIAL_MATCHES_PER_CANDIDATE,
-        }),
       }),
       configOf(),
     ),
@@ -641,7 +635,7 @@ it("没有引用的候选条目不写(候选序只装真评出成绩的)", async
         requestWith(root, {
           createClient: () => model,
           maxSteps: 1,
-          // 本段的缺省实现:恒不产出成绩。
+          // 一次 `evaluate` 都没写脚本:提交被服务当场拒掉(不是「评了但零分」)。
         }),
         configOf(),
       ),
@@ -722,4 +716,254 @@ it("runGeneration 写失败档:agent 字段与 steps 一起落盘", async () => 
   expect(record.harnessDigest).toBe(HARNESS_DIGEST);
   void COMPILED;
   void SCRIPT;
+});
+
+/** 一条「把脚本写进 /workspace」的动作块（heredoc：模型在沙箱里写文件的自然写法）。 */
+const writeScript = (body: string): string =>
+  `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${body}EOF\n\`\`\``;
+
+/** 候选序里的三条候选（档案里唯一允许的 1..3 区间）。 */
+const candidatesOf = (meta: ArchiveMeta) =>
+  (meta.optimization as unknown as { candidates: readonly Record<string, unknown>[] }).candidates;
+
+/** 一次会话：写脚本 N 次、每次之后 evaluate，最后 done；`scripts[i]` 是第 i 次评测时的字节。 */
+const sessionOf = (scripts: readonly string[]): readonly string[] =>
+  scripts
+    .flatMap((script) => [writeScript(script), "```bash\nevaluate\n```"])
+    .concat(["```bash\ndone\n```"]);
+
+it("候选一到三条:1 次 / 2 次 / 3 次评测各产出同等条数,下标即第几次评测", async () => {
+  for (const count of [1, 2, 3] as const) {
+    const root = mkRoot();
+    const scripts = Array.from(
+      { length: count },
+      (_, index) => `var ticks = ${String(index)};\nfunction loop() {}\n`,
+    );
+    const model = stubClient(sessionOf(scripts).map((text) => reply(text)));
+    const workspaceDir = join(root, "ws");
+    mkdirSync(workspaceDir, { recursive: true });
+    const outcome = await withRealBash(workspaceDir, () =>
+      generateOneModel(
+        requestWith(root, { createClient: () => model, workspaceDir, maxSteps: count * 2 + 1 }),
+        configOf(),
+      ),
+    );
+
+    expect(outcome.kind, `${String(count)} 次评测应有候选`).toBe("frozen");
+    if (outcome.kind !== "frozen") return;
+    const candidates = candidatesOf(outcome.meta);
+    expect(candidates).toHaveLength(count);
+    // 有候选即成功档:优化段 version 3、一条 `stage` 都没有(ADR-0031)。
+    expect(outcome.meta.optimization).toMatchObject({ version: 3 });
+    for (const [index, candidate] of candidates.entries()) {
+      expect(candidate.stage).toBeUndefined();
+      // 步号 = 那次 evaluate 的那一步(写脚本一步 + 评测一步,所以是 2,4,6)。
+      expect(candidate.step).toBe((index + 1) * 2);
+      expect(candidate.scriptFile).toBe(`${String(candidate.observationsFile)}.candidate.js`);
+      expect(String(candidate.observationsFile)).toBe(
+        `observed-r1-round-${String((index + 1) * 2)}.jsonl`,
+      );
+      expect(candidate.matchCount).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+    }
+    // 快照三件套都在档案目录里。
+    for (const candidate of candidates) {
+      for (const name of [
+        String(candidate.observationsFile),
+        `${String(candidate.observationsFile)}.grid.json`,
+        String(candidate.scriptFile),
+        `${String(candidate.observationsFile)}.candidate.ts`,
+      ])
+        expect(existsSync(join(root, "archive/alpha", name)), name).toBe(true);
+    }
+  }
+}, 60_000);
+
+it("第 4 次 evaluate 被宿主配额拒掉、不执行:候选仍是三条", async () => {
+  const root = mkRoot();
+  const scripts = [
+    "var a = 0;\nfunction loop() {}\n",
+    "var b = 0;\nfunction loop() {}\n",
+    "var c = 0;\nfunction loop() {}\n",
+    "var d = 0;\nfunction loop() {}\n",
+  ];
+  const model = stubClient(sessionOf(scripts).map((text) => reply(text)));
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const outcome = await withRealBash(workspaceDir, () =>
+    generateOneModel(
+      requestWith(root, { createClient: () => model, workspaceDir, maxSteps: 10 }),
+      configOf(),
+    ),
+  );
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") return;
+  // 三次评测是**上限**:第四次被拒,所以候选仍是三条(不是四条)。
+  expect(candidatesOf(outcome.meta)).toHaveLength(3);
+  // 被拒的那一步记成 evaluate(动作种类归解析层,配额拒绝是宿主侧的结论),且模型看得见原因。
+  const rejected = outcome.meta.steps?.filter((step) => step.action.kind === "evaluate") ?? [];
+  expect(rejected).toHaveLength(4);
+  expect(rejected[3]?.exitCode).not.toBe(0);
+  expect(rejected[3]?.stderr).toContain("评测额度已用完");
+  // 被拒那一步没有产出任何证据族文件(不执行 = 不落盘)。
+  expect(existsSync(join(root, "archive/alpha", "observed-r1-round-8.jsonl"))).toBe(false);
+}, 60_000);
+
+it("观测不完整不产候选:缺场的那一次不产出成绩,档落成失败档", async () => {
+  const root = mkRoot();
+  const model = stubClient(sessionOf(["function loop() {}\n"]).map((text) => reply(text)));
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const outcome = await withRealBash(workspaceDir, () =>
+    generateOneModel(
+      requestWith(root, {
+        createClient: () => model,
+        workspaceDir,
+        maxSteps: 3,
+        // 只写 28 行:缺的 4 场不许补零,也不许产出候选。
+        trial: completeGridTrial({ matches: 28 }),
+      }),
+      configOf(),
+    ),
+  );
+
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  // 零候选 = 失败档,但会话本身跑完了(终止原因与落档正交)。
+  expect(outcome.agent.termination).toBe("done");
+  expect(outcome.failure.message).toContain("没有产出任何候选");
+  // 「为什么没成绩」写得出来:缺场那一句在诊断里(取自那次 evaluate 的 stderr)。
+  expect(outcome.failure.diagnostics.join("\n")).toContain("不完整");
+  expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
+}, 60_000);
+
+it("快照字节 == 评估时的工作区字节:评完之后改文件不影响成绩", async () => {
+  const root = mkRoot();
+  const first = "var first = 1;\nfunction loop() {}\n";
+  const second = "var second = 2;\nfunction loop() {}\n";
+  // 两次评测之后**再改一次文件**,然后 done:那次改动不进任何候选。
+  const model = stubClient([
+    reply(writeScript(first)),
+    reply("```bash\nevaluate\n```"),
+    reply(writeScript(second)),
+    reply("```bash\nevaluate\n```"),
+    reply(writeScript("var broken = ;\n")),
+    reply("```bash\ndone\n```"),
+  ]);
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const outcome = await withRealBash(workspaceDir, () =>
+    generateOneModel(
+      requestWith(root, { createClient: () => model, workspaceDir, maxSteps: 6 }),
+      configOf(),
+    ),
+  );
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") return;
+  const candidates = candidatesOf(outcome.meta);
+  expect(candidates).toHaveLength(2);
+  const archiveDir = join(root, "archive/alpha");
+  const sourceOf = (index: number): string =>
+    readFileSync(
+      join(archiveDir, `${String(candidates[index]!.observationsFile)}.candidate.ts`),
+      "utf8",
+    );
+  // 第一条快照是第一次评测时那份字节,第二条是第二次的——会话末尾那次改动没有进它们。
+  expect(sourceOf(0)).toBe(first);
+  expect(sourceOf(1)).toBe(second);
+  // 胜者取末位候选:冻结的三件套就是第二条那份字节(有测试钉住「评完之后又改过不影响成绩」)。
+  expect(readFileSync(join(archiveDir, "r1/script.ts"), "utf8")).toBe(second);
+  expect(
+    readFileSync(join(archiveDir, "r1/script.js")).equals(
+      readFileSync(join(archiveDir, String(candidates[1]!.scriptFile))),
+    ),
+  ).toBe(true);
+}, 60_000);
+
+it("meta.scriptSha256 等于末位候选的产物哈希(胜者取末位,不是某一版的源哈希)", async () => {
+  const root = mkRoot();
+  const model = stubClient(
+    sessionOf(["var a = 1;\nfunction loop() {}\n", "var b = 2;\nfunction loop() {}\n"]).map(
+      (text) => reply(text),
+    ),
+  );
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const outcome = await withRealBash(workspaceDir, () =>
+    generateOneModel(
+      requestWith(root, { createClient: () => model, workspaceDir, maxSteps: 5 }),
+      configOf(),
+    ),
+  );
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") return;
+  const candidates = candidatesOf(outcome.meta);
+  expect(candidates).toHaveLength(2);
+  const final = candidates[candidates.length - 1]!;
+  expect(outcome.meta.scriptSha256).toBe(final.scriptSha256);
+  // 冻结的 script.js 字节就是那份产物(复算认编译产物,不认 script.ts)。
+  expect(sha256Hex(readFileSync(join(root, "archive/alpha/r1/script.js")))).toBe(
+    final.scriptSha256,
+  );
+  // 且与首条候选不同(否则这条断言证明不了「取末位」)。
+  expect(final.scriptSha256).not.toBe(candidates[0]?.scriptSha256);
+}, 60_000);
+
+it("计划与现场事实不符即 infra:会话大声失败,不把环境故障解释成模型手滑", async () => {
+  const root = mkRoot();
+  const model = stubClient([
+    reply(writeScript(SCRIPT)),
+    reply("```bash\nevaluate\n```"),
+    reply("```bash\ndone\n```"),
+  ]);
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  // 试跑入口在 infra 上抛错(计划重建不符 / 子进程异常):那是环境的事,不是候选的错。
+  await expect(
+    withRealBash(workspaceDir, () =>
+      generateOneModel(
+        requestWith(root, {
+          createClient: () => model,
+          workspaceDir,
+          maxSteps: 3,
+          trial: () => {
+            throw new Error("试跑子进程异常退出（码 2）：预期试跑计划与现场事实不符");
+          },
+        }),
+        configOf(),
+      ),
+    ),
+    // 消息里带着那一步与原因:infra 不能变成一条「模型写错了」的观测。
+  ).rejects.toThrow(/第 2 步的评测基础设施失败.*计划与现场事实不符/su);
+  // 没有落成功档,也没有落失败档:这一场会话的结论由 orchestration 记为 infra。
+  expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
+}, 60_000);
+
+it("一次 evaluate 都不做的会话不搬计划:网格不是入场费", async () => {
+  const root = mkRoot();
+  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\ndone\n```")]);
+  let planned = 0;
+  const outcome = await withHostBash(
+    () => stepOk(),
+    () =>
+      generateOneModel(
+        requestWith(root, {
+          createClient: () => model,
+          // 计划装载会 spawn 一次试跑入口;没有 evaluate 的会话不该付这笔钱,
+          // 也不该因为「搬不动计划」而整场失败(那会把一次没用到网格的会话也赔进去)。
+          trialPlan: () => {
+            planned += 1;
+            return gridPlanFixture();
+          },
+        }),
+        configOf(),
+      ),
+  );
+
+  expect(planned).toBe(0);
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  expect(outcome.agent.termination).toBe("done");
 });

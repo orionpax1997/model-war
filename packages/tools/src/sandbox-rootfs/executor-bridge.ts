@@ -71,7 +71,7 @@ export type BridgeReply =
  * 让门禁读到的是「执行器说了什么」,而不是一段没有上下文的栈。
  *
  * `channel: "tools"` 那一路在这里造**真**的会话工具面(dispatcher + check 服务);它的
- * `evaluate` 接一个假试跑(真网格归票 06)。断言全在门禁那边，这段胶水只负责装配。
+ * `evaluate` 接假计划与假试跑(真网格在 gen 侧验)。断言全在门禁那边，这段胶水只负责装配。
  */
 export const EXECUTOR_ADAPTER = `
 const entry = process.argv[1];
@@ -100,7 +100,13 @@ try {
         evaluate: host.createEvaluateService({
           root: repoRoot,
           model: "gate",
-          trial: () => ({ passed: true, stdout: "gate 假试跑（真网格归票 06）" }),
+          runId: "gate",
+          // 计划与试跑都是桩：这条通道判据证明的是「薄壳 → fd → 宿主服务」，
+          // 真网格（计划搬运、32 场、观测）在 gen 侧的单测与 e2e 里验。
+          plan: () => {
+            throw new Error("gate 通道判据不接真网格");
+          },
+          trial: () => ({ passed: true, stdout: "gate 假试跑" }),
         }),
       });
       requestHandler = (line) => { received.push(line); return tools.requestHandler(line); };

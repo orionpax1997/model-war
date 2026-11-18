@@ -16,7 +16,6 @@ import {
   ACTION_PARSE_FAILURE_LIMIT,
   hasCandidates,
   runAgentSession,
-  unpluggedEvaluateProbe,
   type AgentLoopRequest,
 } from "./loop.js";
 import { OBSERVATION_LIMITS, TRUNCATED_RESPONSE_FEEDBACK } from "./truncate.js";
@@ -33,6 +32,7 @@ const SUBMISSION = {
   scriptSha256: "0".repeat(64),
   hostPath: "/tmp/ws/script.ts",
   observationsPath: "/workspace/.observations/1.md",
+  tscVersion: "7.0.2",
 };
 
 /** 假执行器:按序回放结果,并把每次请求原样记下来。 */
@@ -352,30 +352,19 @@ it("一次真评出成绩的 evaluate 把提交身份记下来,步号即候选�
   const result = await runAgentSession(
     requestOf({ model, executor: executor.executor, maxSteps: 1 }),
   );
-  // loop 只搬运:候选的 score 与 matchCount 归网格(票 06),它一个字都不猜。
+  // loop 只搬运:候选的 score 与 matchCount 归网格(`scoreFromCandidateEvidence`),它一个字都不猜。
   expect(result.submissions).toEqual([{ step: 1, call: 1, ...SUBMISSION }]);
 });
 
-it("解析层的 done 行号与宿主通道原样递给执行器", async () => {
-  const handler = (line: string): string => line;
+it("解析层的 done 行号原样递给执行器(块内 first 行 = 0 起)", async () => {
   const model = stubClient([reply("```bash\nevaluate\ndone\necho 不该跑\n```")]);
   const executor = fakeExecutor([{ ...OK, done: true }]);
-  await runAgentSession(
-    requestOf({
-      model,
-      executor: executor.executor,
-      host: {
-        requestHandler: handler,
-        evaluate: { evaluate: async () => ({ kind: "failed", stderr: "" }) },
-      },
-    }),
-  );
+  await runAgentSession(requestOf({ model, executor: executor.executor }));
 
   expect(executor.requests[0]).toMatchObject({
     step: 1,
     command: "evaluate\ndone\necho 不该跑",
     doneAtLine: 1,
-    requestHandler: handler,
   });
 });
 
@@ -521,13 +510,6 @@ it("atMs 是相对会话起点的偏移,harnessMs 是 sendMs 的补集", async (
 
 it("默认步数上限取自常量(不在这里写第二个 120)", async () => {
   expect(AGENT_MAX_STEPS).toBe(120);
-});
-
-it("未接线的评测探针给一条明确的失败,而不是空候选", async () => {
-  const outcome = await unpluggedEvaluateProbe.evaluate();
-  expect(outcome.kind).toBe("failed");
-  if (outcome.kind !== "failed") return;
-  expect(outcome.stderr).toContain("尚未接线");
 });
 
 it("有没有候选就是成功档与失败档的分界(与终止原因无关)", async () => {

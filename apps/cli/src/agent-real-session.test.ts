@@ -36,7 +36,7 @@ import { readArchiveReports } from "@model-war/runner";
 
 import { HARNESS_DIGEST, HARNESS_VERSION, generateOneModel } from "@model-war/gen";
 import type { ModelConfig } from "@model-war/gen";
-import { reply, stubClient } from "@model-war/gen";
+import { completeGridTrial, gridPlanFixture, reply, stubClient } from "@model-war/gen";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -105,16 +105,10 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
       workspaceDir,
       // 时钟取当下:会话墙钟 = 起点 + 1800s。
       now: () => new Date(),
-      // 试跑桩:这条用例验的是「真 bwrap + 真通道 + 真档案」,不是网格(真网格归票 06)。
-      trial: () => ({ passed: true, stdout: "" }),
-      evaluateScoring: async () => ({
-        score: {
-          totalPoints: TRIAL_MATCHES_PER_CANDIDATE / 4,
-          averagePoints: 0.25,
-          countedMatches: TRIAL_MATCHES_PER_CANDIDATE,
-        },
-        matchCount: TRIAL_MATCHES_PER_CANDIDATE,
-      }),
+      // 试跑与计划桩:这条用例验的是「真 bwrap + 真通道 + 真档案」,网格本身由 `check:gen-grid`
+      // 那一侧用真子进程验。桩写的是形状真实的一整张网格(32 行观测 + 旁挂汇总)。
+      trial: completeGridTrial(),
+      trialPlan: () => gridPlanFixture(),
     },
     configOf(),
   );
@@ -181,7 +175,8 @@ it(
         createClient: () => model,
         workspaceDir,
         now: () => new Date(),
-        trial: () => ({ passed: true, stdout: "" }),
+        trial: completeGridTrial(),
+        trialPlan: () => gridPlanFixture(),
       },
       configOf(),
     );

@@ -8,7 +8,7 @@
  *   workspaceDir,                                   // bind 成 /workspace 的那个宿主目录
  *   deadlineAtMs: sessionStartedAt + sessionBudgetMs, // 会话墙钟的绝对到点时刻
  *   check: createCheckService({ root }),
- *   evaluate: createEvaluateService({ root, model, trial }),
+ *   evaluate: createEvaluateService({ root, model, runId, plan: () => plan, trial }),
  * });
  *
  * const split = splitDoneBlock(modelOutput);        // 块级哨兵:切掉 done 之后的部分
@@ -56,6 +56,9 @@ export {
 export {
   OBSERVATIONS_DIR_NAME,
   OBSERVATIONS_DIR_PATH,
+  candidateObservationsFile,
+  candidateScriptFile,
+  candidateSourceFile,
   createEvaluateService,
   type EvaluateOutcome,
   type EvaluateRequest,
