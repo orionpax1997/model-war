@@ -177,6 +177,8 @@ it("顺利路径:一次 evaluate 出成绩就冻结,退出码 0", { timeout: 30_
       agentPrompt: PROMPT,
       workspaceDir,
       maxSteps: 2,
+      // 试跑桩:验的是编排层,不是网格(真网格归票 06)。
+      trial: () => ({ passed: true, stdout: "" }),
       evaluateScoring: async () => ({
         score: { totalPoints: 4, averagePoints: 1, countedMatches: 4 },
         matchCount: 4,
@@ -254,6 +256,8 @@ it("一批两模型一败一成:退出码非零,但成功那个照旧冻结", { 
       agentPrompt: PROMPT,
       workspaceDir,
       maxSteps: 2,
+      // 试跑桩:验的是编排层,不是网格(真网格归票 06)。
+      trial: () => ({ passed: true, stdout: "" }),
       evaluateScoring: async () => ({
         score: { totalPoints: 4, averagePoints: 1, countedMatches: 4 },
         matchCount: 4,

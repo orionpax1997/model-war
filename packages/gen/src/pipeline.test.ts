@@ -116,6 +116,9 @@ const requestWith = (
   runId: "r1",
   now: () => FIXED_NOW,
   agentPrompt: { user: FIRST_USER, system: SYSTEM },
+  // 试跑桩:这些用例验的是 loop 与落档,不是网格(真网格归票 06)。不注的话缺省会走真子进程,
+  // 一次整张 32 场网格就是分钟级——那是 `check:sandbox` 与 `agent-real-session` 的事。
+  trial: () => ({ passed: true, stdout: "" }),
   ...input,
 });
 
