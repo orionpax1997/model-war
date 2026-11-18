@@ -22,6 +22,8 @@ export * from "./season-config.js";
 export * from "./scheduler.js";
 
 export * from "./archive-report.js";
+// 档案 v3 的报告读模型（过程记录 / 步级度量 / 受污染分层）：形状与报告类型同住在这里。
+export * from "./archive-report-steps.js";
 
 export * from "./selection.js";
 // v2 选拔（评测网格）：排序用生成阶段的分数，复算只校不对（逐场观测行摘要 + 分数三元组）。

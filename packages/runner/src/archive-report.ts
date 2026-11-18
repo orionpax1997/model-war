@@ -53,6 +53,14 @@ import {
 } from "@model-war/schema";
 
 import { archiveShapeVersionOf, optimizationMetaOf } from "./archive-optimization.js";
+import {
+  archiveShapeOf,
+  stepsOf,
+  stepGroupsOf,
+  type ReportArchiveShape,
+  type ReportPercentiles,
+  type ReportSteps,
+} from "./archive-report-steps.js";
 import { buildSelectionPlan } from "./selection.js";
 import { checkTrialPlan } from "./trial-plan.js";
 import {
@@ -561,8 +569,22 @@ export type ArchiveReport = {
   };
   readonly kind: "success" | "failure";
   readonly model: string;
+  /** 生成时的模型版本；与 `shape.harnessDigest` 一起构成步级分位的分组维度。 */
+  readonly modelVersion: string | null;
   readonly runId: string;
   readonly source: string;
+  /**
+   * 档案形状的读法分派与形状事实（ADR-0031 / ADR-0029）。
+   *
+   * `archiveSchemaVersion: "legacy"` 是**分派结果**而不是历史档的一个字段：旧档没有这一格，
+   * 报告按它决定「要不要渲染步列」。
+   */
+  readonly shape: ReportArchiveShape;
+  /**
+   * 过程记录与步级度量。`null` = 这一档没有过程记录（v1 / v2 历史档）——**不是零步**：
+   * 零步会话是 `steps` 在场、`entries: []`（ADR-0031 的合法形状），两者不混用。
+   */
+  readonly steps: ReportSteps | null;
   readonly failure: {
     readonly classification: string;
     readonly diagnosticsCount: number;
@@ -1521,9 +1543,17 @@ const readRecord = (
   const stages = describedCandidates.length;
   const expectedAttempts =
     protocolRounds + (kind === "failure" && record.classification === "transport" ? 1 : 0);
+  /**
+   * 步列与受污染分层：两者都按**版本**分派（v1 / v2 档没有步，那一列就恒 `null`）。
+   * `stepsOf` 会拒读「步号不是 1..n」的 v3 档——那意味着按号数的左连接不再成立，不能静默降级。
+   */
+  const steps = stepsOf({ record, shape, rounds, protocolRounds });
   return {
     kind,
     model: slug,
+    modelVersion: typeof record.modelVersion === "string" ? record.modelVersion : null,
+    shape: archiveShapeOf(record, shape),
+    steps,
     runId,
     source,
     runScope:
@@ -1847,6 +1877,14 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
    */
   const percent = (value: number | null): string =>
     value === null ? "null" : `${(value * 100).toFixed(1)}%`;
+  /** 空集合写「无」（关联失败的那一侧真的没有），不写 0。 */
+  const renderNumbers = (values: readonly number[]): string =>
+    values.length === 0 ? "无" : values.join(" / ");
+  /** 分位一格：`count: 0` 写「不适用」——缺数据不写 0。 */
+  const renderPercentiles = (reading: ReportPercentiles): string =>
+    reading.count === 0
+      ? "不适用"
+      : `${reading.p50} / ${reading.p95} / ${reading.max}（n=${reading.count}）`;
   const labels = {
     sendMs: "sendMs",
     input: "输入 token",
@@ -1908,6 +1946,9 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     "> 配置和渠道能力是请求意图与支持声明；HTTP 接受不证明参数执行，服务端模型回报不认证后端身份。证据来源自由文本、prompt、原响应与诊断不公开。",
     "> --run-id 显式指定本轮标识：其它记录为历史；未指定时全部未分轮，不将历史失败当作本轮失败或参赛资格。",
     "> 最终观测独立读取 observed-<runId>.jsonl；旧档标记最后完成试跑，可能在 infra 后留旧读数。回喂前后的候选按协议 round 单列，不合并命中数。成功档最后 round 与最终文件精确匹配且新事实 hash 符合 meta 编译 JS hash 时标记最终候选。",
+    // 命中率的口径必须写在报告正面：它一旦被当效率指标读，结论就会反。
+    "> 缓存命中率是**回归哨兵**，不是效率指标：agent 形态每步重发完整历史，分子分母同步长，命中率是步数的函数而不是缓存效率的函数。它低于该步的理论值只说明前缀被打断了（时间戳注入、序列化不确定、中途改 system）——那是别处看不见的真 bug 信号。有信息量的是每步 prompt 大小与增长。",
+    "> 步级耗时是诊断列，不是排名主指标：`stepMs = sendMs + harnessMs`（模型慢还是沙箱慢由两列分开回答），会话总墙钟由 `max(atMs + sendMs + harnessMs)` 跨步聚合，档案顶层不另放一份。分位按最近秩（不插值）；缺数据写 null，不写 0。",
     "",
   ];
   if (reports.length === 0) out.push("没有匹配的生成档案。", "");
@@ -1951,6 +1992,9 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       `- HTTP 尝试：已记录 ${report.budget.model.recordedAttempts}；完整尝试证据覆盖 ${report.budget.model.attemptEvidenceRounds}/${report.budget.model.expectedAttemptEvidenceRounds} 轮；带 token 统计响应 ${report.budget.model.responseAttemptsWithUsage}；传输错误 ${report.budget.model.transportErrors}；已记录但消费未知 ${report.budget.model.unknownConsumptionAttempts}`,
       `- 本地预算：有效候选优化观测 ${report.budget.local.optimizationObservedMatches ?? "null"} 场（不代表全部重跑/无效候选执行）；选拔上限 ${report.budget.local.selectionMaximumMatches ?? "null"} 场；已证实执行 ${report.budget.local.selectionExecutedMatches ?? "null"} 场；复用 ${report.budget.local.selectionReusedMatches ?? "null"} 场`,
       `- 日志：${report.log.state}（收敛可读 ${report.log.readableRounds}/${report.protocolRounds} 轮；记录 ${report.log.recordedLines} 行）`,
+      // 分组维度与形状事实：步级分位的分组键就是这两格（ADR-0035）。
+      `- 分组键：modelVersion=${escape(report.modelVersion ?? "null")}；harnessDigest=${escape(report.shape.harnessDigest ?? "null")}`,
+      `- 形状：archiveSchemaVersion=${report.shape.archiveSchemaVersion}；harness=${escape(report.shape.harnessVersion ?? "null")}；上下文窗口=${report.shape.contextLength ?? "null"}；终止=${report.shape.termination ?? "null"}${report.shape.atStep === null ? "" : `（第 ${report.shape.atStep} 步）`}`,
     );
     if (report.failure !== null)
       out.push(
@@ -1974,6 +2018,39 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       out.push(
         `| ${round.responseConverged ? round.round : `${round.round}（未收敛 transport）`} | ${round.sendMs ?? "null"} | ${round.usage.input.value ?? "null"} | ${round.usage.output.value ?? "null"} | ${round.usage.cacheRead.value ?? "null"} | ${round.usage.cacheWrite.value ?? "null"} | ${ttlCells(round)}${round.usage.reasoning.value ?? "null"} | ${percent(round.cacheHitRate)} |`,
       );
+    /**
+     * 步级表**只在该档真有过程记录条目时出现**：v1 / v2 没有 `steps`（`report.steps === null`），
+     * 零步会话是 `entries: []`。两种都不渲染步列——没数据不渲染 0，也不留空表头。
+     */
+    if (report.steps !== null && report.steps.entries.length > 0) {
+      const steps = report.steps;
+      const stats = steps.stats;
+      out.push(
+        "",
+        "### 步级度量（轮号 = 步号）",
+        "",
+        `- 步数：${stats.steps}；轮 × 步关联：${steps.join.matched}/${steps.entries.length} 匹配（缺日志行的步=${renderNumbers(steps.join.stepsWithoutRound)}；缺过程记录的轮=${renderNumbers(steps.join.roundsWithoutStep)}；传输末行不占步，不算不匹配）`,
+        `- 步级耗时 p50/p95/max：stepMs=${renderPercentiles(stats.stepMs)}；sendMs=${renderPercentiles(stats.sendMs)}；会话中位数 stepMs=${stats.sessionMedianStepMs ?? "null"}；会话总墙钟（max of atMs+stepMs）=${stats.sessionWallClockMs ?? "null"}`,
+        `- prompt 大小 p50/p95/max：${renderPercentiles(stats.inputTokens)}；每步增长 input[i]−input[i−1] 的最大值=${stats.maxInputGrowth ?? "null"}（首步是 null，不是 0）`,
+        "",
+        "| 步 | 动作 | stepMs | sendMs | harnessMs | atMs | 输入 token | 增长 | 缓存命中率 | 结果 | 关联 |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+      );
+      for (const step of steps.entries)
+        out.push(
+          `| ${step.step} | ${step.action ?? "null"} | ${step.stepMs ?? "null"} | ${step.sendMs ?? "null"} | ${step.harnessMs ?? "null"} | ${step.atMs ?? "null"} | ${step.inputTokens ?? "null"} | ${step.inputGrowth ?? "null"} | ${percent(step.cacheHitRate)} | ${step.result === null ? "null" : `${step.result.kind}（${step.result.errorCodes.length} 个错误码）`} | ${step.roundLinked ? "round==step" : "缺日志行"} |`,
+        );
+      const results = steps.entries.filter((step) => step.result !== null);
+      // `result` 缺席（这一步没有结果）**不渲染**；`errorCodes: []` 渲染成空（跑过了、没错误）。
+      if (results.length > 0) {
+        out.push("", "结果侧证据（真源在过程记录）：");
+        for (const step of results)
+          out.push(
+            `- 第 ${step.step} 步：kind=${step.result!.kind}；errorCodes=${step.result!.errorCodes.length === 0 ? "（空）" : step.result!.errorCodes.map(escape).join(" / ")}`,
+          );
+      }
+    } else if (report.steps !== null)
+      out.push("", "- 步级度量：不适用（本档过程记录为空——零步会话，不是「没记」）");
     out.push("", "### 参数与尝试证据", "");
     for (const round of report.rounds) {
       out.push(
@@ -1993,7 +2070,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       out.push(`- 停止：${escape(JSON.stringify(round.stop))}；尝试证据=${round.attemptCoverage}`);
       for (const attempt of round.attempts) {
         out.push(
-          `- 第 ${round.round} 轮 attempt ${attempt.attempt}：${attempt.outcome}；停止 ${escape(JSON.stringify(attempt.stop))}；token ${shownFields
+          `- 第 ${round.round} 轮 attempt ${attempt.attempt}：${attempt.outcome}；失败细分=${attempt.failureKind ?? "null"}；停止 ${escape(JSON.stringify(attempt.stop))}；token ${shownFields
             .filter((field) => field !== "sendMs")
             .map((field) => `${labels[field]}=${attempt.usage[field].value ?? "null"}`)
             .join("；")}`,
@@ -2150,6 +2227,26 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         );
     }
     out.push("");
+  }
+  /**
+   * 跨记录的步级分位：分组维度是 `modelVersion + harnessDigest`（ADR-0035 与榜键一致）。
+   * 没步的档（v1 / v2）不进任何分组——它们没有可比的步。
+   */
+  const groups = stepGroupsOf(reports);
+  if (groups.length > 0) {
+    out.push(
+      "",
+      "## 步级分位（按 modelVersion + harnessDigest 分组）",
+      "",
+      "> 分位按会话里每一步的读数汇总（最近秩，不插值）；会话中位数是各会话中位数的中位数。步级成本全是诊断列，不是排名主指标。",
+      "",
+      "| modelVersion | harnessDigest | 会话 | 步数 | stepMs p50/p95/max | sendMs p50/p95/max | 会话中位数 stepMs |",
+      "| --- | --- | ---: | ---: | --- | --- | ---: |",
+      ...groups.map(
+        (group) =>
+          `| ${escape(group.modelVersion ?? "null")} | ${escape(group.harnessDigest ?? "null")} | ${group.sessions} | ${group.steps} | ${renderPercentiles(group.stepMs)} | ${renderPercentiles(group.sendMs)} | ${group.sessionMedianStepMs ?? "null"} |`,
+      ),
+    );
   }
   return `${out.join("\n")}\n`;
 };
