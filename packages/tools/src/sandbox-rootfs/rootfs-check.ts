@@ -96,7 +96,8 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
     push(staticBinaryFinding(path, staticElfVerdict(readFileSync(join(rootfsDir, path)))));
   }
 
-  // ④ 契约副本 == 真源(`docs/rules-v2/`)。
+  // ④ 契约副本 == 真源(`docs/rules-v2/`)。盘上缺的那份由 ② 报(它是清单的双向比对),
+  // 这里跳过只是不拿两次同样的红去吵——不是说缺了没关系。
   for (const file of CONTRACT_FILES) {
     const copyPath = `contract/${file}`;
     if (!actualPaths.includes(copyPath)) continue;
@@ -110,7 +111,7 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
     );
   }
 
-  // ⑤ 薄壳 == 源码真源;`bin/*` 全部可执行。
+  // ⑤ 薄壳 == 源码真源;`bin/*` 全部可执行(缺的那几份同样由 ② 报)。
   const shimSource = readFileSync(join(repoRoot, SHIM_SOURCE));
   for (const copyPath of shimPaths) {
     if (!actualPaths.includes(copyPath)) continue;
