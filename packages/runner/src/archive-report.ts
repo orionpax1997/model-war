@@ -28,7 +28,6 @@ import {
   OPTIMIZATION_CANDIDATE_LIMIT,
   OPTIMIZATION_GRID_VERSION,
   OPTIMIZATION_STAGES,
-  OPTIMIZATION_VERSION,
   SELECTION_AGENT_VERSION,
   SELECTION_VERSION,
   TRIAL_PLAN_JSON_SHAPE,
@@ -55,6 +54,7 @@ import {
 
 import {
   archiveShapeVersionOf,
+  isLegacyOptimization,
   isLegacySelection,
   optimizationMetaOf,
 } from "./archive-optimization.js";
@@ -215,7 +215,7 @@ const candidateScoresOf = (
 ): readonly ReportCandidateScores[] => {
   if (optimization === undefined) return [];
   // v2 / v3 都有网格分数（v3 的候选把分数直接写在身上）；v1 历史档没有。
-  const grid = optimization.version !== OPTIMIZATION_VERSION;
+  const grid = !isLegacyOptimization(optimization);
   return reportCandidatesOf(optimization).map((candidate, index) => {
     const generation = grid ? gridScoreOf(candidate.score) : NOT_APPLICABLE_SCORE;
     const selectionReading =

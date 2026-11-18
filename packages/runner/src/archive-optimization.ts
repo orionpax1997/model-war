@@ -34,6 +34,7 @@ import {
   OPTIMIZATION_AGENT_VERSION,
   OPTIMIZATION_CANDIDATE_LIMIT,
   OPTIMIZATION_GRID_VERSION,
+  OPTIMIZATION_VERSION,
   SELECTION_AGENT_VERSION,
   SELECTION_GRID_VERSION,
   SELECTION_VERSION,
@@ -416,6 +417,19 @@ export const isLegacySelection = (
   selection: ArchiveSelection,
 ): selection is Extract<ArchiveSelection, { version: typeof SELECTION_VERSION }> =>
   selection.version === SELECTION_VERSION;
+
+/**
+ * 优化段是 **v1**(三场单图)还是至少进入了网格(v2 / v3)。
+ *
+ * 与 `isLegacySelection` 同族、同一个理由:调用点要问的是「这一段按旧读法读吗」,而
+ * `optimization.version !== OPTIMIZATION_VERSION` 读起来像「不是当前版本」——那个常量恰好是
+ * **最老一版**,于是这行代码的字面意思与它的实际意思正好相反,而它是对的。将来出 v4(也带网格
+ * 分数)时,散落各处的 `!== OPTIMIZATION_VERSION` 会各自漂成不同答案;收成一个守卫,答案只有一处。
+ */
+export const isLegacyOptimization = (
+  optimization: ArchiveOptimization,
+): optimization is Extract<ArchiveOptimization, { version: typeof OPTIMIZATION_VERSION }> =>
+  optimization.version === OPTIMIZATION_VERSION;
 
 /**
  * 优化旁证的读入端：按**档案形状版本**分派之后再过 zod 形状与跨字段关系。
