@@ -251,3 +251,56 @@ it(
     expect(readdirSync(join(root, "archive/alpha"))).toEqual([]);
   },
 );
+
+it(
+  "服务调用不占单步墙钟:慢评测不会被 124 杀掉,这一步照旧产出候选",
+  { timeout: 180_000 },
+  async () => {
+    // ADR-0029:「服务调用不受单步约束,只受总墙钟约束」。一次真网格实测约 75 s,叠上模型自己
+    // 写脚本的时间就会撞上 `DEFAULT_STEP_WALL_CLOCK_MS`;票 08 的真会话里那一步就是这样拿到
+    // `exitCode: 124` 的,而观测原料与网格汇总已经落盘——会话留下半个提交。
+    const root = mkRoot();
+    const workspaceDir = join(root, "ws");
+    mkdirSync(workspaceDir, { recursive: true });
+
+    const model = stubClient([
+      reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${SCRIPT}EOF\n\`\`\``),
+      reply("```bash\nevaluate\n```"),
+      reply("```bash\ndone\n```"),
+    ]);
+    const grid = completeGridTrial();
+    const outcome = await generateOneModel(
+      {
+        root,
+        runId: "r-slow-evaluate",
+        agentPrompt: { user: "任务:在 /workspace 写 script.ts", system: "协议:每一步一个动作块" },
+        createClient: () => model,
+        workspaceDir,
+        now: () => new Date(),
+        // 单步额度压到 1 s,而宿主服务要跑 4 s:只有「服务在途时冻结单步墙钟」才会不超时。
+        stepWallClockMs: 1_000,
+        trial: (request) => {
+          // 真试跑入口是一次 `spawnSync`(阻塞宿主事件循环),这里用同样的形状:服务在干活,
+          // 沙箱里那一步只是在等一行响应。
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4_000);
+          return grid(request);
+        },
+        trialPlan: () => gridPlanFixture(),
+      },
+      configOf(),
+    );
+
+    expect(outcome.kind).toBe("frozen");
+    const meta = JSON.parse(
+      readFileSync(join(root, "archive/alpha/r-slow-evaluate/meta.json"), "utf8"),
+    ) as ArchiveMeta;
+    // 那一步没被墙钟杀掉:退出码是命令自己的,输出是这次真评测的出口。
+    expect(meta.steps?.[1]?.exitCode).toBe(0);
+    expect(meta.steps?.[1]?.stdout).toContain("完整观测");
+    expect(meta.steps?.[1]?.action).toEqual({ kind: "evaluate" });
+    // 半个提交的反面:这一次评测的候选真的进了档案。
+    const candidates = (meta.optimization as unknown as { candidates: { step: number }[] })
+      .candidates;
+    expect(candidates.map((candidate) => candidate.step)).toEqual([2]);
+  },
+);
