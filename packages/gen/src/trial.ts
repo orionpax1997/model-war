@@ -69,7 +69,10 @@ export type TrialProbe = (options: {
    * 测试桩拿它写 32 行观测与汇总，不需要自己造计划。
    */
   readonly plan?: TrialPlan;
-}) => TrialResult;
+}) =>
+  | TrialResult
+  // 异步形态只为一件事:让「服务在宿主侧要跑几秒」能在测试里如实地演出来(见调用点)。
+  | Promise<TrialResult>;
 
 /** 试跑入口在安装根下的位置（`apps/cli` 的构建产物，调用约定见那份入口的头注）。 */
 const TRIAL_ENTRY = join("apps", "cli", "dist", "trial", "run-trial-script.js");

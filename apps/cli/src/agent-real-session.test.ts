@@ -278,10 +278,17 @@ it(
         now: () => new Date(),
         // 单步额度压到 1 s,而宿主服务要跑 4 s:只有「服务在途时冻结单步墙钟」才会不超时。
         stepWallClockMs: 1_000,
-        trial: (request) => {
-          // 真试跑入口是一次 `spawnSync`(阻塞宿主事件循环),这里用同样的形状:服务在干活,
-          // 沙箱里那一步只是在等一行响应。
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4_000);
+        trial: async (request) => {
+          // ── 这 4 秒必须**事件循环还在走** ──
+          //
+          // 判据是「服务在途时那 1 s 的单步墙钟停表」。要让它**确定**成立,计时器就得有机会
+          // 到期:上一版这里用 `Atomics.wait` 阻塞宿主 4 s,而阻塞期间 `setTimeout` 本来就不跑,
+          // 于是「不超时」与「停表」是同一件事的两种解释——那条用例验的是竞态,不是机制。
+          //
+          // `await` 一段真等待才是服务在途的样子:沙箱里那一步阻塞在 fd 3 上等一行响应,宿主
+          // 侧的计时器照常走表。旧实现(不 pause)在这 4 s 里会被 1 s 的额度杀掉,退出码变 124,
+          // 下面的 `exitCode === 0` 当场红;新实现整段停表,准点续上还有 1 s。
+          await new Promise((resolve) => setTimeout(resolve, 4_000));
           return grid(request);
         },
         trialPlan: () => gridPlanFixture(),
