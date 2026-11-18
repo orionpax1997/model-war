@@ -95,11 +95,15 @@ export type SessionToolsOptions = {
 };
 
 /**
- * 一个会话的工具面。`requestHandler` 直接喂给 `sandbox.run({ requestHandler })`。
+ * 一个会话的工具面。
+ *
+ * `requestHandlerFor(step)` 给出**这一步**的通道应答端:步号是显式入参,不是会话级的一个槽。
+ * 它要用来给候选证据族起名(`observed-<runId>-round-<步>`)——槽的写法要靠「先写进去、执行完
+ * 再取走」的时序保住,而时序一旦错位,证据会挂到另一步上,读侧完全看不出来。
  */
 export type SessionTools = {
-  /** 一行请求进、一行响应出。**永不抛错**:抛错在传输层会被吞掉,薄壳就等到死了。 */
-  readonly requestHandler: (line: string) => Promise<string>;
+  /** 这一步的一行请求进、一行响应出。**永不抛错**:抛错在传输层会被吞掉,薄壳就等到死了。 */
+  readonly requestHandlerFor: (step: number) => (line: string) => Promise<string>;
   /** 已执行的 `evaluate` 次数(超限被拒的不算)。 */
   readonly evaluateCalls: () => number;
   /** 模型有没有通过薄壳喊过 `done`(权威信号仍是宿主侧块切分,见 `done.ts`)。 */
@@ -132,7 +136,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
   const expired = (): boolean => now() >= options.deadlineAtMs;
   const remainingMs = (): number => Math.max(0, options.deadlineAtMs - now());
 
-  const dispatch = async (line: string): Promise<ToolResponse> => {
+  const dispatch = async (line: string, step: number): Promise<ToolResponse> => {
     const parsed = parseToolRequest(line);
     if (!parsed.ok) {
       // 沙箱侧写进来的任意字节都落在这里(包括「响应形状」的伪造行):它是请求,不是响应。
@@ -164,6 +168,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
         return await options.evaluate({
           workspaceDir: options.workspaceDir,
           call: evaluateCalls,
+          step,
         });
       }
       default:
@@ -174,20 +179,22 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
     }
   };
 
-  const requestHandler = async (line: string): Promise<string> => {
-    let response: ToolResponse;
-    try {
-      response = await dispatch(line);
-    } catch (error) {
-      // 服务的异常不往传输层扔:那里会把它吞掉(见 `execute.ts`),薄壳就等到单步墙钟为止。
-      const message = error instanceof Error ? error.message : String(error);
-      response = refusal(REFUSAL_EXIT_CODE, `工具服务内部错误(${message})`);
-    }
-    return serializeToolResponse(response);
-  };
+  const handlerFor =
+    (step: number) =>
+    async (line: string): Promise<string> => {
+      let response: ToolResponse;
+      try {
+        response = await dispatch(line, step);
+      } catch (error) {
+        // 服务的异常不往传输层扔:那里会把它吞掉(见 `execute.ts`),薄壳就等到单步墙钟为止。
+        const message = error instanceof Error ? error.message : String(error);
+        response = refusal(REFUSAL_EXIT_CODE, `工具服务内部错误(${message})`);
+      }
+      return serializeToolResponse(response);
+    };
 
   return {
-    requestHandler,
+    requestHandlerFor: handlerFor,
     evaluateCalls: () => evaluateCalls,
     doneRequested: () => done,
     expired,

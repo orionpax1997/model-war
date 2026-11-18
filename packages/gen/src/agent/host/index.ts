@@ -15,7 +15,7 @@
  * const step = await sandbox.run({
  *   command: split.body,                            // 整块一次 bash -c,不是两段
  *   workspaceDir,
- *   requestHandler: tools.requestHandler,           // 薄壳的 fd 3 由此应答
+ *   requestHandler: tools.requestHandlerFor(step),  // 薄壳的 fd 3 由此应答(步号绑在这里)
  * });
  * ```
  *

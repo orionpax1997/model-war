@@ -246,8 +246,6 @@ const NO_CHECK_VALIDATION: ArchiveValidation = {
  * 而那种错位在报告里看起来完全正常——所以宁可在每次执行前清一次。
  */
 type StepFacts = {
-  /** 当前步号(1 起):宿主服务要它给候选证据族起名。 */
-  step?: number;
   result?: ArchiveStep["result"];
   submission?: {
     readonly scriptSha256: string;
@@ -311,13 +309,18 @@ const observeServices = (options: {
       if (response.result !== undefined) options.facts.result = response.result;
       return response;
     },
-    evaluate: async (request: { readonly workspaceDir: string; readonly call: number }) => {
+    evaluate: async (request: {
+      readonly workspaceDir: string;
+      readonly call: number;
+      readonly step: number;
+    }) => {
       let outcome: Awaited<ReturnType<typeof evaluate>>;
       try {
         outcome = await evaluate({
           workspaceDir: request.workspaceDir,
           call: request.call,
-          step: options.facts.step ?? Number.NaN,
+          // 步号由执行器请求带进来(dispatcher 把它绑进这一步的应答端),不经过任何槽。
+          step: request.step,
         });
       } catch (cause) {
         // 计划重建不符与试跑子进程异常都是 infra:候选不该为它背账。记下来,
@@ -361,7 +364,6 @@ const createExecutor =
   }): AgentExecutor =>
   async (request: AgentExecRequest): Promise<AgentExecResult> => {
     options.facts.reset();
-    options.facts.current.step = request.step;
     const split = splitDoneBlock(request.command);
     // `done` 是块内第一行时 body 是空串:不跑空 shell(它的副作用只有一次 `bash` 启动)。
     const executed =
@@ -370,7 +372,8 @@ const createExecutor =
         : await sandbox.run({
             command: split.body,
             workspaceDir: options.workspaceDir,
-            requestHandler: options.tools.requestHandler,
+            // 这一步的应答端:步号绑在这里,不经过会话级槽位。
+            requestHandler: options.tools.requestHandlerFor(request.step),
             ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
             ...(options.stepWallClockMs === undefined
               ? {}

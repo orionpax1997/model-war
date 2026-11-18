@@ -305,10 +305,11 @@ describe("拒绝语义:不白花一次信息机会", () => {
 });
 
 describe("基础设施:计划是网格的身份", () => {
-  it("缺步号就大声失败(候选证据族不能无名落盘)", async () => {
+  it("步号必须是正整数(候选证据族不能无名落盘)", async () => {
+    // 类型上 `step` 已经必填;这一条拦的是契约外的调用(0 / NaN)。
     const dir = workspace(SOURCE);
     const service = createEvaluateService(depsOf());
-    await expect(service({ workspaceDir: dir, call: 1 })).rejects.toThrow(/缺步号/);
+    await expect(service({ workspaceDir: dir, call: 1, step: 0 })).rejects.toThrow(/正整数/);
   });
 
   it("试跑子进程抛错原样上抛(计划重建不符 / 入口异常都是 infra)", async () => {

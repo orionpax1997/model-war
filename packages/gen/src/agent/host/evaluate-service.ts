@@ -198,12 +198,13 @@ export type EvaluateRequest = {
   /** 第几次评测(1 起,由 dispatcher 的计数器给)。 */
   readonly call: number;
   /**
-   * 步号(1 起,loop 给的):候选证据族的序号就是它。
+   * 步号(1 起):候选证据族的序号就是它。
    *
-   * 可选是因为 dispatcher 不知道步号(它只管配额与工具名),步号由上层包装在执行前写进
-   * 「当前步」的槽里。缺了它服务当场拒绝——候选证据族不能无名落盘。
+   * **必填而不是可选**:以前它是「当前步」槽里读出来的,缺了就用 `NaN` 兜底再由服务拒——那让
+   * 「这一步是第几步」变成一个要按时序保证的东西。现在步号由执行器请求带进来
+   * (`requestHandlerFor(step)` 把它绑进通道应答端),缺了是类型错误,不是运行期惊喜。
    */
-  readonly step?: number;
+  readonly step: number;
 };
 
 /** 服务形态:给 dispatcher 调的那一个函数。 */
@@ -259,9 +260,12 @@ export const createEvaluateService = (deps: EvaluateServiceDeps): EvaluateServic
 
   return async (request: EvaluateRequest): Promise<EvaluateOutcome> => {
     const step = request.step;
-    if (step === undefined || !Number.isSafeInteger(step) || step < 1) {
-      // 候选证据族的序号来自步号,没有步号就没有能对得上的名字——大声失败,不猜一个。
-      throw new Error(`evaluate 服务缺步号(收到 ${String(step)}):候选证据族不能无名落盘`);
+    if (!Number.isSafeInteger(step) || step < 1) {
+      // 候选证据族的序号来自步号,没有序号就没有能对得上的名字——大声失败,不猜一个。
+      // 类型上它已经必填;这一条拦的是「传了个 0 或 NaN 进来」那种契约外的调用。
+      throw new Error(
+        `evaluate 服务的步号必须是正整数(收到 ${String(step)}):候选证据族不能无名落盘`,
+      );
     }
     const hostPath = join(request.workspaceDir, SCRIPT_SOURCE_NAME);
     let source: string;
