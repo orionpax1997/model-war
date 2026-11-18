@@ -10,7 +10,8 @@ import { expect, it } from "vitest";
 
 import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
-import { ACTION_REJECT_EXIT_CODE, DONE_SENTINEL } from "./action.js";
+import { ACTION_REJECT_EXIT_CODE } from "./action.js";
+import { DONE_SENTINEL } from "./host/done.js";
 import {
   HARNESS_DIGEST,
   HARNESS_VERSION,

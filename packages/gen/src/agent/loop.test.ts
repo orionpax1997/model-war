@@ -400,16 +400,12 @@ it("一次真评出成绩的 evaluate 把提交身份记下来,步号即候选�
   expect(result.submissions).toEqual([{ step: 1, call: 1, ...SUBMISSION }]);
 });
 
-it("解析层的 done 行号原样递给执行器(块内 first 行 = 0 起)", async () => {
+it("执行请求只有两格:第几步、整块原文(切分归执行器,不在请求里夹带行号)", async () => {
   const model = stubClient([reply("```bash\nevaluate\ndone\necho 不该跑\n```")]);
   const executor = fakeExecutor([{ ...OK, done: true }]);
   await runAgentSession(requestOf({ model, executor: executor.executor }));
 
-  expect(executor.requests[0]).toMatchObject({
-    step: 1,
-    command: "evaluate\ndone\necho 不该跑",
-    doneAtLine: 1,
-  });
+  expect(executor.requests[0]).toEqual({ step: 1, command: "evaluate\ndone\necho 不该跑" });
 });
 
 it("结果侧证据原样落步,没有结果时不写空壳", async () => {

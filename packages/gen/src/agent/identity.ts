@@ -29,8 +29,9 @@ import { createHash } from "node:crypto";
 
 import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
-import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE, DONE_SENTINEL } from "./action.js";
+import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
+import { DONE_SENTINEL } from "./host/done.js";
 import { bwrapArgv } from "./sandbox/argv.js";
 import { CHANNEL_FD, DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
 import {

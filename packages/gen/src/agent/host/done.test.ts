@@ -51,6 +51,7 @@ describe("切分", () => {
   it("缩进的 done 也算(模型常缩进);`echo done` / `done=1` 不算", () => {
     expect(splitDoneBlock("echo a\n   done  \necho b").ended).toBe(true);
     expect(splitDoneBlock("echo done\necho b").ended).toBe(false);
+    expect(splitDoneBlock("done | cat").ended).toBe(false);
     expect(splitDoneBlock("done=1\necho $done").ended).toBe(false);
     expect(splitDoneBlock("printf 'done'\necho b").ended).toBe(false);
     expect(splitDoneBlock("# done\necho b").ended).toBe(false);

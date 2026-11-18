@@ -261,11 +261,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
         observation = noActionObservation(parsed.correction);
       } else {
         parseFailures = 0;
-        const executed = await request.executor({
-          step,
-          command: parsed.command,
-          ...(parsed.doneAtLine === undefined ? {} : { doneAtLine: parsed.doneAtLine }),
-        });
+        const executed = await request.executor({ step, command: parsed.command });
         done = executed.done === true;
         action = actionOf(parsed.command, done);
         observation = observationOf(executed);
