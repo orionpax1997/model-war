@@ -305,6 +305,50 @@ it("v3 三候选：步级 stepMs/sendMs 分位、prompt 大小与增长、命中
     "缓存命中率是**回归哨兵**，不是效率指标",
   ])
     expect(md).toContain(expected);
+  // 候选序（`evaluate` 即提交）：两次提交的步号与字节、以及之间经过的步，全由已有字段合成。
+  expect(md).toContain("候选序（`evaluate` 即提交）：");
+  expect(md).toContain("与上一次提交（第 2 步）字节不同；之间经过 0 步（无）");
+});
+
+it("候选序从 --json 可读：两次 evaluate 之间改了同一份 script.ts，字节随步号可查", () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "steps-sequence",
+    runId: "2026-01-04T00-00-00-008Z",
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 30 },
+      {
+        action: "bash",
+        atMs: 2_000,
+        harnessMs: 40,
+        result: { kind: "tsc", errorCodes: ["TS2322"] },
+      },
+      { action: "evaluate", atMs: 3_000, harnessMs: 50 },
+      { action: "done", atMs: 4_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4, 5].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [2, 4],
+    termination: "done",
+  });
+  const [report] = readArchiveReports(root);
+  // 步列给出「哪几步是 evaluate」（`evaluate` 就是提交，ADR-0030）。
+  const evaluateSteps = (report?.steps?.entries ?? [])
+    .filter((entry) => entry.action === "evaluate")
+    .map((entry) => entry.step);
+  expect(evaluateSteps).toEqual([2, 4]);
+  // 候选序给出每一次提交的步号与字节：两次之间字节不同 = 那段时间里 `script.ts` 被改过。
+  expect(report?.scores.map((score) => score.protocolRound)).toEqual([2, 4]);
+  expect(report?.scores[0]?.scriptSha256).not.toBe(report?.scores[1]?.scriptSha256);
+  // 两次提交之间的步（第 3 步）在步列里各带自己的动作与结果侧证据。
+  expect(report?.steps?.entries[2]?.action).toBe("bash");
+  expect(report?.steps?.entries[2]?.result).toEqual({ kind: "tsc", errorCodes: ["TS2322"] });
 });
 
 it("v3 单候选：候选只有一位时步列照旧，末位即最终候选", () => {

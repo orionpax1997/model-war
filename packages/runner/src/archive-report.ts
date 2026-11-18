@@ -2060,6 +2060,37 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         out.push(
           `| ${step.step} | ${step.action ?? "null"} | ${step.stepMs ?? "null"} | ${step.sendMs ?? "null"} | ${step.harnessMs ?? "null"} | ${step.atMs ?? "null"} | ${step.inputTokens ?? "null"} | ${step.inputGrowth ?? "null"} | ${percent(step.cacheHitRate)} | ${step.result === null ? "null" : `${step.result.kind}（${step.result.errorCodes.length} 个错误码）`} | ${step.roundLinked ? "round==step" : "缺日志行"} |`,
         );
+      /**
+       * 候选序与步：`evaluate` 就是提交（ADR-0030），所以「第几步评了哪一版」由两个已存在的字段
+       * 合成——步列的 `action === "evaluate"` 与 `scores[].protocolRound / scriptSha256`。
+       *
+       * 这里**不猜模型命令写了什么**（那要 grep 自由文本，ADR-0036 已否掉那种分类法），只报
+       * 结构事实：哪几步是 `evaluate`、两次之间过了几步、两次提交的字节同不同。
+       */
+      const commits = report.scores.filter((score) =>
+        steps.entries.some(
+          (entry) => entry.step === score.protocolRound && entry.action === "evaluate",
+        ),
+      );
+      if (commits.length > 0) {
+        out.push("", "候选序（`evaluate` 即提交）：");
+        for (const [index, commit] of commits.entries()) {
+          const previous = commits[index - 1];
+          const between =
+            previous === undefined
+              ? []
+              : steps.entries.filter(
+                  (entry) =>
+                    entry.step > previous.protocolRound && entry.step < commit.protocolRound,
+                );
+          out.push(
+            `- 第 ${commit.protocolRound} 步：scriptSha256=${commit.scriptSha256}` +
+              (previous === undefined
+                ? ""
+                : `；与上一次提交（第 ${previous.protocolRound} 步）${previous.scriptSha256 === commit.scriptSha256 ? "**字节相同**" : "字节不同"}；之间经过 ${between.length} 步（${between.length === 0 ? "无" : between.map((entry) => `${entry.step}:${entry.action ?? "null"}`).join(" / ")}）`),
+          );
+        }
+      }
       const results = steps.entries.filter((step) => step.result !== null);
       // `result` 缺席（这一步没有结果）**不渲染**；`errorCodes: []` 渲染成空（跑过了、没错误）。
       if (results.length > 0) {
