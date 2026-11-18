@@ -18,10 +18,11 @@
  *    这条放这里是因为「沙箱里跑的东西」与「入库的内容物」是同一件事的两面:前者证明隔离成立,
  *    后者证明隔离住的正是那份字节。
  *
- * 外加一条**通道开得出来**:沙箱里调一次薄壳,宿主那边必须收到恰好一行 JSON、并且回得过去。
- * 它不属于上面四件事,但它是「可用性」的另一半——沙箱能跑命令却开不出通道时,`check` /
- * `evaluate` 全都不存在,而这不会以「沙箱坏了」的形式出现。协议体的字段集归票 04,所以这里
- * 只断言「一行、是 JSON」,不认字段。
+ * 外加两条关于**通道**的:沙箱里调一次薄壳,宿主那边必须收到恰好一行 JSON、并且回得过去;
+ * 再让真 `check` 服务经那条通道跑一次 tsc。它们不属于上面四件事,但它们是「可用性」的另一半
+ * ——沙箱能跑命令却开不出通道时,`check` / `evaluate` 全都不存在,而这不会以「沙箱坏了」的
+ * 形式出现。前一条只认形状(一行、是 JSON),后一条认结果(薄壳拿到的退出码与 stdout、以及
+ * 宿主落进 `/workspace/.check.txt` 的全文)。
  *
  * ── 为什么它不挂在 `check` / `check:quick` 上 ──
  * 它需要内核能力(非特权 user namespace)与系统装的 `bubblewrap`。挂进常跑链,「全量门禁红了」
@@ -36,10 +37,19 @@
  * 退出码:0 = 四件事全成立;1 = 任一条不成立(含空转)。
  */
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { CONTRACT_DIR } from "../contract-package.ts";
 import { vacuousReason } from "../gate/vacuous.ts";
 import { driveExecutor, EXECUTOR_ENTRY, type BridgeRequest } from "./executor-bridge.ts";
 import { checkRootfsTree, rootfsCheckSummary } from "./rootfs-check.ts";
@@ -103,6 +113,7 @@ const main = async (): Promise<number> => {
 
     outcomes.push(await networkOutcome(workspaceDir));
     outcomes.push(await channelOutcome(workspaceDir));
+    outcomes.push(await checkThroughShimOutcome(workspaceDir));
     outcomes.push(await backgroundOutcome(workspaceDir));
     outcomes.push(rootfsOutcome());
   } finally {
@@ -182,8 +193,9 @@ const networkOutcome = async (workspaceDir: string): Promise<Outcome> => {
 /**
  * 通道那一半:沙箱里调一次薄壳,宿主收到恰好一行 JSON,并把响应回得回去。
  *
- * 不认字段(协议归票 04)、不认薄壳的措辞(占位实现会换成真实现),只认形状:一行进、一行出。
- * 若这一步挂住(`wallClockMs` 很大),说明 fd 3 根本没接上——薄壳在等一个永远不会来的响应。
+ * 真工具服务那一条在下面的 `checkThroughShimOutcome`;这一条只认形状(一行进、一行出),用来
+ * 把「通道本身没接上」与「服务跑不对」分开。若这一步挂住(`wallClockMs` 很大),说明 fd 3
+ * 根本没接上——薄壳在等一个永远不会来的响应。
  */
 const channelOutcome = async (workspaceDir: string): Promise<Outcome> => {
   const failures: string[] = [];
@@ -226,6 +238,85 @@ const channelOutcome = async (workspaceDir: string): Promise<Outcome> => {
         failures,
       }
     : { line: "✗ 薄壳通道", failures };
+};
+
+/**
+ * 判据 2'':薄壳 → fd → 宿主服务这一整条链真的跑通一次 `check`。
+ *
+ * ── 为何它比上一條硬得多 ──
+ * 上一条只证明「fd 3 上的字节能来回」。但它对两侧的协议、薄壳对响应的解码、宿主对请求的
+ * 分派都是空话:把响应换成一句任意文本,上一条照旧绿。这一条跑的是**真的**:真 bwrap、真
+ * 入库薄壳、真 fd、真的 `check` 服务(真 tsc + 真静态校验器),断言沙箱里那条命令拿到的退出
+ * 码与 stdout,以及宿主写回工作区的 `/workspace/.check.txt`。
+ *
+ * 输入用契约里的那份最小骸骨(`cp /contract/examples/minimal.ts /workspace/script.ts` 正是
+ * 模型的第一步)。没有它就得在门禁里手写一份「恰好能编译」的脚本,而那是第二份真源。
+ */
+const checkThroughShimOutcome = async (workspaceDir: string): Promise<Outcome> => {
+  const failures: string[] = [];
+  const toolWorkspace = join(workspaceDir, "tool-channel");
+  mkdirSync(toolWorkspace, { recursive: true });
+  writeFileSync(
+    join(toolWorkspace, "script.ts"),
+    readFileSync(join(repoRoot, CONTRACT_DIR, "examples", "minimal.ts")),
+  );
+
+  const result = await driveExecutor(
+    repoRoot,
+    {
+      action: "run",
+      rootfsDir: join(repoRoot, "packages/gen/sandbox-rootfs"),
+      workspaceDir: toolWorkspace,
+      // 真 tsc 要几秒;这一步的墙钟只需比它宽,不需要与经济口径对齐。
+      wallClockMs: 120_000,
+      channel: "tools",
+      command: "/bin/check",
+    },
+    180_000,
+  );
+
+  if (!result.ok) {
+    failures.push(`沙箱里调 \`check\` 时执行器报错:${result.message}`);
+    return { line: "✗ 薄壳跑通 check", failures };
+  }
+
+  const stdout = result.stdout ?? "";
+  if (result.exitCode !== 0) {
+    failures.push(
+      `\`/bin/check\` 在沙箱里的退出码是 ${String(result.exitCode)}(期望 0;stdout ${JSON.stringify(stdout.slice(0, 400))},` +
+        `stderr ${JSON.stringify((result.stderr ?? "").slice(0, 400))})。` +
+        "这份输入是契约里那份可编译的骸骨,它该过。",
+    );
+  }
+  if (!stdout.includes("类型检查通过")) {
+    failures.push(
+      `沙箱里 \`check\` 的 stdout 没有「类型检查通过」:${JSON.stringify(stdout.slice(0, 400))}。` +
+        "要么响应没有解回 stdout,要么服务根本没被调到。",
+    );
+  }
+  const fullTextPath = join(toolWorkspace, ".check.txt");
+  const full = existsSync(fullTextPath) ? readFileSync(fullTextPath, "utf8") : "";
+  if (!full.includes("# 类型检查")) {
+    failures.push(
+      `宿主没有把全文写回 ${fullTextPath}:"模型按需去读"这条观测出口当场不成立` +
+        `(文件${existsSync(fullTextPath) ? "存在但内容不对" : "不存在"})。`,
+    );
+  }
+  if ((result.channelRequests ?? []).length !== 1) {
+    failures.push(
+      `宿主侧收到 ${String((result.channelRequests ?? []).length)} 行请求(期望 1 行):` +
+        "一个工具调用就是一行请求。",
+    );
+  }
+
+  return failures.length === 0
+    ? {
+        line:
+          "✓ 薄壳跑通 check:真 bwrap + 真薄壳 + 真 fd,宿主侧的 check 服务真的跑了 tsc" +
+          " 与静态校验,stdout 与 /workspace/.check.txt 都对得上",
+        failures,
+      }
+    : { line: "✗ 薄壳跑通 check", failures };
 };
 
 /** 判据 3:后台进程不残留;正对照是「某一步在跑时宿主看得见它」。 */
@@ -335,7 +426,7 @@ const report = (outcomes: readonly Outcome[], note: string): void => {
   const asserted = outcomes.filter((outcome) => outcome.line.startsWith("✓")).length;
   const vacuous = vacuousReason(asserted, {
     subject: "真正跑通的沙箱判据",
-    scope: "可用性 / 无网络 / 通道 / 后台进程 / rootfs 漂移",
+    scope: "可用性 / 无网络 / 通道 / 薄壳跑通 check / 后台进程 / rootfs 漂移",
   });
 
   for (const outcome of outcomes) {
@@ -349,7 +440,7 @@ const report = (outcomes: readonly Outcome[], note: string): void => {
   }
   const failed = outcomes.some((outcome) => outcome.failures.length > 0);
   process.stdout.write(
-    `check:sandbox:${failed ? "红" : `绿(执行器入口 ${EXECUTOR_ENTRY},四件事与通道那一半全部真跑)`}\n`,
+    `check:sandbox:${failed ? "红" : `绿(执行器入口 ${EXECUTOR_ENTRY},四件事与通道那两条全部真跑)`}\n`,
   );
 };
 
