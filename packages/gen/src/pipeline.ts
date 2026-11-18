@@ -89,7 +89,7 @@ import { createSessionTools } from "./agent/host/dispatcher.js";
 import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
 import { retryTransport } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
-import type { TrialProbe } from "./trial.js";
+import { runTrialScript, type TrialProbe } from "./trial.js";
 import { compileScript, type CompileResult } from "./compile.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
@@ -302,6 +302,8 @@ const observeServices = (options: {
 const createExecutor =
   (options: {
     readonly workspaceDir: string;
+    /** 入库 rootfs 的宿主路径;`undefined` 时执行器按模块位置上溯(源码/`dist` 形态)。 */
+    readonly rootfsDir: string | undefined;
     readonly tools: ReturnType<typeof createSessionTools>;
     readonly facts: { readonly current: StepFacts; readonly reset: () => void };
     readonly stepWallClockMs?: number;
@@ -317,6 +319,7 @@ const createExecutor =
             command: split.body,
             workspaceDir: options.workspaceDir,
             requestHandler: options.tools.requestHandler,
+            ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
             ...(options.stepWallClockMs === undefined
               ? {}
               : { wallClockMs: options.stepWallClockMs }),
@@ -382,13 +385,16 @@ const nonEmptyLines = (text: string): readonly string[] =>
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
 
-/** 一条不评任何东西的评测探针:本段的占位(票 06 换掉它)。 */
-const unpluggedTrial: TrialProbe = () => ({
-  passed: false,
-  stdout: "evaluate 尚未接线(票 06 才接真实网格):这一次没有产出候选。\n",
-});
-
-/** 一条恒不产出成绩的评分接缝:本段的占位(票 06 换掉它)。 */
+/**
+ * 一条恒不产出成绩的评分接缝:本段的占位(票 06 换掉它)。
+ *
+ * ── 占位的是**成绩**,不是试跑 ──
+ *
+ * 一次 `evaluate` 由两半组成:试跑(真跑整张网格,给出观测与拦下明细)与成绩(分数与场数)。
+ * 本段缺的是后者——`score` 要由网格汇总读出来,那是票 06 的活。试跑本身**照跑真子进程**
+ * (`runTrialScript`),否则「evaluate 说拦下」与「evaluate 说未接线」在读侧同形,而前者才是
+ * 模型与人都需要看见的那件事。
+ */
 const unpluggedScoring: EvaluateScoring = async () => undefined;
 
 /** 观测路径 → 档案里的 basename(候选条目的 `observationsFile` 要与旁挂文件同名)。 */
@@ -458,7 +464,8 @@ export const generateOneModel = async (
   const services = observeServices({
     root: request.root,
     model: slug,
-    trial: request.trial ?? unpluggedTrial,
+    // 缺省走真试跑子进程(与 one-shot 时代同一个入口):本段缺的只有成绩(见 `unpluggedScoring`)。
+    trial: request.trial ?? runTrialScript,
     facts: facts.current,
   });
   const tools = createSessionTools({
@@ -473,6 +480,7 @@ export const generateOneModel = async (
   });
   const executor = createExecutor({
     workspaceDir,
+    rootfsDir: request.rootfsDir,
     tools,
     facts,
     ...(request.stepWallClockMs === undefined ? {} : { stepWallClockMs: request.stepWallClockMs }),
@@ -786,17 +794,48 @@ const freezeFromCandidate = (options: {
   };
 };
 
+/**
+ * 零候选时那一句人话。
+ *
+ * 三种「没产出」要说得出来,因为它们的处方不同:模型自己收工却没提交、最后一次 `evaluate`
+ * 被拦下(值得读诊断)、或者根本没跑到 `evaluate`。
+ */
 const messageOfNoCandidate = (slug: string, loop: AgentLoopResult): string => {
   const head = `模型 ${slug} 的会话结束于 ${loop.termination}(第 ${String(loop.atStep)} 步),没有产出任何候选`;
-  return loop.termination === "done" ? `${head}:模型自己收工了,但从未 evaluate 出成绩` : head;
+  if (loop.termination === "done") return `${head}:模型自己收工了,但从未 evaluate 出成绩`;
+  const lastEvaluate = [...loop.steps].reverse().find((step) => step.action.kind === "evaluate");
+  if (lastEvaluate !== undefined) {
+    return `${head}:最后一次 evaluate(第 ${String(lastEvaluate.step)} 步)没有产出成绩,被拦下或提交被拒,明细见诊断`;
+  }
+  return head;
 };
 
-const diagnosticLines = (loop: AgentLoopResult): readonly string[] =>
-  loop.steps.length === 0
-    ? [`一次模型调用都没有成功(${loop.termination})`]
-    : loop.steps
-        .slice(-3)
-        .map(
-          (step) =>
-            `第 ${String(step.step)} 步(${step.action.kind}): ${step.stderr.split("\n")[0] ?? ""}`,
-        );
+/**
+ * 失败档的诊断行:最后几步到底怎么了。
+ *
+ * ── 为什么两路输出都要看 ──
+ *
+ * 「命令失败」的证据常在 `stderr`(tsc 诊断、shell 报错),而 `evaluate` 被拦下的证据在
+ * `stdout`(服务的 verdict 与试跑明细都是给模型读的**正常输出**,不是错误流)。只看 `stderr`
+ * 会把「试跑拦下」写成一条空诊断——而那正是失败档唯一能回答「为什么没成绩」的东西。
+ *
+ * 取前两行而不是全量:诊断是给人读的一行提示清单,全文就在 `steps` 里(同一步的两路输出都已
+ * 落盘),不在这里再复写一份。
+ */
+const diagnosticLines = (loop: AgentLoopResult): readonly string[] => {
+  if (loop.steps.length === 0) {
+    return [`一次模型调用都没有成功(${loop.termination})`];
+  }
+  return loop.steps.slice(-3).flatMap((step) => {
+    const source = step.stderr.trim() === "" ? step.stdout : step.stderr;
+    const lines = source
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => line !== "")
+      .slice(0, 2);
+    const head = `第 ${String(step.step)} 步(${step.action.kind},exit ${String(step.exitCode)}):`;
+    return lines.length === 0
+      ? [`${head} 两路输出都是空的`]
+      : lines.map((line) => `${head} ${line}`);
+  });
+};

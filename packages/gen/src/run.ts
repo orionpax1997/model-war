@@ -20,6 +20,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { writeFailureRecord } from "./failure.js";
+import { SANDBOX_ROOTFS_DIR } from "@model-war/schema";
 import type { AgentPrompt } from "./agent-prompt.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
@@ -54,6 +55,19 @@ export type GenerationRequest = {
   /** 覆盖单步墙钟(默认执行器的 `DEFAULT_STEP_WALL_CLOCK_MS`)。 */
   readonly stepWallClockMs?: number;
   /**
+   * 入库 rootfs 的宿主路径。缺省即 `<root>/packages/gen/sandbox-rootfs`。
+   *
+   * ── 为什么由 `root` 推,而不是执行器自己按模块位置上溯 ──
+   *
+   * 执行器的 `defaultRootfsDir()` 从模块自身位置往上数五层,在源码与 `dist` 形态下都对——但
+   * CLI 是**打包成单文件**跑的(esbuild 把 gen 打进入口 bundle),那时模块位置在临时目录里,
+   * 上溯五层得到的是 `/`,沙箱因此报 `Can't find source path /packages/...`。
+   *
+   * `--root` 的语义本来就是「安装根」(hld §9),rootfs 也在它下面,所以这里按它推——bundle
+   * 形态与源码形态算出同一个路径。
+   */
+  readonly rootfsDir?: string;
+  /**
    * 冻结期试跑探针(被 `evaluate` 服务调)。缺席即占位实现——**本段不接真网格**(票 06),
    * 于是 `evaluate` 不产出候选,零候选即失败档。测试注入桩。
    */
@@ -79,6 +93,8 @@ export type GenerationOptions = {
   readonly agentPrompt?: AgentPrompt;
   /** 会话预算与工作区的覆盖缝(测试用)。 */
   readonly workspaceDir?: string;
+  /** rootfs 的覆盖缝;缺省由 `root` 推。 */
+  readonly rootfsDir?: string;
   readonly maxSteps?: number;
   readonly totalWallClockMs?: number;
   readonly stepWallClockMs?: number;
@@ -146,6 +162,8 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
     runId,
     createClient,
     now,
+    // 由安装根推 rootfs:打包形态下执行器的模块位置上溯不可用(见 `GenerationRequest.rootfsDir`)。
+    rootfsDir: join(root, SANDBOX_ROOTFS_DIR),
     ...(options.agentPrompt === undefined ? {} : { agentPrompt: options.agentPrompt }),
     ...(options.workspaceDir === undefined ? {} : { workspaceDir: options.workspaceDir }),
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
@@ -153,6 +171,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
       ? {}
       : { totalWallClockMs: options.totalWallClockMs }),
     ...(options.stepWallClockMs === undefined ? {} : { stepWallClockMs: options.stepWallClockMs }),
+    ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
     ...(options.evaluateScoring === undefined ? {} : { evaluateScoring: options.evaluateScoring }),
   };

@@ -105,6 +105,8 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
       workspaceDir,
       // 时钟取当下:会话墙钟 = 起点 + 1800s。
       now: () => new Date(),
+      // 试跑桩:这条用例验的是「真 bwrap + 真通道 + 真档案」,不是网格(真网格归票 06)。
+      trial: () => ({ passed: true, stdout: "" }),
       evaluateScoring: async () => ({
         score: {
           totalPoints: TRIAL_MATCHES_PER_CANDIDATE / 4,
@@ -179,6 +181,7 @@ it(
         createClient: () => model,
         workspaceDir,
         now: () => new Date(),
+        trial: () => ({ passed: true, stdout: "" }),
       },
       configOf(),
     );
