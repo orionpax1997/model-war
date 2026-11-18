@@ -543,6 +543,7 @@ archive/<modelSlug>/<runId>/
 | 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`（`stateHash` 断言）+ `check:no-float`（禁浮点门禁是其中一轨） |
 | 档案形状版本与旧档读兼容 | `apps/cli/src/archive-v3.test.ts`（v3 写 → 装载 → 报告往返；v1/v2 旧档 fixture 照旧读出）+ `packages/runner/src/fixtures/archive/README.md`（旧档副本的来源与改写清单） |
 | 传输韧性与限流处置 | `packages/gen/src/retry.test.ts`（三套预算互不侵占、`Retry-After` 作下限、抖动只向上、单次与累计封顶、5xx 一次即收口）+ `packages/gen/src/pipeline.test.ts`（重试不涨协议轮数、`attemptEvidence.failureKind` 留痕）+ `packages/gen/src/run.test.ts`（单模型失败不中止同批） |
+| 步级度量与受污染分层 | `packages/runner/src/archive-report-steps.test.ts`（步级 `stepMs` = `sendMs` + `harnessMs` 的 p50/p95/max 与会话中位数、每步 prompt 大小与 `input[i] − input[i−1]`（首步 null）、缓存命中率为回归哨兵的口径、`round == step` 左连接的不匹配计数、`--json` 的 `failureKind` 与受污染单列及阈值）+ `packages/runner/src/archive-report-v2.test.ts`（v2 网格档的报告口径不因步列改动漂移） |
 
 它自己有判据:`check:landings` 逐行验落点的存在性(命名脚本必在脚本清单里、`modelwar <子命令>` 必在 CLI 的 `COMMANDS` 里、文件与目录必须存在且被版本库跟踪、一行里一个都认不出即红),并顺带断言文档里以命名脚本形态出现的 token 都真的存在。判据只读这张表,**不把它变成生成物**——它的家就是这份文档。
 
