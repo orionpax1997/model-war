@@ -8,7 +8,10 @@
  *
  * ── 假的三样 ──
  *
- * 模型(桩)、沙箱执行(替掉 `sandbox.run`)、时钟。真的只有档案组装、失败档写盘与 CLI 参数解析。
+ * 模型(桩)、沙箱执行(`agent/sandbox.fixture.ts` 那层替身)、时钟。真的只有档案组装、失败档写盘
+ * 与 CLI 参数解析。替身只有一份:本文件不另抄一套 `TOOL_COMMANDS` / `withRealBash`
+ * (`pipeline.test.ts` 与 `apps/cli` 那两条链读的也是同一份),否则「通道先于执行」这条时序
+ * 会在三份副本里各自漂。
  */
 
 import {
@@ -32,6 +35,7 @@ import { generateAndFreeze, runGeneration } from "./run.js";
 import { preflightFailureMessage } from "./agent/sandbox/index.js";
 import { fail, reply, stubClient, type StubClient } from "./stub-client.js";
 import type { AgentPrompt } from "./agent-prompt.js";
+import { withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
 import { completeGridTrial } from "./trial-grid.fixture.js";
 import { gridPlanFixture } from "./trial-plan.fixture.js";
 
@@ -82,73 +86,6 @@ const modelsYaml = (...entries: readonly string[]): string => ["models:", ...ent
  */
 const clientOf = (steps: Parameters<typeof stubClient>[0]): StubClient => stubClient(steps);
 
-/** 三个走通道的薄壳:它们的命令行本身就是要发给宿主的那个请求(与 `shim.sh` 一致)。 */
-const TOOL_COMMANDS = new Set(["check", "evaluate", "done"]);
-
-/** 一次 `sandbox.run` 的替身:入参只要这两格,返回值只要四格(其余字段与本文件的判据无关)。 */
-type SandboxRun = (request: {
-  command: string;
-  requestHandler?: (line: string) => Promise<string>;
-}) => Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>;
-
-/**
- * 把沙箱**整个**换掉:`run` 与 `preflight` 一起换,`finally` 里原样还回去。
- *
- * 两个一起换是**纪律**而不是便利:`runGeneration` 的第一件事就是启动自证(ADR-0033),它要
- * 真跑 bwrap。只换 `run` 的话,本文件的每一条用例都会先死在「这台机器没装 bubblewrap」上——
- * 那是环境账,不是被测行为。自证恒过之后,「整批入口真的调过它、且失败即整批失败」这件事由
- * **注入的失败实现**那一条用例单独验,不由这里兼。
- */
-const withReplacedSandbox = async <T>(run: SandboxRun, body: () => Promise<T>): Promise<T> => {
-  const mod = await import("./agent/sandbox/index.js");
-  const originals = { run: mod.sandbox.run, preflight: mod.sandbox.preflight };
-  const define = (key: "run" | "preflight", value: unknown): void => {
-    Object.defineProperty(mod.sandbox, key, { configurable: true, writable: true, value });
-  };
-  define("run", run);
-  define("preflight", () => ({ version: "test" }));
-  try {
-    return await body();
-  } finally {
-    define("run", originals.run);
-    define("preflight", originals.preflight);
-  }
-};
-
-/**
- * 把 `sandbox.run` 换成「宿主 bash + 真通道」。
- *
- * 沙箱里的三个薄壳只往 fd 3 写一行请求、读一行响应,自己什么也不干;所以它们必须走通道。
- * 其余命令在宿主 `bash` 里真跑(把 `/workspace` 前缀改写成临时工作区,以便模型写的绝对路径
- * 在宿主上成立)。
- */
-const withRealBash = async <T>(workspaceDir: string, body: () => Promise<T>): Promise<T> => {
-  const { spawnSync } = await import("node:child_process");
-  return await withReplacedSandbox(async (request) => {
-    const tool = request.command.trim();
-    if (request.requestHandler !== undefined && TOOL_COMMANDS.has(tool)) {
-      const response = JSON.parse(
-        await request.requestHandler(JSON.stringify({ tool, args: [] })),
-      ) as { exitCode: number; stdout: string; stderr: string };
-      return { ...response, timedOut: false };
-    }
-    const executed = spawnSync(
-      "/bin/bash",
-      ["-c", request.command.replaceAll("/workspace", workspaceDir)],
-      {
-        cwd: workspaceDir,
-        encoding: "utf8",
-      },
-    );
-    return {
-      stdout: executed.stdout,
-      stderr: executed.stderr,
-      exitCode: executed.status ?? 1,
-      timedOut: false,
-    };
-  }, body);
-};
-
 /** 一条「写脚本」的动作:真 bwrap 里就是 heredoc,这里原样保留(替身改写 `/workspace` 前缀)。 */
 const WRITE_SCRIPT = (body: string): string =>
   `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${body}EOF\n\`\`\``;
@@ -162,10 +99,7 @@ const SCRIPT_BODY = "function loop() {}\n";
  * 失败档写没写),不是沙箱里发生了什么。
  */
 const withPlainSandbox = async <T>(body: () => Promise<T>): Promise<T> =>
-  await withReplacedSandbox(
-    async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
-    body,
-  );
+  await withHostBash(async () => ({ stdout: "", stderr: "", exitCode: 0 }), body);
 
 it("顺利路径:一次 evaluate 出成绩就冻结,退出码 0", { timeout: 30_000 }, async () => {
   const root = writeRoot(modelsYaml(entry("alpha")));

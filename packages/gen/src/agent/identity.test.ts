@@ -12,6 +12,7 @@ import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
 import { ACTION_REJECT_EXIT_CODE } from "./action.js";
 import { DONE_SENTINEL } from "./host/done.js";
+import { PROTOCOL_EXIT_CODE, TOOL_USAGE } from "./host/dispatcher.js";
 import {
   HARNESS_DIGEST,
   HARNESS_VERSION,
@@ -56,6 +57,19 @@ it("清单里的数字取自真源,不是在本文件里抄的第二份", () => 
   expect(current.actionSyntax.fenceTag).toBe("bash");
   expect(current.actionSyntax.rejectExitCode).toBe(ACTION_REJECT_EXIT_CODE);
   expect(current.done.sentinel).toBe(DONE_SENTINEL);
+});
+
+it("参数面进清单:工具不收参数,拒绝的退出码取自 dispatcher", () => {
+  const current = manifest();
+  // 模型会试 `evaluate --help` 这种东西,试了会拿到「被拒」——那是行为面,不是实现细节。
+  expect(current.services.args).toEqual({
+    accepted: false,
+    exitCode: PROTOCOL_EXIT_CODE,
+    consumesQuota: false,
+  });
+  // 那句拒绝文案跟它同一个家:判据在 dispatcher,清单只记形状。
+  expect(TOOL_USAGE.check).toContain("不接受参数");
+  expect(TOOL_USAGE.evaluate).toContain("不接受参数");
 });
 
 it("可见面取自真源:二进制清单与 rootfs 一致,三件受限工具确实存在", () => {

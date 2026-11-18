@@ -52,12 +52,14 @@
  */
 
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1824,6 +1826,55 @@ it("runtime bundle 门禁挂在全量门禁末尾,且不进快门禁", () => {
   // 它要 spawn 一次 esbuild,与快门禁的零构建性质不相容(理由同 check:drift)。
   expect(manifest().scripts["check:quick"]).not.toContain("check:runtime");
   expect(manifest().scripts["check:types"]).not.toContain("check:runtime");
+});
+
+// ── rootfs 清单门禁反例:清单与磁盘逐项双向比对 ──────────────────────────────
+
+/**
+ * 反例手法:在**磁盘侧**各动一次(删一份内容物 / 添一份不在清单里的),再看门禁说不说话。
+ *
+ * 为什么不动清单:清单是 `@model-war/schema` 的源码,门禁从它的源码文本里读——改真源会同时
+ * 影响哈希常量与别的断言,那不是这条判据要证明的事。而「组装漏拷一步」「上次组装的残骸没清」
+ * 恰恰是产物目录在生产里真实会变成的样子,它们就是这一条判据的全部内容。
+ *
+ * 两个方向都验:只验「少一份」的话,「多一个」那半可以塌掉而没人发现——而它同样会让
+ * 「整棵树哈希 == 模型可见世界」这句话变成假话(多出来的那份不会被挂载,却看起来像内容物)。
+ */
+it("rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、还原即绿)", () => {
+  const rootfs = `${repoRoot}packages/gen/sandbox-rootfs`;
+  const victim = `${rootfs}/bin/cp`;
+  const bytes = readFileSync(victim);
+  const mode = statSync(victim).mode;
+
+  const clean = script("check:sandbox-rootfs");
+  expect(clean.status, clean.output).toBe(0);
+  expect(clean.output, clean.output).toContain("rootfs 漂移门禁:绿");
+
+  try {
+    rmSync(victim);
+    const missing = script("check:sandbox-rootfs");
+    expect(missing.status, "盘上少了一份内容物,门禁必须非零退出").not.toBe(0);
+    expect(missing.output, missing.output).toContain("bin/cp");
+    expect(missing.output, missing.output).toContain("盘上没有");
+  } finally {
+    // 权限位也是产物的一部分(`bin/*` 必须可执行),所以还原要连它一起。
+    writeFileSync(victim, bytes);
+    chmodSync(victim, mode);
+  }
+
+  const extra = `${rootfs}/bin/__extra-probe`;
+  try {
+    writeFileSync(extra, "不在清单里的一份\n", { mode: 0o755 });
+    const surplus = script("check:sandbox-rootfs");
+    expect(surplus.status, "盘上多了一份不在清单里的文件,门禁必须非零退出").not.toBe(0);
+    expect(surplus.output, surplus.output).toContain("__extra-probe");
+    expect(surplus.output, surplus.output).toContain("不在清单里");
+  } finally {
+    rmSync(extra, { force: true });
+  }
+
+  const restored = script("check:sandbox-rootfs");
+  expect(restored.status, `还原后没有回到绿:\n${restored.output}`).toBe(0);
 });
 
 // ── 契约自证门禁:按需,不在 check 里 ────────────────────────────────────────

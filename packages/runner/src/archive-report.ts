@@ -28,7 +28,6 @@ import {
   OPTIMIZATION_CANDIDATE_LIMIT,
   OPTIMIZATION_GRID_VERSION,
   OPTIMIZATION_STAGES,
-  OPTIMIZATION_VERSION,
   SELECTION_AGENT_VERSION,
   SELECTION_VERSION,
   TRIAL_PLAN_JSON_SHAPE,
@@ -55,6 +54,7 @@ import {
 
 import {
   archiveShapeVersionOf,
+  isLegacyOptimization,
   isLegacySelection,
   optimizationMetaOf,
 } from "./archive-optimization.js";
@@ -215,7 +215,7 @@ const candidateScoresOf = (
 ): readonly ReportCandidateScores[] => {
   if (optimization === undefined) return [];
   // v2 / v3 都有网格分数（v3 的候选把分数直接写在身上）；v1 历史档没有。
-  const grid = optimization.version !== OPTIMIZATION_VERSION;
+  const grid = !isLegacyOptimization(optimization);
   return reportCandidatesOf(optimization).map((candidate, index) => {
     const generation = grid ? gridScoreOf(candidate.score) : NOT_APPLICABLE_SCORE;
     const selectionReading =
@@ -2015,6 +2015,15 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     const shownFields = fields.filter(
       (field) => ttlRecorded || !(TTL_WRITE_FIELDS as readonly string[]).includes(field),
     );
+    /**
+     * 这一跑**评测过几次**——从过程记录的动作列数出来。
+     *
+     * 它与 `candidateStages` 不是同一件事：后者是「记录里留了几个候选描述符」，而失败档的描述符
+     * 只在字节还在时才写（`packages/gen/src/failure.ts` 的 `retainedCandidatesOf`）。所以失败档的
+     * 这两个数可以合法地不相等，差额就是「评测过、但字节没保留」的那几份。
+     */
+    const evaluatedSteps =
+      report.steps?.entries.filter((entry) => entry.action === "evaluate").length ?? 0;
     out.push(
       `## ${escape(report.model)} · ${report.kind}`,
       "",
@@ -2155,7 +2164,15 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       "- 不适用 = 该口径不属本档（v1 历史档没有网格分数；无选拔段时没有复算读数；赛季分数恒不适用）",
     );
     if (report.scores.length === 0)
-      out.push("- 候选分数：不适用（本档没有优化旁证，没有候选可出分数）");
+      out.push(
+        // 失败档的候选**字节**随清理撤掉了，于是描述符也不写进记录（`failure.ts` 的
+        // `retainedCandidatesOf`）。这里必须说成「未保留」而不是「字节缺失」：前者是这一档
+        // 的诚实说法（我们主动没留），后者是搬运 / 手工删除那类事故的读数。次数不会丢——
+        // 过程记录的动作列里每一步都在。
+        report.kind === "failure" && evaluatedSteps > 0
+          ? `- 候选：未保留（这一跑 evaluate ${evaluatedSteps} 次；候选字节与描述符随失败清理一并撤掉，次数见过程记录的动作列）`
+          : "- 候选分数：不适用（本档没有优化旁证，没有候选可出分数）",
+      );
     else
       out.push(
         "",
@@ -2245,13 +2262,26 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       if (listed === undefined) candidateSections.push({ labels: [label], candidate });
       else if (!listed.labels.includes(label)) listed.labels.push(label);
     }
+    /**
+     * 候选字节的读数**按档分派**。
+     *
+     * 失败档的发布不变量是「只写 `failed-<runId>.json`」,所以那一档的候选字节本来就该不在
+     * (`packages/gen/src/pipeline.ts` 的 `finally` 清掉,描述符按「字节还在才写」落盘)。给它写
+     * `missing` 会把「我们主动没留」说成「字节丢了」——那是搬运事故的读数,不是这一档的事实。
+     * 数据层(`ReportCandidate.scriptState`)照旧是 `missing`(盘上确实没有),只有渲染改口:
+     * 判据不因为措辞而放宽。
+     */
+    const scriptStateLabel = (state: ReportCandidate["scriptState"]): string =>
+      report.kind === "failure" && state === "missing"
+        ? "未保留（失败档只留 failed-<runId>.json，候选字节随清理撤掉）"
+        : state;
     for (const { labels, candidate } of candidateSections) {
       const label = labels.join("兼");
       out.push(
         "",
         `### ${label}（协议轮 ${candidate.protocolRound}）`,
         "",
-        `- JS 来源：${escape(candidate.scriptSource)}；状态：${candidate.scriptState}`,
+        `- JS 来源：${escape(candidate.scriptSource)}；状态：${scriptStateLabel(candidate.scriptState)}`,
         `- scriptSha256=${candidate.scriptSha256}；实际 hash=${candidate.actualScriptSha256 ?? "null"}`,
         // 参数只写白名单投影（与逐轮同一套）：原值含 `stop` / `logit_bias` 的自由文本，不回显。
         ...(candidate.params === undefined

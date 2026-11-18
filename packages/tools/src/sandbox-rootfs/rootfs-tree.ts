@@ -1,5 +1,9 @@
 /**
- * 入库 rootfs 的**树口径**:文件枚举、整棵树哈希、以及「这五个是不是静态 ELF」。
+ * 入库 rootfs 的**树口径**:文件枚举、整棵树哈希、以及「这是不是静态 ELF」的单份判断。
+ *
+ * 哪几个文件要过这条判断**不在这里**:清单与薄壳名只有一份,住在 `@model-war/schema` 的
+ * `sandbox-rootfs.ts`(本包零构建,经 `rootfs-drift.ts` 从源码文本里取,理由见那里)。本文件只提供
+ * 「怎么枚举一棵树」「怎么判一份字节是静态 ELF」这两块与清单无关的口径。
  *
  * ── 哈希口径与票 02 的契约树哈希同源,但**范围不同,两者不能互换** ──
  * 两边都是「按路径排序、`path\0bytes` 串接后的 sha256」。这边算的是**整棵 rootfs**
@@ -42,18 +46,6 @@ export const ROOTFS_PROVENANCE_DOC = "PROVENANCE.md";
 
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const ROOTFS_MOUNTED_DIRS = ["bin", "contract"] as const;
-
-/** 五个必须是静态 ELF 的二进制(路径相对 rootfs 根)。 */
-export const ROOTFS_STATIC_BINARIES = [
-  "bin/bash",
-  "bin/cat",
-  "bin/cp",
-  "bin/grep",
-  "bin/ls",
-] as const;
-
-/** 三个薄壳:rootfs 里那一份必须是 `packages/gen/src/agent/shim/shim.sh` 的逐字节副本。 */
-export const ROOTFS_SHIM_NAMES = ["check", "done", "evaluate"] as const;
 
 /** 一棵树里的一份内容:路径(相对 rootfs 根、`/` 分隔)+ 字节。 */
 export type TreeEntry = { readonly path: string; readonly bytes: Buffer };

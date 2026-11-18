@@ -536,7 +536,7 @@ archive/<modelSlug>/<runId>/
 | 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
 | 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `check:budget`(结构门禁)+ `check:budget-recheck`(探针复核) |
 | 生成期沙箱执行器 | `check:sandbox`(真跑四件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移,外加通道两条:fd 3 能进能出、薄壳经它跑通一次 `check`;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
-| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集 / 四个静态 ELF / 契约与薄壳逐字节)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
+| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里除三个薄壳之外每个二进制都是静态 ELF / 契约与薄壳逐字节)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
 | 宿主工具面与 fd 通道 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 沙箱伪造的「响应」只被当成请求)+ `packages/gen/src/agent/shim/shim.test.ts`(真 bash 对真序列化的往返:退出码 / 两路输出 / 形态不对就退出 2)+ `check:sandbox`(真 bwrap 下薄壳走 fd 跑通一次 `check`,真 tsc) |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |

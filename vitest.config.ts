@@ -30,6 +30,15 @@ const SANDBOX_TEST = "apps/cli/src/agent-real-session.test.ts";
 /** 各 project 通用的排除项:`tsc -b` 会把测试一并编译进各包的 dist,产物绝不能被二次拾取。 */
 const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
 
+/**
+ * 常跑链的内核探针:把 `bwrap` 换成会拒绝的执行体(理由见该文件头注)。
+ *
+ * 只装给 `unit` 与 `property`:它们**不该**有任何用例执行真 preflight / 真 bwrap,而真 bwrap 的
+ * 那几条住在 `sandbox` project(`check:sandbox`),那里必须是真二进制。两处写同一份路径(不抽
+ * 常量):`packages/tools/src/vitest/kernel-guard.test.ts` 逐个 project 断言它,抽常量反而让那条
+ * 断言要去读常量的值。
+ */
+
 export default defineConfig({
   test: {
     // 任何测试模块被加载**之前**先补一次 `tsc -b`(理由与代价见 vitest.global-setup.ts 的头注)。
@@ -44,6 +53,7 @@ export default defineConfig({
           name: "unit",
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
           exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST],
+          setupFiles: ["./vitest.kernel-guard.setup.ts"],
         },
       },
       {
@@ -53,6 +63,7 @@ export default defineConfig({
           // 的属性(手写 schema 最容易漏的那类崩),它按同样的纪律归到这里。
           include: ["packages/*/src/**/*.prop.ts", "apps/*/src/**/*.prop.ts"],
           exclude: NEVER_TEST,
+          setupFiles: ["./vitest.kernel-guard.setup.ts"],
           testTimeout: 30_000,
         },
       },
