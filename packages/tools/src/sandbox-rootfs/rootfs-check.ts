@@ -81,7 +81,7 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
   // ② 磁盘文件集 == 清单(多一个少一个都红)。
   findings.push(...manifestFindings(files, actualPaths));
 
-  // ③ 四个二进制是静态 ELF(清单里缺的文件由 ② 报,这里不重复)。
+  // ③ 五个二进制是静态 ELF(清单里缺的文件由 ② 报,这里不重复)。
   for (const path of ROOTFS_STATIC_BINARIES) {
     if (!actualPaths.includes(path)) continue;
     push(staticBinaryFinding(path, staticElfVerdict(readFileSync(join(rootfsDir, path)))));
@@ -126,5 +126,6 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
 export const rootfsCheckSummary = (check: RootfsCheck, greenPrefix: string): string =>
   `${greenPrefix}${check.dir} 的 ${String(check.files)} 份内容物` +
   `(sha256 ${check.treeHash.slice(0, 12)}…)与常量一致;文件集不多不少;` +
-  "4 个二进制是静态 ELF;" +
+  // 计数从清单派生,不写字面量:加了第五个二进制之后这里还写着 4,是一句读起来毫无异样的假话。
+  `${String(ROOTFS_STATIC_BINARIES.length)} 个二进制是静态 ELF;` +
   `contract/ 与 ${CONTRACT_DIR}/ 逐字节相同;三个薄壳与 ${SHIM_SOURCE} 逐字节相同。`;

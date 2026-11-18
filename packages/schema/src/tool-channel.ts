@@ -12,7 +12,7 @@
  * 伪造**响应**。这条性质是结构性的,不要把它降级成「协议里加一个签名」。
  *
  * ── 为什么形状是手写解析 + 手写序列化 ──
- * 消费者是沙箱里的 `bash`:`packages/gen/src/agent/shim/shim.sh` 只有 `bash` 与三个 coreutils,
+ * 消费者是沙箱里的 `bash`:`packages/gen/src/agent/shim/shim.sh` 只有 `bash` 与 `cat`/`cp`/`ls`/`grep`,
  * 没有 `jq`。所以**响应的字节形态是协议的一部分**,由本模块的 `serializeToolResponse` 定死:
  *
  * - 键序固定 `exitCode` → `result` → `stdout` → `stderr`(最后一个字段永远是 `stderr`);

@@ -45,7 +45,7 @@ export type StepLimits = {
  *
  * - `processes = 256`:一次 `bash -c` 正常起不到十个进程;256 足够管道与子 shell,又远小于
  *   「把宿主 fork 穿」的量级。
- * - `addressSpaceKib = 1 GiB`:静态 bash + 三个 coreutils 的常驻是 MB 级;1 GiB 给足
+ * - `addressSpaceKib = 1 GiB`:静态 bash + 四个 coreutils 的常驻是 MB 级;1 GiB 给足
  *   `sort`/`grep` 处理大文件的余量,又挡住「一次 malloc 把宿主换页打满」。
  * - `cpuSeconds = 60`:单进程 CPU 秒。它的作用是「一步里不许算满 60 秒的 CPU」,与宿主侧的
  *   墙钟上限互补(墙钟挡的是 IO 等待与多个子进程,CPU 秒挡的是单进程死算)。

@@ -12,7 +12,7 @@
  *
  * ── 六条判据(实现在 `rootfs-check.ts`,纯判据在 `rootfs-drift.ts`) ──
  * ① 整棵树哈希 == `SANDBOX_ROOTFS_TREE_HASH`;② 磁盘文件集 == `SANDBOX_ROOTFS_FILES`
- * (多一个少一个都红);③ 四个二进制是静态 ELF(自解析 ELF,不靠 `ldd` / `file`);
+ * (多一个少一个都红);③ 五个二进制是静态 ELF(自解析 ELF,不靠 `ldd` / `file`);
  * ④ `contract/*` 与 `docs/rules-v2/*` 逐字节相同;⑤ 三个薄壳与
  * `packages/gen/src/agent/shim/shim.sh` 逐字节相同,且 `bin/*` 都可执行;
  * ⑥ 产物目录顶层只许 `bin/`、`contract/` 与来路说明书。

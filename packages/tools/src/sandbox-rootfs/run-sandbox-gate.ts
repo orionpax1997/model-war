@@ -70,7 +70,7 @@ const NETWORK_TARGET = { host: "1.1.1.1", port: 443 } as const;
 /** 后台进程判据里「立即返回」的口径。一步的回包要远小于单步墙钟(默认 120 s)。 */
 const IMMEDIATE_RETURN_MS = 5_000;
 
-/** 后台进程判据里的探针:bash 死循环,不需要 rootfs 里存在 `sleep`(那里只有四个二进制)。 */
+/** 后台进程判据里的探针:bash 死循环,不需要 rootfs 里存在 `sleep`(那里只有五个二进制)。 */
 const spin = (nonce: string): string => `# ${nonce}\nwhile :; do :; done`;
 
 const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));

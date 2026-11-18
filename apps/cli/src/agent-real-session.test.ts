@@ -63,13 +63,6 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-real-session-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-const SCRIPT = `var ticks = 0;
-function loop() {
-  ticks += 1;
-  return ticks;
-}
-`;
-
 /**
  * 造一个能给**真沙箱**用的安装根。
  *
@@ -108,9 +101,11 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
 
-  // 四步:写脚本 → 跑 check → evaluate → done。每一步都是一次真的 `sandbox.run`。
+  // 四步:起手式(`cp`,首条消息写的就是它) → 跑 check → evaluate → done。
+  // 每一步都是一次真的 `sandbox.run`。用 `cp` 而不是 heredoc 是有意的:那是模型真正会照做的第一步,
+  // 它曾因 rootfs 里没有 `cp` 而以 `exit 127` 白费一步。
   const model = stubClient([
-    reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${SCRIPT}EOF\n\`\`\``),
+    reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
     reply("```bash\ncheck\n```"),
     reply("```bash\nevaluate\n```"),
     reply("```bash\ndone\n```"),
@@ -154,8 +149,12 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   expect(meta.prompts).toHaveLength(1);
   expect(meta.steps?.map((step) => step.action.kind)).toEqual(["bash", "bash", "evaluate", "done"]);
 
-  // ── 真沙箱里跑出来的东西真的在:写文件那步的退出码是 0,check 那步有 tsc 版本 ──
+  // ── 真沙箱里跑出来的东西真的在:起手式那步的退出码是 0,check 那步有 tsc 版本 ──
   expect(meta.steps?.[0]?.exitCode).toBe(0);
+  // 契约里的那份骸骨真的被拷到了工作区:这是「沙箱里能 `cp`」的现场证据。
+  expect(readFileSync(join(workspaceDir, "script.ts"), "utf8")).toBe(
+    readFileSync(join(repoRoot, "docs/rules-v2/examples/minimal.ts"), "utf8"),
+  );
   expect(meta.steps?.[1]?.stdout).toContain("类型检查通过");
   // 结果侧证据:check 那一步带着契约侧的规则标签(通过时是空集合)。
   expect(meta.steps?.[1]?.result).toBeUndefined();
@@ -264,7 +263,7 @@ it(
     mkdirSync(workspaceDir, { recursive: true });
 
     const model = stubClient([
-      reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${SCRIPT}EOF\n\`\`\``),
+      reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
       reply("```bash\nevaluate\n```"),
       reply("```bash\ndone\n```"),
     ]);

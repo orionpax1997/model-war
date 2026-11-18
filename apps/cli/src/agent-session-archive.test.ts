@@ -53,13 +53,6 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-agent-session-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-const SCRIPT = `var ticks = 0;
-function loop() {
-  ticks += 1;
-  return ticks;
-}
-`;
-
 /**
  * 造一个能真跑整条链的安装根:符号链接回仓库的依赖(真 tsc、真静态校验器、真薄壳)与规则集
  * (`check` 服务读体积上限)。
@@ -96,8 +89,11 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
   mkdirSync(workspaceDir, { recursive: true });
 
   // 四步:写脚本 → 跑 check → evaluate → done。工具命令经通道打到宿主服务,其余在宿主 bash 里跑。
+  // 第一步写脚本。这里用 heredoc 而不是首条消息的起手式(`cp`):假执行器只把 `/workspace`
+  // 改写成宿主路径,`/contract` 在宿主上不存在——「沙箱里有没有 `cp`」是**内容物**的事实,
+  // 只有真 bwrap 那条用例(以及 `check:sandbox-rootfs` 的文件集门禁)能判它。
   const model = stubClient([
-    reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${SCRIPT}EOF\n\`\`\``),
+    reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
     reply("```bash\ncheck\n```"),
     reply("```bash\nevaluate\n```"),
     reply("```bash\ndone\n```"),

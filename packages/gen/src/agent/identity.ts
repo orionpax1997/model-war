@@ -206,7 +206,7 @@ export const digestOf = (manifest: HarnessManifest): string =>
  * 它是**入库常量**而不是运行时现算,与 `SANDBOX_ROOTFS_TREE_HASH` 同一条纪律:判据锚定确切
  * 取值,回填时必须有人有意改这一行,于是「上限变了但没人注意」在 diff 里看得见。
  */
-export const HARNESS_DIGEST = "0066e99019dc4799a54a37b5a01f2065ed7a7759924baddf8edfc4b53463e298";
+export const HARNESS_DIGEST = "863eeca5eaeb966de1820be28332da3c2025fce79c404053daa18c7026ec9756";
 
 /** 现算的身份:`harnessVersion` + `harnessDigest`,落进档案的就是这两个。 */
 export const harnessIdentity = (): { version: string; digest: string } => ({
