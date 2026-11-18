@@ -62,6 +62,7 @@ import {
   type ReportObservationInput,
   requestEvidenceOf,
   stopEvidenceOf,
+  attemptFailureKindOf,
   failureClassificationOf,
   usageEnumOf,
   observationEvidenceOf,
@@ -311,6 +312,11 @@ const TTL_WRITE_FIELDS = ["cacheWrite5m", "cacheWrite1h"] as const;
 export type ArchiveReportRound = {
   readonly round: number;
   readonly sendMs: number | null;
+  /**
+   * 这一轮的退避等待（毫秒）。ADR-0036 定的记账字段：`sendMs` 含退避，而 deadline 按不含退避的
+   * 口径判，所以退避要单独可读。生成侧今天还不写这一格 → `null`，不补零。
+   */
+  readonly backoffMs: number | null;
   readonly responseConverged: boolean;
   readonly params: ReturnType<typeof paramsOf>;
   readonly requestEvidence: ReportRequestEvidence;
@@ -326,6 +332,11 @@ export type ArchiveReportRound = {
 export type ReportAttempt = {
   readonly attempt: number;
   readonly outcome: "response" | "transport-error";
+  /**
+   * 传输失败的细分（ADR-0036）：`rate-limited` / `server` / `network` / `timeout`。
+   * 成功尝试与历史档为 `null`——**「重试救回来的 429」也带它**，否则限流压力在数据里不存在。
+   */
+  readonly failureKind: "rate-limited" | "server" | "network" | "timeout" | null;
   readonly stop: ReturnType<typeof stopEvidenceOf>;
   readonly usage: ReportUsage;
 };
@@ -1160,6 +1171,8 @@ const attemptsOf = (raw: unknown): Pick<ArchiveReportRound, "attempts" | "attemp
     attempts.push({
       attempt: index + 1,
       outcome: value.outcome,
+      // 细分只对「传输失败」有意义；成功尝试上写了也不采（它两个格说的是两件事）。
+      failureKind: response ? null : attemptFailureKindOf(value.failureKind),
       stop: stopEvidenceOf(response ? value : undefined),
       usage: normalizeUsage(response ? value.usage : undefined),
     });
@@ -1309,6 +1322,11 @@ const readRecord = (
     throw new Error(`报告记录 ${source} 的 model 与目录 slug 不一致`);
   }
   const lines = Array.isArray(record.generationLog) ? record.generationLog : [];
+  /**
+   * 形状版本在这里就定下来（在**逐行解析之前**）：日志行的读法按版本分派——v3 的行只装发送侧
+   * 证据，结果侧（驱动来源 `kind` 与 `errorCodes`）的真源在过程记录里（ADR-0031）。
+   */
+  const shape = archiveShapeVersionOf(record);
   const issues: { line: number; reason: string }[] = [];
   const seen = new Set<number>();
   const rounds: ArchiveReportRound[] = lines.flatMap((line: unknown, index: number) => {
@@ -1319,6 +1337,14 @@ const readRecord = (
         log = objectOf(JSON.parse(line));
       } catch {
         throw new Error("日志行 JSON 不合法");
+      }
+      if (shape === ARCHIVE_SCHEMA_VERSION) {
+        // 旧档的行里有这两个键，那时代它们就是结果侧证据；v3 不许再带——复写让同一个事实有了
+        // 两个家，而后者迟早是陈的（ADR-0031「一个事实一个家」）。显式拒读，不静默忽略。
+        if (Object.hasOwn(log, "errorCodes"))
+          throw new Error("v3 日志行不带结果侧 errorCodes 字段");
+        if (log.kind !== undefined && log.kind !== "converged" && log.kind !== "transport")
+          throw new Error("v3 日志行的 kind 只能是行类型标记");
       }
       const transport =
         kind === "failure" &&
@@ -1352,6 +1378,7 @@ const readRecord = (
         {
           round,
           sendMs: numberOf(log.sendMs),
+          backoffMs: numberOf(log.backoffMs),
           responseConverged: !transport,
           params: paramsOf(log.params),
           requestEvidence: requestEvidenceOf(log.requestEvidence, slug),
@@ -1370,6 +1397,8 @@ const readRecord = (
           [
             "日志行不是 JSON 字符串",
             "日志行 JSON 不合法",
+            "v3 日志行不带结果侧 errorCodes 字段",
+            "v3 日志行的 kind 只能是行类型标记",
             "未收敛日志只能是传输失败末行",
             "轮号缺失、越界或重复",
           ],
@@ -1380,8 +1409,8 @@ const readRecord = (
     }
   });
   rounds.sort((a, b) => a.round - b.round);
-  // 形状版本在这里就定下来：不认识的版本与「带 agent 字段却缺 3」都在这里拒读（不猜）。
-  const agentShape = archiveShapeVersionOf(record) === ARCHIVE_SCHEMA_VERSION;
+  /** agent 形态（v3）：步列、终止原因与受污染分层都按它分派。 */
+  const agentShape = shape === ARCHIVE_SCHEMA_VERSION;
   const failureDescriptors = kind === "failure" ? failureCandidatesOf(record) : [];
   const failedSelection =
     kind === "failure" ? selectionFailureOf(record, failureDescriptors, protocolRounds) : null;
