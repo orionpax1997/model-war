@@ -445,6 +445,54 @@ it("截断重试并入同一步:第二次成功就照常执行,attempts 记 2,�
   expect(outcome.failure.generationLog).toHaveLength(1);
 });
 
+it("截断重试的证据按步聚合:该步日志行装两条 attempts,两枪各就各位", async () => {
+  const root = mkRoot();
+  // 三步:写脚本 → evaluate(第一枪截断、第二枪成功) → done。
+  //
+  // 这是「一次 send 的桶 ≠ 一行日志」那条接缝:该步有**两次** send,而日志仍只有一行。
+  // 旧写法按下标取,第二行会拿到第一步的证据、第二枪丢掉(ADDR-0032:同一步的第二个 attempt,
+  // `generationLog` 一行、`attempts` 两条)。
+  const model = stubClient([
+    reply(writeScript(SCRIPT)),
+    reply("```bash\nls /contract", { finishReason: "length" }),
+    reply("```bash\nevaluate\n```"),
+    reply("```bash\ndone\n```"),
+  ]);
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const outcome = await withRealBash(workspaceDir, () =>
+    generateOneModel(
+      requestWith(root, { createClient: () => model, workspaceDir, maxSteps: 4 }),
+      configOf(),
+    ),
+  );
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") return;
+  // 重试不占步:三步就是三步,协议轮数也还是三。
+  expect(outcome.meta.steps).toHaveLength(3);
+  expect(outcome.meta.protocolRounds).toBe(3);
+  expect(outcome.meta.generationLog).toHaveLength(3);
+
+  const logs = outcome.meta.generationLog.map(
+    (line) =>
+      JSON.parse(line) as {
+        round: number;
+        attempts: number;
+        attemptEvidence: { attempt: number; finishReason?: string }[];
+      },
+  );
+  // 行号 = 步号,一行一步。
+  expect(logs.map((log) => log.round)).toEqual([1, 2, 3]);
+  expect(logs.map((log) => log.attempts)).toEqual([1, 2, 1]);
+  // 截断那一步的两枪都在这一行里,且先后到位(读侧按下标校验 1..n)。
+  expect(logs[1]?.attemptEvidence.map((item) => item.attempt)).toEqual([1, 2]);
+  expect(logs[1]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["length", "stop"]);
+  // 另外两步各一枪,不会舋到截断那一步的证据。
+  expect(logs[0]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["stop"]);
+  expect(logs[2]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["stop"]);
+}, 60_000);
+
 it("第二次仍截断:转格式反馈,不执行任何命令", async () => {
   const root = mkRoot();
   const model = stubClient([

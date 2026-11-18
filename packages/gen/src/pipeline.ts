@@ -560,7 +560,13 @@ export const generateOneModel = async (
   const client = request.createClient(config);
   const caliber =
     config.generationPolicy === undefined ? undefined : usageCaliberOf(config.endpointFamily);
-  /** 每次 loop 侧 `send` 的尝试证据,按发生序;与 `loop.turns` 一一对应。 */
+  /**
+   * 每次 loop 侧 `send` 的一桶尝试证据,按发生序。
+   *
+   * 一桶 = 一次 `model.send`(里面可能有若干传输重试),而**一步**可能有两次 `send`
+   * (截断重试,ADR-0035)。所以桶与日志行不是一一对应:切行时必须按 `turn.attempts` 数,
+   * 不能拿 turn 的下标去取——那样截断那一步的日志会拿到上一步的证据,而第二枪直接丢掉。
+   */
   const sendEvidence: AttemptEvidence[][] = [];
 
   try {
@@ -591,9 +597,19 @@ export const generateOneModel = async (
       now: () => request.now().getTime(),
     });
 
-    // 生成日志:一步一行,轮号 = 步号。`attempts` 是截断重试的枪数(不占步)。
-    for (const [index, turn] of loop.turns.entries()) {
-      const evidence = sendEvidence[index] ?? [];
+    // 生成日志:**一个日志行 = 一步 = 一组 attempts**(ADR-0032)。
+    //
+    // 轮号 = 步号;`attempts` 是截断重试的枪数(不占步)。所以这一行要装上**这一步全部**的
+    // 发送侧证据:按 `turn.attempts` 从发生序里切一段。逐 turn 下标取(`sendEvidence[index]`)
+    // 在截断重试时是错的——那一步有两次 send,于是下一行会拿到上一行的证据、第二枪丢掉。
+    // 编号在**步内**连续(1..n):读侧(`attemptsOf`)按下标校验 `attempt === index + 1`。
+    let cursor = 0;
+    for (const turn of loop.turns) {
+      const evidence = sendEvidence
+        .slice(cursor, cursor + turn.attempts)
+        .flat()
+        .map((item, index) => ({ ...item, attempt: index + 1 }));
+      cursor += turn.attempts;
       generationLog.push(
         logLine(
           turn.kind === "transport"
