@@ -618,7 +618,8 @@ it("一条 `done` 在块中:`done` 之前的命令照跑,action 记 done", async
   const outcome = await withHostBash(
     (command) => {
       commands.push(command);
-      return stepOk({ done: true });
+      // 这一块真跑了一个命令:它自己的退出码要原样落进过程记录(不是被 done 改成 0)。
+      return stepOk({ done: true, exitCode: 3 });
     },
     () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
   );
@@ -629,6 +630,31 @@ it("一条 `done` 在块中:`done` 之前的命令照跑,action 记 done", async
   // 块被切开:执行的是 done 之前那半段。
   expect(commands[0]).toBe("ls /contract");
   expect(outcome.agent.steps[0]?.action).toEqual({ kind: "done" });
+  // 有前置命令就是一次真的执行:退出码是命令自己的那个。
+  expect(outcome.agent.steps[0]?.exitCode).toBe(3);
+});
+
+it("`done` 独占一块:不起 shell,退出码记 0(不是「起了一次空 bash」)", async () => {
+  // 切完 body 为空就不该起进程:那一步什么都没执行,过程记录里那格就该是 0。
+  // 反面证据由替身给:它一律报 7——真的把空命令交给它跑,这个 0 就变不成。
+  const root = mkRoot();
+  const model = stubClient([reply("```bash\ndone\n```")]);
+  let ran = 0;
+  const outcome = await withHostBash(
+    () => {
+      ran += 1;
+      return stepOk({ exitCode: 7, stdout: "不该跑到\n" });
+    },
+    () =>
+      generateOneModel(requestWith(root, { createClient: () => model, maxSteps: 1 }), configOf()),
+  );
+
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  expect(ran).toBe(0);
+  expect(outcome.agent.steps[0]?.action).toEqual({ kind: "done" });
+  expect(outcome.agent.steps[0]?.exitCode).toBe(0);
+  expect(outcome.agent.steps[0]?.stdout).toBe("");
 });
 
 it("runGeneration 写失败档:agent 字段与 steps 一起落盘", async () => {

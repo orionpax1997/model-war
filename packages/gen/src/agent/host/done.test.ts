@@ -60,6 +60,20 @@ describe("切分", () => {
     expect(splitDoneBlock("echo a\ndone\necho b\ndone")).toEqual({ body: "echo a", ended: true });
   });
 
+  it("已知边界:`for … do … done` 的收尾 `done` 也会被当成哨兵", () => {
+    // 真档案里撞到过:`archive/minimax-m3.1-flash/2026-11-18T08-48-17-718Z` 第 19 步
+    // (`for f in …; do … done` 的诊断块)被判成「这一块以 done 结束」,切掉后半段之后剩下一个
+    // 没有收尾的 `for`,于是 `bash -c` 报语法错误、退出码 2。
+    //
+    // 这是 ADR-0032 明确接受的边界(「不做 shell 解析;漏的那一面是『该停没停』」):over-stop
+    // 只丢命令,under-stop 会让 `done` 之后的命令真的跑起来。所以这里不改判据,只把这一格
+    // 写进契约——它会被再撞到,而下次撞到的人应该一眼认出这是已知行为。
+    expect(splitDoneBlock("for f in a b; do\n  echo $f\ndone\necho tail")).toEqual({
+      body: "for f in a b; do\n  echo $f",
+      ended: true,
+    });
+  });
+
   it("已知边界:heredoc 里独占一行的 done 也会被当成哨兵", () => {
     // 判据是「整行去空白等于 done」,不做 shell 解析——ADR-0032 明确否掉了静态解析命令这条路,
     // 代价是这一格:模型想在 heredoc 里原样写一行 done 的话会被切掉。宁可这样,也不要让
