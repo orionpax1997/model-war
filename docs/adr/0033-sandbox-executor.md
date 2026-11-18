@@ -49,11 +49,11 @@ ADR-0029 把禁令的落点定成**沙箱内容物**(不放引擎、不放试跑
 
 ### 内容物是入库 rootfs,不从宿主借
 
-沙箱里的全部内容物是一个约 6–8 MB 的 rootfs 产物:静态 `bash` + 四个 coreutils(`cat` / `cp` / `ls` / `grep`)。它**入版本库、以字节为准**,并配一条「现算 == 入库」的漂移门禁——与 ADR-0007 对 runtime bundle 的处理同款。
+沙箱里的全部内容物是一个约 6–8 MB 的 rootfs 产物:静态 `bash` + 几个 coreutils(`cat` / `cp` / `ls` / `grep`)。它**入版本库、以字节为准**,并配一条「现算 == 入库」的漂移门禁——与 ADR-0007 对 runtime bundle 的处理同款。
 
 这条选择的实质是把「容器」唯一真实的优势搬了过来:**镜像的价值是「内容物可钉」,不是「隔离更强」**。钉住内容物之后,等价基线的可比性不再依赖「两台机器的发行版恰好一样」,`ldd` 闭包门禁整条消失。
 
-顺带缩小了沙箱的职责:因为 `check`/`evaluate` 全在宿主侧执行,沙箱里**不需要** `node`、`tsc`、`node_modules`、`rulesets/`、测试框架。它只需要 `bash` 加四个 coreutils——其中 `cp` 是首条消息写明的起手式(`cp /contract/examples/minimal.ts /workspace/script.ts`),缺它那一步就是一次 `exit 127`。
+顺带缩小了沙箱的职责:因为 `check`/`evaluate` 全在宿主侧执行,沙箱里**不需要** `node`、`tsc`、`node_modules`、`rulesets/`、测试框架。它只需要 `bash` 加那几个 coreutils——其中 `cp` 是首条消息写明的起手式(`cp /contract/examples/minimal.ts /workspace/script.ts`),缺它那一步就是一次 `exit 127`。
 
 ### 资源上限靠 `ulimit`,不靠 cgroup——而且要承认它不完整
 
