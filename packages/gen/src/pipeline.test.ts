@@ -40,7 +40,7 @@ import { fail, reply, replies, stubClient } from "./stub-client.js";
 import { generateOneModel } from "./pipeline.js";
 import { runGeneration, type GenerationRequest } from "./run.js";
 import type { ModelConfig } from "./config.js";
-import type { ChatMessage, ModelParams } from "./model-client.js";
+import type { ChatMessage, ModelParams, ModelResponse } from "./model-client.js";
 import { HARNESS_DIGEST, HARNESS_VERSION } from "./agent/identity.js";
 import { ACTION_REJECT_EXIT_CODE } from "./agent/action.js";
 import { withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
@@ -467,6 +467,59 @@ it("总墙钟耗尽:已跑完的步留着,不判失败(终止与落档正交)", 
   expect(outcome.agent.termination).toBe("wall-clock");
   // 走完的那几步仍在过程记录里。
   expect(outcome.agent.steps.length).toBeGreaterThan(0);
+});
+
+it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 wall-clock", async () => {
+  // ADR-0029/0035:预算是一项硬约束,而「等到步与步之间才发现」等于让一次调用随便超支
+  // (`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z` 两次调用各 816 s / 928 s)。
+  // 这里造的形状就是空闲超时挡不住的那一种:客户端一直不返回,只有在被 abort 时才结束。
+  const root = mkRoot();
+  let calls = 0;
+  const slow = {
+    send: async (
+      _messages: readonly ChatMessage[],
+      _params: ModelParams,
+      options?: { readonly signal?: AbortSignal },
+    ): Promise<ModelResponse> =>
+      await new Promise<ModelResponse>((_resolve, reject) => {
+        calls += 1;
+        options?.signal?.addEventListener("abort", () => reject(new Error("aborted by budget")), {
+          once: true,
+        });
+      }),
+  };
+
+  const startedAt = Date.now();
+  const outcome = await withHostBash(
+    () => stepOk(),
+    () =>
+      generateOneModel(
+        requestWith(root, {
+          createClient: () => slow,
+          totalWallClockMs: 200,
+          // 真钟:这条判据量的是墙钟本身,冻住它就没有被测对象了。
+          now: () => new Date(),
+        }),
+        configOf(),
+      ),
+  );
+
+  expect(Date.now() - startedAt).toBeLessThan(10_000);
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  expect(outcome.agent.termination).toBe("wall-clock");
+  // 半截响应不进过程记录、不进协议轮数(ADR-0031):它没有被执行的任何动作。
+  expect(outcome.agent.steps).toEqual([]);
+  expect(outcome.agent.atStep).toBe(0);
+  // 但**日志行仍在**:那一行的形状是传输末行(`responseConverged: false`),不是「静默丢掉」。
+  const lines = outcome.failure.generationLog.map(
+    (line) => JSON.parse(line) as Record<string, unknown>,
+  );
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatchObject({ kind: "transport", round: 1, responseConverged: false });
+  expect(Array.isArray(lines[0]?.attemptEvidence)).toBe(true);
+  // 到点之后不再发新的尝试:一次 abort 只烧掉一次调用。
+  expect(calls).toBe(1);
 });
 
 it("配额拒绝模型看得见:第 4 次 evaluate 被 dispatcher 拒掉,stderr 进观测", async () => {

@@ -10,10 +10,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createStepClock, type StepTimer } from "./step-clock.js";
+import { createBudgetClock, type BudgetTimer } from "./budget-clock.js";
 
 type Harness = {
-  readonly clock: ReturnType<typeof createStepClock>;
+  readonly clock: ReturnType<typeof createBudgetClock>;
   readonly fired: () => number;
   /** 把假时钟推进若干毫秒,顺带跑掉期间到点的计时器。 */
   readonly advance: (ms: number) => void;
@@ -26,13 +26,13 @@ const harnessOf = (wallClockMs: number): Harness => {
   let sequence = 0;
   const timers = new Map<number, { readonly at: number; readonly fire: () => void }>();
   let fired = 0;
-  const clock = createStepClock({
-    wallClockMs,
+  const clock = createBudgetClock({
+    limitMs: wallClockMs,
     onExpire: () => {
       fired += 1;
     },
     now: () => now,
-    setTimer: (fire, ms): StepTimer => {
+    setTimer: (fire, ms): BudgetTimer => {
       sequence += 1;
       timers.set(sequence, { at: now + ms, fire });
       return sequence;
@@ -141,5 +141,25 @@ describe("冻结之外照旧杀挂起", () => {
     clock.clock.stop();
     clock.advance(10_000);
     expect(clock.fired()).toBe(0);
+  });
+});
+
+describe("读数:还剩多少 / 是否到点", () => {
+  it("停表期间剩余额度不减少,继续后按余额到点", () => {
+    const clock = harnessOf(1_000);
+    clock.clock.start();
+    expect(clock.clock.remainingMs()).toBe(1_000);
+    clock.advance(400);
+    expect(clock.clock.remainingMs()).toBe(600);
+    clock.clock.pause();
+    clock.advance(5_000);
+    // 会话总墙钟与单步墙钟都靠这个读数判「还能不能再开一步」:停表期间它必须不动。
+    expect(clock.clock.remainingMs()).toBe(600);
+    expect(clock.clock.expired()).toBe(false);
+    clock.clock.resume();
+    clock.advance(600);
+    expect(clock.clock.expired()).toBe(true);
+    expect(clock.clock.remainingMs()).toBe(0);
+    clock.clock.stop();
   });
 });

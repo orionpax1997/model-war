@@ -80,7 +80,8 @@ import {
 } from "./archive.js";
 import { loadAgentPrompt, type AgentPrompt } from "./agent-prompt.js";
 import { harnessIdentity } from "./agent/identity.js";
-import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS } from "./agent/limits.js";
+import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, WallClockExhausted } from "./agent/limits.js";
+import { createBudgetClock } from "./agent/budget-clock.js";
 import { runAgentSession, type AgentLoopResult } from "./agent/loop.js";
 import { sandbox } from "./agent/sandbox/index.js";
 import { splitDoneBlock } from "./agent/host/done.js";
@@ -94,7 +95,7 @@ import {
 } from "./agent/host/evaluate-service.js";
 import { createSessionTools } from "./agent/host/dispatcher.js";
 import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
-import { retryTransport } from "./retry.js";
+import { retryTransport, type RetrySleep } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
 import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
 import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
@@ -409,15 +410,24 @@ const sendWithTransportRetry = async (options: {
   readonly params: ModelParams;
   readonly evidence: AttemptEvidence[];
   readonly caliber: UsageCaliber | undefined;
+  /** 会话总墙钟的中止信号(ADR-0029/0035):到点即打断进行中的调用。 */
+  readonly signal: AbortSignal;
+  /** 退避等待的实现(会话预算在这里停表,ADR-0036)。 */
+  readonly sleep: RetrySleep;
 }): Promise<
   | { readonly ok: true; readonly response: ModelResponse }
   | { readonly ok: false; readonly message: string; readonly diagnostics: readonly string[] }
 > => {
   const attempt = await retryTransport({
     send: async () => {
+      // 预算已经到点:不再发新的尝试。用**非** `TransportError` 抛,`classifyCause` 因此判 fatal
+      // ——重发解决不了「这场会话跑太久了」,再退避只会把收口往后拖。
+      if (options.signal.aborted) throw new Error("会话总墙钟已到点:不再发起新的尝试");
       const number = options.evidence.length + 1;
       try {
-        const response = await options.client.send(options.messages, options.params);
+        const response = await options.client.send(options.messages, options.params, {
+          signal: options.signal,
+        });
         options.evidence.push(responseAttemptEvidence(number, response, options.caliber));
         return response;
       } catch (cause) {
@@ -425,6 +435,7 @@ const sendWithTransportRetry = async (options: {
         throw cause;
       }
     },
+    sleep: options.sleep,
     // 截断归 loop:本层把它当一次成功响应交回。
     truncation: "caller",
   });
@@ -568,6 +579,37 @@ export const generateOneModel = async (
   const client = request.createClient(config);
   const caliber =
     config.generationPolicy === undefined ? undefined : usageCaliberOf(config.endpointFamily);
+
+  // ── 会话总墙钟:active 口径,且能在调用**进行中**收口(ADR-0029/0035) ──
+  //
+  // 退出条件原先只有「步与步之间」那一处检查,于是一次慢慢吐 token 的调用可以合法地吃光整个
+  // 预算(`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z`:两次调用各 816 s / 928 s,
+  // 全是 reasoning token,1800 s 就这么没了)。空闲超时挡不住它——每读到一段字节就重置。
+  //
+  // 所以预算自己有一只表:到点就把**当前在途**那次调用 abort 掉。退避等待期间这只表停表
+  // (`backoffSleep`),那是 ADR-0036 的口径:退避是测量条件的抗噪设置,不是模型的耗时。
+  let inFlight: AbortController | undefined;
+  const budget = createBudgetClock({
+    limitMs: totalWallClockMs,
+    now: () => request.now().getTime(),
+    onExpire: () => {
+      inFlight?.abort();
+    },
+  });
+  budget.start();
+
+  /** 退避等待:不进 active 墙钟(ADR-0036);预算已到点时干脆不再等。 */
+  const backoffSleep: RetrySleep = async (ms) => {
+    if (budget.expired()) return;
+    budget.pause();
+    try {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      });
+    } finally {
+      budget.resume();
+    }
+  };
   /**
    * 每次 loop 侧 `send` 的一桶尝试证据,按发生序。
    *
@@ -583,16 +625,30 @@ export const generateOneModel = async (
         send: async (messages: readonly ChatMessage[], sendParams: ModelParams) => {
           const evidence: AttemptEvidence[] = [];
           sendEvidence.push(evidence);
-          const outcome = await sendWithTransportRetry({
-            client,
-            messages,
-            params: sendParams,
-            evidence,
-            caliber,
-          });
-          // 抛给 loop 就是「传输重试耗尽」:那次调用不进过程记录、不进协议轮数(ADR-0031)。
-          if (!outcome.ok) throw new Error(outcome.message);
-          return outcome.response;
+          // 这一次调用挂到会话预算上:到点时 `onExpire` 打断的就是它。
+          const controller = new AbortController();
+          inFlight = controller;
+          try {
+            const outcome = await sendWithTransportRetry({
+              client,
+              messages,
+              params: sendParams,
+              evidence,
+              caliber,
+              signal: controller.signal,
+              sleep: backoffSleep,
+            });
+            if (!outcome.ok) {
+              // 到点被打断的那一次不是「传输运气不好」:终止原因归 `wall-clock`,而那一行日志
+              // 与本步的尝试证据照旧留着(半截响应没有别的落法,见 loop 的那条 catch)。
+              if (controller.signal.aborted) throw new WallClockExhausted(outcome.message);
+              // 抛给 loop 就是「传输重试耗尽」:那次调用不进过程记录、不进协议轮数(ADR-0031)。
+              throw new Error(outcome.message);
+            }
+            return outcome.response;
+          } finally {
+            inFlight = undefined;
+          }
         },
       },
       executor,
@@ -603,6 +659,8 @@ export const generateOneModel = async (
       maxSteps,
       totalWallClockMs,
       now: () => request.now().getTime(),
+      // 预算的 active 读数:步与步之间那一处检查与「到点 abort」必须是同一把尺子。
+      activeElapsedMs: () => totalWallClockMs - budget.remainingMs(),
     });
 
     // 生成日志:**一个日志行 = 一步 = 一组 attempts**(ADR-0032)。
@@ -779,6 +837,7 @@ export const generateOneModel = async (
     committed = true;
     return { kind: "frozen", slug, runId, dir: commit.dir, meta };
   } finally {
+    budget.stop();
     if (!committed) {
       discardStagingDir(stagingDir);
       // ── 失败会话不污染 `archive/<slug>/` ──

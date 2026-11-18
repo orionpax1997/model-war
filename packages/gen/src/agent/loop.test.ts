@@ -11,7 +11,7 @@ import { expect, it } from "vitest";
 import type { ChatMessage, ModelResponse } from "../model-client.js";
 import { fail, reply, stubClient } from "../stub-client.js";
 import { ACTION_REJECT_EXIT_CODE } from "./action.js";
-import { AGENT_MAX_STEPS } from "./limits.js";
+import { AGENT_MAX_STEPS, WallClockExhausted } from "./limits.js";
 import {
   ACTION_PARSE_FAILURE_LIMIT,
   hasCandidates,
@@ -130,6 +130,48 @@ it("总墙钟耗尽:下一步开始前就停下,不把已跑完的步算丢", as
   expect(result.atStep).toBe(3);
   expect(result.steps).toHaveLength(3);
   expect(model.calls).toHaveLength(3);
+});
+
+it("总墙钟用 **active** 口径:退避那段时间不进账(实钟没走也照样到点)", async () => {
+  // 接线方(`pipeline.ts`)的预算是「退避期间停表」的,它把 active 读数注进来。这里只验 loop
+  // 用的是那把尺子:实钟一格没走,active 已经超了 —— 该停,而且第一次检查就停。
+  const model = stubClient([reply(ACTION), reply(ACTION)]);
+  const executor = fakeExecutor([OK]);
+  let active = 0;
+  const result = await runAgentSession(
+    requestOf({
+      model,
+      executor: executor.executor,
+      totalWallClockMs: 500,
+      activeElapsedMs: () => {
+        active += 600;
+        return active;
+      },
+      maxSteps: 10,
+    }),
+  );
+
+  expect(result.termination).toBe("wall-clock");
+  expect(result.steps).toEqual([]);
+  expect(model.calls).toHaveLength(0);
+});
+
+it("调用被总墙钟中止:终止原因是 wall-clock,而那一行日志照旧留着", async () => {
+  // 半截响应既不是一份响应(没有 `finishReason`、没有被执行的动作),也不是一次手滑;
+  // 它按传输末行的形状留一行,终止原因单独记 —— 重跑一次同样的会话不会更好,多给时间才会。
+  const model = {
+    send: async (): Promise<ModelResponse> => {
+      throw new WallClockExhausted("会话总墙钟已到点:进行中的调用被中止");
+    },
+  };
+  const result = await runAgentSession(requestOf({ model, executor: fakeExecutor([]).executor }));
+
+  expect(result.termination).toBe("wall-clock");
+  expect(result.steps).toEqual([]);
+  expect(result.atStep).toBe(0);
+  // 那一行日志在:形状是传输末行(读侧据此判「未收敛日志只能是传输末行」)。
+  expect(result.turns.map((turn) => turn.kind)).toEqual(["transport"]);
+  expect(result.turns[0]).toMatchObject({ round: 1, attempts: 1 });
 });
 
 it("上下文守卫:上一轮读数到窗口 80% 即停,不是估算", async () => {

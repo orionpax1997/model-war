@@ -17,7 +17,7 @@
  *
  * ── 这个钟只计**沙箱自身**的时间 ──
  * 它只杀挂起,不是 deadline(ADR-0029);而「服务调用不受单步约束,只受总墙钟约束」是同一句
- * 裁决的另一半。所以宿主服务请求在途时它冻结(`step-clock.ts`):那段时间这一步只是在等一行
+ * 裁决的另一半。所以宿主服务请求在途时它冻结(`agent/budget-clock.ts`):那段时间这一步只是在等一行
  * 响应,不是在跑。
  *
  * ── fd 3:宿主与薄壳之间唯一的通道 ──
@@ -38,7 +38,7 @@ import { spawn } from "node:child_process";
 import { TOOL_CHANNEL_FD } from "@model-war/schema";
 
 import { bwrapArgv, type StepCommand, type StepLimits } from "./argv.js";
-import { createStepClock, type StepClock } from "./step-clock.js";
+import { createBudgetClock, type BudgetClock } from "../budget-clock.js";
 
 /** 宿主侧收请求的那一端。一行请求进,一行响应出。 */
 export type RequestHandler = (requestLine: string) => string | Promise<string>;
@@ -81,7 +81,7 @@ export const OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 /** 单步墙钟默认值。真正的一步上限归会话级预算(票 07),这里是「一步不该跑过两分钟」。
  *
  * 取值是 harness 身份项(ADR-0029 的 `deadline.stepWallClockMs`),口径也是:它只计**沙箱
- * 自身执行**的时间,宿主服务在途时冻结(`step-clock.ts`)。改口径不改取值,所以 `harnessDigest`
+ * 自身执行**的时间,宿主服务在途时冻结(`agent/budget-clock.ts`)。改口径不改取值,所以 `harnessDigest`
  * 不动——它描述的是裁决后的语义,不是「有没有实现对」。
  */
 export const DEFAULT_STEP_WALL_CLOCK_MS = 120_000;
@@ -205,8 +205,8 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
   // ADR-0029:「服务调用不受单步约束,只受总墙钟约束」。这一步阻塞在宿主服务上(`evaluate`
   // 要跑一整张网格)的那段时间在通道里冻结、回包后续上。不冻的后果不是慢,而是错杀一次真
   // 评测:观测原料与网格汇总已经落盘,而这一步以 `timedOut` 收场,会话留下半个提交。
-  const clock: StepClock = createStepClock({
-    wallClockMs,
+  const clock: BudgetClock = createBudgetClock({
+    limitMs: wallClockMs,
     onExpire: () => {
       timedOut = true;
       killTree(child.pid ?? -1, "SIGTERM");
@@ -262,7 +262,7 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
 const wireChannel = (
   stream: unknown,
   handler: RequestHandler | undefined,
-  clock: StepClock,
+  clock: BudgetClock,
 ): (() => void) => {
   if (!isDuplexChannel(stream)) {
     return () => {

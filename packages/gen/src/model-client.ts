@@ -87,7 +87,28 @@ export type ModelResponse = {
   readonly reasoning?: ReasoningEcho;
 };
 
+/** 一次 `send` 的控制面。目前只有「中止」,而它不是可选项:见 `SendOptions.signal`。 */
+export type SendOptions = {
+  /**
+   * 会话总墙钟到点(ADR-0029/0035):**进行中的调用必须真的被打断**。
+   *
+   * ── 为什么这条必须存在 ──
+   *
+   * 空闲超时挡不住「持续慢慢吐 token」——每读到一段数据就重置,于是一次调用可以合法地跑很久。
+   * 实测到的形状:`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z` 两次调用各吃 816 s / 928 s
+   * (全是 reasoning token),1800 s 的总预算就这么没了,而会话是在第 15 步**步与步之间**
+   * 才发现「预算已经用完」。所以预算必须能在调用**进行中**收口。
+   *
+   * 实现方应当把它接到底层请求(HTTP 适配器直接并进 `fetch` 的 signal),而不是只在入口查一次。
+   */
+  readonly signal?: AbortSignal;
+};
+
 /** 一次生成调用的端口。实现 = HTTP 适配器(`packages/gen/src/http/client.ts`)或可编程桩(测试与本地演练)。 */
 export interface ModelClient {
-  send(messages: readonly ChatMessage[], params: ModelParams): Promise<ModelResponse>;
+  send(
+    messages: readonly ChatMessage[],
+    params: ModelParams,
+    options?: SendOptions,
+  ): Promise<ModelResponse>;
 }
