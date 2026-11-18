@@ -72,6 +72,42 @@ const session = (
   return { tools, check, evaluate };
 };
 
+describe("参数:不接受,也不吃配额", () => {
+  it("`evaluate --help` 只回用法:不执行、不扣额度", async () => {
+    // 真会话里这样白花过一次 91 秒与一次额度(`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z`
+    // 第 8 步:`/bin/evaluate --help` 被当成一次真评测跑了一整张网格)。
+    const { tools, evaluate } = session();
+    const response = parse(await tools.requestHandler('{"tool":"evaluate","args":["--help"]}'));
+    expect(response.exitCode).toBe(PROTOCOL_EXIT_CODE);
+    expect(response.stderr).toContain("用法:evaluate");
+    expect(response.stderr).toContain("不接受参数");
+    expect(evaluate.calls).toBe(0);
+    expect(tools.evaluateCalls()).toBe(0);
+  });
+
+  it("`check` 侧同理:参数被拒,执行函数零调用", async () => {
+    const { tools, check } = session();
+    const response = parse(await tools.requestHandler('{"tool":"check","args":["-x"]}'));
+    expect(response.exitCode).toBe(PROTOCOL_EXIT_CODE);
+    expect(response.stderr).toContain("用法:check");
+    expect(check.calls).toBe(0);
+  });
+
+  it("被拒的参数不占额度:三次 `--help` 之后真评测仍能用满三次", async () => {
+    const { tools, evaluate } = session();
+    for (let index = 0; index < 3; index += 1) {
+      parse(await tools.requestHandler('{"tool":"evaluate","args":["--help"]}'));
+    }
+    expect(tools.evaluateCalls()).toBe(0);
+    for (let index = 0; index < 3; index += 1) {
+      const response = parse(await tools.requestHandler('{"tool":"evaluate"}'));
+      expect(response.exitCode).toBe(0);
+    }
+    expect(tools.evaluateCalls()).toBe(3);
+    expect(evaluate.calls).toBe(3);
+  });
+});
+
 describe("白名单", () => {
   it("名单外的工具名被拒,两个执行函数零调用", async () => {
     const { tools, check, evaluate } = session();
