@@ -11,14 +11,14 @@
  *
  * ── 这个哈希与契约包身份不是同一个数 ──
  * 两边口径同源(`按路径排序 → path\0bytes 串接 → sha256`),但**范围不同**:这里是
- * **整棵 rootfs**(bash + 三个 coreutils + 三个薄壳 + `contract/` 四条),契约包身份只算
+ * **整棵 rootfs**(bash + 四个 coreutils + 三个薄壳 + `contract/` 四条),契约包身份只算
  * `docs/rules-v2/` 那四条。别把两个数当同一个用:只换 bash 版本时,模型世界的哈希应该变,
  * 契约身份不应该变——合成一个数就把两种断代混成一种。
  *
  * ── 为什么是手写常量,而不是「运行时现算」 ──
  * 与 runtime bundle 同一条纪律:判据锚定确切字节,不锚运行目录。改产物后跑
  * `pnpm run sandbox:rootfs:build` 重算并手写回这里,门禁(`check:sandbox-rootfs`)负责证明
- * 两者一致,并顺带证明清单不多不少、四个二进制确实是静态 ELF、`contract/` 与 `docs/rules-v2/`
+ * 两者一致,并顺带证明清单不多不少、五个二进制确实是静态 ELF、`contract/` 与 `docs/rules-v2/`
  * 逐字节相同、薄壳与 `packages/gen/src/agent/shim/shim.sh` 逐字节相同。
  *
  * ── `PROVENANCE.md` 不在清单里 ──
@@ -39,6 +39,7 @@ export const SANDBOX_ROOTFS_FILES = [
   "bin/bash",
   "bin/cat",
   "bin/check",
+  "bin/cp",
   "bin/done",
   "bin/evaluate",
   "bin/grep",
@@ -56,7 +57,7 @@ export const SANDBOX_ROOTFS_FILES = [
  * 门禁证明「现算 == 这里写的」。它是「模型看见的世界还是不是那份字节」的唯一判据。
  */
 export const SANDBOX_ROOTFS_TREE_HASH =
-  "10b0e32b275e0aafb2c421b4fbc0441b8b7889c4e47af3b036cca0289ed18270";
+  "8ced7782081516a5b76a344ff78cfe4665cb25a42b5c60839e83fd84fb861f79";
 
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const SANDBOX_ROOTFS_BIN_DIR = "bin";

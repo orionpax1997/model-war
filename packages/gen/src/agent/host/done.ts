@@ -26,8 +26,14 @@ export type DoneSplit = {
   readonly ended: boolean;
 };
 
-/** 哨兵行:整行去空白之后恰好是它。 */
-const DONE_LINE = "done";
+/**
+ * 哨兵行:整行去空白之后恰好是它。
+ *
+ * 这是「独占一行的 `done`」**唯一**的定义。解析层(`agent/action.ts`)曾经各写一份,而那一份的
+ * 产出(行号)从没被读过;身份清单(`agent/identity.ts`)的 `done.sentinel` 直接引用这里,所以
+ * 「哨兵是什么字」只有这一个家。
+ */
+export const DONE_SENTINEL = "done";
 
 /**
  * 把整块命令按**第一个**独占一行的 `done` 切开。
@@ -39,7 +45,7 @@ const DONE_LINE = "done";
  */
 export const splitDoneBlock = (command: string): DoneSplit => {
   const lines = command.split("\n");
-  const index = lines.findIndex((line) => line.trim() === DONE_LINE);
+  const index = lines.findIndex((line) => line.trim() === DONE_SENTINEL);
   if (index < 0) {
     return { body: command, ended: false };
   }

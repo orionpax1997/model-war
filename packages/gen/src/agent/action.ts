@@ -6,9 +6,12 @@
  * 放宽到「抽第一个块」能省一步,代价是模型以为自己把三条命令都跑了,然后基于那个错误的世界观
  * 继续推理——那是最难诊断的一类失败。宁可浪费一步,也不要在错误的前提上继续。
  *
- * 所以本模块只有两种结论:一个可执行的命令,或者一条纠正消息。`done` 哨兵的出现位置也在这里
- * 暴露出来,但**切分不在这里**:它属于宿主侧(票 04 的 dispatcher / 薄壳通道),本层只回答
- * 「块里有没有一行独占的 `done`、在第几行」。
+ * 所以本模块只有两种结论:一个可执行的命令,或者一条纠正消息。
+ *
+ * **`done` 的判据整个不在这里**:块级哨兵的切分与「停止剩余命令」都归宿主侧
+ * (`host/done.ts` 的 `splitDoneBlock`)。本层曾经也报一份「独占一行 `done` 的行号」,而那个
+ * 行号一路传到执行器却从没被读过(执行器自己重扫一遍)——同一件事的两份判据,删掉的是多余的
+ * 那一份。
  *
  * ── 本模块不碰 IO、不碰时钟、不拼历史 ──
  *
@@ -17,9 +20,6 @@
 
 /** 动作块的围栏标记。用 `bash` 而不是 mini 的私有串:它是训练分布里的东西(ADR-0032)。 */
 export const ACTION_FENCE_TAG = "bash";
-
-/** 块级哨兵:块内**独占一行**的 `done`。 */
-export const DONE_SENTINEL = "done";
 
 /**
  * 「这一步没有动作可执行」的退出码。
@@ -42,8 +42,6 @@ export type ActionParse =
       readonly kind: "ok";
       /** 整块原文,原样交给一次 `bash -c`。 */
       readonly command: string;
-      /** 块内独占一行 `done` 的行号(0 起);没有这一行时缺席。切分归宿主侧。 */
-      readonly doneAtLine?: number;
     }
   | {
       readonly kind: "reject";
@@ -89,17 +87,6 @@ export const fencedBlocks = (text: string): readonly FencedBlock[] => {
     blocks.push({ tag: open.tag, body: open.lines.join("\n") });
   }
   return blocks;
-};
-
-/** 块内独占一行的 `done` 的行号(0 起);没有就 `undefined`。 */
-export const doneSentinelLine = (body: string): number | undefined => {
-  const lines = body.split("\n");
-  for (const [index, line] of lines.entries()) {
-    if (line.trim() === DONE_SENTINEL) {
-      return index;
-    }
-  }
-  return undefined;
 };
 
 /**
@@ -151,12 +138,7 @@ export const parseAction = (text: string): ActionParse => {
   if (block === undefined || block.tag !== ACTION_FENCE_TAG) {
     return { kind: "reject", reason: "non-bash", correction: correctionOf("non-bash", blocks) };
   }
-  const doneAtLine = doneSentinelLine(block.body);
-  return {
-    kind: "ok",
-    command: block.body,
-    ...(doneAtLine === undefined ? {} : { doneAtLine }),
-  };
+  return { kind: "ok", command: block.body };
 };
 
 /**

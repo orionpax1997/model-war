@@ -11,6 +11,17 @@
  * 这正是票面允许的那条替代:「有凭证缺失时用 `stubClient` + 真 bwrap 的形态验证『档案写得
  * 出来、装载得进』——但必须真跑一次 bwrap,不许全程假执行器」。
  *
+ * ── 它为什么不在常跑链上 ──
+ *
+ * 它要非特权 user namespace 与系统装的 `bubblewrap`,而常跑链(`pnpm run test`)不装。
+ * 收进 `unit` 的后果是两种处方混成一条红:全量门禁红了到底是提交内容有问题,还是这台机器
+ * 没装 bwrap(与 `check:sandbox` 那条隔离门禁同一条理由)。所以它归 vitest 的 `sandbox`
+ * project,入口是命名脚本 `pnpm run check:sandbox`(先跑隔离那四件事,再跑这一条)。
+ *
+ * 同一套断言在 unit 里有一份**假执行器**版本(`apps/cli/src/agent-session-archive.test.ts`):
+ * 沙箱只负责「命令跑在哪一层进程里」,而 `check` / `evaluate` 的答案、编译、校验、落档都不
+ * 经过它。两份一起看才是完整的:「每轮编辑循环里能通」与「真隔离里也能通」。
+ *
  * ── 它证明什么、不证明什么 ──
  *
  * 证明:一条从「模型说要做什么」到「盘上有一份可装载的 v3 档案」的路是通的,而且中间每一站
@@ -26,7 +37,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,13 +62,6 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-real-session-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
-
-const SCRIPT = `var ticks = 0;
-function loop() {
-  ticks += 1;
-  return ticks;
-}
-`;
 
 /**
  * 造一个能给**真沙箱**用的安装根。
@@ -89,9 +101,11 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
 
-  // 四步:写脚本 → 跑 check → evaluate → done。每一步都是一次真的 `sandbox.run`。
+  // 四步:起手式(`cp`,首条消息写的就是它) → 跑 check → evaluate → done。
+  // 每一步都是一次真的 `sandbox.run`。用 `cp` 而不是 heredoc 是有意的:那是模型真正会照做的第一步,
+  // 它曾因 rootfs 里没有 `cp` 而以 `exit 127` 白费一步。
   const model = stubClient([
-    reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${SCRIPT}EOF\n\`\`\``),
+    reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
     reply("```bash\ncheck\n```"),
     reply("```bash\nevaluate\n```"),
     reply("```bash\ndone\n```"),
@@ -135,8 +149,12 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   expect(meta.prompts).toHaveLength(1);
   expect(meta.steps?.map((step) => step.action.kind)).toEqual(["bash", "bash", "evaluate", "done"]);
 
-  // ── 真沙箱里跑出来的东西真的在:写文件那步的退出码是 0,check 那步有 tsc 版本 ──
+  // ── 真沙箱里跑出来的东西真的在:起手式那步的退出码是 0,check 那步有 tsc 版本 ──
   expect(meta.steps?.[0]?.exitCode).toBe(0);
+  // 契约里的那份骸骨真的被拷到了工作区:这是「沙箱里能 `cp`」的现场证据。
+  expect(readFileSync(join(workspaceDir, "script.ts"), "utf8")).toBe(
+    readFileSync(join(repoRoot, "docs/rules-v2/examples/minimal.ts"), "utf8"),
+  );
   expect(meta.steps?.[1]?.stdout).toContain("类型检查通过");
   // 结果侧证据:check 那一步带着契约侧的规则标签(通过时是空集合)。
   expect(meta.steps?.[1]?.result).toBeUndefined();
@@ -227,5 +245,61 @@ it(
     // 第一步真的跑在沙箱里:`ls /contract` 列出了契约目录那四个文件。
     expect(outcome.agent.steps[0]?.stdout).toContain("README.md");
     expect(outcome.agent.steps[0]?.exitCode).toBe(0);
+    // 发布不变量:「失败只写 failed-<runId>.json」。这一场连失败记录都没写
+    // (`generateOneModel` 不收口),所以目录该是空的。
+    expect(readdirSync(join(root, "archive/alpha"))).toEqual([]);
+  },
+);
+
+it(
+  "服务调用不占单步墙钟:慢评测不会被 124 杀掉,这一步照旧产出候选",
+  { timeout: 180_000 },
+  async () => {
+    // ADR-0029:「服务调用不受单步约束,只受总墙钟约束」。一次真网格实测约 75 s,叠上模型自己
+    // 写脚本的时间就会撞上 `DEFAULT_STEP_WALL_CLOCK_MS`;票 08 的真会话里那一步就是这样拿到
+    // `exitCode: 124` 的,而观测原料与网格汇总已经落盘——会话留下半个提交。
+    const root = mkRoot();
+    const workspaceDir = join(root, "ws");
+    mkdirSync(workspaceDir, { recursive: true });
+
+    const model = stubClient([
+      reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
+      reply("```bash\nevaluate\n```"),
+      reply("```bash\ndone\n```"),
+    ]);
+    const grid = completeGridTrial();
+    const outcome = await generateOneModel(
+      {
+        root,
+        runId: "r-slow-evaluate",
+        agentPrompt: { user: "任务:在 /workspace 写 script.ts", system: "协议:每一步一个动作块" },
+        createClient: () => model,
+        workspaceDir,
+        now: () => new Date(),
+        // 单步额度压到 1 s,而宿主服务要跑 4 s:只有「服务在途时冻结单步墙钟」才会不超时。
+        stepWallClockMs: 1_000,
+        trial: (request) => {
+          // 真试跑入口是一次 `spawnSync`(阻塞宿主事件循环),这里用同样的形状:服务在干活,
+          // 沙箱里那一步只是在等一行响应。
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4_000);
+          return grid(request);
+        },
+        trialPlan: () => gridPlanFixture(),
+      },
+      configOf(),
+    );
+
+    expect(outcome.kind).toBe("frozen");
+    const meta = JSON.parse(
+      readFileSync(join(root, "archive/alpha/r-slow-evaluate/meta.json"), "utf8"),
+    ) as ArchiveMeta;
+    // 那一步没被墙钟杀掉:退出码是命令自己的,输出是这次真评测的出口。
+    expect(meta.steps?.[1]?.exitCode).toBe(0);
+    expect(meta.steps?.[1]?.stdout).toContain("完整观测");
+    expect(meta.steps?.[1]?.action).toEqual({ kind: "evaluate" });
+    // 半个提交的反面:这一次评测的候选真的进了档案。
+    const candidates = (meta.optimization as unknown as { candidates: { step: number }[] })
+      .candidates;
+    expect(candidates.map((candidate) => candidate.step)).toEqual([2]);
   },
 );

@@ -28,6 +28,7 @@ import {
   OPTIMIZATION_CANDIDATE_LIMIT,
   OPTIMIZATION_GRID_VERSION,
   OPTIMIZATION_STAGES,
+  OPTIMIZATION_VERSION,
   SELECTION_AGENT_VERSION,
   SELECTION_VERSION,
   TRIAL_PLAN_JSON_SHAPE,
@@ -52,7 +53,11 @@ import {
   type TrialObservationLine,
 } from "@model-war/schema";
 
-import { archiveShapeVersionOf, optimizationMetaOf } from "./archive-optimization.js";
+import {
+  archiveShapeVersionOf,
+  isLegacySelection,
+  optimizationMetaOf,
+} from "./archive-optimization.js";
 import {
   archiveShapeOf,
   contaminationOf,
@@ -105,13 +110,24 @@ const selectionCandidateScoreOf = (
  * `evaluate`」，而报告这一侧需要的恰好是「第几个候选」。把 `stage` 这个**报告字段名**的收口
  * （换成步级列）留在度量票（07），本票只保证「候选按位置可读」。
  *
- * `position` 只能取 0..2（候选上限就是配额 3），所以这里的断言不可能被绕过。
+ * `position` 只能取 0..2（候选上限就是配额 3），所以越界不该发生——但「不该发生」不是
+ * 一个类型,把它写成 `as 0 | 1 | 2` 会让越界静默读成一个不存在的阶段。这里逐个认,认不出就
+ * 大声失败。
  */
+const stageOfPosition = (position: number): 0 | 1 | 2 => {
+  if (position === 0) return 0;
+  if (position === 1) return 1;
+  if (position === 2) return 2;
+  throw new Error(
+    `v3 候选位置 ${String(position)} 越界：候选上限是 ${String(OPTIMIZATION_CANDIDATE_LIMIT)} 条`,
+  );
+};
+
 const projectAgentCandidate = (
   candidate: ArchiveOptimizationCandidateAgent,
   position: number,
 ): ArchiveOptimizationCandidate => ({
-  stage: position as 0 | 1 | 2,
+  stage: stageOfPosition(position),
   protocolRound: candidate.step,
   scriptFile: candidate.scriptFile,
   observationsFile: candidate.observationsFile,
@@ -199,13 +215,13 @@ const candidateScoresOf = (
 ): readonly ReportCandidateScores[] => {
   if (optimization === undefined) return [];
   // v2 / v3 都有网格分数（v3 的候选把分数直接写在身上）；v1 历史档没有。
-  const grid = optimization.version !== 1;
+  const grid = optimization.version !== OPTIMIZATION_VERSION;
   return reportCandidatesOf(optimization).map((candidate, index) => {
     const generation = grid ? gridScoreOf(candidate.score) : NOT_APPLICABLE_SCORE;
     const selectionReading =
       selection === undefined
         ? NOT_APPLICABLE_SCORE
-        : selection.version === SELECTION_VERSION
+        : isLegacySelection(selection)
           ? legacyScoreReadingOf(selection.candidates[index])
           : gridScoreOf(selection.candidates[index]?.score);
     return {
@@ -1700,10 +1716,9 @@ const readRecord = (
             rulesetSha256: selection.plan.rulesetSha256,
             sandboxRuntimeHash: selection.plan.sandboxRuntimeHash,
             // 选拔计划本身（不搬 32 场明文）：v2 / v3 = 生成阶段那张网格，v1 = 12 场单图。
-            plan:
-              selection.version === SELECTION_VERSION
-                ? legacySelectionPlanReportOf(selection.plan, `${source}#selection.plan`)
-                : gridPlanReportOf(selection.plan, `${source}#selection.plan`),
+            plan: isLegacySelection(selection)
+              ? legacySelectionPlanReportOf(selection.plan, `${source}#selection.plan`)
+              : gridPlanReportOf(selection.plan, `${source}#selection.plan`),
           },
     protocolRounds,
     rounds,

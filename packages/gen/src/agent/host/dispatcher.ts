@@ -55,6 +55,31 @@ export const SESSION_EXPIRED_MESSAGE = "工具不可用:会话墙钟已到点,�
 /** 白名单之外的工具名。 */
 export const UNKNOWN_TOOL_MESSAGE = `工具不可用:不在受限工具白名单里(${TOOL_NAMES.join(" / ")})。`;
 
+/**
+ * 两个服务型工具的用法。**都不接受参数**:它们做什么由「当前的 `/workspace/script.ts`」唯一
+ * 决定,命令行没有可填的东西。
+ *
+ * ── 为什么要有这一条 ──
+ *
+ * 模型偶尔会先试探用法(`/bin/evaluate --help`)。以前那会被当成一次真评测执行——白花 91 秒与
+ * 一次额度(`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z` 第 8 步)。而「不接受参数」是
+ * 一条**结构性**事实,不是可以商量的输入:放行多余参数只会让它以为那些参数生效了。
+ */
+export const TOOL_USAGE = {
+  check: "用法:check(不接受参数)——检查当前 /workspace/script.ts 的类型与静态校验,计一步。",
+  evaluate:
+    "用法:evaluate(不接受参数)——把当前 /workspace/script.ts 送去跑一次完整评测,计一步、占用一次配额。",
+} as const;
+
+/** 带参数时的拒绝:一句用法 + 点名多出来的参数(不执行、不吃配额)。 */
+const argumentRefusal = (tool: "check" | "evaluate", args: readonly string[]): ToolResponse =>
+  refusal(
+    PROTOCOL_EXIT_CODE,
+    `${tool}: ${TOOL_USAGE[tool]}\n` +
+      `参数不被接受:${args.map((arg) => JSON.stringify(arg)).join(" ")}。` +
+      "两个工具都只看当前的 /workspace/script.ts,没有可传的参数。",
+  );
+
 /** dispatcher 的依赖:两个服务 + 会话的两个判据。 */
 export type SessionToolsOptions = {
   /** 这一步 bind 成 `/workspace` 的宿主目录:服务读的就是它里面的 `script.ts`。 */
@@ -70,11 +95,15 @@ export type SessionToolsOptions = {
 };
 
 /**
- * 一个会话的工具面。`requestHandler` 直接喂给 `sandbox.run({ requestHandler })`。
+ * 一个会话的工具面。
+ *
+ * `requestHandlerFor(step)` 给出**这一步**的通道应答端:步号是显式入参,不是会话级的一个槽。
+ * 它要用来给候选证据族起名(`observed-<runId>-round-<步>`)——槽的写法要靠「先写进去、执行完
+ * 再取走」的时序保住,而时序一旦错位,证据会挂到另一步上,读侧完全看不出来。
  */
 export type SessionTools = {
-  /** 一行请求进、一行响应出。**永不抛错**:抛错在传输层会被吞掉,薄壳就等到死了。 */
-  readonly requestHandler: (line: string) => Promise<string>;
+  /** 这一步的一行请求进、一行响应出。**永不抛错**:抛错在传输层会被吞掉,薄壳就等到死了。 */
+  readonly requestHandlerFor: (step: number) => (line: string) => Promise<string>;
   /** 已执行的 `evaluate` 次数(超限被拒的不算)。 */
   readonly evaluateCalls: () => number;
   /** 模型有没有通过薄壳喊过 `done`(权威信号仍是宿主侧块切分,见 `done.ts`)。 */
@@ -107,7 +136,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
   const expired = (): boolean => now() >= options.deadlineAtMs;
   const remainingMs = (): number => Math.max(0, options.deadlineAtMs - now());
 
-  const dispatch = async (line: string): Promise<ToolResponse> => {
+  const dispatch = async (line: string, step: number): Promise<ToolResponse> => {
     const parsed = parseToolRequest(line);
     if (!parsed.ok) {
       // 沙箱侧写进来的任意字节都落在这里(包括「响应形状」的伪造行):它是请求,不是响应。
@@ -123,9 +152,13 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
     }
 
     switch (tool) {
-      case "check":
+      case "check": {
+        // 参数检查在**执行与计数之前**:被拒的一次不是一次评测,不扣额度。
+        if (parsed.request.args.length > 0) return argumentRefusal("check", parsed.request.args);
         return await options.check({ workspaceDir: options.workspaceDir });
+      }
       case "evaluate": {
+        if (parsed.request.args.length > 0) return argumentRefusal("evaluate", parsed.request.args);
         if (evaluateCalls >= limit) {
           return refusal(REFUSAL_EXIT_CODE, QUOTA_EXHAUSTED_MESSAGE);
         }
@@ -135,6 +168,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
         return await options.evaluate({
           workspaceDir: options.workspaceDir,
           call: evaluateCalls,
+          step,
         });
       }
       default:
@@ -145,20 +179,22 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
     }
   };
 
-  const requestHandler = async (line: string): Promise<string> => {
-    let response: ToolResponse;
-    try {
-      response = await dispatch(line);
-    } catch (error) {
-      // 服务的异常不往传输层扔:那里会把它吞掉(见 `execute.ts`),薄壳就等到单步墙钟为止。
-      const message = error instanceof Error ? error.message : String(error);
-      response = refusal(REFUSAL_EXIT_CODE, `工具服务内部错误(${message})`);
-    }
-    return serializeToolResponse(response);
-  };
+  const handlerFor =
+    (step: number) =>
+    async (line: string): Promise<string> => {
+      let response: ToolResponse;
+      try {
+        response = await dispatch(line, step);
+      } catch (error) {
+        // 服务的异常不往传输层扔:那里会把它吞掉(见 `execute.ts`),薄壳就等到单步墙钟为止。
+        const message = error instanceof Error ? error.message : String(error);
+        response = refusal(REFUSAL_EXIT_CODE, `工具服务内部错误(${message})`);
+      }
+      return serializeToolResponse(response);
+    };
 
   return {
-    requestHandler,
+    requestHandlerFor: handlerFor,
     evaluateCalls: () => evaluateCalls,
     doneRequested: () => done,
     expired,

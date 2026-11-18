@@ -322,7 +322,7 @@ export const createHttpModelClient = (
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
-    send: async (messages, params): Promise<ModelResponse> => {
+    send: async (messages, params, sendOptions): Promise<ModelResponse> => {
       if (canonicalParams !== undefined && !isDeepStrictEqual(params, canonicalParams)) {
         throw new Error(`${config.slug}:请求参数与规范政策不一致，拒绝修改采样/推理/输出预算`);
       }
@@ -351,7 +351,13 @@ export const createHttpModelClient = (
             ...(options.sessionId === undefined ? {} : { "x-opencode-session": options.sessionId }),
           },
           body,
-          signal: idle.signal,
+          // 两个中止源合成一条:空闲超时(本层)与会话总墙钟(调用方)。后者是「预算到点,
+          // 别再吐 token 了」的那一半——只有本层的空闲超时会拦住安静挂死的连接,却拦不住
+          // 一直慢慢吐字节的响应(每读到一段就重置)。
+          signal:
+            sendOptions?.signal === undefined
+              ? idle.signal
+              : AbortSignal.any([idle.signal, sendOptions.signal]),
         });
       } catch (cause) {
         // 网络失败 / DNS / 连接被拒 / 空闲超时(手动 abort)都到这里,一律可重试。

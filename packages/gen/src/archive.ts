@@ -76,9 +76,11 @@ export type AgentArchiveInput = {
   /** 过程记录，一步一条。条数就是协议轮数（ADR-0031 的同一个公式）。 */
   readonly steps: readonly ArchiveStep[];
   /**
-   * 首条消息（system + 首条 user）的完整文本。
+   * 起始 prompt：首条 `user` 消息的逐字文本。
    *
-   * 分步形态下 `prompts` 恢复原始语义：它装「这个会话是拿哪份 prompt 起的」。
+   * 分步形态下 `prompts` 恢复原始语义：它装「这个会话是拿哪份 prompt 起的」。起手那一条
+   * prompt 就是首条 `user`（任务、目录与三条硬约束）；`system` 是**协议**，不在这里再存一份
+   * —— 它在 `prompts/agent-system.md`，归属由 `harnessVersion` / `harnessDigest` 承担。
    * 零步会话不写它（`prompts` 为空数组）。
    */
   readonly firstPrompt: string;

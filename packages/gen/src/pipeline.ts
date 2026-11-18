@@ -80,7 +80,8 @@ import {
 } from "./archive.js";
 import { loadAgentPrompt, type AgentPrompt } from "./agent-prompt.js";
 import { harnessIdentity } from "./agent/identity.js";
-import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS } from "./agent/limits.js";
+import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, WallClockExhausted } from "./agent/limits.js";
+import { createBudgetClock } from "./agent/budget-clock.js";
 import { runAgentSession, type AgentLoopResult } from "./agent/loop.js";
 import { sandbox } from "./agent/sandbox/index.js";
 import { splitDoneBlock } from "./agent/host/done.js";
@@ -90,10 +91,11 @@ import {
   candidateScriptFile,
   candidateSourceFile,
   createEvaluateService,
+  discardCandidateArtifacts,
 } from "./agent/host/evaluate-service.js";
 import { createSessionTools } from "./agent/host/dispatcher.js";
 import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
-import { retryTransport } from "./retry.js";
+import { retryTransport, type RetrySleep } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
 import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
 import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
@@ -164,6 +166,13 @@ export type ModelFailure = {
  */
 export type AgentArchiveFields = {
   readonly steps: readonly ArchiveStep[];
+  /**
+   * 起始 prompt = 首条 `user` 的逐字文本（`archive.ts` 的 `AgentArchiveInput.firstPrompt`）。
+   *
+   * `system` 不进这里：它是协议的一部分，条目在 `prompts/agent-system.md`，归属由
+   * `harnessVersion` / `harnessDigest` 承担。档案里因此只有**一份** prompt 文本，
+   * 不会出现「system 抄本与它会滞」。
+   */
   readonly firstPrompt: string;
   readonly contextLength: number;
   readonly harnessVersion: string;
@@ -237,8 +246,6 @@ const NO_CHECK_VALIDATION: ArchiveValidation = {
  * 而那种错位在报告里看起来完全正常——所以宁可在每次执行前清一次。
  */
 type StepFacts = {
-  /** 当前步号(1 起):宿主服务要它给候选证据族起名。 */
-  step?: number;
   result?: ArchiveStep["result"];
   submission?: {
     readonly scriptSha256: string;
@@ -302,13 +309,18 @@ const observeServices = (options: {
       if (response.result !== undefined) options.facts.result = response.result;
       return response;
     },
-    evaluate: async (request: { readonly workspaceDir: string; readonly call: number }) => {
+    evaluate: async (request: {
+      readonly workspaceDir: string;
+      readonly call: number;
+      readonly step: number;
+    }) => {
       let outcome: Awaited<ReturnType<typeof evaluate>>;
       try {
         outcome = await evaluate({
           workspaceDir: request.workspaceDir,
           call: request.call,
-          step: options.facts.step ?? Number.NaN,
+          // 步号由执行器请求带进来(dispatcher 把它绑进这一步的应答端),不经过任何槽。
+          step: request.step,
         });
       } catch (cause) {
         // 计划重建不符与试跑子进程异常都是 infra:候选不该为它背账。记下来,
@@ -352,7 +364,6 @@ const createExecutor =
   }): AgentExecutor =>
   async (request: AgentExecRequest): Promise<AgentExecResult> => {
     options.facts.reset();
-    options.facts.current.step = request.step;
     const split = splitDoneBlock(request.command);
     // `done` 是块内第一行时 body 是空串:不跑空 shell(它的副作用只有一次 `bash` 启动)。
     const executed =
@@ -361,7 +372,8 @@ const createExecutor =
         : await sandbox.run({
             command: split.body,
             workspaceDir: options.workspaceDir,
-            requestHandler: options.tools.requestHandler,
+            // 这一步的应答端:步号绑在这里,不经过会话级槽位。
+            requestHandler: options.tools.requestHandlerFor(request.step),
             ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
             ...(options.stepWallClockMs === undefined
               ? {}
@@ -401,15 +413,24 @@ const sendWithTransportRetry = async (options: {
   readonly params: ModelParams;
   readonly evidence: AttemptEvidence[];
   readonly caliber: UsageCaliber | undefined;
+  /** 会话总墙钟的中止信号(ADR-0029/0035):到点即打断进行中的调用。 */
+  readonly signal: AbortSignal;
+  /** 退避等待的实现(会话预算在这里停表,ADR-0036)。 */
+  readonly sleep: RetrySleep;
 }): Promise<
   | { readonly ok: true; readonly response: ModelResponse }
   | { readonly ok: false; readonly message: string; readonly diagnostics: readonly string[] }
 > => {
   const attempt = await retryTransport({
     send: async () => {
+      // 预算已经到点:不再发新的尝试。用**非** `TransportError` 抛,`classifyCause` 因此判 fatal
+      // ——重发解决不了「这场会话跑太久了」,再退避只会把收口往后拖。
+      if (options.signal.aborted) throw new Error("会话总墙钟已到点:不再发起新的尝试");
       const number = options.evidence.length + 1;
       try {
-        const response = await options.client.send(options.messages, options.params);
+        const response = await options.client.send(options.messages, options.params, {
+          signal: options.signal,
+        });
         options.evidence.push(responseAttemptEvidence(number, response, options.caliber));
         return response;
       } catch (cause) {
@@ -417,6 +438,7 @@ const sendWithTransportRetry = async (options: {
         throw cause;
       }
     },
+    sleep: options.sleep,
     // 截断归 loop:本层把它当一次成功响应交回。
     truncation: "caller",
   });
@@ -560,7 +582,44 @@ export const generateOneModel = async (
   const client = request.createClient(config);
   const caliber =
     config.generationPolicy === undefined ? undefined : usageCaliberOf(config.endpointFamily);
-  /** 每次 loop 侧 `send` 的尝试证据,按发生序;与 `loop.turns` 一一对应。 */
+
+  // ── 会话总墙钟:active 口径,且能在调用**进行中**收口(ADR-0029/0035) ──
+  //
+  // 退出条件原先只有「步与步之间」那一处检查,于是一次慢慢吐 token 的调用可以合法地吃光整个
+  // 预算(`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z`:两次调用各 816 s / 928 s,
+  // 全是 reasoning token,1800 s 就这么没了)。空闲超时挡不住它——每读到一段字节就重置。
+  //
+  // 所以预算自己有一只表:到点就把**当前在途**那次调用 abort 掉。退避等待期间这只表停表
+  // (`backoffSleep`),那是 ADR-0036 的口径:退避是测量条件的抗噪设置,不是模型的耗时。
+  let inFlight: AbortController | undefined;
+  const budget = createBudgetClock({
+    limitMs: totalWallClockMs,
+    now: () => request.now().getTime(),
+    onExpire: () => {
+      inFlight?.abort();
+    },
+  });
+  budget.start();
+
+  /** 退避等待:不进 active 墙钟(ADR-0036);预算已到点时干脆不再等。 */
+  const backoffSleep: RetrySleep = async (ms) => {
+    if (budget.expired()) return;
+    budget.pause();
+    try {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      });
+    } finally {
+      budget.resume();
+    }
+  };
+  /**
+   * 每次 loop 侧 `send` 的一桶尝试证据,按发生序。
+   *
+   * 一桶 = 一次 `model.send`(里面可能有若干传输重试),而**一步**可能有两次 `send`
+   * (截断重试,ADR-0035)。所以桶与日志行不是一一对应:切行时必须按 `turn.attempts` 数,
+   * 不能拿 turn 的下标去取——那样截断那一步的日志会拿到上一步的证据,而第二枪直接丢掉。
+   */
   const sendEvidence: AttemptEvidence[][] = [];
 
   try {
@@ -569,16 +628,30 @@ export const generateOneModel = async (
         send: async (messages: readonly ChatMessage[], sendParams: ModelParams) => {
           const evidence: AttemptEvidence[] = [];
           sendEvidence.push(evidence);
-          const outcome = await sendWithTransportRetry({
-            client,
-            messages,
-            params: sendParams,
-            evidence,
-            caliber,
-          });
-          // 抛给 loop 就是「传输重试耗尽」:那次调用不进过程记录、不进协议轮数(ADR-0031)。
-          if (!outcome.ok) throw new Error(outcome.message);
-          return outcome.response;
+          // 这一次调用挂到会话预算上:到点时 `onExpire` 打断的就是它。
+          const controller = new AbortController();
+          inFlight = controller;
+          try {
+            const outcome = await sendWithTransportRetry({
+              client,
+              messages,
+              params: sendParams,
+              evidence,
+              caliber,
+              signal: controller.signal,
+              sleep: backoffSleep,
+            });
+            if (!outcome.ok) {
+              // 到点被打断的那一次不是「传输运气不好」:终止原因归 `wall-clock`,而那一行日志
+              // 与本步的尝试证据照旧留着(半截响应没有别的落法,见 loop 的那条 catch)。
+              if (controller.signal.aborted) throw new WallClockExhausted(outcome.message);
+              // 抛给 loop 就是「传输重试耗尽」:那次调用不进过程记录、不进协议轮数(ADR-0031)。
+              throw new Error(outcome.message);
+            }
+            return outcome.response;
+          } finally {
+            inFlight = undefined;
+          }
         },
       },
       executor,
@@ -589,11 +662,23 @@ export const generateOneModel = async (
       maxSteps,
       totalWallClockMs,
       now: () => request.now().getTime(),
+      // 预算的 active 读数:步与步之间那一处检查与「到点 abort」必须是同一把尺子。
+      activeElapsedMs: () => totalWallClockMs - budget.remainingMs(),
     });
 
-    // 生成日志:一步一行,轮号 = 步号。`attempts` 是截断重试的枪数(不占步)。
-    for (const [index, turn] of loop.turns.entries()) {
-      const evidence = sendEvidence[index] ?? [];
+    // 生成日志:**一个日志行 = 一步 = 一组 attempts**(ADR-0032)。
+    //
+    // 轮号 = 步号;`attempts` 是截断重试的枪数(不占步)。所以这一行要装上**这一步全部**的
+    // 发送侧证据:按 `turn.attempts` 从发生序里切一段。逐 turn 下标取(`sendEvidence[index]`)
+    // 在截断重试时是错的——那一步有两次 send,于是下一行会拿到上一行的证据、第二枪丢掉。
+    // 编号在**步内**连续(1..n):读侧(`attemptsOf`)按下标校验 `attempt === index + 1`。
+    let cursor = 0;
+    for (const turn of loop.turns) {
+      const evidence = sendEvidence
+        .slice(cursor, cursor + turn.attempts)
+        .flat()
+        .map((item, index) => ({ ...item, attempt: index + 1 }));
+      cursor += turn.attempts;
       generationLog.push(
         logLine(
           turn.kind === "transport"
@@ -629,6 +714,7 @@ export const generateOneModel = async (
     // 快照本身已经由 `evaluate` 服务在评测那一刻落进 `archive/<slug>/`(「快照即提交」),
     // 这里只做三件事:找它、读它的**字节**算产物摘要、把成绩拼进候选条目。重读工作区会把
     // 「评完之后又改过」混进成绩里,而模型可能只是想清理一下(ADR-0030)。
+    // 会话失败时这一族旁挂产物在 `finally` 里被撤掉:没有 commit 就没有留下的理由。
     const scoring =
       request.evaluateScoring ??
       scoreFromCandidateEvidence({ root: request.root, slug, plan: planOf });
@@ -754,8 +840,16 @@ export const generateOneModel = async (
     committed = true;
     return { kind: "frozen", slug, runId, dir: commit.dir, meta };
   } finally {
+    budget.stop();
     if (!committed) {
       discardStagingDir(stagingDir);
+      // ── 失败会话不污染 `archive/<slug>/` ──
+      //
+      // 候选快照必须在**评测那一刻**就落盘(「快照即提交」),而那时还不知道整场会话会不会
+      // 成功。所以零候选 / 冻结失败 / 落档失败这三条路上都会剩下没有主人的旁挂产物,而发布
+      // 不变量(`docs/hld.md`)是「失败只写 `failed-<runId>.json`」。清理放在 `finally`:
+      // 失败的形状有三条,而「没有 commit 就不留字节」只有一条。
+      discardCandidateArtifacts({ root: request.root, model: slug, runId });
     }
   }
 };

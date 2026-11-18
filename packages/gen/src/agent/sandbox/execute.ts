@@ -15,6 +15,11 @@
  * 内核把命名空间里的进程一起收走。先 SIGTERM 让正常退出,宽限期内没走就 SIGKILL,
  * 然后仍然等 `close`——不等就等于把回收交给运气。
  *
+ * ── 这个钟只计**沙箱自身**的时间 ──
+ * 它只杀挂起,不是 deadline(ADR-0029);而「服务调用不受单步约束,只受总墙钟约束」是同一句
+ * 裁决的另一半。所以宿主服务请求在途时它冻结(`agent/budget-clock.ts`):那段时间这一步只是在等一行
+ * 响应,不是在跑。
+ *
  * ── fd 3:宿主与薄壳之间唯一的通道 ──
  * `stdio` 的第 4 项给 `"pipe"`,POSIX 上 Node 为它建的是 **socketpair**,所以那是一个**双向**
  * fd:薄壳往里写一行请求,也从那读一行响应。宿主这一端只在宿主进程里(`child.stdio[3]`),
@@ -33,6 +38,7 @@ import { spawn } from "node:child_process";
 import { TOOL_CHANNEL_FD } from "@model-war/schema";
 
 import { bwrapArgv, type StepCommand, type StepLimits } from "./argv.js";
+import { createBudgetClock, type BudgetClock } from "../budget-clock.js";
 
 /** 宿主侧收请求的那一端。一行请求进,一行响应出。 */
 export type RequestHandler = (requestLine: string) => string | Promise<string>;
@@ -72,9 +78,13 @@ export type SandboxStepResult = {
 /** 宿主侧收集输出的字节上限(理由见头注)。 */
 export const OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 
-/** 单步墙钟默认值。真正的一步上限归会话级预算(票 07),这里是「一步不该跑过两分钟」。 */
+/** 单步墙钟默认值。真正的一步上限归会话级预算(票 07),这里是「一步不该跑过两分钟」。
+ *
+ * 取值是 harness 身份项(ADR-0029 的 `deadline.stepWallClockMs`),口径也是:它只计**沙箱
+ * 自身执行**的时间,宿主服务在途时冻结(`agent/budget-clock.ts`)。改口径不改取值,所以 `harnessDigest`
+ * 不动——它描述的是裁决后的语义,不是「有没有实现对」。
+ */
 export const DEFAULT_STEP_WALL_CLOCK_MS = 120_000;
-
 /** SIGTERM 之后等多久升级到 SIGKILL。 */
 export const KILL_GRACE_MS = 2_000;
 
@@ -188,20 +198,29 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
   stdoutPipe.on("data", (chunk: Buffer) => stdout.push(chunk));
   stderrPipe.on("data", (chunk: Buffer) => stderr.push(chunk));
 
-  const channel = child.stdio[CHANNEL_FD];
-  const stopChannel = wireChannel(channel, request.requestHandler);
-
   let timedOut = false;
   let escalation: ReturnType<typeof setTimeout> | undefined;
-  const deadline = setTimeout(() => {
-    timedOut = true;
-    killTree(child.pid ?? -1, "SIGTERM");
-    escalation = setTimeout(() => killTree(child.pid ?? -1, "SIGKILL"), KILL_GRACE_MS);
-  }, wallClockMs);
+  // ── 单步墙钟只计**沙箱自身执行**的时间 ──
+  //
+  // ADR-0029:「服务调用不受单步约束,只受总墙钟约束」。这一步阻塞在宿主服务上(`evaluate`
+  // 要跑一整张网格)的那段时间在通道里冻结、回包后续上。不冻的后果不是慢,而是错杀一次真
+  // 评测:观测原料与网格汇总已经落盘,而这一步以 `timedOut` 收场,会话留下半个提交。
+  const clock: BudgetClock = createBudgetClock({
+    limitMs: wallClockMs,
+    onExpire: () => {
+      timedOut = true;
+      killTree(child.pid ?? -1, "SIGTERM");
+      escalation = setTimeout(() => killTree(child.pid ?? -1, "SIGKILL"), KILL_GRACE_MS);
+    },
+  });
+  clock.start();
+
+  const channel = child.stdio[CHANNEL_FD];
+  const stopChannel = wireChannel(channel, request.requestHandler, clock);
 
   return await new Promise<SandboxStepResult>((resolve, reject) => {
     child.on("error", (error: Error) => {
-      clearTimeout(deadline);
+      clock.stop();
       if (escalation !== undefined) clearTimeout(escalation);
       stopChannel();
       reject(
@@ -212,7 +231,7 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
       );
     });
     child.on("close", (code, signal) => {
-      clearTimeout(deadline);
+      clock.stop();
       if (escalation !== undefined) clearTimeout(escalation);
       stopChannel();
       const settled = stdout.truncated() || stderr.truncated();
@@ -236,8 +255,15 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
  *
  * 一行进、一行出;按到达顺序**串行**处理(响应要按序回给同一端)。请求行按 `\n` 切,
  * 多字节字符不会被切断(Buffer 上切,切完再解码)。
+ *
+ * 服务请求**在途**期间把单步墙钟冻结(`clock.pause` / `resume`):那段时间里这一步只是在等一行
+ * 响应,不是沙箱在跑(ADR-0029「服务调用不受单步约束」)。
  */
-const wireChannel = (stream: unknown, handler: RequestHandler | undefined): (() => void) => {
+const wireChannel = (
+  stream: unknown,
+  handler: RequestHandler | undefined,
+  clock: BudgetClock,
+): (() => void) => {
   if (!isDuplexChannel(stream)) {
     return () => {
       // 没有通道可接:这一步的薄壳会以「工具不可用」退出 2,那是设计好的行为。
@@ -255,12 +281,15 @@ const wireChannel = (stream: unknown, handler: RequestHandler | undefined): (() 
 
   const respond = (line: string): void => {
     queue = queue.then(async () => {
+      clock.pause();
       try {
         const response = await handler(line);
         stream.write(`${response}\n`);
       } catch {
         // 服务自己保证「永远回一行」(`agent/host` 的 dispatcher 把异常折成伪造响应);
         // 真漏到这里也只丢一条响应,由薄壳变成「脚本工具不可用」,传输层不发明一套语义。
+      } finally {
+        clock.resume();
       }
     });
   };

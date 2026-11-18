@@ -106,11 +106,11 @@
 
 | 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick` | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、验收落点门禁;**零构建**,贴得住每轮编辑循环 |
+| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
 | 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
-| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑 |
+| 按需 → 夜间 | `check:sandbox`、`check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑。`check:sandbox` 要内核能力(非特权 user namespace)与系统装的 `bubblewrap`,所以它自己一条腿:先跑隔离那四件事,再跑真 bwrap 下的一场真会话(vitest 的 `sandbox` project) |
 | 按需(本机,不进任何链) | `check:gen-grid` | **一次 `evaluate` 真跑满一张网格**:它的前提是四份钉死的陪练存档,而 `archive/` 不入库——干净克隆上跑不起来,所以它不进夜间矩阵(那会让「CI 红」与「这台机器没有本地档案」同形)。单测里的真网格判据由 `packages/gen/src/agent/host/evaluate-service.test.ts` 与 `pipeline.test.ts` 用形状真实的假试跑承担 |
 | 按需 → 夜间 | `mutate` / `mutate:<分片>` / `scan` | `mutate*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`scan` 仍**只观测、不设红线** |
 | 按需(不进任何链) | `lint:diagnose` | **测试纪律规则的诊断**:把 oxlint 那几条 vitest 规则报的命中拆成形态与风险(「整条用例的断言都在守卫里」= 可能零断言执行;「部分守卫」= 盲区;循环体 = 逐元素检查),落 `reports/lint/vitest-rules.md`。规则只报位置不报风险,位置与风险不是一回事——命中数本身说明不了有没有假绿来源,这份报告把它变成可复算的判定 |
@@ -169,7 +169,7 @@
 | # | 威胁 | 防线 | 边界 |
 |---|---|---|---|
 | T1 | 模型读到引擎源码或试跑入口,自己跑一遍 | 根文件系统从空开始,只挂入库 rootfs + 薄壳 + 只读契约;仓库路径与引擎不出现 | 任何一条「沙箱内必须可读」的例外都会重新打开 T1 |
-| T2 | 绕过配额(超次调用受限工具) | 四个受限工具是薄壳,判据在宿主侧;通道只有一条且只通向宿主 | 宿主按**调用次数**计,不信请求参数 |
+| T2 | 绕过配额(超次调用受限工具) | 三个受限工具(`check` / `evaluate` / `done`)是薄壳,判据在宿主侧;通道只有一条且只通向宿主 | 宿主按**调用次数**计,不信请求参数。第四个候选工具 `smoke` 已在 ADR-0030 里落选(工具面就是这三个),清单真源是 `packages/schema/src/tool-channel.ts` 的 `TOOL_NAMES` |
 | T3 | 后台进程活过一步(`cmd &`) | PID 命名空间在步结束时回收整棵进程树 | 一步之内合法(`cmd & sleep 1; wait` 是正常写法) |
 | T4 | 联网(外传契约、拉取外部依赖) | 网络命名空间独立,连 loopback 都没有 | 也让通道无法走 TCP,只能走继承 fd |
 | T5 | 评测后改写交付物 | 每步全新进程树;候选在提交时由宿主快照 | 快照时点由宿主决定,不由沙箱决定 |

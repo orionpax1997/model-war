@@ -73,6 +73,15 @@ export const observationsPathOf = (
   );
 
 /**
+ * 候选证据族的文件名前缀（`archive/<slug>/` 下）：`observed-<runId>-round-`。
+ *
+ * 单拿出来是因为**失败清理**也要认这一族：它按名字扫目录，把这一跑留下的旁挂产物删干净。
+ * 另写一份 `-round-` 字面量就等于给同一族名字两个家，而认错一个字符就是一条残留。
+ */
+export const candidateObservationsFilePrefixOf = (runId: string): string =>
+  `${OBSERVATIONS_FILE_PREFIX}${runId}-round-`;
+
+/**
  * 候选证据族的 basename（`archive/<slug>/` 下），序号 = 步号。
  *
  * 分步形态下它就是「第几步照的那张网格」，而**不是**协议轮号：一次会话里步与轮是一回事
@@ -81,7 +90,7 @@ export const observationsPathOf = (
  * 服务落盘与候选条目都从这里取，不各写一份字面量。
  */
 export const candidateObservationsFileOf = (runId: string, step: number): string =>
-  `${OBSERVATIONS_FILE_PREFIX}${runId}-round-${String(step)}.jsonl`;
+  `${candidateObservationsFilePrefixOf(runId)}${String(step)}.jsonl`;
 
 /**
  * 字段形状已由共享 JSON Schema 验证；这里只校验当前候选与跨字段关系。

@@ -10,7 +10,7 @@
  * 1. **整棵树哈希 == 常量**:字节被改过(哪怕只改一个字节)就是另一份世界。
  * 2. **磁盘文件集 == 清单**:多一个(上一次组装的残骸、顺手放的调试文件)与少一个(漏拷)
  *    都红。「多一个」尤其重要——它不会被挂载,却看起来像是内容物的一部分。
- * 3. **四个二进制是静态 ELF**:不带 `PT_INTERP`。判据自己解析 ELF,不靠 `ldd`(它执行目标
+ * 3. **五个二进制是静态 ELF**:不带 `PT_INTERP`。判据自己解析 ELF,不靠 `ldd`(它执行目标
  *    文件)也不靠 `file`(输出随版本漂)。这条是「不从宿主借动态库」的可执行形式。
  * 4. **`contract/*` 与 `docs/rules-v2/*` 逐字节相同**:契约的真源只有一份。运行期不 bind
  *    宿主 checkout,所以副本一旦与真源分叉,模型读到的就是一份没人维护的契约。
@@ -145,7 +145,7 @@ export const staticBinaryFinding = (
   if (verdict === undefined) {
     return {
       where: path,
-      detail: "解析不出 ELF 头/程序头:它不是 ELF,或被截断了。rootfs 里的四个必须是静态 ELF。",
+      detail: "解析不出 ELF 头/程序头:它不是 ELF,或被截断了。rootfs 里的五个必须是静态 ELF。",
     };
   }
   return verdict.static

@@ -8,6 +8,12 @@
  * 记它的 sha256、编译,并把两份字节**立刻快照**进候选证据族——不是会话结束时再读一遍工作区
  * (那会把「评完之后又改过」这件事变成成绩的一部分,而模型可能只是想清理一下)。
  *
+ * ── 一次读,两条路 ──
+ *
+ * 工作区只读一次,同一段文本既喂编译器也落源码快照。分两次读会造出一个真的窗口:模型写
+ * `evaluate &` 再改 `script.ts` 时(或短会话里有后台写句柄时),快照拿到的是第二份字节,而
+ * 产物来自第一份——「快照就是被评的那份字节」当场变成假话。
+ *
  * ── 快照沿用既有命名族,不新建目录(ADR-0031) ──
  *
  * `observed-<runId>-round-<步号>{.jsonl,.jsonl.candidate.ts,.jsonl.candidate.js}` 就是既有逐候选
@@ -45,6 +51,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -52,12 +59,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ToolResponse, TrialPlan } from "@model-war/schema";
+import { TRIAL_GRID_SUMMARY_SUFFIX, type ToolResponse, type TrialPlan } from "@model-war/schema";
 
 import { SCRIPT_SOURCE_NAME, sha256Hex } from "../../archive.js";
 import { compileScript, type CompileResult } from "../../compile.js";
 import {
   candidateObservationsFileOf,
+  candidateObservationsFilePrefixOf,
   missingTrialGridMatches,
   readTrialObservations,
   renderScoreSourceFeedback,
@@ -93,6 +101,69 @@ export const candidateScriptFile = (observationsFile: string): string =>
 export const candidateSourceFile = (observationsFile: string): string =>
   `${observationsFile}.candidate.ts`;
 
+/**
+ * 一次评测在 `archive/<slug>/` 下落下的**一族**文件:观测原料 + 两份候选快照 + 网格汇总。
+ *
+ * 名字从这一处出,调用方不各写一份字面量:失败清理要按名字认出自己那一族,而认错一个后缀
+ * 就是一个残留文件。
+ */
+export const candidateArtifactFiles = (observationsFile: string): readonly string[] => [
+  observationsFile,
+  candidateSourceFile(observationsFile),
+  candidateScriptFile(observationsFile),
+  `${observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+];
+
+/** `name` 是不是 `runId` 这一跑的候选旁挂产物(`observed-<runId>-round-<步号>.jsonl…`)。
+ *
+ * 判据是「前缀 + 纯数字步号 + 本族的后缀」三件都对上。只看前缀不够:另一次的 runId 可能是
+ * 这一跑的前缀串(`r1` 对 `r1-round`),那样会把另一份档的字节删掉。
+ */
+export const isCandidateArtifactOf = (name: string, runId: string): boolean => {
+  const head = candidateObservationsFilePrefixOf(runId);
+  if (!name.startsWith(head)) return false;
+  const rest = name.slice(head.length);
+  const dot = rest.indexOf(".");
+  if (dot <= 0) return false;
+  const step = rest.slice(0, dot);
+  if (!/^\d+$/u.test(step)) return false;
+  return candidateArtifactFiles(`${head}${step}.jsonl`).includes(name);
+};
+
+/**
+ * 失败会话的清理:把这一跑在 `archive/<slug>/` 下落下的候选旁挂产物删干净。
+ *
+ * ── 为什么需要它 ──
+ *
+ * 候选快照必须在**评测那一刻**落盘(「快照即提交」),而那时还不知道整场会话会不会成功。
+ * 所以零候选 / 冻结失败 / 落档失败这三条路上,`archive/<slug>/` 会剩下没有主人的旁挂产物。
+ * 发布不变量(`docs/hld.md`)是「失败只写 `failed-<runId>.json`」:目录里的东西要么是一份
+ * 完整的三件套,要么是一条失败记录。
+ *
+ * ── 只删自己那一跑 ──
+ *
+ * 名字按 runId 认(见 `isCandidateArtifactOf`),同目录里别的档、别的跑的字节一律不碰。
+ * 工作区里的派生视图(`/workspace/.observations/<n>.md`)不在这里:它住在会话工作区,
+ * 不在 `archive/` 的发布面上。
+ */
+export const discardCandidateArtifacts = (options: {
+  readonly root: string;
+  readonly model: string;
+  readonly runId: string;
+}): void => {
+  const archiveDir = join(options.root, "archive", options.model);
+  let names: readonly string[];
+  try {
+    names = readdirSync(archiveDir);
+  } catch {
+    // 目录不在 = 一次评测都没跑过 = 没有可清的。
+    return;
+  }
+  for (const name of names) {
+    if (isCandidateArtifactOf(name, options.runId)) rmSync(join(archiveDir, name), { force: true });
+  }
+};
+
 /** 一次提交的身份:评的是哪份字节、产物是什么、观测落在哪。 */
 export type EvaluateSubmission = {
   /** 沙箱视角的源路径(恒为 `/workspace/script.ts`)。 */
@@ -127,12 +198,13 @@ export type EvaluateRequest = {
   /** 第几次评测(1 起,由 dispatcher 的计数器给)。 */
   readonly call: number;
   /**
-   * 步号(1 起,loop 给的):候选证据族的序号就是它。
+   * 步号(1 起):候选证据族的序号就是它。
    *
-   * 可选是因为 dispatcher 不知道步号(它只管配额与工具名),步号由上层包装在执行前写进
-   * 「当前步」的槽里。缺了它服务当场拒绝——候选证据族不能无名落盘。
+   * **必填而不是可选**:以前它是「当前步」槽里读出来的,缺了就用 `NaN` 兜底再由服务拒——那让
+   * 「这一步是第几步」变成一个要按时序保证的东西。现在步号由执行器请求带进来
+   * (`requestHandlerFor(step)` 把它绑进通道应答端),缺了是类型错误,不是运行期惊喜。
    */
-  readonly step?: number;
+  readonly step: number;
 };
 
 /** 服务形态:给 dispatcher 调的那一个函数。 */
@@ -188,9 +260,12 @@ export const createEvaluateService = (deps: EvaluateServiceDeps): EvaluateServic
 
   return async (request: EvaluateRequest): Promise<EvaluateOutcome> => {
     const step = request.step;
-    if (step === undefined || !Number.isSafeInteger(step) || step < 1) {
-      // 候选证据族的序号来自步号,没有步号就没有能对得上的名字——大声失败,不猜一个。
-      throw new Error(`evaluate 服务缺步号(收到 ${String(step)}):候选证据族不能无名落盘`);
+    if (!Number.isSafeInteger(step) || step < 1) {
+      // 候选证据族的序号来自步号,没有序号就没有能对得上的名字——大声失败,不猜一个。
+      // 类型上它已经必填;这一条拦的是「传了个 0 或 NaN 进来」那种契约外的调用。
+      throw new Error(
+        `evaluate 服务的步号必须是正整数(收到 ${String(step)}):候选证据族不能无名落盘`,
+      );
     }
     const hostPath = join(request.workspaceDir, SCRIPT_SOURCE_NAME);
     let source: string;
@@ -247,12 +322,16 @@ export const createEvaluateService = (deps: EvaluateServiceDeps): EvaluateServic
       // 先落快照再跑网格,是因为「评的是哪份字节」这件事在跑之前就已经定了;跑完之后再读一遍
       // 工作区会把模型后来的改动混进成绩里。`COPYFILE_EXCL`:同名证据已存在即整次失败,
       // 宁可红也不覆盖别人的字节。
+      //
+      // 源码快照写的是**喂给编译器的那段字节**(`source`),不是再从 `hostPath` 拷一遍:
+      // 模型写 `evaluate &` 再改 `script.ts` 时,第二次读会拿到另一份字节,于是快照里的源与
+      // 产物的来源不是同一份——而 `scriptSha256` 算的正是喂给编译的那一份。一次读、两条路
+      // 用同一份字节,「快照字节 == 评估时字节」在构造上成立,不靠时序。
       mkdirSync(archiveDir, { recursive: true });
-      copyFileSync(
-        hostPath,
-        join(archiveDir, candidateSourceFile(observationsFile)),
-        constants.COPYFILE_EXCL,
-      );
+      writeFileSync(join(archiveDir, candidateSourceFile(observationsFile)), source, {
+        encoding: "utf8",
+        flag: "wx",
+      });
       copyFileSync(
         compiled.jsPath,
         join(archiveDir, candidateScriptFile(observationsFile)),

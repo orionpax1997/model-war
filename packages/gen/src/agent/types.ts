@@ -32,15 +32,14 @@ export type AgentStep = ArchiveStep;
 /**
  * 一步的执行请求。
  *
- * `doneAtLine` 是**块内独占一行 `done`** 的行号(0 起),切分与停块归宿主侧(票 04):
- * 解析层只回答「有没有、在第几行」,执行层决定「跑哪一半」。
+ * 只有两格:第几步、整块原文。块级 `done` 的切分由执行器自己做(`host/done.ts` 的
+ * `splitDoneBlock`)——它才是「跑哪一半」的判据持有者,所以请求里不再夹带一份行号。
  */
 export type AgentExecRequest = {
   /** 步号,1 起。 */
   readonly step: number;
   /** 整块原文,原样交给一次 `bash -c`。 */
   readonly command: string;
-  readonly doneAtLine?: number;
 };
 
 /** 一步的执行结果。命令自己的非零退出不是异常;起不来才是(执行器 reject)。 */
