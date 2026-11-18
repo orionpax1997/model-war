@@ -165,6 +165,13 @@ export type ModelFailure = {
  */
 export type AgentArchiveFields = {
   readonly steps: readonly ArchiveStep[];
+  /**
+   * 起始 prompt = 首条 `user` 的逐字文本（`archive.ts` 的 `AgentArchiveInput.firstPrompt`）。
+   *
+   * `system` 不进这里：它是协议的一部分，条目在 `prompts/agent-system.md`，归属由
+   * `harnessVersion` / `harnessDigest` 承担。档案里因此只有**一份** prompt 文本，
+   * 不会出现「system 抄本与它会滞」。
+   */
   readonly firstPrompt: string;
   readonly contextLength: number;
   readonly harnessVersion: string;

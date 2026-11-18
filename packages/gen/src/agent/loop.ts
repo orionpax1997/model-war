@@ -81,6 +81,10 @@ export type AgentLoopResult = {
   /**
    * 起始 prompt:零步会话为空数组、否则一条(ADR-0031)。
    *
+   * 它装的就是首条 `user` 的逐字文本(`request.firstUser`)。`system` 不在这里:那是**协议**,
+   * 不是「这次会话的任务」,它的归属是 `harnessVersion` / `harnessDigest` 与
+   * `prompts/agent-system.md`(同一份字节存两处就会漂)。
+   *
    * `prompts` 在分步形态下恢复原始语义——「这个会话是拿哪份 prompt 起的」,而不是「每轮发了
    * 什么」;每轮发了什么由 `steps` 与历史规则确定性还原。
    */

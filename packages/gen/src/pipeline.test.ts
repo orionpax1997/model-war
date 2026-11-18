@@ -266,6 +266,9 @@ it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 
   expect(meta.protocolRounds).toBe(2);
   // 首条 prompt 只有一份(不是每步一份)。
   expect(meta.prompts).toEqual([FIRST_USER]);
+  // 它装的是首条 `user` 的逐字文本:`system` 是协议,不进档案(归 harnessVersion / harnessDigest),
+  // 否则同一份字节就有两个家。
+  expect(meta.prompts[0]).not.toContain(SYSTEM);
   // 身份字段成套(ADR-0034「身份从第一份 agent 档起就写」)。
   expect(meta.harnessVersion).toBe(HARNESS_VERSION);
   expect(meta.harnessDigest).toBe(HARNESS_DIGEST);
