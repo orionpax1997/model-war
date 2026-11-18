@@ -123,6 +123,33 @@ describe("快照即提交:两份字节在跑之前落定", () => {
     );
   });
 
+  it("编译用的字节 == 快照的字节:编译期间工作区被改写也不会串", async () => {
+    // 模型写 `evaluate &` 再改 `script.ts`:编译器跑着的时候工作区已经换了另一份字节。
+    // 分两次读(先读去编译、之后再拷一份快照)会把第二份字节当成本次提交,而产物来自第一份。
+    const root = installRoot();
+    const dir = workspace(SOURCE);
+    let compiledInput = "";
+    const compileWhileRewriting: CompileFn = (options) => {
+      compiledInput = options.source;
+      // 编译要几秒,这期间模型的写句柄真的可以动手。
+      writeFileSync(join(dir, "script.ts"), "改过了\n", "utf8");
+      return compileOk(options);
+    };
+    const service = createEvaluateService(depsOf({ root, compile: compileWhileRewriting }));
+    const outcome = await service({ workspaceDir: dir, call: 1, step: 2 });
+    expect(outcome.exitCode).toBe(0);
+
+    const observationsFile = candidateObservationsFile("r1", 2);
+    const snapshot = readFileSync(
+      join(root, "archive", "alpha", candidateSourceFile(observationsFile)),
+    );
+    // 快照 == 喂给编译器的那段字节 == `scriptSha256` 说的那一份。
+    expect(snapshot.equals(Buffer.from(compiledInput, "utf8"))).toBe(true);
+    expect(sha256Hex(snapshot)).toBe(outcome.submission?.scriptSha256);
+    // 反面证据:工作区里已经是另一份了(否则这条用例证明不了「不串」)。
+    expect(readFileSync(join(dir, "script.ts"), "utf8")).toBe("改过了\n");
+  });
+
   it("同一步重复提交是可读的拒绝(不升级成 infra,不覆盖既有证据)", async () => {
     const root = installRoot();
     const dir = workspace(SOURCE);

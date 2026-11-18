@@ -8,6 +8,12 @@
  * 记它的 sha256、编译,并把两份字节**立刻快照**进候选证据族——不是会话结束时再读一遍工作区
  * (那会把「评完之后又改过」这件事变成成绩的一部分,而模型可能只是想清理一下)。
  *
+ * ── 一次读,两条路 ──
+ *
+ * 工作区只读一次,同一段文本既喂编译器也落源码快照。分两次读会造出一个真的窗口:模型写
+ * `evaluate &` 再改 `script.ts` 时(或短会话里有后台写句柄时),快照拿到的是第二份字节,而
+ * 产物来自第一份——「快照就是被评的那份字节」当场变成假话。
+ *
  * ── 快照沿用既有命名族,不新建目录(ADR-0031) ──
  *
  * `observed-<runId>-round-<步号>{.jsonl,.jsonl.candidate.ts,.jsonl.candidate.js}` 就是既有逐候选
@@ -247,12 +253,16 @@ export const createEvaluateService = (deps: EvaluateServiceDeps): EvaluateServic
       // 先落快照再跑网格,是因为「评的是哪份字节」这件事在跑之前就已经定了;跑完之后再读一遍
       // 工作区会把模型后来的改动混进成绩里。`COPYFILE_EXCL`:同名证据已存在即整次失败,
       // 宁可红也不覆盖别人的字节。
+      //
+      // 源码快照写的是**喂给编译器的那段字节**(`source`),不是再从 `hostPath` 拷一遍:
+      // 模型写 `evaluate &` 再改 `script.ts` 时,第二次读会拿到另一份字节,于是快照里的源与
+      // 产物的来源不是同一份——而 `scriptSha256` 算的正是喂给编译的那一份。一次读、两条路
+      // 用同一份字节,「快照字节 == 评估时字节」在构造上成立,不靠时序。
       mkdirSync(archiveDir, { recursive: true });
-      copyFileSync(
-        hostPath,
-        join(archiveDir, candidateSourceFile(observationsFile)),
-        constants.COPYFILE_EXCL,
-      );
+      writeFileSync(join(archiveDir, candidateSourceFile(observationsFile)), source, {
+        encoding: "utf8",
+        flag: "wx",
+      });
       copyFileSync(
         compiled.jsPath,
         join(archiveDir, candidateScriptFile(observationsFile)),
