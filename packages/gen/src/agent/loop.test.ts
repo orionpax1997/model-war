@@ -8,10 +8,6 @@
 
 import { expect, it } from "vitest";
 
-import {
-  OPTIMIZATION_CANDIDATE_LIMIT,
-  type ArchiveOptimizationCandidateAgent,
-} from "@model-war/schema";
 import type { ChatMessage, ModelResponse } from "../model-client.js";
 import { fail, reply, stubClient } from "../stub-client.js";
 import { ACTION_REJECT_EXIT_CODE } from "./action.js";
@@ -32,13 +28,11 @@ const FIRST_USER = "任务:/workspace 里写 script.ts";
 /** 一条合法动作。 */
 const ACTION = "```bash\nls /contract\n```";
 
-const CANDIDATE: ArchiveOptimizationCandidateAgent = {
-  step: 1,
-  scriptFile: "observed-run-round-1.candidate.js",
-  observationsFile: "observed-run-round-1",
+/** 一次「真评出成绩」的 evaluate 交回的提交身份:候选的两半里,loop 只搬运这一半。 */
+const SUBMISSION = {
   scriptSha256: "0".repeat(64),
-  score: { totalPoints: 1, averagePoints: 0.25, countedMatches: 4 },
-  matchCount: 4,
+  hostPath: "/tmp/ws/script.ts",
+  observationsPath: "/workspace/.observations/1.md",
 };
 
 /** 假执行器:按序回放结果,并把每次请求原样记下来。 */
@@ -346,19 +340,20 @@ it("配额拒绝是模型可见的:宿主伪造的那条 stderr 原样进观测"
 
   expect(result.steps[0]?.action).toEqual({ kind: "evaluate" });
   expect(result.steps[0]?.stderr).toBe(refusal);
-  expect(result.candidates).toEqual([]);
+  // 被拒的那一次没有提交身份:配额没用掉,也没有成绩。
+  expect(result.submissions).toEqual([]);
   // 下一步的观测里就有它:模型看得到「我这次评测没执行」。
   expect(model.calls[1]?.messages.at(-1)?.content).toContain(refusal);
 });
 
-it("一次 evaluate 产出的候选进候选序,步号即候选条目的步号", async () => {
+it("一次真评出成绩的 evaluate 把提交身份记下来,步号即候选条目的步号", async () => {
   const model = stubClient([reply("```bash\nevaluate\n```")]);
-  const executor = fakeExecutor([{ ...OK, candidate: CANDIDATE }]);
+  const executor = fakeExecutor([{ ...OK, submission: SUBMISSION, evaluateCall: 1 }]);
   const result = await runAgentSession(
     requestOf({ model, executor: executor.executor, maxSteps: 1 }),
   );
-  expect(result.candidates).toEqual([CANDIDATE]);
-  expect(result.candidates.length).toBeLessThanOrEqual(OPTIMIZATION_CANDIDATE_LIMIT);
+  // loop 只搬运:候选的 score 与 matchCount 归网格(票 06),它一个字都不猜。
+  expect(result.submissions).toEqual([{ step: 1, call: 1, ...SUBMISSION }]);
 });
 
 it("解析层的 done 行号与宿主通道原样递给执行器", async () => {
@@ -541,7 +536,7 @@ it("有没有候选就是成功档与失败档的分界(与终止原因无关)",
     requestOf({
       model,
       maxSteps: 1,
-      executor: fakeExecutor([{ ...OK, candidate: CANDIDATE }]).executor,
+      executor: fakeExecutor([{ ...OK, submission: SUBMISSION, evaluateCall: 1 }]).executor,
     }),
   );
   expect(hasCandidates(withCandidate)).toBe(true);

@@ -185,7 +185,6 @@ const mkRoot = (baseUrl: string): string => {
   writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
   writeFileSync(join(root, "docs", "rules-v2", "api.md"), CONTRACT_API);
   mkdirSync(join(root, "prompts"), { recursive: true });
-  writeFileSync(join(root, "prompts", "base.md"), "契约:\n\n{{contract}}\n");
   mkdirSync(join(root, "rulesets"), { recursive: true });
   // 网格是 32 场：把 tick 上限压到 4，让端到端稳定在秒级（断言的是接线，不是对局长度）。
   const ruleset = JSON.parse(

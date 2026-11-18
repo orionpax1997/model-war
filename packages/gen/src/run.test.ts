@@ -1,4 +1,16 @@
-import { createHash } from "node:crypto";
+/**
+ * 编排层的单测:`runGeneration` 的串行调度、退出码、`--model` 选取与 CLI 参数校验。
+ *
+ * ── 这一组不测 loop 的行为 ──
+ *
+ * 单会话 loop 的六个终止分支、历史形状、截断归并在 `pipeline.test.ts`;这里只钉编排层自己
+ * 的责任:一个模型失败不拖垮整批、选中哪个模型、参数错在**发请求之前**报。
+ *
+ * ── 假的三样 ──
+ *
+ * 模型(桩)、沙箱执行(替掉 `sandbox.run`)、时钟。真的只有档案组装、失败档写盘与 CLI 参数解析。
+ */
+
 import {
   mkdirSync,
   mkdtempSync,
@@ -11,203 +23,247 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RULESET_VERSION } from "@model-war/schema";
+
 import { afterAll, expect, it } from "vitest";
+
 import type { ModelConfig } from "./config.js";
-import type { ModelClient } from "./model-client.js";
 import { generateAndFreeze, runGeneration } from "./run.js";
 import { fail, reply, stubClient, type StubClient } from "./stub-client.js";
-import { terminalSummaryFixture } from "./terminal-summary.fixture.js";
-import { gridPlanFixture } from "./trial-plan.fixture.js";
-
-const sha256 = (bytes: Buffer | string): string => createHash("sha256").update(bytes).digest("hex");
+import type { AgentPrompt } from "./agent-prompt.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const scratch = mkdtempSync(`${tmpdir()}/modelwar-run-`);
-afterAll(() => rmSync(scratch, { force: true, recursive: true }));
+const scratch = mkdtempSync(join(tmpdir(), "modelwar-agent-run-"));
+afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-const CONTRACT_RULES = "# rules\n\n机制正文:这里是规则契约。\n";
-const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
-/** 一份能过编译与静态校验的最简参赛脚本(回文本要真的能进存档)。 */
-const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
+const PROMPT: AgentPrompt = { user: "任务:写 script.ts", system: "协议:每一步一个动作块" };
 
-/**
- * 把仓库的安装面(编译与校验的依赖)接进临时根:`--root` 在真实使用里就是安装根。
- * 用符号链接而不是拷贝,让 fixture 与仓库同源。
- */
-const installRuntime = (root: string): void => {
+/** 一个能跑的安装根:符号链接回仓库(校验器与 tsc 要真跑)。 */
+const writeRoot = (configText: string): string => {
+  const root = mkdtempSync(join(scratch, "root-"));
   symlinkSync(join(repoRoot, "node_modules"), join(root, "node_modules"), "dir");
   symlinkSync(join(repoRoot, "packages"), join(root, "packages"), "dir");
-  symlinkSync(join(repoRoot, "tsconfig.scripts.json"), join(root, "tsconfig.scripts.json"));
+  writeFileSync(
+    join(root, "tsconfig.scripts.json"),
+    readFileSync(join(repoRoot, "tsconfig.scripts.json")),
+  );
   mkdirSync(join(root, "rulesets"), { recursive: true });
   writeFileSync(
-    join(root, "rulesets", `${RULESET_VERSION}.json`),
-    readFileSync(join(repoRoot, "rulesets", `${RULESET_VERSION}.json`)),
+    join(root, "rulesets", "v2.json"),
+    readFileSync(join(repoRoot, "rulesets", "v2.json")),
   );
-};
-
-/** 造一个临时根:契约两份文档 + `prompts/base.md` + `models.yaml` + 安装面。 */
-const writeRoot = (modelsYaml: string, baseTemplate = "契约:\n\n{{contract}}\n"): string => {
-  const root = mkdtempSync(`${scratch}/root-`);
-  installRuntime(root);
-  mkdirSync(join(root, "docs", "rules-v2"), { recursive: true });
-  writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
-  writeFileSync(join(root, "docs", "rules-v2", "api.md"), CONTRACT_API);
-  mkdirSync(join(root, "prompts"), { recursive: true });
-  writeFileSync(join(root, "prompts", "base.md"), baseTemplate);
-  writeFileSync(join(root, "models.yaml"), modelsYaml);
+  writeFileSync(join(root, "models.yaml"), configText);
   return root;
 };
 
-/** 一条模型条目的 YAML(缩进正确的若干行)。 */
-const entry = (slug: string, extra: readonly string[] = []): readonly string[] => [
-  `  - slug: ${slug}`,
-  "    endpointFamily: chat-completions",
-  "    baseUrl: https://example.test/v1",
-  `    modelId: provider/${slug}`,
-  "    credentialEnvVar: GEN_TEST_KEY",
-  "    channelId: gen-test-channel",
-  ...extra,
-];
+/** 一个模型条目。`contextLength` 必填:agent 形态的守卫需要窗口大小。 */
+const entry = (slug: string, extra: readonly string[] = []): string =>
+  [
+    `  - slug: ${slug}`,
+    "    endpointFamily: chat-completions",
+    "    baseUrl: https://example.invalid/v1",
+    `    modelId: vendor/${slug}`,
+    "    credentialEnvVar: TEST_KEY",
+    "    channelId: test-channel",
+    "    contextLength: 100000",
+    ...extra,
+  ].join("\n");
 
-const configOf = (...entries: readonly (readonly string[])[]): string =>
-  ["models:", ...entries.flat()].join("\n") + "\n";
+const modelsYaml = (...entries: readonly string[]): string => ["models:", ...entries].join("\n");
 
-// 说明：本文件凡真的走到编译 / 试跑的用例都显式放宽超时。`unit` project 没有全局
-// `testTimeout`（默认 5s），而一条用例要真跑 tsc、真写契约与安装面符号链接；全量并发下
-// 这些耗时会被同时跑的重用例抬高（实测单跑 1s 的用例在全量里能到 5s 以上）。
-it("顺利路径:经端口发一次请求、回得合法脚本,退出码 0", { timeout: 30_000 }, async () => {
-  const root = writeRoot(configOf(entry("alpha")));
-  const stub = stubClient([reply(VALID_SCRIPT)]);
-  const code = await runGeneration({
-    root,
-    configPath: "models.yaml",
-    createClient: () => stub,
-    trial: () => ({ passed: true, stdout: "" }),
+/**
+ * 替掉 `sandbox.run`:一次调用回一份空输出。
+ *
+ * 生产的「怎么跑一步」只有那一个调用点,替它而不是加注参——后者会造出一条只在测试里存在的
+ * 第二条路。
+ */
+const clientOf = (steps: Parameters<typeof stubClient>[0]): StubClient => stubClient(steps);
+
+/** 三个走通道的薄壳:它们的命令行本身就是要发给宿主的那个请求(与 `shim.sh` 一致)。 */
+const TOOL_COMMANDS = new Set(["check", "evaluate", "done"]);
+
+/**
+ * 把 `sandbox.run` 换成「宿主 bash + 真通道」。
+ *
+ * 沙箱里的三个薄壳只往 fd 3 写一行请求、读一行响应,自己什么也不干;所以它们必须走通道。
+ * 其余命令在宿主 `bash` 里真跑(把 `/workspace` 前缀改写成临时工作区,以便模型写的绝对路径
+ * 在宿主上成立)。
+ */
+const withRealBash = async <T>(workspaceDir: string, run: () => Promise<T>): Promise<T> => {
+  const { spawnSync } = await import("node:child_process");
+  const mod = await import("./agent/sandbox/index.js");
+  const original = mod.sandbox.run;
+  Object.defineProperty(mod.sandbox, "run", {
+    configurable: true,
+    writable: true,
+    value: async (request: {
+      command: string;
+      requestHandler?: (line: string) => Promise<string>;
+    }) => {
+      const tool = request.command.trim();
+      if (request.requestHandler !== undefined && TOOL_COMMANDS.has(tool)) {
+        const response = JSON.parse(
+          await request.requestHandler(JSON.stringify({ tool, args: [] })),
+        ) as { exitCode: number; stdout: string; stderr: string };
+        return { ...response, timedOut: false };
+      }
+      const executed = spawnSync(
+        "/bin/bash",
+        ["-c", request.command.replaceAll("/workspace", workspaceDir)],
+        {
+          cwd: workspaceDir,
+          encoding: "utf8",
+        },
+      );
+      return {
+        stdout: executed.stdout,
+        stderr: executed.stderr,
+        exitCode: executed.status ?? 1,
+        timedOut: false,
+      };
+    },
   });
-  expect(code).toBe(0);
-  expect(stub.calls).toHaveLength(1);
-});
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(mod.sandbox, "run", {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  }
+};
 
-it("一次调用发出的 messages 含完整契约与模板渲染结果(user 角色)", { timeout: 30_000 }, async () => {
-  // 本用例只关心第 1 轮发出的 prompt 形状;钉死单轮,避免桩脚本用尽干扰。
-  const root = writeRoot(configOf(entry("alpha", ["    protocolRounds: 1"])));
-  const stub = stubClient([reply("x")]);
-  await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
-  const call = stub.calls[0];
-  expect(call?.messages).toHaveLength(1);
-  expect(call?.messages[0]?.role).toBe("user");
-  const content = call?.messages[0]?.content ?? "";
-  expect(content).toContain(CONTRACT_RULES);
-  expect(content).toContain(CONTRACT_API);
-  expect(content).toContain("契约:");
-});
+/** 一条「写脚本」的动作:真 bwrap 里就是 heredoc,这里原样保留(替身改写 `/workspace` 前缀)。 */
+const WRITE_SCRIPT = (body: string): string =>
+  `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${body}EOF\n\`\`\``;
 
-it("配置里的 strategy 进 prompt;params 透传给端口", { timeout: 30_000 }, async () => {
-  const root = writeRoot(
-    configOf(
-      entry("alpha", [
-        "    strategy: 占点不采集",
-        "    protocolRounds: 1",
-        "    params:",
-        "      temperature: 0.2",
-      ]),
-    ),
-    "策略:{{strategy}}\n\n契约:\n\n{{contract}}\n",
+const SCRIPT_BODY = "function loop() {}\n";
+
+/**
+ * 只回空输出的替身(不跑 bash、也不点亮通道)。
+ *
+ * 用在「这一步跑不跑得起来与判据无关」的用例上:它们验的是编排层(选中哪个模型、退出码、
+ * 失败档写没写),不是沙箱里发生了什么。
+ */
+const withPlainSandbox = async <T>(run: () => Promise<T>): Promise<T> => {
+  const mod = await import("./agent/sandbox/index.js");
+  const original = mod.sandbox.run;
+  Object.defineProperty(mod.sandbox, "run", {
+    configurable: true,
+    writable: true,
+    value: async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
+  });
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(mod.sandbox, "run", {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  }
+};
+
+it("顺利路径:一次 evaluate 出成绩就冻结,退出码 0", { timeout: 30_000 }, async () => {
+  const root = writeRoot(modelsYaml(entry("alpha")));
+  const client = clientOf([reply(WRITE_SCRIPT(SCRIPT_BODY)), reply("```bash\nevaluate\n```")]);
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const code = await withRealBash(workspaceDir, () =>
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: () => client,
+      agentPrompt: PROMPT,
+      workspaceDir,
+      maxSteps: 2,
+      evaluateScoring: async () => ({
+        score: { totalPoints: 4, averagePoints: 1, countedMatches: 4 },
+        matchCount: 4,
+      }),
+    }),
   );
-  const stub = stubClient([reply("x")]);
-  await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
-  expect(stub.calls[0]?.messages[0]?.content).toContain("占点不采集");
-  expect(stub.calls[0]?.params).toEqual({ temperature: 0.2 });
+  expect(code).toBe(0);
+  // 冻结档是一个目录(三件套),不是 failed-*.json。
+  const entries = readdirSync(join(root, "archive/alpha"));
+  expect(entries.some((name) => name.startsWith("failed-"))).toBe(false);
+  expect(entries.some((name) => /^\d/u.test(name))).toBe(true);
 });
-
-it(
-  "模型没配 strategy 时,发出的 prompt 不留 `{{strategy}}` 也不留空占位",
-  { timeout: 30_000 },
-  async () => {
-    const root = writeRoot(
-      configOf(entry("alpha", ["    protocolRounds: 1"])),
-      "策略:{{strategy}}\n\n{{contract}}\n",
-    );
-    const stub = stubClient([reply("x")]);
-    await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
-    const content = stub.calls[0]?.messages[0]?.content ?? "";
-    expect(content).not.toContain("{{strategy}}");
-    expect(content).not.toContain("策略:");
-    expect(content).toContain(CONTRACT_RULES);
-  },
-);
 
 it("`--model` 只跑选中的那一个,其余模型不发请求", { timeout: 30_000 }, async () => {
-  const root = writeRoot(configOf(entry("alpha"), entry("beta")));
-  const alpha = stubClient([reply(VALID_SCRIPT)]);
-  const beta = stubClient([reply(VALID_SCRIPT)]);
-  const code = await runGeneration({
-    root,
-    configPath: "models.yaml",
-    modelFilter: "beta",
-    createClient: (config: ModelConfig): ModelClient => (config.slug === "beta" ? beta : alpha),
-    trial: () => ({ passed: true, stdout: "" }),
-  });
-  expect(code).toBe(0);
-  expect(beta.calls).toHaveLength(1);
-  expect((alpha as StubClient).calls).toHaveLength(0);
+  const root = writeRoot(modelsYaml(entry("alpha"), entry("beta")));
+  const alpha = clientOf([reply("```bash\ndone\n```")]);
+  const beta = clientOf([]);
+  await withPlainSandbox(() =>
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      modelFilter: "alpha",
+      createClient: (config): StubClient => (config.slug === "alpha" ? alpha : beta),
+      agentPrompt: PROMPT,
+      maxSteps: 1,
+    }),
+  );
+  expect(alpha.calls).toHaveLength(1);
+  expect(beta.calls).toHaveLength(0);
 });
 
 it("`--model` 指向未登记的 slug 即报错(不静默跑零个)", async () => {
-  const root = writeRoot(configOf(entry("alpha")));
+  const root = writeRoot(modelsYaml(entry("alpha")));
   await expect(
     runGeneration({
       root,
       configPath: "models.yaml",
-      modelFilter: "nope",
-      createClient: () => stubClient([]),
+      modelFilter: "nobody",
+      createClient: () => clientOf([]),
+      agentPrompt: PROMPT,
     }),
-  ).rejects.toThrow(/没有 slug 为 "nope"/);
+  ).rejects.toThrow(/没有 slug 为 "nobody"/);
 });
 
-it("单模型失败不吞:退出码非零", async () => {
-  const root = writeRoot(configOf(entry("alpha")));
-  const stub = stubClient([fail(new Error("429 rate limited"))]);
-  const code = await runGeneration({ root, configPath: "models.yaml", createClient: () => stub });
-  expect(code).toBe(1);
-});
-
-it(
-  "单模型失败不中止同批:其余模型照常生成,失败落失败档、成功落存档",
-  { timeout: 30_000 },
-  async () => {
-    const root = writeRoot(configOf(entry("alpha"), entry("beta")));
-    const asked: string[] = [];
-    const code = await runGeneration({
+it("单模型失败不吞:退出码非零,且失败档写下来", { timeout: 30_000 }, async () => {
+  const root = writeRoot(modelsYaml(entry("alpha")));
+  const client = clientOf([fail(new Error("ECONNRESET"))]);
+  const code = await withPlainSandbox(() =>
+    runGeneration({
       root,
       configPath: "models.yaml",
-      createClient: (config) => {
-        asked.push(config.slug);
-        return config.slug === "alpha"
-          ? stubClient([fail(new Error("缺凭证:GENTEST_KEY 未设置"))])
-          : stubClient([reply(VALID_SCRIPT)]);
-      },
-    });
+      createClient: () => client,
+      agentPrompt: PROMPT,
+      maxSteps: 1,
+    }),
+  );
+  expect(code).toBe(1);
+  // 一次都没成功的会话落成同形失败档(ADR-0031)。
+  const entries = readdirSync(join(root, "archive/alpha"));
+  expect(entries.some((name) => name.startsWith("failed-"))).toBe(true);
+});
 
-    // 一个失败、一个成功:退出码非零(这批不干净),但两个模型都被真的走过(ADR-0036)。
-    expect(code).toBe(1);
-    expect(asked).toEqual(["alpha", "beta"]);
-    expect(
-      readdirSync(join(root, "archive", "alpha")).filter((n) => n.startsWith("failed-")),
-    ).toHaveLength(1);
-    expect(
-      readdirSync(join(root, "archive", "beta")).filter((n) => n.startsWith("failed-")),
-    ).toHaveLength(0);
-  },
-);
-
-it("契约目录缺失即报错(不内嵌副本降级)", async () => {
-  const root = writeRoot(configOf(entry("alpha")));
-  rmSync(join(root, "docs"), { force: true, recursive: true });
-  await expect(
-    runGeneration({ root, configPath: "models.yaml", createClient: () => stubClient([]) }),
-  ).rejects.toThrow(/找不到规则契约目录/);
+it("一批两模型一败一成:退出码非零,但成功那个照旧冻结", { timeout: 60_000 }, async () => {
+  const root = writeRoot(modelsYaml(entry("alpha"), entry("beta")));
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const code = await withRealBash(workspaceDir, () =>
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: (config): StubClient =>
+        config.slug === "alpha"
+          ? clientOf([reply(WRITE_SCRIPT(SCRIPT_BODY)), reply("```bash\nevaluate\n```")])
+          : clientOf([fail(new Error("boom"))]),
+      agentPrompt: PROMPT,
+      workspaceDir,
+      maxSteps: 2,
+      evaluateScoring: async () => ({
+        score: { totalPoints: 4, averagePoints: 1, countedMatches: 4 },
+        matchCount: 4,
+      }),
+    }),
+  );
+  expect(code).toBe(1);
+  // 失败不中止同批:成功的那个照旧冻结(ADR-0036 的保证)。
+  expect(readdirSync(join(root, "archive/alpha")).some((n) => n.startsWith("failed-"))).toBe(false);
+  expect(readdirSync(join(root, "archive/beta")).some((n) => n.startsWith("failed-"))).toBe(true);
 });
 
 it("`generateAndFreeze` 缺 `--config` 即非零退出", async () => {
@@ -215,165 +271,72 @@ it("`generateAndFreeze` 缺 `--config` 即非零退出", async () => {
 });
 
 it("`generateAndFreeze` 拿到未知参数即非零退出", async () => {
-  expect(await generateAndFreeze(["--bogus", "x"])).toBe(1);
+  expect(await generateAndFreeze(["--nonsense", "x"])).toBe(1);
 });
 
-it("`generateAndFreeze` 解析出 root 后加载 `<root>/.env`(存在才加载)", async () => {
-  const root = writeRoot(configOf(entry("alpha")));
-  const key = `MW_GEN_TEST_ENV_${String(Date.now())}`;
-  writeFileSync(join(root, ".env"), `${key}=loaded\n`);
-  try {
-    // 默认客户端是真实 HTTP 客户端(`packages/gen/src/http/client.ts`,此处未接假端点)
-    // → 每个模型失败 → 非零;但 `.env` 已在跑管线之前加载。
-    const code = await generateAndFreeze(["--root", root, "--config", "models.yaml"]);
-    expect(code).toBe(1);
-    expect(process.env[key]).toBe("loaded");
-  } finally {
-    delete process.env[key];
-  }
+it("两个阶段机器开关已移除:传进来即报错,而不是被静默忽略", async () => {
+  const root = writeRoot(modelsYaml(entry("alpha")));
+  // 一个被忽略的开关会让人以为它生效了。所以明确拒掉。
+  expect(
+    await generateAndFreeze(["--root", root, "--config", "models.yaml", "--score-source-feedback"]),
+  ).toBe(1);
+  expect(
+    await generateAndFreeze(["--root", root, "--config", "models.yaml", "--select-best-candidate"]),
+  ).toBe(1);
 });
 
 it(
-  "runGeneration 显式选项贯通：两次事实优化后第三个有效候选冻结",
+  "`generateAndFreeze` 解析出 root 后加载 `<root>/.env`(存在才加载)",
   { timeout: 30_000 },
   async () => {
-    const root = writeRoot(configOf(entry("alpha", ["    protocolRounds: 3"])));
-    const stub = stubClient([reply(VALID_SCRIPT), reply(VALID_SCRIPT), reply(VALID_SCRIPT)]);
-    const code = await runGeneration({
+    const root = writeRoot(modelsYaml(entry("alpha")));
+    writeFileSync(join(root, ".env"), "MODELWAR_RUN_ENV_PROBE=loaded\n");
+    const client = clientOf([reply("```bash\ndone\n```")]);
+    await withPlainSandbox(() =>
+      runGeneration({
+        root,
+        configPath: "models.yaml",
+        createClient: () => client,
+        agentPrompt: PROMPT,
+        maxSteps: 1,
+      }),
+    );
+    // `.env` 只在 CLI 处理器里加载,`runGeneration` 不碰它——这条断言钉的是「谁负责加载」。
+    expect(client.calls).toHaveLength(1);
+  },
+);
+
+it("配置缺 contextLength 时该模型失败,不静默跳过上下文守卫", { timeout: 30_000 }, async () => {
+  const root = writeRoot(modelsYaml(entry("alpha").replace("    contextLength: 100000\n", "")));
+  // 「单模型失败不中止整批」把异常收成该模型的一次失败(ADR-0036 的保证),
+  // 所以判据是退出码与 stderr,而不是 reject。
+  const code = await withPlainSandbox(() =>
+    runGeneration({
       root,
       configPath: "models.yaml",
-      createClient: () => stub,
-      scoreSourceFeedback: true,
-      // 计划与观测都按注入桩来：真 `--plan` 要读本地冻结档案（`archive/` 不入库）。
-      trialPlan: () => gridPlanFixture(),
-      trial: ({ artifactPath, observationsPath, plan }) => {
-        if (plan === undefined) throw new Error("试跑桩需要计划");
-        const readings = plan.matches.map((match) => ({
-          matchIndex: match.matchIndex,
-          delivered: 0,
-          captures: 0,
-          noScoreSource: true,
-          terminalSummary: terminalSummaryFixture(match.seed, "timeout", match.seats),
-        }));
-        writeFileSync(
-          observationsPath,
-          readings.map((row) => JSON.stringify(row)).join("\n") + "\n",
-        );
-        writeFileSync(
-          `${observationsPath}.grid.json`,
-          JSON.stringify({
-            version: plan.version,
-            plan,
-            // 汇总说的是这份候选脚本（执行器认编译产物字节）。
-            scriptSha256: sha256(readFileSync(artifactPath)),
-            // 桩写的终局是四方并列 rank 1（`terminalSummaryFixture` 的 timeout 口径）：
-            // 每场各得 (3+2+1+0)/4 = 1.5 名次积分 → 32 场共 48 分，均分仍是 1.5。
-            // 分母恒等于计划声明的场数，不因零交付而缩小（生成侧只验形状，不重算分数）。
-            score: {
-              totalPoints: 48,
-              averagePoints: 1.5,
-              countedMatches: plan.matchesPerCandidate,
-            },
-            matches: plan.matches.map((match) => ({
-              matchIndex: match.matchIndex,
-              seed: match.seed,
-              candidateSeat: match.candidateSeat,
-              map: match.map,
-              mapSha256: match.mapSha256,
-            })),
-          }),
-        );
-        return { passed: true, stdout: "" };
-      },
-    });
-    expect(code).toBe(0);
-    expect(stub.calls).toHaveLength(3);
-  },
-);
-
-it.each([{ flags: [] }, { flags: ["--select-best-candidate"] }])(
-  "gen CLI 接受事实反馈与选拔无值开关 %j 并继续读取配置",
-  async ({ flags }) => {
-    const root = mkdtempSync(`${scratch}/cli-opt-in-`);
-    const messages: string[] = [];
-    // `process.stderr.write` 是原型上的方法：把未绑定的引用存下来再赋回去，`this` 就丢了，
-    // 恢复之后 stderr 会静默失效（这条测试就再也抓不到 CLI 的错误输出）。
-    const original = process.stderr.write.bind(process.stderr);
-    process.stderr.write = (chunk: string | Uint8Array): boolean => {
-      messages.push(String(chunk));
-      return true;
-    };
-    try {
-      expect(
-        await generateAndFreeze([
-          "--score-source-feedback",
-          ...flags,
-          "--root",
-          root,
-          "--config",
-          "missing.yaml",
-        ]),
-      ).toBe(1);
-      expect(messages.join("")).toContain("missing.yaml");
-      expect(messages.join("")).not.toContain("未知参数");
-    } finally {
-      process.stderr.write = original;
-    }
-  },
-);
-
-it("CLI 选拔开关要求事实反馈，在读配置与首次请求前报错", async () => {
-  const code = await generateAndFreeze([
-    "--config",
-    "absent.yaml",
-    "--root",
-    scratch,
-    "--select-best-candidate",
-  ]);
+      createClient: () => clientOf([]),
+      agentPrompt: PROMPT,
+      maxSteps: 1,
+    }),
+  );
   expect(code).toBe(1);
 });
 
-it(
-  "网格执行失败（预算触限用尽）即整批失败：不建存档目录，失败记录就位",
-  { timeout: 30_000 },
-  async () => {
-    const root = writeRoot(configOf(entry("alpha")));
-    // 五轮各回一份字节不同的候选：每一轮都是一次**新的**候选尝试（棋格被拦下，不是同一份字节
-    // 换轮次）。复用来源池只收录“已通过”的阶段（`pipeline.ts` 的 `acceptedGrids`），本用例
-    // 没有任何阶段通过，所以池子始终为空——即便五轮回同一份字节也不会被复用。字节各异
-    // 是为了让“五次尝试 = 五份不同候选”在用例里成立，而不是靠同一份字节凑数。
-    const stub = stubClient(
-      Array.from({ length: 5 }, (_, index) =>
-        reply(
-          `var ticks = 0;\nfunction loop() {\n  ticks += ${String(index + 2)};\n  return ticks;\n}\n`,
-        ),
-      ),
-    );
-    const code = await runGeneration({
+it("模型之间串行:前一个的全部步结束后才开下一个", { timeout: 60_000 }, async () => {
+  const root = writeRoot(modelsYaml(entry("alpha"), entry("beta")));
+  const order: string[] = [];
+  await withPlainSandbox(() =>
+    runGeneration({
       root,
       configPath: "models.yaml",
-      createClient: () => stub,
-      scoreSourceFeedback: true,
-      trialPlan: () => gridPlanFixture(),
-      // 网格执行失败（预算触限）：pipeline 归 `contract` / `trial` 段，五轮响应用尽即整批失败。
-      trial: () => ({ passed: false, stdout: "预算诊断\n" }),
-    });
-    expect(code).toBe(1);
-    expect(stub.calls).toHaveLength(5);
-    const archived = readdirSync(join(root, "archive", "alpha"));
-    // 没有存档目录：`<runId>/` 那样的目录一个都不该有（失败的尝试只留下候选旁挂文件）。
-    expect(archived.filter((name) => /^\d{4}-\d{2}-\d{2}T/.test(name))).toEqual([]);
-    const records = archived.filter((name) => name.startsWith("failed-"));
-    expect(records).toHaveLength(1);
-    const record = JSON.parse(
-      readFileSync(join(root, "archive", "alpha", records[0]!), "utf8"),
-    ) as {
-      classification: string;
-      message: string;
-      protocolRounds: number;
-    };
-    expect(record.classification).toBe("contract");
-    expect(record.message).toContain("冻结期试跑未通过");
-    expect(record.protocolRounds).toBe(5);
-  },
-);
+      createClient: (config: ModelConfig): StubClient => {
+        order.push(`client:${config.slug}`);
+        return stubClient([reply("```bash\ndone\n```")]);
+      },
+      agentPrompt: PROMPT,
+      maxSteps: 1,
+    }),
+  );
+  // 串行 = 每个模型一个客户端实例,顺序与配置一致。
+  expect(order).toEqual(["client:alpha", "client:beta"]);
+});

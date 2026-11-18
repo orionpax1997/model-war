@@ -63,7 +63,6 @@ const mkRoot = (): string => {
   writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
   writeFileSync(join(root, "docs", "rules-v2", "api.md"), CONTRACT_API);
   mkdirSync(join(root, "prompts"), { recursive: true });
-  writeFileSync(join(root, "prompts", "base.md"), "契约:\n\n{{contract}}\n");
   writeFileSync(join(root, "models.yaml"), MODELS_YAML);
   mkdirSync(join(root, "rulesets"), { recursive: true });
   writeFileSync(
