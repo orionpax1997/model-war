@@ -19,7 +19,8 @@
  * `stdio` 的第 4 项给 `"pipe"`,POSIX 上 Node 为它建的是 **socketpair**,所以那是一个**双向**
  * fd:薄壳往里写一行请求,也从那读一行响应。宿主这一端只在宿主进程里(`child.stdio[3]`),
  * 跨步读不到;每一步一对新管道。**协议体的字段集不在这里**:它落在 `@model-war/schema` 的
- * 协议模块里,归票 04。本模块只提供传输(一行进、一行出)与那个 `requestHandler` 缝。
+ * 协议模块(`tool-channel.ts`)里;本模块只提供传输(一行进、一行出)与那个 `requestHandler`
+ * 缝——接上它的是宿主侧 dispatcher(`agent/host`),沙箱那一侧永远只看得到一行 JSON。
  *
  * ── 输出上限 ──
  * 采集有一个字节上限,理由与生成侧的截断口径(ADR-0032 的三条键级上限)无关:那是「模型该看到
@@ -28,6 +29,8 @@
  */
 
 import { spawn } from "node:child_process";
+
+import { TOOL_CHANNEL_FD } from "@model-war/schema";
 
 import { bwrapArgv, type StepCommand, type StepLimits } from "./argv.js";
 
@@ -45,10 +48,11 @@ export type SandboxStepRequest = {
   /** 单步墙钟上限(毫秒)。默认 `DEFAULT_STEP_WALL_CLOCK_MS`;超时即 `timedOut: true`。 */
   readonly wallClockMs?: number;
   /**
-   * 通道的宿主侧服务(票 04 的唯一入口)。
+   * 通道的宿主侧服务:一行请求进、一行响应出。
    *
-   * 给了就按「一行进、一行出」把请求转给它;不给则 fd 3 照样打开(薄壳据此判断通道在不在),
-   * 但宿主不读不写。本票只证明这条 fd **开得出来、关得掉**。
+   * 生产实现是 `createSessionTools(...).requestHandler`(`agent/host`,带白名单、`evaluate`
+   * 配额与会话墙钟)。给了就按行转发;不给则 fd 3 照样打开(薄壳据此判断通道在不在),但宿主
+   * 不读不写——那一步里任何受限工具都会以「工具不可用」退出 2。
    */
   readonly requestHandler?: RequestHandler;
   /** 覆盖 bwrap 路径(测试 / 调试用)。 */
@@ -77,8 +81,11 @@ export const KILL_GRACE_MS = 2_000;
 /** 被墙钟杀掉时交回的退出码(借 `timeout(1)` 的口径,不冒充命令自己的退出码)。 */
 export const TIMEOUT_EXIT_CODE = 124;
 
-/** 通道用的 fd 序号。薄壳侧写死同一个数(票 04 的协议模块里再收一次口)。 */
-export const CHANNEL_FD = 3;
+/**
+ * 通道用的 fd 序号。真源是 `@model-war/schema` 的 `TOOL_CHANNEL_FD`(薄壳与协议体同一份);
+ * 这里只是给执行器一个本地名字,别在两处各写一个 `3`。
+ */
+export const CHANNEL_FD = TOOL_CHANNEL_FD;
 
 /** `child.stdio[3]` 的类型太宽;只认「既能读又能写」的那种,不猜。 */
 type DuplexChannel = {
@@ -237,7 +244,7 @@ const wireChannel = (stream: unknown, handler: RequestHandler | undefined): (() 
     };
   }
   if (handler === undefined) {
-    // 本票的形状:通道开着、宿主不读。网关那端(票 04)接上 `requestHandler` 即可。
+    // 通道开着、宿主不读:那一步里的薄壳会以「工具不可用」退出 2(那是设计好的行为)。
     return () => {
       stream.destroy();
     };
@@ -252,7 +259,8 @@ const wireChannel = (stream: unknown, handler: RequestHandler | undefined): (() 
         const response = await handler(line);
         stream.write(`${response}\n`);
       } catch {
-        // 服务的拒绝语义(伪造 stderr、怎么回退出码)归票 04:传输层不发明一套。
+        // 服务自己保证「永远回一行」(`agent/host` 的 dispatcher 把异常折成伪造响应);
+        // 真漏到这里也只丢一条响应,由薄壳变成「脚本工具不可用」,传输层不发明一套语义。
       }
     });
   };
