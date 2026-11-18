@@ -25,6 +25,7 @@
  * 上、起止 prompt 条数符合公式。
  */
 
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -105,8 +106,10 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
       workspaceDir,
       // 时钟取当下:会话墙钟 = 起点 + 1800s。
       now: () => new Date(),
-      // 试跑与计划桩:这条用例验的是「真 bwrap + 真通道 + 真档案」,网格本身由 `check:gen-grid`
-      // 那一侧用真子进程验。桩写的是形状真实的一整张网格(32 行观测 + 旁挂汇总)。
+      // 试跑桩:这条用例验的是「真 bwrap + 真通道 + 真档案」,网格本身由 `check:gen-grid`
+      // 那一侧用真子进程验。桩写的是**形状真实**的一整张网格(32 行观测 + 旁挂汇总),
+      // 于是「有候选 → 成功档 → 报告读得出候选」这一整条链在真沙箱下走过一遍(票 05 残余风险 3:
+      // `freezeFromCandidate` 在真 bwrap 下没走过)。
       trial: completeGridTrial(),
       trialPlan: () => gridPlanFixture(),
     },
@@ -142,18 +145,50 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
 
   // ── 候选的旁挂快照真的在盘上,哈希对得上 ──
   expect(meta.optimization).toMatchObject({ version: 3 });
-  const candidate = (
-    meta.optimization as unknown as { candidates: { scriptFile: string; step: number }[] }
-  ).candidates[0];
-  expect(candidate?.step).toBe(3);
-  expect(
-    readFileSync(join(root, "archive/alpha", candidate!.scriptFile)).byteLength,
-  ).toBeGreaterThan(0);
+  const optimization = meta.optimization as unknown as {
+    candidates: {
+      step: number;
+      scriptFile: string;
+      observationsFile: string;
+      scriptSha256: string;
+      score: { countedMatches: number };
+    }[];
+  };
+  // 候选条数 1..3:这次只评了一次。
+  expect(optimization.candidates).toHaveLength(1);
+  const candidate = optimization.candidates[0]!;
+  expect(candidate.step).toBe(3);
+  const candidateBytes = readFileSync(join(root, "archive/alpha", candidate.scriptFile));
+  expect(candidateBytes.byteLength).toBeGreaterThan(0);
+  // 候选条目的 `scriptSha256` 是**产物**字节的哈希(报告侧复算的就是它)。
+  expect(createHash("sha256").update(candidateBytes).digest("hex")).toBe(candidate.scriptSha256);
+  // 冻结的三件套就是胜者(这里只有一个候选 = 末位候选)的那份产物字节。
+  expect(meta.scriptSha256).toBe(candidate.scriptSha256);
+  expect(readFileSync(join(root, "archive/alpha/r-real/script.js")).equals(candidateBytes)).toBe(
+    true,
+  );
+  expect(readFileSync(join(root, "archive/alpha/r-real/script.ts"), "utf8")).toBe(
+    readFileSync(join(root, "archive/alpha", `${candidate.observationsFile}.candidate.ts`), "utf8"),
+  );
+  // 成绩取的是网格汇总那一份(32 场的分母),不是某个局部读数。
+  expect(candidate.score.countedMatches).toBe(TRIAL_MATCHES_PER_CANDIDATE);
 
   // ── 装载器读得出来:这一步才是「可装载」的判据 ──
   const [report] = readArchiveReports(root);
   expect(report?.protocolRounds).toBe(4);
   expect(report?.rounds).toHaveLength(4);
+  // 报告侧认得出这个候选:字节哈希对得上、观测行数等于计划场数(32)。
+  expect(report?.kind).toBe("success");
+  // 只有一个候选:它既是首候选也是末候选(没有 selection 时胜者取末位,ADR-0030/0031)。
+  expect(report?.intermediateCandidates).toHaveLength(0);
+  expect(report?.initialCandidate?.scriptFile).toBe(candidate.scriptFile);
+  expect(report?.initialCandidate?.scriptState).toBe("verified");
+  expect(report?.initialCandidate?.observations.state).toBe("recorded");
+  expect(report?.initialCandidate?.observations.observedMatches).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+  expect(report?.finalCandidate?.scriptFile).toBe(candidate.scriptFile);
+  expect(report?.frozenCandidate?.scriptFile).toBe(candidate.scriptFile);
+  // 报告侧也认得出这张网格给出的分数(它读的就是候选条目里的那一格)。
+  expect(report?.initialCandidate?.score?.countedMatches).toBe(TRIAL_MATCHES_PER_CANDIDATE);
 });
 
 it(
