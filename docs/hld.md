@@ -111,6 +111,7 @@
 | 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
 | 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑 |
+| 按需(本机,不进任何链) | `check:gen-grid` | **一次 `evaluate` 真跑满一张网格**:它的前提是四份钉死的陪练存档,而 `archive/` 不入库——干净克隆上跑不起来,所以它不进夜间矩阵(那会让「CI 红」与「这台机器没有本地档案」同形)。单测里的真网格判据由 `packages/gen/src/agent/host/evaluate-service.test.ts` 与 `pipeline.test.ts` 用形状真实的假试跑承担 |
 | 按需 → 夜间 | `mutate` / `mutate:<分片>` / `scan` | `mutate*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`scan` 仍**只观测、不设红线** |
 | 按需(不进任何链) | `lint:diagnose` | **测试纪律规则的诊断**:把 oxlint 那几条 vitest 规则报的命中拆成形态与风险(「整条用例的断言都在守卫里」= 可能零断言执行;「部分守卫」= 盲区;循环体 = 逐元素检查),落 `reports/lint/vitest-rules.md`。规则只报位置不报风险,位置与风险不是一回事——命中数本身说明不了有没有假绿来源,这份报告把它变成可复算的判定 |
 | 按需(不进任何链) | `test:report` | **测试观测**:慢测试长尾(用例级耗时 + p50/p90/p99)与不稳定用例。同一批测试跑**两遍**、比两次状态:两次状态不同才叫不稳定。**不用 vitest 的 `retry`**——retry 会把偶发红藏起来,而仓库对假绿敏感;这里照引擎故障轨的语义(先重跑一次、再记账),跑两遍、拿两次状态对比 |
@@ -540,6 +541,7 @@ archive/<modelSlug>/<runId>/
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
 | 评测网格与选拔复算 | `packages/runner/src/trial-plan.test.ts`(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ `packages/runner/src/selection-grid.test.ts`(逐场复算比对)+ `packages/runner/src/archive-report-v2.test.ts`(生成阶段分数与赛季口径分离) |
+| 一次 `evaluate` 真跑满一张网格 | `packages/gen/src/agent/host/evaluate-service.test.ts`(提交身份 / 快照即提交 / 缺场不产候选 / 观测外置)+ `packages/gen/src/pipeline.test.ts`(候选 1..3、第 4 次被拒、胜者取末位、快照字节 == 评估时工作区字节)+ `check:gen-grid`(真子进程跑 32 场,判完整性 / 身份 / 观测外置 / 耗时量级;需要四份钉死的陪练存档,所以是独立腿而不是 `check:sandbox` 的一条) |
 | 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`（`stateHash` 断言）+ `check:no-float`（禁浮点门禁是其中一轨） |
 | 档案形状版本与旧档读兼容 | `apps/cli/src/archive-v3.test.ts`（v3 写 → 装载 → 报告往返；v1/v2 旧档 fixture 照旧读出）+ `packages/runner/src/fixtures/archive/README.md`（旧档副本的来源与改写清单） |
 | 传输韧性与限流处置 | `packages/gen/src/retry.test.ts`（三套预算互不侵占、`Retry-After` 作下限、抖动只向上、单次与累计封顶、5xx 一次即收口）+ `packages/gen/src/pipeline.test.ts`（重试不涨协议轮数、`attemptEvidence.failureKind` 留痕）+ `packages/gen/src/run.test.ts`（单模型失败不中止同批） |
