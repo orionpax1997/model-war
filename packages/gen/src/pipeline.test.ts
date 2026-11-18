@@ -824,6 +824,16 @@ it("freeze 失败也清干净:`archive/<slug>/` 里只剩那一份 failed-<runId
   const entries = readdirSync(join(root, "archive/alpha"));
   expect(entries).toHaveLength(1);
   expect(entries[0]).toMatch(/^failed-.+\.json$/u);
+
+  // 而失败记录里**不写**那几份已经被清掉的候选描述符:写了就等于给读者一串指向空处的地址
+  // (报告侧照它去读 `.candidate.js` 会得到 `scriptState: missing`,而「成绩可核」是假话)。
+  const record = JSON.parse(readFileSync(join(root, "archive/alpha", entries[0]!), "utf8")) as {
+    candidates?: unknown;
+    steps?: readonly { action: { kind: string } }[];
+  };
+  expect(record.candidates).toBeUndefined();
+  // 次数不丢:过程记录的动作列里那一步还在,读侧据此渲染「评测过 N 次,候选未保留」。
+  expect(record.steps?.filter((step) => step.action.kind === "evaluate")).toHaveLength(1);
 }, 60_000);
 
 it("候选一到三条:1 次 / 2 次 / 3 次评测各产出同等条数,下标即第几次评测", async () => {
