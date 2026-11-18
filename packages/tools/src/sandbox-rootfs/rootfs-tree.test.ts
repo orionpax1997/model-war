@@ -16,8 +16,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  sandboxRootfsConstantsFrom,
+  SCHEMA_CONSTANTS_SOURCE,
+  staticBinariesOf,
+} from "./rootfs-drift.ts";
+import {
   ROOTFS_PROVENANCE_DOC,
-  ROOTFS_STATIC_BINARIES,
   rootfsFilePaths,
   staticElfVerdict,
   treeDigest,
@@ -110,10 +114,19 @@ describe("文件枚举", () => {
     }
   });
 
-  it("真实 rootfs:五个静态二进制都在,且它们真的没有 PT_INTERP", () => {
+  it("真实 rootfs:清单里除薄壳之外的每个 bin/ 都在,且真的没有 PT_INTERP", () => {
     const rootfsDir = join(repoRoot, "packages/gen/sandbox-rootfs");
     const paths = rootfsFilePaths(rootfsDir);
-    for (const path of ROOTFS_STATIC_BINARIES) {
+    // 哪几个要过这条判断由 schema 的清单推出来,本文件不另写一张:上一轮给 `cp` 补清单时,
+    // 第二张手写表(`ROOTFS_STATIC_BINARIES`)就是漏写也不会红的那个位置。
+    const parsed = sandboxRootfsConstantsFrom(
+      readFileSync(`${repoRoot}${SCHEMA_CONSTANTS_SOURCE}`, "utf8"),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const binaries = staticBinariesOf(parsed.constants.files, parsed.constants.shims);
+    expect(binaries.length, "推导出 0 个二进制:清单或薄壳表抽空了").toBeGreaterThan(0);
+    for (const path of binaries) {
       expect(paths, `${path} 不在入库 rootfs 里`).toContain(path);
       expect(
         staticElfVerdict(readFileSync(join(rootfsDir, path)))?.static,

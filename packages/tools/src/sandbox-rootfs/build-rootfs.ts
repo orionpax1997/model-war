@@ -38,11 +38,11 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path";
 
 import { CONTRACT_DIR, CONTRACT_FILES } from "../contract-package.ts";
+import { sandboxRootfsConstantsFrom, SCHEMA_CONSTANTS_SOURCE } from "./rootfs-drift.ts";
 import {
   ROOTFS_DIR,
   ROOTFS_MOUNTED_DIRS,
   ROOTFS_PROVENANCE_DOC,
-  ROOTFS_SHIM_NAMES,
   SHIM_SOURCE,
   readRootfsEntries,
   rootfsFilePaths,
@@ -51,6 +51,18 @@ import {
 
 /** 本文件在 `<repo>/packages/tools/src/sandbox-rootfs/` 下,上溯四层是仓库根。 */
 const repoRoot = resolve(import.meta.dirname, "../../../..");
+
+/**
+ * 薄壳名字的来源:`@model-war/schema` 的 `SANDBOX_ROOTFS_SHIMS`,经源码文本抽取(本脚本与门禁
+ * 一样零构建)。抽不出来即抛——组装一个「不知道薄壳叫什么」的 rootfs 没有意义。
+ */
+const shimNamesFromSchema = (): readonly string[] => {
+  const parsed = sandboxRootfsConstantsFrom(
+    readFileSync(join(repoRoot, SCHEMA_CONSTANTS_SOURCE), "utf8"),
+  );
+  if (!parsed.ok) throw new Error(parsed.reason);
+  return parsed.constants.shims;
+};
 
 /**
  * 五个静态二进制**钉死**的来源。`sha256` 是唯一判据:拷进产物前逐个核对,不一致就停。
@@ -256,9 +268,10 @@ const main = (): number => {
     writeFileSync(join(rootfsDir, "bin", binary.path), binary.bytes, { mode: 0o755 });
   }
 
-  // ② 三个薄壳:同一份字节的三个副本,工具名取自 `$0`。
+  // ② 薄壳:同一份字节的几份副本,工具名取自 `$0`。名字从 schema 那份清单取——组装与门禁
+  // 读的是同一处,否则「组装多写一个、门禁认不出」正是这套判据最容易漏的形状。
   const shim = readFileSync(join(repoRoot, SHIM_SOURCE));
-  for (const name of ROOTFS_SHIM_NAMES) {
+  for (const name of shimNamesFromSchema()) {
     writeFileSync(join(rootfsDir, "bin", name), shim, { mode: 0o755 });
   }
 

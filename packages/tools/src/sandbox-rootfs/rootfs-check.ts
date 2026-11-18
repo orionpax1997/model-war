@@ -16,6 +16,8 @@ import {
   manifestFindings,
   sandboxRootfsConstantsFrom,
   SCHEMA_CONSTANTS_SOURCE,
+  shimPathsOf,
+  staticBinariesOf,
   staticBinaryFinding,
   topLevelFindings,
   treeHashFinding,
@@ -24,8 +26,6 @@ import {
 import {
   ROOTFS_MOUNTED_DIRS,
   ROOTFS_PROVENANCE_DOC,
-  ROOTFS_SHIM_NAMES,
-  ROOTFS_STATIC_BINARIES,
   SHIM_SOURCE,
   isExecutableFile,
   readRootfsEntries,
@@ -42,6 +42,10 @@ export type RootfsCheck = {
   readonly files: number;
   /** 现算的整棵树哈希(报告用)。 */
   readonly treeHash: string;
+  /** 过了静态 ELF 判据的二进制份数(从清单派生,报告用)。 */
+  readonly staticBinaries: number;
+  /** 过了逐字节判据的薄壳份数(同上)。 */
+  readonly shims: number;
   /** 产物目录(仓库相对路径)。常量抽不出来时为空串。 */
   readonly dir: string;
 };
@@ -56,10 +60,15 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
       findings: [{ where: SCHEMA_CONSTANTS_SOURCE, detail: parsed.reason }],
       files: 0,
       treeHash: "",
+      staticBinaries: 0,
+      shims: 0,
       dir: "",
     };
   }
-  const { dir, files, treeHash } = parsed.constants;
+  const { dir, files, treeHash, shims } = parsed.constants;
+  // 「谁是什么」全部从清单推出来(本文件不另写一张):`bin/*` 减掉薄壳 = 必须静态 ELF 的那些。
+  const shimPaths = shimPathsOf(shims);
+  const staticBinaries = staticBinariesOf(files, shims);
   const rootfsDir = join(repoRoot, dir);
   const entries = readRootfsEntries(rootfsDir);
   const actualPaths = rootfsFilePaths(rootfsDir);
@@ -71,7 +80,7 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
   // 一棵树里 0 个文件时,哈希只是 sha256("")、清单比对两边都是空集,六条判据全部「通过」而
   // 什么都没断言。判决归入口的 `vacuousReason`(共享件),这里只把计数交出去。
   if (actualPaths.length === 0) {
-    return { findings, files: 0, treeHash: "", dir };
+    return { findings, files: 0, treeHash: "", staticBinaries: 0, shims: 0, dir };
   }
 
   // ① 整棵树哈希 == 常量。
@@ -81,8 +90,8 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
   // ② 磁盘文件集 == 清单(多一个少一个都红)。
   findings.push(...manifestFindings(files, actualPaths));
 
-  // ③ 五个二进制是静态 ELF(清单里缺的文件由 ② 报,这里不重复)。
-  for (const path of ROOTFS_STATIC_BINARIES) {
+  // ③ `bin/` 里除薄壳之外都是静态 ELF(清单里缺的文件由 ② 报,这里不重复)。
+  for (const path of staticBinaries) {
     if (!actualPaths.includes(path)) continue;
     push(staticBinaryFinding(path, staticElfVerdict(readFileSync(join(rootfsDir, path)))));
   }
@@ -101,10 +110,9 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
     );
   }
 
-  // ⑤ 三个薄壳 == 源码真源;`bin/*` 全部可执行。
+  // ⑤ 薄壳 == 源码真源;`bin/*` 全部可执行。
   const shimSource = readFileSync(join(repoRoot, SHIM_SOURCE));
-  for (const name of ROOTFS_SHIM_NAMES) {
-    const copyPath = `bin/${name}`;
+  for (const copyPath of shimPaths) {
     if (!actualPaths.includes(copyPath)) continue;
     push(
       byteCopyFinding(copyPath, SHIM_SOURCE, readFileSync(join(rootfsDir, copyPath)), shimSource),
@@ -119,7 +127,14 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
     ...topLevelFindings(readdirSync(rootfsDir), [...ROOTFS_MOUNTED_DIRS, ROOTFS_PROVENANCE_DOC]),
   );
 
-  return { findings, files: actualPaths.length, treeHash: actualHash, dir };
+  return {
+    findings,
+    files: actualPaths.length,
+    treeHash: actualHash,
+    staticBinaries: staticBinaries.length,
+    shims: shimPaths.length,
+    dir,
+  };
 };
 
 /** 一条结论的人话摘要(两个入口共用,免得两处措辞分叉)。 */
@@ -127,5 +142,5 @@ export const rootfsCheckSummary = (check: RootfsCheck, greenPrefix: string): str
   `${greenPrefix}${check.dir} 的 ${String(check.files)} 份内容物` +
   `(sha256 ${check.treeHash.slice(0, 12)}…)与常量一致;文件集不多不少;` +
   // 计数从清单派生,不写字面量:加了第五个二进制之后这里还写着 4,是一句读起来毫无异样的假话。
-  `${String(ROOTFS_STATIC_BINARIES.length)} 个二进制是静态 ELF;` +
-  `contract/ 与 ${CONTRACT_DIR}/ 逐字节相同;三个薄壳与 ${SHIM_SOURCE} 逐字节相同。`;
+  `${String(check.staticBinaries)} 个二进制是静态 ELF;` +
+  `contract/ 与 ${CONTRACT_DIR}/ 逐字节相同;${String(check.shims)} 个薄壳与 ${SHIM_SOURCE} 逐字节相同。`;

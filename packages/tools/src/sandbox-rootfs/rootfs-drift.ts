@@ -10,7 +10,7 @@
  * 1. **整棵树哈希 == 常量**:字节被改过(哪怕只改一个字节)就是另一份世界。
  * 2. **磁盘文件集 == 清单**:多一个(上一次组装的残骸、顺手放的调试文件)与少一个(漏拷)
  *    都红。「多一个」尤其重要——它不会被挂载,却看起来像是内容物的一部分。
- * 3. **五个二进制是静态 ELF**:不带 `PT_INTERP`。判据自己解析 ELF,不靠 `ldd`(它执行目标
+ * 3. **`bin/` 里除薄壳之外都是静态 ELF**:不带 `PT_INTERP`。哪几个是这样,由清单减薄壳推出。判据自己解析 ELF,不靠 `ldd`(它执行目标
  *    文件)也不靠 `file`(输出随版本漂)。这条是「不从宿主借动态库」的可执行形式。
  * 4. **`contract/*` 与 `docs/rules-v2/*` 逐字节相同**:契约的真源只有一份。运行期不 bind
  *    宿主 checkout,所以副本一旦与真源分叉,模型读到的就是一份没人维护的契约。
@@ -26,14 +26,34 @@
  * **按失败处理**并说明原因,不静默放行——那正是「判据失明但门禁全绿」的形态。
  */
 
-/** schema 源码里被读的那三个常量名与那一处文件。 */
+/** schema 源码里被读的那四个常量名与那一处文件。 */
 export const SCHEMA_CONSTANTS_SOURCE = "packages/schema/src/sandbox-rootfs.ts";
 
-/** 从 schema 源码文本里抽出来的三个常量。 */
+/** 从 schema 源码文本里抽出来的四个常量。 */
 export type SandboxRootfsConstants = {
   readonly dir: string;
   readonly files: readonly string[];
   readonly treeHash: string;
+  /** 三个薄壳的名字(不带 `bin/` 前缀):`bin/*` 里除它们之外都必须是静态 ELF。 */
+  readonly shims: readonly string[];
+};
+
+/**
+ * 清单里点名的薄壳路径(`bin/<名字>`),按字典序。
+ *
+ * 「谁是什么」不从这份文件另写一张表:`ROOTFS_STATIC_BINARIES` 曾经是本文件的第二份清单,
+ * 上一轮给 `cp` 补内容物时两处都要改,漏一处没有任何判据会红。
+ */
+export const shimPathsOf = (shims: readonly string[]): readonly string[] =>
+  shims.map((name) => `bin/${name}`).sort();
+
+/** 清单里点名、且必须是静态 ELF 的路径:`bin/*` 减掉薄壳。 */
+export const staticBinariesOf = (
+  files: readonly string[],
+  shims: readonly string[],
+): readonly string[] => {
+  const shimPaths = new Set(shimPathsOf(shims));
+  return files.filter((path) => path.startsWith("bin/") && !shimPaths.has(path)).sort();
 };
 
 /**
@@ -67,7 +87,7 @@ const stringArrayConstant = (source: string, name: string): readonly string[] | 
   );
 };
 
-/** 抽三个常量。任一个抽不出来就返回理由,调用方按失败处理(不猜、不跳过)。 */
+/** 抽四个常量。任一个抽不出来就返回理由,调用方按失败处理(不猜、不跳过)。 */
 export const sandboxRootfsConstantsFrom = (
   source: string,
 ):
@@ -76,12 +96,20 @@ export const sandboxRootfsConstantsFrom = (
   const dir = stringConstant(source, "SANDBOX_ROOTFS_DIR");
   const files = stringArrayConstant(source, "SANDBOX_ROOTFS_FILES");
   const treeHash = stringConstant(source, "SANDBOX_ROOTFS_TREE_HASH");
+  const shims = stringArrayConstant(source, "SANDBOX_ROOTFS_SHIMS");
   const missing = [
     dir === undefined ? "SANDBOX_ROOTFS_DIR" : "",
     files === undefined || files.length === 0 ? "SANDBOX_ROOTFS_FILES" : "",
     treeHash === undefined ? "SANDBOX_ROOTFS_TREE_HASH" : "",
+    shims === undefined || shims.length === 0 ? "SANDBOX_ROOTFS_SHIMS" : "",
   ].filter((name) => name !== "");
-  if (missing.length > 0 || dir === undefined || files === undefined || treeHash === undefined) {
+  if (
+    missing.length > 0 ||
+    dir === undefined ||
+    files === undefined ||
+    treeHash === undefined ||
+    shims === undefined
+  ) {
     return {
       ok: false,
       reason:
@@ -89,7 +117,7 @@ export const sandboxRootfsConstantsFrom = (
         "本门禁零构建、只能读源码文本(不 import 真源包)。改过常量的写法就同步改本门禁的取法。",
     };
   }
-  return { ok: true, constants: { dir, files, treeHash } };
+  return { ok: true, constants: { dir, files, treeHash, shims } };
 };
 
 /** 一条违规:先指位置,再说它为什么是问题、处方是什么。 */

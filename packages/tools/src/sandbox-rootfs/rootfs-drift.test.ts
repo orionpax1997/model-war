@@ -22,6 +22,8 @@ import {
   manifestFindings,
   sandboxRootfsConstantsFrom,
   SCHEMA_CONSTANTS_SOURCE,
+  shimPathsOf,
+  staticBinariesOf,
   staticBinaryFinding,
   topLevelFindings,
   treeHashFinding,
@@ -33,13 +35,14 @@ const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const schemaSource = readFileSync(`${repoRoot}${SCHEMA_CONSTANTS_SOURCE}`, "utf8");
 
 describe("从 schema 源码文本里抽常量", () => {
-  it("三个常量都抽得到:路径、清单、哈希", () => {
+  it("四个常量都抽得到:路径、清单、哈希、薄壳名", () => {
     const parsed = sandboxRootfsConstantsFrom(schemaSource);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.constants.dir).toBe("packages/gen/sandbox-rootfs");
     expect(parsed.constants.files).toContain("bin/bash");
     expect(parsed.constants.treeHash).toMatch(/^[0-9a-f]{64}$/u);
+    expect(parsed.constants.shims).toEqual(["check", "done", "evaluate"]);
   });
 
   it("抽不出来时点名缺的是哪一个,并按失败交回(不猜、不跳过)", () => {
@@ -58,9 +61,43 @@ describe("从 schema 源码文本里抽常量", () => {
       'export const SANDBOX_ROOTFS_DIR = "x";',
       "export const SANDBOX_ROOTFS_FILES = [] as const;",
       'export const SANDBOX_ROOTFS_TREE_HASH = "abc";',
+      "export const SANDBOX_ROOTFS_SHIMS = [] as const;",
       "",
     ].join("\n");
     expect(sandboxRootfsConstantsFrom(source).ok).toBe(false);
+  });
+
+  it("薄壳表抽不出来也按失败处理:没有它就分不清谁是二进制", () => {
+    const source = [
+      'export const SANDBOX_ROOTFS_DIR = "x";',
+      'export const SANDBOX_ROOTFS_FILES = ["bin/bash"] as const;',
+      'export const SANDBOX_ROOTFS_TREE_HASH = "abc";',
+      "",
+    ].join("\n");
+    const parsed = sandboxRootfsConstantsFrom(source);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.reason).toContain("SANDBOX_ROOTFS_SHIMS");
+  });
+});
+
+describe("「谁是什么」从清单推出来,不另写一张表", () => {
+  it("清单里新加一个 bin/,没进薄壳表 → 当场进静态 ELF 判据", () => {
+    // 上一轮给 `cp` 补清单时,门禁侧的手写二进制表漏写它不会有任何红:判据只遍历那张表。
+    // 现在是反过来的——新增内容物写进清单,它自动被静态 ELF 判据覆盖。
+    const binaries = staticBinariesOf(
+      ["bin/bash", "bin/check", "bin/cp", "contract/rules.md"],
+      ["check", "done", "evaluate"],
+    );
+    expect(binaries).toEqual(["bin/bash", "bin/cp"]);
+  });
+
+  it("薄壳路径带 bin/ 前缀,而且按字典序(报文顺序稳定)", () => {
+    expect(shimPathsOf(["evaluate", "check", "done"])).toEqual([
+      "bin/check",
+      "bin/done",
+      "bin/evaluate",
+    ]);
   });
 });
 
