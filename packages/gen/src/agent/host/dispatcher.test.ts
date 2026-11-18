@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseToolResponse } from "@model-war/schema";
 
+import { harnessManifest } from "../identity.js";
 import type { CheckService } from "./check-service.js";
 import { createSessionTools, PROTOCOL_EXIT_CODE, REFUSAL_EXIT_CODE } from "./dispatcher.js";
 import type { EvaluateService } from "./evaluate-service.js";
@@ -105,6 +106,23 @@ describe("参数:不接受,也不吃配额", () => {
     }
     expect(tools.evaluateCalls()).toBe(3);
     expect(evaluate.calls).toBe(3);
+  });
+});
+
+describe("配额与身份清单同源", () => {
+  it("第 N+1 次被拒的那个 N,就是 manifest 里记的数", async () => {
+    // 「digest 里的配额」与「dispatcher 实际执行的配额」必须是同一件事:两处各写一个 3 时,
+    // 档案里说三次、实际能调四次这种漂移在读侧根本看不出来。判据走行为,不走常量比较。
+    const { tools } = session();
+    const quota = harnessManifest().quotas.evaluate;
+    for (let index = 0; index < quota; index += 1) {
+      const response = parse(await tools.requestHandler('{"tool":"evaluate"}'));
+      expect(response.exitCode).toBe(0);
+    }
+    const refused = parse(await tools.requestHandler('{"tool":"evaluate"}'));
+    expect(refused.exitCode).toBe(REFUSAL_EXIT_CODE);
+    expect(refused.stderr).toContain("评测额度已用完");
+    expect(tools.evaluateCalls()).toBe(quota);
   });
 });
 

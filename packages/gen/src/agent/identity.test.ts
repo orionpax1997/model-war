@@ -8,7 +8,7 @@
 
 import { expect, it } from "vitest";
 
-import { OPTIMIZATION_CANDIDATE_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
+import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
 import { ACTION_REJECT_EXIT_CODE, DONE_SENTINEL } from "./action.js";
 import {
@@ -44,7 +44,9 @@ it("清单里的数字取自真源,不是在本文件里抄的第二份", () => 
   expect(current.contextGuard.ratio).toBe(
     `${String(CONTEXT_GUARD.numerator)}/${String(CONTEXT_GUARD.denominator)}`,
   );
-  expect(current.quotas.evaluate).toBe(OPTIMIZATION_CANDIDATE_LIMIT);
+  // 清单记录的是 **dispatcher 执行的那个常量**:两处各写一个 3 时,\「档案说三次、实际能调
+  // 四次」这种漂移在读侧看不出来(见 `tool-channel.ts` 的单源注释)。
+  expect(current.quotas.evaluate).toBe(EVALUATE_CALL_LIMIT);
   expect(current.observation.stdout.limitBytes).toBe(OBSERVATION_LIMITS.stdout.limitBytes);
   expect(current.observation.stderr.limitBytes).toBe(OBSERVATION_LIMITS.stderr.limitBytes);
   expect(current.observation.stdout.headRatio).toBe("3/10");

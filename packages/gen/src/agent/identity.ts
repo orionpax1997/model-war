@@ -21,13 +21,13 @@
  * ── 数字不在本文件里再抄一遍 ──
  *
  * 截断上限取自 `truncate.ts`、步数与墙钟取自 `limits.ts`、配额取自真源包的
- * `OPTIMIZATION_CANDIDATE_LIMIT`、单步墙钟与通道 fd 取自执行器、挂载与网络**直接取 bwrap 的
+ * `EVALUATE_CALL_LIMIT`、单步墙钟与通道 fd 取自执行器、挂载与网络**直接取 bwrap 的
  * 参数表**。所以本文件没有第二份取值:改真源,清单跟着变,digest 跟着断代。
  */
 
 import { createHash } from "node:crypto";
 
-import { OPTIMIZATION_CANDIDATE_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
+import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
 import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE, DONE_SENTINEL } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
@@ -142,7 +142,9 @@ export const harnessManifest = (): HarnessManifest => {
     visibleBinaries: SANDBOX_ROOTFS_FILES.filter((file) => file.startsWith("bin/")),
     sandboxArgv: argv,
     network: argv.includes("--unshare-net") ? "unshared" : "present",
-    quotas: { evaluate: OPTIMIZATION_CANDIDATE_LIMIT, check: "counts-as-step" },
+    // 配额取 **dispatcher 执行的那个**常量(`EVALUATE_CALL_LIMIT`),不是它的同值邻居:
+    // 清单要记录的是「模型撞得到的判据」。两者同源只在这一处(out of `tool-channel.ts`)。
+    quotas: { evaluate: EVALUATE_CALL_LIMIT, check: "counts-as-step" },
     services: { tools: HOST_SERVICE_TOOLS, shape: "host-side-service", channelFd: CHANNEL_FD },
     observation: {
       keys: ["stdout", "stderr"],
