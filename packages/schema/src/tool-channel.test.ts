@@ -9,9 +9,14 @@
  * 序列化输出);两处合起来才是「协议两侧对得上」。
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
+import { OPTIMIZATION_CANDIDATE_LIMIT } from "./archive-meta.js";
 import {
+  EVALUATE_CALL_LIMIT,
   TOOL_NAMES,
   escapePayload,
   parseToolRequest,
@@ -150,5 +155,33 @@ describe("响应解析", () => {
 describe("工具名取值域", () => {
   it("三个受限工具,`done` 也在里面(它被写进管道时仍是一条合法请求)", () => {
     expect([...TOOL_NAMES]).toEqual(["check", "evaluate", "done"]);
+  });
+});
+
+describe("评测配额的真源方向", () => {
+  it("配额真源在 harness 侧,档案形状从它派生", () => {
+    expect(EVALUATE_CALL_LIMIT).toBe(3);
+    // 派生值相等是这条断言的一半;另一半是**方向**——相等在两种写法下都成立。
+    expect(OPTIMIZATION_CANDIDATE_LIMIT).toBe(EVALUATE_CALL_LIMIT);
+  });
+
+  /**
+   * 方向用源码钉住,因为它是**依赖边**,不是取值。
+   *
+   * 反过来写过一版(`EVALUATE_CALL_LIMIT = OPTIMIZATION_CANDIDATE_LIMIT`),后果是档案形状一旦
+   * 放宽候选数,harness 配额与 `harnessDigest` 就跟着断代——正是 ADR-0029 把档案形状排除出清单
+   * 要防的耦合。这种翻转在任何取值断言里都看不出来,所以判据只能看那条 import 边。
+   */
+  it("`tool-channel.ts` 不 import 档案形状,`archive-meta.ts` 单向取它", () => {
+    const read = (name: string): string =>
+      readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
+    const channel = read("./tool-channel.ts");
+    const archiveMeta = read("./archive-meta.ts");
+    expect(channel, "harness 侧的配额真源又开始依赖档案形状了").not.toContain(
+      'from "./archive-meta.js"',
+    );
+    expect(archiveMeta, "档案形状没有从 harness 侧取配额").toContain(
+      'import { EVALUATE_CALL_LIMIT } from "./tool-channel.js"',
+    );
   });
 });
