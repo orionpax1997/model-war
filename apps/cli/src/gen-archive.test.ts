@@ -34,8 +34,8 @@ import {
   reply,
   runGeneration,
   stubClient,
-  withRealBash,
 } from "@model-war/gen";
+import { withRealBash } from "@model-war/gen/testing";
 import { RULESET_VERSION, SANDBOX_RUNTIME_HASH, type JsonValue } from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 
@@ -86,7 +86,7 @@ it("gen 产出的存档过 `validateArchiveMeta`:三件套齐、哈希与版本�
   mkdirSync(workspaceDir, { recursive: true });
   // agent 形态的一次会话:写脚本 → evaluate → done。三步各一次模型调用。
   //
-  // 执行器换成宿主 `bash`(`@model-war/gen` 的 `withRealBash`):`runGeneration` 的第一件事是
+  // 执行器换成宿主 `bash`(`@model-war/gen/testing` 的 `withRealBash`):`runGeneration` 的第一件事是
   // 启动自证(ADR-0033),它要真跑 bwrap,而**本文件在常跑链(unit)上**——那条链不装 bubblewrap。
   // 不换的后果是「本机装了 bwrap 所以绿、CI 上红」,两种处方混成一条红。真隔离由
   // `apps/cli/src/agent-real-session.test.ts`(`check:sandbox`)与 `agent-session-archive.test.ts`
