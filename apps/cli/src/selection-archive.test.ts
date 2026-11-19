@@ -298,8 +298,13 @@ it("发布时冻结文件身份错配拒绝 rename，候选旁挂不变", () => 
   discardStagingDir(stage);
 });
 
-const writeCandidateSidecars = (root: string, meta: ArchiveMeta, scripts = products): void => {
-  const directory = join(root, "archive/alpha");
+const writeCandidateSidecars = (
+  root: string,
+  meta: ArchiveMeta,
+  scripts = products,
+  slug = "alpha",
+): void => {
+  const directory = join(root, "archive", slug);
   mkdirSync(directory, { recursive: true });
   for (const candidate of legacyCandidatesOf(meta)) {
     writeFileSync(join(directory, candidate.scriptFile), scripts[candidate.stage]!);
@@ -655,52 +660,158 @@ const selectionScriptPaths = [
     `observed-r1-round-${round}.jsonl.candidate.js`,
   ]),
 ];
-it.each(selectionScriptPaths)(
-  "真实 report CLI 拒绝选拔档 %s 的篡改、缺失或不可读，安全错误且不计成功",
-  (relative) => {
+
+/** 篡改时铺进去的哨兵字节：它出现在任何输出里都算泄漏。 */
+const tamperSecret = "PRIVATE_TAMPER_PROMPT_PROVIDER_BODY";
+
+/** 三种损坏的造法。调用前目标路径已被清掉，这里只铺上对应形状。 */
+const corruptions: readonly { mode: string; damage: (path: string) => void }[] = [
+  { mode: "tampered", damage: (path) => writeFileSync(path, tamperSecret) },
+  { mode: "missing", damage: () => undefined },
+  { mode: "unreadable", damage: (path) => mkdirSync(path) },
+];
+
+/** 记录读不出来时读侧只给一句总说法——它不对外分解「是缺、是坏、还是不可读」。 */
+const unreadableReason = "记录 JSON、优化/选拔元数据或候选身份不合法，无法生成摘要";
+
+/** slug 既是目录名也是 `meta.model`：让它自己说明坏的是哪个文件、哪一种坏法。 */
+const tamperSlugOf = (mode: string, relative: string): string =>
+  `corrupt-${mode}-${relative.replaceAll(/[^a-z0-9]+/g, "-")}`;
+
+/**
+ * 真实 report CLI 拒绝选拔档：篡改、缺失、不可读，逐个文件、逐条断言。
+ *
+ * **进程启动账**——下一次改这里的人先读这一段。改之前是 8 个 `it.each` 路径、每条 7 次
+ * spawn，合计 56 次（3 种损坏 × 2 种格式 = 6，加收尾 `status === 0` 一次），单实例空载
+ * 3.4–4.0 s，而它挂在 `unit` project 的 vitest 默认 5 s 上：本次合并期间它两次因超时红，
+ * 两次都是超时，不是断言失败。压在它身上的是**进程启动**，不是那几条断言：一次 spawn
+ * 按 ~0.18 s 起步（`node -e ""` 约 0.05 s，余下是载那个 ~1.9 MB 的 CLI 包），7 次就是
+ * 一整条用例的耗时。
+ *
+ * 现在**这条用例只剩 1 次 spawn**（+0.07 s 读这 24 份坏档），加上造 24 份档与两趟读取
+ * 各一下，单例空载实测 0.6–0.8 s。JSON 走真进程（进程边界 + argv 解析 + 退出码），
+ * Markdown 走**同一个处理器** `runArchiveReport`（CLI 就是把子命令路由到它）并注入 io。
+ * 两种格式的判据一条没少，少的只是第二次进程启动——退出码映射由 JSON 那一趟证明，
+ * 渲染差异本来就在处理器里、不在进程边界上。收尾那次 `status === 0` 的进程也不再单独起：
+ * 它验的是「损坏修回去之后档案又能读、`meta.json` 字节没被动过」，前半由同一函数的共享
+ * 读取（`readArchiveReports`）在末尾断言，后半逐档按字节比。
+ *
+ * **超时预算**（与上头那笔启动账配套）：这条用例自己的进程只有 1 次，其余都是同一进程里的
+ * 造档与两趟读取，所以它不该再跟 `unit` project 的默认 5 s 赛跑。本机实测：空载 0.7 s；
+ * `--maxWorkers=8` 全量并发 1.8–2.6 s，差的那一截是 1 次 spawn 被 CPU 争用拖慢（`node -e ""`
+ * 空载 0.05 s，可见不是用例自己加的活）。预算是最坏并发读数的 ~5.8 倍，常量写在这条用例上，
+ * 与 `apps/cli/src/cli.test.ts` 给真 spawn 用例 `{ timeout: 30_000 }` / `120_000` 同一种做法：
+ * 看得见，不藏在 project 默认值里，也不替结构问题打掩护。
+ *
+ * **为什么三种损坏要各占一份档**：`meta.model` 必须等于目录 slug（`archive-report.ts` 的
+ * `readRecord` 会拒），而 tampered / missing / unreadable 是同一个路径的三个互斥状态，
+ * 所以「一次造齐」只能是「每个 (文件 × 损坏形状) 一份档」= 8 × 3 = 24 份，同一个 root、
+ * 两趟读取跑完。断言因此从「每次一种损坏、一条 issue」变成「一次 24 条 issue、逐条对上
+ * 来源」——判据只多不少，少的是重复的进程启动。共享读取那一层只抽一份留一条
+ * `onReadIssue` 形状的断言，是因为它与上面两趟读的是同一份档、走的是同一个
+ * `readArchiveReports`，再读一遍 24 份只是重跑同一件事。
+ */
+it(
+  "真实 report CLI 在同一个 root 里逐条拒绝选拔档的篡改、缺失或不可读，安全错误且不计成功",
+  { timeout: 15_000 },
+  async () => {
     const root = mkdtempSync(join(scratch, "tamper-"));
-    const meta = metaOf(1);
-    const staging = openStagingDir(root, "alpha");
-    writeFileSync(join(staging, "script.ts"), source[1]!);
-    writeFileSync(join(staging, "script.js"), products[1]!);
-    expect(commitArchive({ root, slug: "alpha", runId: "r1", stagingDir: staging, meta }).ok).toBe(
-      true,
+    const cases = selectionScriptPaths.flatMap((relative) =>
+      corruptions.map(({ mode, damage }) => ({
+        relative,
+        mode,
+        damage,
+        slug: tamperSlugOf(mode, relative),
+      })),
     );
-    writeCandidateSidecars(root, meta);
-    const path = join(root, "archive/alpha", relative);
-    const original = readFileSync(path);
-    const metaBytes = readFileSync(join(root, "archive/alpha/r1/meta.json"));
-    const secret = "PRIVATE_TAMPER_PROMPT_PROVIDER_BODY";
-    for (const mode of ["tampered", "missing", "unreadable"]) {
-      rmSync(path, { recursive: true, force: true });
-      if (mode === "tampered") writeFileSync(path, secret);
-      if (mode === "unreadable") mkdirSync(path);
-      const issues: { source: string; reason: string }[] = [];
-      expect(readArchiveReports(root, { onReadIssue: (issue) => issues.push(issue) })).toEqual([]);
-      expect(issues).toEqual([
-        {
-          source: "archive/alpha/r1/meta.json",
-          reason: "记录 JSON、优化/选拔元数据或候选身份不合法，无法生成摘要",
-        },
-      ]);
-      expect(() => readArchiveReports(root)).toThrow(/候选身份不合法/);
-      for (const json of [true, false]) {
-        const result = reportCli(root, json);
-        expect(result.status, result.stderr).toBe(1);
-        expect(result.stderr).toContain("读取记录失败 archive/alpha/r1/meta.json");
-        expect(result.stderr).toContain("候选身份不合法");
-        expect(result.stdout + result.stderr).not.toContain(secret);
-        if (json) expect(JSON.parse(result.stdout)).toEqual([]);
-        else {
-          expect(result.stdout).toContain("成功记录 0");
-          expect(result.stdout).not.toContain("## alpha · success");
-        }
-      }
+    const originals = new Map<string, Buffer>();
+    const metaBytes = new Map<string, Buffer>();
+    const at = (slug: string, relative: string): string => join(root, "archive", slug, relative);
+
+    // 24 份档只差 `model`（= 目录 slug），其余逐位相同：造一次，按 slug 换 `model` 复制。
+    const baseMeta = metaOf(1);
+    for (const { slug } of cases) {
+      const meta = { ...baseMeta, model: slug };
+      const staging = openStagingDir(root, slug);
+      writeFileSync(join(staging, "script.ts"), source[1]!);
+      writeFileSync(join(staging, "script.js"), products[1]!);
+      expect(commitArchive({ root, slug, runId: "r1", stagingDir: staging, meta }).ok, slug).toBe(
+        true,
+      );
+      writeCandidateSidecars(root, meta, products, slug);
+      metaBytes.set(slug, readFileSync(join(root, "archive", slug, "r1/meta.json")));
     }
-    rmSync(path, { recursive: true, force: true });
-    writeFileSync(path, original);
-    expect(reportCli(root, true).status).toBe(0);
-    expect(readFileSync(join(root, "archive/alpha/r1/meta.json"))).toEqual(metaBytes);
+
+    for (const { relative, damage, slug } of cases) {
+      const path = at(slug, relative);
+      originals.set(`${slug}/${relative}`, readFileSync(path));
+      rmSync(path, { recursive: true, force: true });
+      damage(path);
+    }
+
+    const expectedSources = cases.map(({ slug }) => `archive/${slug}/r1/meta.json`);
+    // 共享读取这一层（其它消费者用的就是它）：坏档一条都不许当作报告返回，且逐条说得出出处。
+    // 逐条枚举走下面两趟格式，这里只钉「不给 `onReadIssue` 就抛」与「给了也不伪造报告」。
+    expect(() => readArchiveReports(root)).toThrow(/候选身份不合法/);
+    const sample = cases[0]!.slug;
+    const sampledIssues: { source: string; reason: string }[] = [];
+    expect(
+      readArchiveReports(root, {
+        model: sample,
+        onReadIssue: (issue) => sampledIssues.push(issue),
+      }),
+    ).toEqual([]);
+    expect(sampledIssues).toEqual([
+      { source: `archive/${sample}/r1/meta.json`, reason: unreadableReason },
+    ]);
+
+    // 格式一：真进程、`--json`。
+    const json = reportCli(root, true);
+    expect(json.status, json.stderr).toBe(1);
+    for (const source of expectedSources)
+      expect(json.stderr, source).toContain(`读取记录失败 ${source}`);
+    expect(json.stderr.match(/读取记录失败/g)).toHaveLength(cases.length);
+    expect(json.stderr).toContain("候选身份不合法");
+    expect(json.stdout + json.stderr).not.toContain(tamperSecret);
+    expect(JSON.parse(json.stdout)).toEqual([]);
+
+    // 格式二：同一个处理器、Markdown 渲染（不另起进程，见头注的启动账）。
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const markdownCode = await runArchiveReport(["--root", root], {
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+    });
+    const markdown = { stdout: stdout.join(""), stderr: stderr.join("") };
+    expect(markdownCode, markdown.stderr).toBe(1);
+    for (const source of expectedSources)
+      expect(markdown.stderr, source).toContain(`读取记录失败 ${source}`);
+    expect(markdown.stderr.match(/读取记录失败/g)).toHaveLength(cases.length);
+    expect(markdown.stdout + markdown.stderr).not.toContain(tamperSecret);
+    // 「不计成功」：坏档案不进成功记录，也不渲染成成功档的一节。
+    expect(markdown.stdout).toContain("成功记录 0");
+    expect(markdown.stdout).not.toContain("· success");
+
+    // 损坏修回去：字节没被动过，档案重新可读。
+    for (const { relative, slug } of cases) {
+      const path = at(slug, relative);
+      rmSync(path, { recursive: true, force: true });
+      writeFileSync(path, originals.get(`${slug}/${relative}`)!);
+    }
+    for (const { slug } of cases)
+      expect(
+        readFileSync(join(root, "archive", slug, "r1/meta.json")).equals(metaBytes.get(slug)!),
+        slug,
+      ).toBe(true);
+    // 「又能读」每种损坏抽一份：一次成功读档要按候选 × 整张网格重算，24 份全读会把这条
+    // 用例的耗时重新推回它要压的那个量级，而 24 份档的修复本身已由上面的字节比对钉住。
+    for (const { mode } of corruptions) {
+      const slug = tamperSlugOf(mode, selectionScriptPaths[0]!);
+      expect(
+        readArchiveReports(root, { model: slug }).map((report) => report.model),
+        slug,
+      ).toEqual([slug]);
+    }
   },
 );
 
