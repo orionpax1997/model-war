@@ -1,5 +1,5 @@
 /**
- * rootfs 漂移判据的自测:常量抽取、六条判据的**每条两个方向**,以及「真实这棵树现在是绿的」。
+ * rootfs 漂移判据的自测:常量抽取、七条判据的**每条两个方向**,以及「真实这棵树现在是绿的」。
  *
  * ── 为什么最后那条最重要 ──
  * 其余用例证明判据会红、也会绿;只有「真实这棵树绿」把判据接到了入库产物上——它让默认的
@@ -20,6 +20,8 @@ import {
   byteCopyFinding,
   executableFinding,
   manifestFindings,
+  provenanceFindings,
+  provenanceRows,
   sandboxRootfsConstantsFrom,
   SCHEMA_CONSTANTS_SOURCE,
   shimPathsOf,
@@ -101,7 +103,7 @@ describe("「谁是什么」从清单推出来,不另写一张表", () => {
   });
 });
 
-describe("六条判据各自两个方向", () => {
+describe("七条判据各自两个方向", () => {
   it("① 树哈希:相符时没有话说,不符时把现算值与处方一起给", () => {
     expect(treeHashFinding("same", "same")).toBeUndefined();
     const finding = treeHashFinding("expected", "actual");
@@ -152,6 +154,45 @@ describe("六条判据各自两个方向", () => {
     expect(executableFinding("bin/check", false)?.detail).toContain("+x");
   });
 
+  it("⑦ 来路说明书:三向都判——缺行、hex 不符、多出来的行", () => {
+    const binaries = [
+      { path: "bin/bash", sha256: "a".repeat(64) },
+      { path: "bin/sed", sha256: "b".repeat(64) },
+    ];
+    const rows = [
+      { name: "bin/bash", sha256: "a".repeat(64) },
+      { name: "bin/sed", sha256: "b".repeat(64) },
+    ];
+    expect(provenanceFindings(rows, binaries)).toEqual([]);
+    const missing = provenanceFindings(rows.slice(0, 1), binaries);
+    expect(missing).toHaveLength(1);
+    expect(missing[0]?.detail).toContain("bin/sed");
+    const wrong = provenanceFindings(
+      [rows[0]!, { name: "bin/sed", sha256: "c".repeat(64) }],
+      binaries,
+    );
+    expect(wrong).toHaveLength(1);
+    expect(wrong[0]?.where).toBe("bin/sed");
+    expect(wrong[0]?.detail).toContain("c".repeat(64));
+    const extra = provenanceFindings(
+      [...rows, { name: "bin/gone", sha256: "d".repeat(64) }],
+      binaries,
+    );
+    expect(extra).toHaveLength(1);
+    expect(extra[0]?.where).toBe("bin/gone");
+  });
+
+  it("⑦ 来路表的形态:只认「产物 | 版本 | sha256」三列且前两列是 bin/ 路径与 hex 的行", () => {
+    const markdown = [
+      "| 产物 | 版本 | 字节 sha256 |",
+      "|---|---|---|",
+      `| \`bin/sed\` | GNU sed 4.9 | \`${"f".repeat(64)}\` |`,
+      "| `bin/x` | 版本 | 不是 hex |",
+      "正文里出现 `bin/not-a-row` 不算",
+    ].join("\n");
+    expect(provenanceRows(markdown)).toEqual([{ name: "bin/sed", sha256: "f".repeat(64) }]);
+  });
+
   it("⑥ 顶层只许两个挂载目录与来路说明书", () => {
     expect(
       topLevelFindings(["bin", "contract", "PROVENANCE.md"], ["bin", "contract", "PROVENANCE.md"]),
@@ -167,7 +208,7 @@ describe("六条判据各自两个方向", () => {
 });
 
 describe("真实入库产物", () => {
-  it("现在这棵树是绿的:六条判据全过,且查到了内容物", () => {
+  it("现在这棵树是绿的:七条判据全过,且查到了内容物", () => {
     const check = checkRootfsTree(repoRoot);
     expect(check.findings).toEqual([]);
     // 空转的反面:真的读到了东西。份数由清单决定,这里只要求非零——写死数字会让「加一份内容物」
