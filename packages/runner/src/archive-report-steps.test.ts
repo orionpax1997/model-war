@@ -195,6 +195,23 @@ const markdownOf = async (root: string): Promise<string> => {
   return out.join("");
 };
 
+/**
+ * 抽出 Markdown 里「候选序」那一段的一行条（`- 第 N 步：…`）。
+ *
+ * 段尾落在下一个空行：两侧都是列表项，不能靠「下一行不是 `- `」截断。
+ */
+const candidateSequenceOf = (md: string): readonly string[] => {
+  const lines = md.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("候选序（"));
+  if (start === -1) return [];
+  const entries: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line === "") break;
+    if (line.startsWith("- ")) entries.push(line);
+  }
+  return entries.filter((line) => line.startsWith("- 第 "));
+};
+
 const copyFixture = (name: string): string => {
   const root = mkdtempSync(join(scratch, `${name}-`));
   cpSync(join(FIXTURE_ROOT, name), root, { recursive: true });
@@ -349,6 +366,77 @@ it("候选序从 --json 可读：两次 evaluate 之间改了同一份 script.ts
   // 两次提交之间的步（第 3 步）在步列里各带自己的动作与结果侧证据。
   expect(report?.steps?.entries[2]?.action).toBe("bash");
   expect(report?.steps?.entries[2]?.result).toEqual({ kind: "tsc", errorCodes: ["TS2322"] });
+});
+
+it("候选序从候选描述符出：与 check 写在同一块、动作记成 bash 的那次提交也列出来", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "steps-bash-commit",
+    runId: "2026-01-04T00-00-00-009Z",
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 30 },
+      // 第 3 步是 `check` 与 `evaluate` 写在同一块：动作记成 `bash`，但它产出了第 2 个候选。
+      { action: "bash", atMs: 2_000, harnessMs: 60 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [2, 3],
+    termination: "done",
+  });
+  const [report] = readArchiveReports(root);
+  // 数据层本来就有两条候选（真源从没丢过）：丢的只是渲染。
+  expect(report?.scores.map((score) => score.protocolRound)).toEqual([2, 3]);
+  expect(report?.candidateStages).toBe(2);
+
+  const md = await markdownOf(root);
+  const sequence = candidateSequenceOf(md);
+  // 档案里有几个候选，序里就列几条：动作标签不是筛选判据。
+  expect(sequence).toHaveLength(2);
+  expect(sequence[0]).toContain("第 2 步：scriptSha256=");
+  expect(sequence[1]).toContain("第 3 步：scriptSha256=");
+  // 动作标签降级为**注**：是 `evaluate` 时注为空，不是时注出「这一步还跑了别的命令」。
+  expect(sequence[0]).not.toContain("还跑了别的命令");
+  expect(sequence[1]).toContain("这一步还跑了别的命令");
+  // 既有语义不动：两次之间隔了几步、字节是否相同仍由已有字段合成。
+  expect(sequence[1]).toContain("之间经过 0 步（无）");
+  expect(sequence[1]).toContain("字节不同");
+});
+
+it("候选序单候选：一条就列一条，不按别的步是否像提交补第二条", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "steps-one-commit",
+    runId: "2026-01-04T00-00-00-010Z",
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 30 },
+      // 提交之后的 `check` 步：它没有产出候选，因此不进序。
+      { action: "bash", atMs: 2_000, harnessMs: 20 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [2],
+    termination: "done",
+  });
+  const [report] = readArchiveReports(root);
+  expect(report?.candidateStages).toBe(1);
+  const sequence = candidateSequenceOf(await markdownOf(root));
+  expect(sequence).toHaveLength(1);
+  expect(sequence[0]).toContain("第 2 步：scriptSha256=");
+  expect(sequence[0]).not.toContain("与上一次提交");
 });
 
 it("v3 单候选：候选只有一位时步列照旧，末位即最终候选", () => {
