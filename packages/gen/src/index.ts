@@ -119,6 +119,10 @@ export {
   type ModelFailure,
   type ModelOutcome,
 } from "./pipeline.js";
+// `TransportError` 是 `ModelClient.send` 的失败契约（重试层按 `instanceof` / `status` 分派适应哪种退避），
+// 所以它进生产面：写一个适配器或者一个「会吹 429」的桩都需要它。拿普通 `Error` 冒充不是同一个事
+// ——那在重试层是「不可重试」，于是一条想验退避的用例会静静地验成另一条路。
+export { TransportError, type TransportErrorOptions } from "./transport-error.js";
 export {
   generateAndFreeze,
   runGeneration,

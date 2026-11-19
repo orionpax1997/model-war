@@ -20,11 +20,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TRIAL_MATCHES_PER_CANDIDATE } from "@model-war/schema";
+import {
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_GRID_SUMMARY_VERSION,
+  TRIAL_MATCHES_PER_CANDIDATE,
+  type TrialPlanScript,
+} from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 
 import { readArchiveReports, runArchiveReport } from "./archive-report.js";
 import { CONTAMINATION_THRESHOLDS, stepGroupsOf } from "./archive-report-steps.js";
+import { buildTrialPlan, trialGridMatchesOf } from "./trial-plan.js";
 
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-archive-steps-"));
 afterAll(() => rmSync(scratch, { force: true, recursive: true }));
@@ -73,6 +79,64 @@ type V3Input = {
   readonly atStep?: number;
   /** `false` = 造一个「声明了 v3、却没有过程记录」的档（读侧必须拒读，不许静默当旧档）。 */
   readonly withSteps?: boolean;
+  /** 给这几步真写旁挂网格汇总（按步号索引）；没给的步就没有 `.grid.json`。 */
+  readonly grids?: readonly { readonly step: number; readonly summary: Record<string, unknown> }[];
+};
+
+/**
+ * 一份旁挂网格汇总（`<观测文件>.grid.json`）的**真数据形状**：整份计划 + 分数 + 逐场身份。
+ *
+ * 与 `archive/gpt-6-luna/observed-2026-11-19T01-33-42-820Z-round-20.jsonl.grid.json` 同形：
+ * 报告要读的四份陪练身份在 `plan.scripts` 里（`id` / `role` / `source` / `scriptSha256`）。
+ * 这里只造形状，不跑对局：本节的判据是「读不读得出身份」，不是「分数算得对不对」。
+ */
+const gridSummaryOf = (options: {
+  readonly incumbent: { readonly id: string; readonly source: string };
+  readonly scriptSha256: string;
+}): Record<string, unknown> => {
+  const scripts: readonly TrialPlanScript[] = [
+    {
+      id: "top:claude-opus-5-5",
+      role: "top",
+      source: "archive:claude-opus-5-5/2026-10-16T08-40-12-578Z",
+      scriptSha256: "1".repeat(64),
+    },
+    {
+      id: "mid:minimax-m3.1-flash",
+      role: "mid",
+      source: "archive:minimax-m3.1-flash/2026-10-13T13-48-45-729Z",
+      scriptSha256: "2".repeat(64),
+    },
+    {
+      id: "last:glm-5.3-flash",
+      role: "last",
+      source: "archive:glm-5.3-flash/2026-10-13T22-30-50-602Z",
+      scriptSha256: "3".repeat(64),
+    },
+    {
+      id: options.incumbent.id,
+      role: "incumbent",
+      source: options.incumbent.source,
+      scriptSha256: "4".repeat(64),
+    },
+  ];
+  const plan = buildTrialPlan({
+    ruleset: "v2",
+    rulesetSha256: "9".repeat(64),
+    sandboxRuntimeHash: "8".repeat(64),
+    scripts,
+    maps: [
+      { name: TRIAL_GRID_MAP_NAMES[0], sha256: "f".repeat(64) },
+      { name: TRIAL_GRID_MAP_NAMES[1], sha256: "e".repeat(64) },
+    ],
+  });
+  return {
+    version: TRIAL_GRID_SUMMARY_VERSION,
+    plan,
+    scriptSha256: options.scriptSha256,
+    score: { totalPoints: 8, averagePoints: 0.25, countedMatches: TRIAL_MATCHES_PER_CANDIDATE },
+    matches: trialGridMatchesOf(plan),
+  };
 };
 
 /**
@@ -80,6 +144,9 @@ type V3Input = {
  *
  * 侧车（`.candidate.js` / `.candidate.ts`）与冻结的 `script.js` / `script.ts` 都真写，所以报告
  * 的 `scriptState` 是 `verified`——那是「候选按位置可读」里最要紧的一半。
+ *
+ * `grids` 给那几步真写一份旁挂网格汇总（`<观测文件>.grid.json`）：v3 档的 `meta` 不装计划，
+ * 所以「这 32 场跟谁打」只在那里（ADR-0035）。
  */
 const writeV3 = (root: string, input: V3Input): void => {
   const slugDir = join(root, "archive", input.slug);
@@ -104,6 +171,12 @@ const writeV3 = (root: string, input: V3Input): void => {
     const product = SCRIPT(`candidate-${String(index)}`);
     writeFileSync(join(slugDir, `${observationsFile}.candidate.js`), product);
     writeFileSync(join(slugDir, `${observationsFile}.candidate.ts`), product);
+    for (const grid of input.grids ?? [])
+      if (grid.step === step)
+        writeFileSync(
+          join(slugDir, `${observationsFile}.grid.json`),
+          `${JSON.stringify(grid.summary, null, 2)}\n`,
+        );
     return {
       step,
       scriptFile: `${observationsFile}.candidate.js`,
@@ -195,11 +268,384 @@ const markdownOf = async (root: string): Promise<string> => {
   return out.join("");
 };
 
+/**
+ * 抽出 Markdown 里「候选序」那一段的一行条（`- 第 N 步：…`）。
+ *
+ * 段尾落在下一个空行：两侧都是列表项，不能靠「下一行不是 `- `」截断。
+ */
+const candidateSequenceOf = (md: string): readonly string[] => {
+  const lines = md.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("候选序（"));
+  if (start === -1) return [];
+  const entries: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line === "") break;
+    if (line.startsWith("- ")) entries.push(line);
+  }
+  return entries.filter((line) => line.startsWith("- 第 "));
+};
+
 const copyFixture = (name: string): string => {
   const root = mkdtempSync(join(scratch, `${name}-`));
   cpSync(join(FIXTURE_ROOT, name), root, { recursive: true });
   return root;
 };
+
+/**
+ * 抽出 Markdown 里「陪练」那一段的全部行（`- 陪练（…）` 及其下的身份行）。
+ *
+ * 段尾落在下一个既不是 `- ` 也不是 `  - ` 开头的非空行或空行。
+ */
+const sparringLinesOf = (md: string): readonly string[] => {
+  const lines = md.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("- 陪练"));
+  if (start === -1) return [];
+  const entries: string[] = [];
+  for (const line of lines.slice(start)) {
+    if (line.trim() === "") {
+      if (entries.length > 0) break;
+      continue;
+    }
+    if (!/^(-|\s{2}-) /.test(line)) break;
+    entries.push(line);
+  }
+  return entries;
+};
+
+// ── 陪练身份（v3：计划不在 `meta` 里，读候选旁挂的 `.grid.json`）────────────────
+
+it("陪练：候选旁挂 `.grid.json` 的四份身份读得出，自指（本席位上一场）显式标出", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-self",
+    runId: "2026-01-05T00-00-00-001Z",
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 30 },
+      { action: "done", atMs: 2_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [2],
+    termination: "done",
+    grids: [
+      {
+        step: 2,
+        summary: gridSummaryOf({
+          // 在位陪练 = 本席位自己的上一场（runId 与本档不同）。
+          incumbent: {
+            id: "incumbent:sparring-self",
+            source: "archive:sparring-self/2026-01-01T00-00-00-009Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  // 一组头 + 四份身份 + 自指标记。
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(1);
+  expect(sparring[0]).toContain("第 2 步候选");
+  expect(sparring[0]).toContain("planSha256=");
+  const identities = sparring.join("\n");
+  // 四个身份的 id / role / source / scriptSha256 都在。
+  expect(identities).toContain("top:claude-opus-5-5（role=top；");
+  expect(identities).toContain("mid:minimax-m3.1-flash（role=mid；");
+  expect(identities).toContain("last:glm-5.3-flash（role=last；");
+  expect(identities).toContain("incumbent:sparring-self（role=incumbent；");
+  expect(identities).toContain(
+    "source=archive:sparring-self/2026-01-01T00-00-00-009Z；scriptSha256=",
+  );
+  expect(identities.match(/scriptSha256=/g)).toHaveLength(4);
+  // 自指：显式标出「本席位上一场」且写出那一场的 runId。
+  expect(md).toContain("陪练 = 本席位上一场（`2026-01-01T00-00-00-009Z`）；本场与它不可直接比");
+});
+
+it("陪练：在位陪练指向别席位时不标自指，四份身份照旧列出", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-other",
+    runId: "2026-01-05T00-00-00-002Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+    grids: [
+      {
+        step: 1,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:another-seat",
+            source: "archive:another-seat/2026-01-04T00-00-00-003Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(1);
+  expect(sparring.join("\n")).toContain("incumbent:another-seat");
+  // 反例：在位指向别席位 → 不写「本席位上一场」。
+  expect(md).not.toContain("本席位上一场");
+});
+
+it("陪练：`id` 是本席位而 `source` 指向别家时不标自指（两个指针都得指本席位）", async () => {
+  // 两个字段说两件事：`id` 说「本席位」，`source` 说「另一家的档」。它们不可能同时为真，
+  // 而报告那句是一句**合取**的声称，所以这里选「不标」而不是「取第一个字段」（见
+  // `sparringSelfReferenceOf` 头注）。
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-mismatch",
+    runId: "2026-01-05T00-00-00-007Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+    grids: [
+      {
+        step: 1,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:sparring-mismatch",
+            source: "archive:another-seat/2026-01-04T00-00-00-003Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  // 四份身份照旧列出（不因自指不标就不读那一份）。
+  expect(sparringLinesOf(md).join("\n")).toContain("incumbent:sparring-mismatch");
+  expect(md).not.toContain("本席位上一场");
+});
+
+it("陪练：`plan` 缺席写「未记录」而不是异常", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-no-plan",
+    runId: "2026-01-05T00-00-00-003Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+    // 只有外层形状、没有 `plan`：真档里唯一可能缺的就是计划（v3 不装进 `meta`）。
+    grids: [{ step: 1, summary: { version: TRIAL_GRID_SUMMARY_VERSION } }],
+  });
+  const md = await markdownOf(root);
+  expect(md).toContain("陪练：未记录");
+  expect(md).not.toContain("本席位上一场");
+});
+
+it("陪练：`.grid.json` 不在盘上也写「未记录」", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-absent",
+    runId: "2026-01-05T00-00-00-004Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+  });
+  const md = await markdownOf(root);
+  expect(md).toContain("陪练：未记录");
+});
+
+it("陪练：两个候选各自那份 `.grid.json` 的身份都读得到", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-two",
+    runId: "2026-01-05T00-00-00-005Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "bash", atMs: 1_000, harnessMs: 5 },
+      { action: "evaluate", atMs: 2_000, harnessMs: 40 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1, 3],
+    termination: "done",
+    grids: [
+      {
+        step: 1,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:early-seat",
+            source: "archive:early-seat/2026-01-02T00-00-00-001Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+      {
+        step: 3,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:sparring-two",
+            source: "archive:sparring-two/2026-01-03T00-00-00-002Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-1")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  // 两候选各自一份：两组头 + 各四份身份。
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(2);
+  expect(sparring.join("\n")).toContain("第 1 步候选");
+  expect(sparring.join("\n")).toContain("第 3 步候选");
+  expect(sparring.join("\n")).toContain("incumbent:early-seat");
+  expect(sparring.join("\n")).toContain("incumbent:sparring-two");
+  // 只有第 3 步那份是自指。
+  expect(md).toContain("陪练 = 本席位上一场（`2026-01-03T00-00-00-002Z`）");
+  expect(md).not.toContain("本席位上一场（`2026-01-02T00-00-00-001Z`）");
+});
+
+it("陪练：两份 `.grid.json` 逐字相同时四份身份不重列，但仍各自读过、自指照说", async () => {
+  const root = rootOf();
+  // 真档（Luna 2026-11-19）的形状：两次提交用的是同一张网格（同一 `planSha256`）。
+  const shared = gridSummaryOf({
+    incumbent: {
+      id: "incumbent:sparring-same",
+      source: "archive:sparring-same/2026-01-02T00-00-00-001Z",
+    },
+    scriptSha256: sha256Of(SCRIPT("candidate-0")),
+  });
+  writeV3(root, {
+    slug: "sparring-same",
+    runId: "2026-01-05T00-00-00-006Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "bash", atMs: 1_000, harnessMs: 5 },
+      { action: "evaluate", atMs: 2_000, harnessMs: 40 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1, 3],
+    termination: "done",
+    grids: [
+      { step: 1, summary: shared },
+      { step: 3, summary: shared },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  // 两个候选各自一份条目（两份文件都读过），但四份身份只排一遍。
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(2);
+  expect(sparring.join("\n")).toContain("与第 1 步候选逐字相同");
+  expect(sparring.join("\n").match(/top:claude-opus-5-5（role=top；/g)).toHaveLength(1);
+  // 去重不影响自指：两份都是自指，各说一句。
+  expect(md).toContain("陪练 = 本席位上一场（`2026-01-02T00-00-00-001Z`）");
+  expect(md.match(/本席位上一场/g)).toHaveLength(2);
+});
+
+it("陪练：去重比的是首次出现的那一份，不是上一份", async () => {
+  const root = rootOf();
+  // 三候选：第 1、5 步同一张网格，中间第 3 步换了一张。第二份条目的步号必须指得到第 1 步：
+  // 说「与上一份相同」在这里是假话——上一份恰好是那张不一样的。
+  const shared = gridSummaryOf({
+    incumbent: {
+      id: "incumbent:sparring-gap",
+      source: "archive:sparring-gap/2026-01-02T00-00-00-001Z",
+    },
+    scriptSha256: sha256Of(SCRIPT("candidate-0")),
+  });
+  const other = gridSummaryOf({
+    incumbent: {
+      id: "incumbent:other-seat",
+      source: "archive:other-seat/2026-01-02T00-00-00-002Z",
+    },
+    scriptSha256: sha256Of(SCRIPT("candidate-1")),
+  });
+  writeV3(root, {
+    slug: "sparring-gap",
+    runId: "2026-01-05T00-00-00-008Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "bash", atMs: 500, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 40 },
+      { action: "bash", atMs: 1_500, harnessMs: 5 },
+      { action: "evaluate", atMs: 2_000, harnessMs: 50 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4, 5, 6].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1, 3, 5],
+    termination: "done",
+    grids: [
+      { step: 1, summary: shared },
+      { step: 3, summary: other },
+      { step: 5, summary: shared },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md).join("\n");
+  expect(sparring).toContain("与第 1 步候选逐字相同");
+  expect(sparring).not.toContain("与第 3 步候选逐字相同");
+  // 中间那份自己的四份身份照旧列出（它是那一格唯一的分家）。
+  expect(sparring).toContain("incumbent:other-seat");
+});
 
 // ── 步级度量 ──────────────────────────────────────────────────────────────────
 
@@ -349,6 +795,77 @@ it("候选序从 --json 可读：两次 evaluate 之间改了同一份 script.ts
   // 两次提交之间的步（第 3 步）在步列里各带自己的动作与结果侧证据。
   expect(report?.steps?.entries[2]?.action).toBe("bash");
   expect(report?.steps?.entries[2]?.result).toEqual({ kind: "tsc", errorCodes: ["TS2322"] });
+});
+
+it("候选序从候选描述符出：与 check 写在同一块、动作记成 bash 的那次提交也列出来", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "steps-bash-commit",
+    runId: "2026-01-04T00-00-00-009Z",
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 30 },
+      // 第 3 步是 `check` 与 `evaluate` 写在同一块：动作记成 `bash`，但它产出了第 2 个候选。
+      { action: "bash", atMs: 2_000, harnessMs: 60 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [2, 3],
+    termination: "done",
+  });
+  const [report] = readArchiveReports(root);
+  // 数据层本来就有两条候选（真源从没丢过）：丢的只是渲染。
+  expect(report?.scores.map((score) => score.protocolRound)).toEqual([2, 3]);
+  expect(report?.candidateStages).toBe(2);
+
+  const md = await markdownOf(root);
+  const sequence = candidateSequenceOf(md);
+  // 档案里有几个候选，序里就列几条：动作标签不是筛选判据。
+  expect(sequence).toHaveLength(2);
+  expect(sequence[0]).toContain("第 2 步：scriptSha256=");
+  expect(sequence[1]).toContain("第 3 步：scriptSha256=");
+  // 动作标签降级为**注**：是 `evaluate` 时注为空，不是时注出「这一步还跑了别的命令」。
+  expect(sequence[0]).not.toContain("还跑了别的命令");
+  expect(sequence[1]).toContain("这一步还跑了别的命令");
+  // 既有语义不动：两次之间隔了几步、字节是否相同仍由已有字段合成。
+  expect(sequence[1]).toContain("之间经过 0 步（无）");
+  expect(sequence[1]).toContain("字节不同");
+});
+
+it("候选序单候选：一条就列一条，不按别的步是否像提交补第二条", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "steps-one-commit",
+    runId: "2026-01-04T00-00-00-010Z",
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 30 },
+      // 提交之后的 `check` 步：它没有产出候选，因此不进序。
+      { action: "bash", atMs: 2_000, harnessMs: 20 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [2],
+    termination: "done",
+  });
+  const [report] = readArchiveReports(root);
+  expect(report?.candidateStages).toBe(1);
+  const sequence = candidateSequenceOf(await markdownOf(root));
+  expect(sequence).toHaveLength(1);
+  expect(sequence[0]).toContain("第 2 步：scriptSha256=");
+  expect(sequence[0]).not.toContain("与上一次提交");
 });
 
 it("v3 单候选：候选只有一位时步列照旧，末位即最终候选", () => {
@@ -641,7 +1158,7 @@ it("受污染会话：429 次数达到阈值即单列，成绩与步数保留", 
   expect(report?.contamination).toEqual({
     state: "contaminated",
     rateLimitedAttempts: CONTAMINATION_THRESHOLDS.rateLimitedAttempts,
-    // 累计退避今天没有落点：缺数据不补零。
+    // 这份合成档的日志行没有 backoffMs：旧档缺这一格，读成 null 而不是 0。
     backoffMs: null,
     reasons: ["rate-limited>=3"],
   });
@@ -707,37 +1224,77 @@ it("受污染会话：累计退避超过阈值同样单列（日志行记了 bac
   });
 });
 
-it("干净会话：429 次数不到阈值、退避未记录 → clean，退避读成 null", async () => {
+/**
+ * 受污染读数里的「累计退避」有三态，**一张表**走同一条读路径：日志行 → 轮读数 → 会话合计 →
+ * Markdown 那一格。三行差别只在 `backoffMs` 这一键在不在、是多少（ADR-0036 的采集口径：没有退避
+ * 写 0、旧档缺这一格读成 null，两者不混）。拆成三套用例写，那条「不补零」的口径就会各自漂一份。
+ */
+const BACKOFF_READOUT: readonly {
+  readonly name: string;
+  /** 两轮日志行各自带不带 `backoffMs`、带多少。 */
+  readonly backoffs: readonly (number | undefined)[];
+  /** 轮读数：每轮一行，缺字段即 null。 */
+  readonly rounds: readonly (number | null)[];
+  /** 会话合计：全都不知即 null，否则按轮求和。 */
+  readonly total: number | null;
+  /** Markdown 那一格逐字长什么样。 */
+  readonly rendered: string;
+}[] = [
+  {
+    name: "实测有值：两轮的退避合计进会话读数",
+    backoffs: [1_000, 2_500],
+    rounds: [1_000, 2_500],
+    total: 3_500,
+    rendered: "3500 ms",
+  },
+  {
+    name: "真等 0：写 0 而不是缺数据",
+    backoffs: [0, 0],
+    rounds: [0, 0],
+    total: 0,
+    rendered: "0 ms",
+  },
+  {
+    name: "旧档缺字段：读成 null，不补零",
+    backoffs: [undefined, undefined],
+    rounds: [null, null],
+    total: null,
+    rendered: "null（旧档的日志行没有 backoffMs：缺数据不补零）",
+  },
+];
+
+it.each(BACKOFF_READOUT)("受污染读数三态：$name", async ({ backoffs, rounds, total, rendered }) => {
   const root = rootOf();
   writeV3(root, {
-    slug: "clean",
+    slug: "backoff-state",
     runId: "2026-01-06T00-00-00-003Z",
-    steps: [{ action: "done", atMs: 0, harnessMs: 1 }],
-    logs: [
-      {
-        round: 1,
-        kind: "converged",
-        responseConverged: true,
-        sendMs: 10,
-        usage: usageOf(100, 0),
-        attemptEvidence: [
-          { attempt: 1, outcome: "transport-error", failureKind: "rate-limited" },
-          { attempt: 2, outcome: "response" },
-        ],
-      },
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 1 },
+      { action: "done", atMs: 10, harnessMs: 1 },
     ],
+    logs: backoffs.map((backoffMs, index) => ({
+      round: index + 1,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 10,
+      ...(backoffMs === undefined ? {} : { backoffMs }),
+      attemptEvidence: [
+        { attempt: 1, outcome: "transport-error", failureKind: "rate-limited" },
+        { attempt: 2, outcome: "response" },
+      ],
+    })),
   });
   const [report] = readArchiveReports(root);
+  expect(report?.rounds.map((round) => round.backoffMs)).toEqual(rounds);
   expect(report?.contamination).toEqual({
     state: "clean",
-    rateLimitedAttempts: 1,
-    backoffMs: null,
+    rateLimitedAttempts: 2,
+    backoffMs: total,
     reasons: [],
   });
   const md = await markdownOf(root);
-  expect(md).toContain(
-    "受污染：clean（429 尝试 1 次；累计退避 null（生成侧日志行还不记退避时延）；命中判据=无）",
-  );
+  expect(md).toContain(`累计退避 ${rendered}；命中判据=无`);
+  // 三行都是 clean：受污染分层那一节里没有行，但“没有行”与“没有看”是两件事，逐字写出来。
   expect(md).toContain("- 本次报告里没有受污染会话（one-shot 档该列恒 null，不代表干净）。");
 });
 

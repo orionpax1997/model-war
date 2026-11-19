@@ -145,7 +145,8 @@ it("用尽步数:写失败记录(过程记录 + 逐步日志 + 诊断 + 分类),
   expect((record.steps as unknown[]).length).toBe(2);
   expect(record.prompts).toEqual([PROMPT.user]);
   expect(record.termination).toBe("max-steps");
-  expect(record.classification).toBe("contract");
+  // 步数用尽是预算耗尽:`budget`,不是「模型违反契约」(它每一轮都交了合协议的块)。
+  expect(record.classification).toBe("budget");
   // v3 的必写键一个不少(ADR-0034:身份从第一份 agent 档起就写)。
   for (const key of AGENT_ARCHIVE_REQUIRED_KEYS) {
     expect(record).toHaveProperty(key);

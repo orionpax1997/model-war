@@ -212,7 +212,13 @@ export type ArchiveStepAction =
   | { readonly kind: "bash"; readonly command: string }
   /** 整块去空白后恰为 `evaluate`：这一次 `evaluate` 产出一个候选。 */
   | { readonly kind: "evaluate" }
-  /** 被块级 `done` 哨兵终止。 */
+  /**
+   * 这一步以**收工工具**结束（模型在块里调用了 `finish`，宿主收到那条请求）。
+   *
+   * 枚举值仍叫 `done`：那是 v3 档案形状里的常量，语义是「这一步以收工工具结束」，与模型敲的
+   * 那条命令叫什么名字无关。模型侧的收工命令叫 `finish`——`done` 是 bash 保留字，裸写一行就是
+   * 语法错误（ADR-0032 修订）。改这个枚举等于升 `archiveSchemaVersion`，本批不升。
+   */
   | { readonly kind: "done" }
   /**
    * 这一步**没有可执行的动作**：零个块 / 多个块 / 块标记不是 `bash`，或者响应两次都被输出上限
@@ -356,6 +362,9 @@ export type ArchiveMeta = {
 /**
  * 终止原因（ADR-0032）：`done` / 步数耗尽 / 总墙钟耗尽 / 上下文守卫 / 连续三次动作解析失败 /
  * 传输重试耗尽。它只决定循环怎么停，不决定落档——有候选就是成功档。
+ *
+ * `done` 这一格读作「模型用收工工具结束了会话」（模型侧那条命令叫 `finish`）；名字留在档案形状
+ * 里不动，旧档照旧可读。
  */
 export const ARCHIVE_TERMINATIONS = [
   "done",

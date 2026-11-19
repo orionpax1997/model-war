@@ -31,6 +31,9 @@ import {
   SELECTION_AGENT_VERSION,
   SELECTION_VERSION,
   TRIAL_PLAN_JSON_SHAPE,
+  TRIAL_GRID_SUMMARY_SUFFIX,
+  TRIAL_SCRIPT_ID_SEPARATOR,
+  TRIAL_SUBSTITUTE_SOURCE_SUFFIX,
   type ArchiveOptimization,
   type ArchiveOptimizationCandidateAgent,
   type ArchiveSelection,
@@ -70,7 +73,7 @@ import {
   type ReportSteps,
 } from "./archive-report-steps.js";
 import { buildSelectionPlan } from "./selection.js";
-import { checkTrialPlan } from "./trial-plan.js";
+import { checkTrialPlan, readTrialPlan } from "./trial-plan.js";
 import {
   objectOf,
   numberOf,
@@ -433,6 +436,42 @@ export type ReportPlanScript = {
 };
 
 /**
+ * 一个候选**旁挂网格汇总**（`<观测文件>.grid.json`）里的陪练身份。
+ *
+ * ── 为什么报告要去读旁挂件 ──
+ * v3 分步档的优化段不装计划（ADR-0035 / ADR-0031），于是「这 32 场跟谁打」在存档 `meta`
+ * 里根本没有。但执行器跑每一次 `evaluate` 都把整份计划写在了观测文件旁的 `.grid.json` 里
+ * （`packages/gen/src/trial-grid.ts`）：报告只**读**它，不新增采集、不改档案形状。
+ *
+ * ── 只记录不裁决 ──
+ * 跨会话分数可不可比是 A2 的事。这里只回答三件事：跟谁打（四份身份）、计划是哪一份
+ * （`planSha256`）、在位那份是不是**本席位自己的上一场**。最后一条不自带走：`selfReference`
+ * 只在两个条件同时成立时非 `null`（见 `sparringSelfReferenceOf`）。
+ */
+export type ReportCandidateSparring = {
+  /** 这条证据属于哪个候选（v3 里就是那次 `evaluate` 的步号）。 */
+  readonly protocolRound: number;
+  /** 旁挂汇总在档里的相对位置（`<目录>/<观测文件>.grid.json`）。 */
+  readonly source: string;
+  /** 计划摘要；读不到时 `null`。 */
+  readonly planSha256: string | null;
+  /**
+   * 四份陪练身份（`id` / `role` / `source` / `scriptSha256`）；**`null` = 读不到**。
+   *
+   * 文件不在 / 没有 `plan` / 形状不合，一律是 `null`——渲染成「未记录」，不猜、不抛。
+   */
+  readonly scripts: readonly ReportPlanScript[] | null;
+  /** 自指：在位陪练就是本席位的上一场冻结存档。 */
+  readonly selfReference: ReportSparringSelfReference | null;
+};
+
+/** 「陪练 = 本席位上一场」的那一场：席位与运行标识（两个都进报告，不只看 runId）。 */
+export type ReportSparringSelfReference = {
+  readonly slug: string;
+  readonly runId: string;
+};
+
+/**
  * 一个「轮空一份陪练」组合的覆盖范围。
  *
  * 报告**不搬 32 场明文**：计划正文就在 `ReportGridPlan.source` 指向的存档里；这里只给
@@ -562,6 +601,13 @@ export type ArchiveReport = {
    * 生成阶段计划：v2 才有（v1 历史档没有计划字段，不迁移、不回填）。`null` = 不适用。
    */
   readonly plan: ReportGridPlan | null;
+  /**
+   * 各候选旁挂网格汇总（`<观测文件>.grid.json`）里的陪练身份（v3 才有，旧档为空数组）。
+   *
+   * 一个候选一条：v3 每次 `evaluate` 各跑一张网格，各自的旁挂件是那一次的证据。
+   * 空数组 = 本档没有可读的计划（v1 / v2 的计划在 `plan` 那一节）。
+   */
+  readonly sparring: readonly ReportCandidateSparring[];
   /** 三类分数分列，每个候选一行；没有优化旁证（失败档等）时为空数组。 */
   readonly scores: readonly ReportCandidateScores[];
   readonly candidateStages: number;
@@ -1026,6 +1072,144 @@ const observationsOf = (
     noScoreSource: readings.filter((reading) => reading.noScoreSource).length,
     readings,
     issues,
+  };
+};
+
+/**
+ * 网格汇总（`.grid.json`）里的计划 → 那 32 场跟谁打。
+ *
+ * ── 只读，不改形状 ──
+ * 文件就在候选观测文件旁边（`<观测文件>.grid.json`，见 `trial-grid.ts` 的落点约定与
+ * `observationsOf` 读观测文件的那一行）：路径按同一个约定算，不另记一份。
+ *
+ * ── 读不到就是读不到 ──
+ * 文件不在 / 不是合法 JSON / 没有 `plan` / 计划读取失败，四种都是 `scripts: null`（渲染成
+ * 「未记录」）。报告是只读面：不因一份旁挂件坏了就不出整份报告，也不拿今天的陪练池堆一个
+ * 「大概是谁」——那会把 A2 要判断的事提前变成一个编造的事实。
+ *
+ * ── 为什么只对 v3 读 ──
+ * v1 / v2 的计划本来就在 `meta` 里（`optimization.plan`），那一节已经把四份身份列出来了；
+ * 再到旁挂件读一遍就是第二个家。v3 的优化段不装计划（ADR-0035），旁挂件是唯一处——这一节
+ * 只补那个缺口。
+ */
+const candidateSparringOf = (options: {
+  readonly root: string;
+  /** 档案目录（`archive/<slug>`），与读观测文件那一处同一个写法。 */
+  readonly directory: string;
+  /** 档案所属席位 slug（= `archive/` 下的一级目录名）。 */
+  readonly model: string;
+  /** 本档运行标识：判「上一场」要拿它和来源里的 runId 比。 */
+  readonly runId: string;
+  readonly candidate: ArchiveOptimizationCandidate;
+}): ReportCandidateSparring => {
+  const source = `${options.directory}/${options.candidate.observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`;
+  const reading = {
+    protocolRound: options.candidate.protocolRound,
+    source,
+    planSha256: null,
+    scripts: null,
+    selfReference: null,
+  } as const;
+  let text: string;
+  try {
+    text = readFileSync(join(options.root, source), "utf8");
+  } catch {
+    return reading;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return reading;
+  }
+  const plan = objectOf(value)["plan"];
+  if (plan === undefined) return reading;
+  let parsed: TrialPlan;
+  try {
+    parsed = readTrialPlan(plan);
+  } catch {
+    return reading;
+  }
+  const scripts = parsed.scripts.map(({ id, role, source: from, scriptSha256 }) => ({
+    id,
+    role,
+    source: from,
+    scriptSha256,
+  }));
+  return {
+    ...reading,
+    planSha256: parsed.planSha256,
+    scripts,
+    selfReference: sparringSelfReferenceOf({
+      scripts,
+      model: options.model,
+      runId: options.runId,
+    }),
+  };
+};
+
+/**
+ * 自指判据：这一场的在位陪练是不是**本席位自己的上一场**。
+ *
+ * 三个条件同时成立才标（差一个就不标——宁可不说，也不说错）：
+ * 1. `incumbent:<slug>` 的 `<slug>` 等于档案所属席位（`archive/<slug>/` 一级目录名）；
+ * 2. 来源 `archive:<slug>/<runId>` 里的 `runId` 不是本档的 `runId`（它是「上一场」，不是「本场」）；
+ * 3. 来源的 `<slug>` 也等于档案所属席位。
+ *
+ * ── 为何第 3 条比票面更严，以及为何不改成票面那两条 ──
+ * 票写的是「`incumbent:<slug>` 的 slug 是本席位，且 `source` 的 runId 不同于本档」。但那句话
+ * 把「陪练是谁的上一场」这句话拆给了两个字段各说一半：运行时报告的标题是「陪练 = 本席位上一场」，
+ * 这是一个**合取命题**，而它的真假要由两个独立的指针都指向本席位才能成立。
+ *
+ * 两个字段不一致时（`id` 说 `incumbent:gpt-6-luna`、`source` 说 `archive:hy4-flash/<runId>`），
+ * 只有一个解释：计划装配时一处用了本席位、另一处用了别的档（代位、手改、或写盘时的一个 bug）。
+ * 此时只读一个字段会**凭空造出一条声称**：说「你家上一场」——而可核的那个指针指着别家。
+ * 那个代价不是渲染难看，是 A2 拿这一行去判「能不能跨会话比」。所以这里选「不猜」：
+ * 两处都说本席位才标，一处说了就当作「未记录」（渲染仍然出四份身份，只是不附那句自指注）。
+ *
+ * 这也解释了两侧为何都不因为这个加固而变松：它只会**少标**不会多标；而票真正要防的那个
+ * 误读（自家上一场被当成能力提升）在正常档上两处本就一致——加固只是把「两处不一致时怎么办」
+ * 定成一个有理由的答案，不再是隐含的「取第一个字段」。
+ *
+ * 代位（`#substitute`）的 slug 是另一份档，所以它天然不会命中；它的 `source` 仍然是
+ * `archive:` 开头，所以这里不靠前缀排除，靠 slug 不等。
+ */
+const sparringSelfReferenceOf = (options: {
+  readonly scripts: readonly ReportPlanScript[];
+  readonly model: string;
+  readonly runId: string;
+}): ReportSparringSelfReference | null => {
+  const incumbent = options.scripts.find((script) => script.role === "incumbent");
+  if (incumbent === undefined) return null;
+  const separator = incumbent.id.indexOf(TRIAL_SCRIPT_ID_SEPARATOR);
+  if (separator === -1) return null;
+  const idSlug = incumbent.id.slice(separator + TRIAL_SCRIPT_ID_SEPARATOR.length);
+  if (idSlug !== options.model) return null;
+  const from = archiveSourceOf(incumbent.source);
+  if (from === null || from.slug !== options.model) return null;
+  if (from.runId === options.runId) return null;
+  return { slug: options.model, runId: from.runId };
+};
+
+/**
+ * 来源指针的读法：`archive:<slug>/<runId>`（代位带 `#substitute` 后缀）。
+ *
+ * 形态对不上就交回 `null`——这个函数只服务于「上一场」那一条判断，没有第二种容错语义。
+ */
+const archiveSourceOf = (
+  source: string,
+): { readonly slug: string; readonly runId: string } | null => {
+  const prefix = "archive:";
+  if (!source.startsWith(prefix)) return null;
+  const rest = source.slice(prefix.length);
+  const withoutSubstitute = rest.endsWith(TRIAL_SUBSTITUTE_SOURCE_SUFFIX)
+    ? rest.slice(0, -TRIAL_SUBSTITUTE_SOURCE_SUFFIX.length)
+    : rest;
+  const slash = withoutSubstitute.lastIndexOf("/");
+  if (slash <= 0 || slash === withoutSubstitute.length - 1) return null;
+  return {
+    slug: withoutSubstitute.slice(0, slash),
+    runId: withoutSubstitute.slice(slash + 1),
   };
 };
 
@@ -1564,6 +1748,21 @@ const readRecord = (
       : null;
   const scores = candidateScoresOf(optimization, selection);
   const stages = describedCandidates.length;
+  /**
+   * 陪练身份：**只对 v3 读**旁挂的 `.grid.json`（v1 / v2 的计划在 `meta` 里，见 `candidateSparringOf`）。
+   * 一个候选一条：v3 每次 `evaluate` 各跑一张网格，各自那份汇总才是那一次的证据。
+   */
+  const sparring = agentShape
+    ? describedCandidates.map((candidate) =>
+        candidateSparringOf({
+          root,
+          directory: `archive/${slug}`,
+          model: slug,
+          runId,
+          candidate,
+        }),
+      )
+    : [];
   const expectedAttempts =
     protocolRounds + (kind === "failure" && record.classification === "transport" ? 1 : 0);
   /**
@@ -1588,6 +1787,7 @@ const readRecord = (
           : "historical",
     candidateStages: stages,
     plan,
+    sparring,
     scores,
     distinctScripts: new Set(describedCandidates.map((candidate) => candidate.scriptSha256)).size,
     selectionFailure:
@@ -1884,6 +2084,66 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       .join("；")}`,
     `- 逐场种子：${renderSeeds(plan.seeds)}`,
   ];
+  /**
+   * 陪练一节（v3）：计划不进 `meta`（ADR-0035），四份身份只在候选旁挂的 `.grid.json` 里。
+   *
+   * ── 为什么每候选一组，而不是合并成一份 ──
+   * v3 每次 `evaluate` 各跑一张网格，各自那份旁挂件才是那一次的证据（真档里两次提交之间可能
+   * 换了陪练池，或者还停在旧的一份）。合并展示会把「第 2 次评测跟第 1 次是同一张网格吗」
+   * 这个可查的事实抹平。
+   *
+   * ── 为何又去重，与**谁**比 ──
+   * 真档（`archive/gpt-6-luna/2026-11-19T01-33-42-820Z`）两个候选的两份 `.grid.json` 是**逐字
+   * 相同**的（同一 `planSha256`）：把那四行再排一遍只会让人以为两次评测的对手变了。所以
+   * 逐字相同的就写「与第 N 步候选逐字相同」，不重复四份身份——但两个候选各自的文件仍是
+   * 分开读的（上一条的那句话只有在两份都读过之后才能说得出来）。
+   *
+   * 比对的是**首次出现的那一份**，不是「上一份」：三份档里若第 1、3 份同、第 2 份不同，
+   * 把第 3 份说成「与上一份相同」是假话（上一份恰好是那一份不同的）。指向首次出现的那一份，
+   * 说出的那个步号永远是真的；而「中间隔了一份别的网格」这个事实在别处（上面那份的完整列表）
+   * 已经写出来了，不需要靠去重行去暗示。
+   *
+   * 读不到就写「未记录」（并指名找的是哪个文件）——不猜、不抛。
+   */
+  const renderSparring = (sparring: readonly ReportCandidateSparring[]): string[] => {
+    const lines: string[] = [];
+    // 首次出现且身份可读的那一份：下面每份都与它比，写出来的步号就永远指得到那份真列表。
+    let first: ReportCandidateSparring | undefined;
+    for (const reading of sparring) {
+      const where = `来源 ${escape(reading.source)}${
+        reading.planSha256 === null ? "" : `；planSha256=${reading.planSha256}`
+      }`;
+      if (reading.scripts === null) {
+        lines.push(`- 陪练：未记录（第 ${reading.protocolRound} 步候选，${where}）`);
+        continue;
+      }
+      const sameAs = first;
+      if (
+        sameAs !== undefined &&
+        JSON.stringify(sameAs.scripts) === JSON.stringify(reading.scripts) &&
+        sameAs.planSha256 === reading.planSha256
+      ) {
+        lines.push(
+          `- 陪练（第 ${reading.protocolRound} 步候选，${where}）：与第 ${sameAs.protocolRound} 步候选逐字相同（同一张网格，四份身份不重列）`,
+        );
+        // 去重只去「四份身份」那几行；自指是**这一份**自己的判定，仍单独说一句。
+        if (reading.selfReference !== null)
+          lines.push(
+            `  - **陪练 = 本席位上一场（\`${reading.selfReference.runId}\`）；本场与它不可直接比**`,
+          );
+        continue;
+      }
+      lines.push(`- 陪练（第 ${reading.protocolRound} 步候选，${where}）：`);
+      for (const script of reading.scripts) lines.push(`  - ${renderPlanScript(script)}`);
+      // 自指单独一行：它不是第四份身份的注，而是「这一场的分数不能当能力提升读」那句。
+      if (reading.selfReference !== null)
+        lines.push(
+          `  - **陪练 = 本席位上一场（\`${reading.selfReference.runId}\`）；本场与它不可直接比**`,
+        );
+      first ??= reading;
+    }
+    return lines;
+  };
   const fields = [
     "sendMs",
     "input",
@@ -1916,7 +2176,9 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     if (reading === null)
       return "不适用（one-shot 档该列恒 null：`readFailureRecords` 刻意跳过参赛模型，本报告不改那条口径——不是「没撞过限流」）";
     const backoff =
-      reading.backoffMs === null ? "null（生成侧日志行还不记退避时延）" : `${reading.backoffMs} ms`;
+      reading.backoffMs === null
+        ? "null（旧档的日志行没有 backoffMs：缺数据不补零）"
+        : `${reading.backoffMs} ms`;
     return `${reading.state}（429 尝试 ${reading.rateLimitedAttempts} 次；累计退避 ${backoff}；命中判据=${reading.reasons.length === 0 ? "无" : reading.reasons.join(" / ")}）`;
   };
   const labels = {
@@ -2016,14 +2278,14 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       (field) => ttlRecorded || !(TTL_WRITE_FIELDS as readonly string[]).includes(field),
     );
     /**
-     * 这一跑**评测过几次**——从过程记录的动作列数出来。
+     * 过程记录里出现过几步——失败档渲染候选那一行时的第二列。
      *
-     * 它与 `candidateStages` 不是同一件事：后者是「记录里留了几个候选描述符」，而失败档的描述符
-     * 只在字节还在时才写（`packages/gen/src/failure.ts` 的 `retainedCandidatesOf`）。所以失败档的
-     * 这两个数可以合法地不相等，差额就是「评测过、但字节没保留」的那几份。
+     * 它**不是**「这一跑 evaluate 了几次」：那个数以前由动作列数出来（`action === "evaluate"`），
+     * 而动作标签是人读的注解——模型把 `check` 与 `evaluate` 写进同一块时它记成 `bash`，据此计数
+     * 只会少数（真档里 2 个候选记成 1 次）。评测过几次在过程记录里根本没有结构化的落点，所以报
+     * 告不造这个数：把两个能数的事实并置（候选描述符数 / 过程记录步数），差额叫「未保留」。
      */
-    const evaluatedSteps =
-      report.steps?.entries.filter((entry) => entry.action === "evaluate").length ?? 0;
+    const stepEntries = report.steps?.entries.length ?? 0;
     out.push(
       `## ${escape(report.model)} · ${report.kind}`,
       "",
@@ -2085,19 +2347,24 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
           `| ${step.step} | ${step.action ?? "null"} | ${step.stepMs ?? "null"} | ${step.sendMs ?? "null"} | ${step.harnessMs ?? "null"} | ${step.atMs ?? "null"} | ${step.inputTokens ?? "null"} | ${step.inputGrowth ?? "null"} | ${percent(step.cacheHitRate)} | ${step.result === null ? "null" : `${step.result.kind}（${step.result.errorCodes.length} 个错误码）`} | ${step.roundLinked ? "round==step" : "缺日志行"} |`,
         );
       /**
-       * 候选序与步：`evaluate` 就是提交（ADR-0030），所以「第几步评了哪一版」由两个已存在的字段
-       * 合成——步列的 `action === "evaluate"` 与 `scores[].protocolRound / scriptSha256`。
+       * 候选序与步：序的**真源是候选描述符**（`optimization.candidates` 的
+       * `step` / `scriptSha256` / `score`），不是「动作标签等于 `evaluate` 的那些步」。
+       *
+       * 两者的区别是真会话上撞见的：模型把 `check` 与 `evaluate` 写进同一块时动作记成 `bash`，
+       * 于是档案里有 2 个候选、报告只列出 1 条。动作标签是**人读的注解**，不能承担「有没有提交
+       * 过」的判据——它现在只回答「这一步除提交之外还跑了什么」。
        *
        * 这里**不猜模型命令写了什么**（那要 grep 自由文本，ADR-0036 已否掉那种分类法），只报
-       * 结构事实：哪几步是 `evaluate`、两次之间过了几步、两次提交的字节同不同。
+       * 结构事实：候选在第几步、两次之间过了几步、两次提交的字节同不同。
        */
-      const commits = report.scores.filter((score) =>
-        steps.entries.some(
-          (entry) => entry.step === score.protocolRound && entry.action === "evaluate",
-        ),
-      );
+      // 一条候选描述符 = 一次提交（ADR-0030）；序按步号递增，装载期已核过。
+      const commits = report.scores;
       if (commits.length > 0) {
-        out.push("", "候选序（`evaluate` 即提交）：");
+        out.push(
+          "",
+          "候选序（`evaluate` 即提交）：",
+          "- 真源：候选描述符（`optimization.candidates`）；动作标签只作注，不参与筛选",
+        );
         for (const [index, commit] of commits.entries()) {
           const previous = commits[index - 1];
           const between =
@@ -2107,8 +2374,16 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
                   (entry) =>
                     entry.step > previous.protocolRound && entry.step < commit.protocolRound,
                 );
+          // 动作标签降级为注：不是 `evaluate` 时注出这一步还跑了别的命令，是时注为空。
+          const stepEntry = steps.entries.find((entry) => entry.step === commit.protocolRound);
+          const actionNote =
+            stepEntry === undefined
+              ? "；这一步不在过程记录里（动作未知）"
+              : stepEntry.action === "evaluate"
+                ? ""
+                : `；这一步还跑了别的命令（动作=${stepEntry.action ?? "null"}）`;
           out.push(
-            `- 第 ${commit.protocolRound} 步：scriptSha256=${commit.scriptSha256}` +
+            `- 第 ${commit.protocolRound} 步：scriptSha256=${commit.scriptSha256}${actionNote}` +
               (previous === undefined
                 ? ""
                 : `；与上一次提交（第 ${previous.protocolRound} 步）${previous.scriptSha256 === commit.scriptSha256 ? "**字节相同**" : "字节不同"}；之间经过 ${between.length} 步（${between.length === 0 ? "无" : between.map((entry) => `${entry.step}:${entry.action ?? "null"}`).join(" / ")}）`),
@@ -2155,10 +2430,15 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     out.push("", "### 计划、陪练与三类分数", "");
     if (report.plan === null)
       out.push(
+        // 「不追填」说的是**档案**不回填；v3 的陪练身份改从旁挂件读（下一节），不是把它堵在档里。
         "- 生成阶段计划：不适用（版本 1 历史档没有计划字段，不迁移、不回填）" +
-          "；v3 分步档的优化段也不装计划——网格计划不进档案，不追填",
+          "；v3 分步档的优化段也不装计划——网格计划不进档案" +
+          (report.sparring.length > 0
+            ? "；这一跑跟谁打从候选旁挂的 `.grid.json` 读（见下）"
+            : "，不追填"),
       );
     else out.push(...renderGridPlan(report.plan));
+    if (report.sparring.length > 0) out.push(...renderSparring(report.sparring));
     out.push(
       "- 同字节直读：看下表「复用来源」列——标出阶段号的是编译产物与那一阶段字节相同、复用它的网格结果",
       "- 不适用 = 该口径不属本档（v1 历史档没有网格分数；无选拔段时没有复算读数；赛季分数恒不适用）",
@@ -2166,11 +2446,11 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     if (report.scores.length === 0)
       out.push(
         // 失败档的候选**字节**随清理撤掉了，于是描述符也不写进记录（`failure.ts` 的
-        // `retainedCandidatesOf`）。这里必须说成「未保留」而不是「字节缺失」：前者是这一档
-        // 的诚实说法（我们主动没留），后者是搬运 / 手工删除那类事故的读数。次数不会丢——
-        // 过程记录的动作列里每一步都在。
-        report.kind === "failure" && evaluatedSteps > 0
-          ? `- 候选：未保留（这一跑 evaluate ${evaluatedSteps} 次；候选字节与描述符随失败清理一并撤掉，次数见过程记录的动作列）`
+        // `retainedCandidatesOf`）。两列并置：记录里留了几个候选描述符、过程记录里出现过几步。
+        // 差额按上一轮口径渲染成「未保留」，**不渲染成异常**——这是我们主动没留，不是搬运事故。
+        // 这里不再从动作列数「这一跑 evaluate 了几次」：动作标签是注解，不能当计数（见 `stepEntries`）。
+        report.kind === "failure" && stepEntries > 0
+          ? `- 候选：未保留（候选描述符数 ${report.candidateStages}；过程记录里出现过的步数 ${stepEntries}；差额按「未保留」记，不当作异常——描述符与字节随失败清理一并撤掉，动作列不是计数判据）`
           : "- 候选分数：不适用（本档没有优化旁证，没有候选可出分数）",
       );
     else
@@ -2352,7 +2632,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       "## 受污染会话（单列，成绩保留）",
       "",
       `> 判据在报告侧（ADR-0036）：累计退避 > ${CONTAMINATION_THRESHOLDS.backoffMs} ms 或 429 次数 ≥ ${CONTAMINATION_THRESHOLDS.rateLimitedAttempts} 即受污染。两个数都是估值不是实测；返第一季数据时改的只是报告侧阈值，不动采集。撞过限流的会话**成绩不作废**：步数、被挡次数、等了多少秒、分数都在下面的表里。`,
-      "> one-shot 档这一格恒 null：`readFailureRecords` 刻意跳过参赛模型（`reporter.ts`），本报告不为封存的历史榜改那条口径——所以「没有受污染会话」不等于「所有会话都干净」。累计退避今天没有落点（生成侧日志行还不记 `backoffMs`），那一格写 null 而不是 0：缺数据不补零，此时判据实际由 429 次数承担。",
+      "> one-shot 档这一格恒 null：`readFailureRecords` 刻意跳过参赛模型（`reporter.ts`），本报告不为封存的历史榜改那条口径——所以「没有受污染会话」不等于「所有会话都干净」。累计退避读的是日志行的 `backoffMs`（生成侧按**实测**等待写：没有退避写 0）；旧档没有这一格时写 null 而不是 0：缺数据不补零，那些会话的判据仍只由 429 次数承担。",
       "",
     );
     if (contaminated.length === 0)

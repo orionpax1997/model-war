@@ -1186,6 +1186,99 @@ it("契约挂载门禁挂在 check:quick,且没被挪进按需 / 慢链", () => 
   expect(tailSteps(), "契约判据被挪进了全量门禁末尾复核组").not.toContain("check:contract");
 });
 
+// ── 命令清单门禁:首条消息里说的命令 == 沙箱里有的命令 ──────────────────────────
+//
+// 它守的是「能力在 `bin/` 里,而模型不知道」那种漂:常量加了二进制、散文没跟上是**默认形态**
+// (散文是手写的),而它的代价是模型拿步数去撞 127。反例落在两个真源上,各判一个方向。
+
+/** 模型在沙箱里能看见的命令清单真源。加它一项 = 沙箱里多一个命令。 */
+const ROOTFS_MANIFEST_FILE = "packages/schema/src/sandbox-rootfs.ts";
+
+/**
+ * 首条 `user` 消息的模板。命令清单是它的一部分(渲染只换占位符,不碰清单)。
+ *
+ * 与 `prompt-commands.ts` 的 `AGENT_TEMPLATE_PATH`、`agent-prompt.ts` 的 `AGENT_TEMPLATE_NAME`
+ * 是同一个路径的第三份字面量:零构建下工具包不得 import `@model-war/gen`,合不成一份。它靠「读不到即红」
+ * 兜底(探针改不到文件时 `withPatchedText` 自己会先红,不会静默放过)。
+ */
+const AGENT_TEMPLATE_FILE = "prompts/agent.md";
+
+it("命令清单门禁:常量加了二进制而文案没跟上时变红并点名,还原变绿", () => {
+  const clean = script("check:prompt-commands");
+  expect(clean.status, clean.output).toBe(0);
+  // 规模自证:报告必须给出两组各自的条数——「退出 0」只有在真比过两个集合时才成立。
+  expect(clean.output, clean.output).toContain("静态二进制");
+  expect(clean.output, clean.output).toContain("薄壳");
+
+  const violated = withPatchedText(
+    ROOTFS_MANIFEST_FILE,
+    (source) => source.replace('  "bin/ls",', '  "bin/__probe",\n  "bin/ls",'),
+    () => script("check:prompt-commands"),
+  );
+  expect(violated.status, "常量里多一个命令而文案没写时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("__probe");
+
+  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("命令清单门禁:文案点名了沙箱里没有的命令时变红并点名", () => {
+  // 反方向:手写散文里多一条命令。模型照它敲会拿到 `command not found`——那一步白花。
+  const violated = withPatchedText(
+    AGENT_TEMPLATE_FILE,
+    (source) => source.replace("- `wc` —", "- `python3` — 解释器。\n- `wc` —"),
+    () => script("check:prompt-commands"),
+  );
+  expect(violated.status, "文案里写了沙箱没有的命令时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("python3");
+  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("命令清单门禁:删掉「没有 sleep / awk」那句时变红(缺项也是清单的一部分)", () => {
+  const violated = withPatchedText(
+    AGENT_TEMPLATE_FILE,
+    (source) =>
+      source
+        .split("\n")
+        .filter((line) => !line.startsWith("没有 `awk`"))
+        .join("\n"),
+    () => script("check:prompt-commands"),
+  );
+  expect(violated.status, "删掉缺项说明时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("sleep");
+  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("命令清单门禁:分组标题换词时红在标题上(不把整组报成「清单没写」)", () => {
+  // 标题是分组的判据:它一换词,整组清单就不再算数。诊断必须指得到那一行,
+  // 否则人会去补八九条清单项,而真正该改的只是一行标题。
+  const violated = withPatchedText(
+    AGENT_TEMPLATE_FILE,
+    (source) => source.replace("### 工具薄壳", "### 宿主工具"),
+    () => script("check:prompt-commands"),
+  );
+  expect(violated.status, "分组标题换词时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("没有那条分组标题");
+  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("命令清单门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它零构建(读两份文本、比两个集合),而日常入口是 `verify:fast`——抓不到等于没有。
+  expect(scripts["check:quick"] ?? "", "命令清单判据不在快门禁里").toContain(
+    "check:prompt-commands",
+  );
+  // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "命令清单判据被挪进了按需门禁").not.toContain(
+    "check:prompt-commands",
+  );
+  expect(scripts["test:slow"] ?? "", "命令清单判据被挪进了慢链").not.toContain(
+    "check:prompt-commands",
+  );
+  expect(tailSteps(), "命令清单判据被挪进了全量门禁末尾复核组").not.toContain(
+    "check:prompt-commands",
+  );
+});
+
 // ── 验收落点门禁:落点表自己的存在性判据 ─────────────────────────────────────
 //
 // 这张表自称「验收写在能被跑出来的东西上」,所以它自己也得有判据:每一行至少一个可执行

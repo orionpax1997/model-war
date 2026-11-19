@@ -40,7 +40,9 @@ import { readArchiveReports } from "@model-war/runner";
 import {
   HARNESS_DIGEST,
   HARNESS_VERSION,
+  TransportError,
   completeGridTrial,
+  fail,
   generateOneModel,
   gridPlanFixture,
   reply,
@@ -96,7 +98,7 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
     reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
     reply("```bash\ncheck\n```"),
     reply("```bash\nevaluate\n```"),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
 
   const outcome = await withRealBash(workspaceDir, () =>
@@ -181,6 +183,11 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
   expect(report?.initialCandidate?.observations.observedMatches).toBe(TRIAL_MATCHES_PER_CANDIDATE);
   expect(report?.frozenCandidate?.scriptFile).toBe(candidate.scriptFile);
   expect(report?.initialCandidate?.score?.countedMatches).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+  // 没退避过的会话写 `0`（真的等了 0），而不是缺数据：读侧读到的是 0 而不是 null。
+  expect(
+    meta.generationLog.map((line) => (JSON.parse(line) as { backoffMs?: number }).backoffMs),
+  ).toEqual([0, 0, 0, 0]);
+  expect(report?.contamination?.backoffMs).toBe(0);
 });
 
 it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产物", async () => {
@@ -189,7 +196,7 @@ it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产
   mkdirSync(workspaceDir, { recursive: true });
 
   // 只 done、不 evaluate:一个候选都没有(ADR-0030「失败 = 一个候选都没有」)。
-  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\ndone\n```")]);
+  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
 
   const outcome = await withRealBash(workspaceDir, () =>
     generateOneModel(
@@ -217,4 +224,75 @@ it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产
   // 发布不变量「失败只写 failed-<runId>.json」:这里连失败记录都没写(generateOneModel 不收口),
   // 所以目录该是空的。
   expect(readdirSync(join(root, "archive/alpha"))).toEqual([]);
+});
+
+it("429 两次:实测退避落进日志行,报告受污染读数读到同一个合计", { timeout: 120_000 }, async () => {
+  // ADR-0036 的两段判据（累计退避 / 429 次数）里，前一段原先没有落点：报告写着「生成侧日志行
+  // 还不记退避时延」。这条用例是那段判据的写→读往返：会话真撞两次 429、真退避，报告读到合计。
+  //
+  // 「真退避」靠注入的时钟与 `sleep` 达成（不真坐 1s / 2s，否则这条用例会跟机器负载赛跑）：
+  // `sleep` 每次让钟多走 137 ms，于是「实测 = 钟走了多少」与「请求值之和」在这条用例里是两个
+  // 不同的数，记错哪一个当场就露。
+  const root = mkRoot();
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+
+  const base = Date.now();
+  let requested = 0;
+  let clock = 0;
+  // 第一步连吃两次 429（退避 1s → 2s）后成功，其余三步照「一场会话」那条用例的剧本走完，
+  // 于是这份档是成功档：`meta.json` 里既有候选、也有四行生成日志。
+  const model = stubClient([
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
+    reply("```bash\ncheck\n```"),
+    reply("```bash\nevaluate\n```"),
+    reply("```bash\nfinish\n```"),
+  ]);
+
+  const outcome = await withRealBash(workspaceDir, () =>
+    generateOneModel(
+      {
+        root,
+        runId: "r-backoff",
+        agentPrompt: { user: "任务:在 /workspace 写 script.ts", system: "协议:每一步一个动作块" },
+        createClient: () => model,
+        workspaceDir,
+        now: () => new Date(base + clock),
+        sleep: async (ms) => {
+          requested += ms;
+          clock += ms + 137;
+        },
+        trial: completeGridTrial(),
+        trialPlan: () => gridPlanFixture(),
+      },
+      configOf(),
+    ),
+  );
+
+  expect(outcome.kind).toBe("frozen");
+  const meta = JSON.parse(
+    readFileSync(join(root, "archive/alpha/r-backoff/meta.json"), "utf8"),
+  ) as ArchiveMeta;
+  const logs = meta.generationLog.map(
+    (line) => JSON.parse(line) as { backoffMs?: number; attemptEvidence?: unknown[] },
+  );
+  // 第一步：两次 429 + 一次成功 = 三条尝试证据，退避记账取实测而不是请求值。
+  expect(logs[0]?.attemptEvidence).toHaveLength(3);
+  expect(logs[0]?.backoffMs).toBe(clock);
+  expect(logs[0]?.backoffMs).toBeGreaterThan(requested);
+  expect(requested).toBeGreaterThanOrEqual(3_000);
+  // 其余三步没退避：写 0（真的等了 0），不是缺数据。
+  expect(logs.slice(1).map((line) => line.backoffMs)).toEqual([0, 0, 0]);
+
+  const [report] = readArchiveReports(root);
+  expect(report?.rounds[0]?.backoffMs).toBe(clock);
+  // 合计 = 四轮的退避之和；两段判据都读得出来，这一段不再靠 429 次数独撑。
+  expect(report?.contamination).toEqual({
+    state: "clean",
+    rateLimitedAttempts: 2,
+    backoffMs: clock,
+    reasons: [],
+  });
 });

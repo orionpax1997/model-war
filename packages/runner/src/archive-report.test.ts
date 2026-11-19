@@ -90,6 +90,59 @@ it("FailureRecord 与成功档用同一读取边界，传输失败只报告已�
   ]);
 });
 
+it("失败分类 budget 自解释:新档读出 budget，旧档的 contract 不被改写也不退化成 unknown", async () => {
+  // 分类的值只由档里的字节决定:旧档(没有 `budget` 这一档)读出什么就是什么,
+  // 不回填、不迁移;报告也不为它增列——两档都只是同一个字段的两个取值。
+  const writeFailure = (root: string, classification: string): void => {
+    const dir = join(root, "archive", "alpha");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "failed-r1.json"),
+      JSON.stringify({
+        model: "alpha",
+        modelVersion: "snapshot-1",
+        generatedAt: "2026-11-19T01:39:45Z",
+        runId: "r1",
+        ruleset: "v2",
+        classification,
+        protocolRounds: 1,
+        prompts: ["prompt 1"],
+        generationLog: [JSON.stringify({ round: 1, sendMs: 10 })],
+        diagnostics: ["零候选"],
+        message: "零候选",
+      }),
+    );
+  };
+  const render = async (root: string): Promise<string> => {
+    const stdout: string[] = [];
+    await runArchiveReport(["--root", root], {
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+    });
+    return stdout.join("");
+  };
+
+  const budgetRoot = rootOf();
+  writeFailure(budgetRoot, "budget");
+  expect(readArchiveReports(budgetRoot)[0]?.failure).toEqual({
+    classification: "budget",
+    diagnosticsCount: 1,
+  });
+  expect(await render(budgetRoot)).toContain("失败分类：budget");
+
+  // 旧档里的每一个旧值都不改写：`contract` 仍是 `contract`(不是退化成 `unknown`)，
+  // `tsc` / `selection` 也照旧读得出来——新增一档不挤掉旧档位。
+  for (const legacy of ["contract", "tsc", "selection"]) {
+    const legacyRoot = rootOf();
+    writeFailure(legacyRoot, legacy);
+    expect(readArchiveReports(legacyRoot)[0]?.failure).toEqual({
+      classification: legacy,
+      diagnosticsCount: 1,
+    });
+    expect(await render(legacyRoot)).toContain(`失败分类：${legacy}`);
+  }
+});
+
 it("Opus 兼容 usage 的 completion_tokens=3292 不被 output_tokens=0 覆盖，billing 与 cache 明细不重复加总", () => {
   const root = rootOf();
   const usage = {
@@ -933,16 +986,31 @@ const markdownOf = async (root: string): Promise<string> => {
   return stdout.join("");
 };
 
-it("失败档：候选描述符缺席时渲染成「未保留」，次数从过程记录数出来", async () => {
+it("失败档：候选缺席渲染成「未保留」，候选描述符数与过程记录步数两列并置", async () => {
   const root = rootOf();
-  failureRecordWithSteps(root, {});
+  // 两步的动作都记成 `bash`：真档里 `check` 与 `evaluate` 写在同一块时就是这样记的，所以动作列
+  // 不能当「评了几次」的计数——这一档的两次评测在动作列里一次也数不出来。
+  failureRecordWithSteps(root, {
+    steps: [1, 2].map((step) => ({
+      step,
+      action: { kind: "bash", command: "check script.ts && evaluate" },
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      atMs: step * 1000,
+      harnessMs: 10,
+    })),
+  });
   const report = readArchiveReports(root)[0]!;
   expect(report.kind).toBe("failure");
   // 数据层不伪造：记录里没写描述符，就没有候选段。
   expect(report.candidateStages).toBe(0);
   const md = await markdownOf(root);
-  // 次数不丢：它由过程记录的动作列数出来，不依赖候选描述符。
-  expect(md).toContain("候选：未保留（这一跑 evaluate 2 次");
+  // 两列并置：记录里留了几个描述符、过程记录里出现过几步；差额按「未保留」记，不是异常。
+  expect(md).toContain("候选：未保留（候选描述符数 0；过程记录里出现过的步数 2；");
+  expect(md).toContain("不当作异常");
+  // 反例：旧口径从动作列数 evaluate，这两步会数成 0 次；报告不再声称那个数。
+  expect(md).not.toContain("这一跑 evaluate");
   expect(md).not.toContain("候选分数：不适用");
 });
 
@@ -967,6 +1035,8 @@ it("失败档：描述符在场而字节被清掉时，状态读成「未保留�
   // 数据层照实报：盘上确实没有那份字节。判据不因为措辞而放宽。
   expect(report.initialCandidate?.scriptState).toBe("missing");
   const md = await markdownOf(root);
+  // 第一列读描述符数（不是 0）：留下的那份描述符照样算进候选数，只是字节不在。
+  expect(md).toContain("候选：未保留（候选描述符数 1；过程记录里出现过的步数 2；");
   expect(md).toContain("状态：未保留（失败档只留 failed-<runId>.json，候选字节随清理撤掉）");
   // 反例的另一半：候选那一行不许写成 `missing`（观测那一行照旧是 `missing`——那是真的没有）。
   expect(md).not.toContain("candidate.js；状态：missing");

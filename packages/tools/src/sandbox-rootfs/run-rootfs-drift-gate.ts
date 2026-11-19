@@ -10,12 +10,14 @@
  * 钉住的前提是**有人盯着**——产物入库后,改了内容不重算哈希会让库里的产物停在旧版,而它照样
  * 挂得进去、照样跑得起来。这条门禁就是那个盯着的人。
  *
- * ── 六条判据(实现在 `rootfs-check.ts`,纯判据在 `rootfs-drift.ts`) ──
+ * ── 七条判据(实现在 `rootfs-check.ts`,纯判据在 `rootfs-drift.ts`) ──
  * ① 整棵树哈希 == `SANDBOX_ROOTFS_TREE_HASH`;② 磁盘文件集 == `SANDBOX_ROOTFS_FILES`
  * (多一个少一个都红);③ `bin/` 里除薄壳之外都是静态 ELF(自解析 ELF,不靠 `ldd` / `file`);
  * ④ `contract/*` 与 `docs/rules-v2/*` 逐字节相同;⑤ 三个薄壳与
  * `packages/gen/src/agent/shim/shim.sh` 逐字节相同,且 `bin/*` 都可执行;
- * ⑥ 产物目录顶层只许 `bin/`、`contract/` 与来路说明书。
+ * ⑥ 产物目录顶层只许 `bin/`、`contract/` 与来路说明书;
+ * ⑦ `PROVENANCE.md` 的来路表与入库的静态二进制一一对应,且它声称的 sha256 就是盘上那串
+ * (它不在挂载面上、也不算进树哈希,所以这条是它唯一会红的地方)。
  *
  * ── 为什么在 `check:quick` 上(而 `check:sandbox` 不在) ──
  * 这一条**零构建**:它读二进制但不编译任何东西,也不碰内核能力,所以放得进快门禁——PR 上就能
@@ -25,7 +27,7 @@
  * 自己那条命名脚本;把它塞进 `check` 会让没有 bwrap 的机器上「全量门禁」变红,而那条红在说
  * 「这台机器没装 bubblewrap」,不是在说提交内容有问题。
  *
- * 退出码:0 = 六条全过;1 = 任一条不成立(含「一个文件都没读到」这种空转)。
+ * 退出码:0 = 七条全过;1 = 任一条不成立(含「一个文件都没读到」这种空转)。
  */
 
 import { resolve } from "node:path";
@@ -45,7 +47,7 @@ const main = (): number => {
   });
   if (vacuous !== "") {
     process.stderr.write(`✗ ${vacuous}\n`);
-    process.stdout.write("rootfs 漂移门禁:红(rootfs 是空的,六条判据一条都没有对象可判)\n");
+    process.stdout.write("rootfs 漂移门禁:红(rootfs 是空的,七条判据一条都没有对象可判)\n");
     return 1;
   }
 
