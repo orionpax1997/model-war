@@ -435,7 +435,7 @@ export const observationEvidenceOf = (
 };
 
 export const failureClassificationOf = (value: unknown) =>
-  enumOf(value, ["tsc", "contract", "transport", "selection"]) ?? "unknown";
+  enumOf(value, ["tsc", "contract", "budget", "transport", "selection"]) ?? "unknown";
 
 /**
  * 一次传输尝试的细分（ADR-0036 的 `AttemptEvidence.failureKind`）：429 / 服务端 / 网络 / 超时。

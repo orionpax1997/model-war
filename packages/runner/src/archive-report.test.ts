@@ -90,6 +90,59 @@ it("FailureRecord 与成功档用同一读取边界，传输失败只报告已�
   ]);
 });
 
+it("失败分类 budget 自解释:新档读出 budget，旧档的 contract 不被改写也不退化成 unknown", async () => {
+  // 分类的值只由档里的字节决定:旧档(没有 `budget` 这一档)读出什么就是什么,
+  // 不回填、不迁移;报告也不为它增列——两档都只是同一个字段的两个取值。
+  const writeFailure = (root: string, classification: string): void => {
+    const dir = join(root, "archive", "alpha");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "failed-r1.json"),
+      JSON.stringify({
+        model: "alpha",
+        modelVersion: "snapshot-1",
+        generatedAt: "2026-11-19T01:39:45Z",
+        runId: "r1",
+        ruleset: "v2",
+        classification,
+        protocolRounds: 1,
+        prompts: ["prompt 1"],
+        generationLog: [JSON.stringify({ round: 1, sendMs: 10 })],
+        diagnostics: ["零候选"],
+        message: "零候选",
+      }),
+    );
+  };
+  const render = async (root: string): Promise<string> => {
+    const stdout: string[] = [];
+    await runArchiveReport(["--root", root], {
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+    });
+    return stdout.join("");
+  };
+
+  const budgetRoot = rootOf();
+  writeFailure(budgetRoot, "budget");
+  expect(readArchiveReports(budgetRoot)[0]?.failure).toEqual({
+    classification: "budget",
+    diagnosticsCount: 1,
+  });
+  expect(await render(budgetRoot)).toContain("失败分类：budget");
+
+  // 旧档里的每一个旧值都不改写：`contract` 仍是 `contract`(不是退化成 `unknown`)，
+  // `tsc` / `selection` 也照旧读得出来——新增一档不挤掉旧档位。
+  for (const legacy of ["contract", "tsc", "selection"]) {
+    const legacyRoot = rootOf();
+    writeFailure(legacyRoot, legacy);
+    expect(readArchiveReports(legacyRoot)[0]?.failure).toEqual({
+      classification: legacy,
+      diagnosticsCount: 1,
+    });
+    expect(await render(legacyRoot)).toContain(`失败分类：${legacy}`);
+  }
+});
+
 it("Opus 兼容 usage 的 completion_tokens=3292 不被 output_tokens=0 覆盖，billing 与 cache 明细不重复加总", () => {
   const root = rootOf();
   const usage = {
