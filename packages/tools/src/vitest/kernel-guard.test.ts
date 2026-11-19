@@ -19,6 +19,22 @@
  *
  * 第 4 条读 `vitest.config.ts`:`property` 那条链只跑 `*.prop.ts`,没有一条用例会去启动沙箱,所以
  * 它的接线只能从配置文本上判——两个 project 都装上,少一个就是一条没人看着的链。
+ *
+ * ── 这条判据抓到的第一例 ──
+ *
+ * 落地后第一条红的是 `apps/cli/src/gen-cli.test.ts`:它 spawn 打好的单文件 CLI 产物、打假端点、
+ * **在真沙箱里**跑满一整张网格,却挂在 `unit` 上。之前没人看见,是因为它包在
+ * `it.skipIf(!archivePresent)` 里——`archive/` 不入库,没冻档的机器上它是 skip,于是一条要内核
+ * 能力的用例在两边都不报红(本机 skip、CI 没有 `archive/` 也 skip)。探针把「本机装了 bwrap」
+ * 这个自由度去掉之后,它当场变成一次指名道姓的失败,而不是一条只在别人 PR 上才发作的红。
+ * 处置见 `vitest.config.ts` 的 `GEN_CLI_TEST`:整条移进 `sandbox` project。
+ *
+ * ── 探针看不到的地方,谁在看 ──
+ *
+ * 探针只能钉住**装了探针的那两条链**。一条用例被移到 `sandbox` 之后探针就不再看它了,所以「移
+ * 走」这件事本身也得有人盯:下面第 5 条断言 `unit` 的 exclude 与 `sandbox` 的 include 引用同一
+ * 个路径字面量(排除过头与没排除是同一种失败)。而「`sandbox` 真收到它」那一侧的证据由
+ * `packages/tools/src/gates.test.ts` 用 `vitest list` 给(这里不 spawn 第二份 vitest)。
  */
 
 import { spawnSync } from "node:child_process";
@@ -83,5 +99,33 @@ describe("两条快链都装上了,真 bwrap 的 project 没被误伤", () => {
   // 反面:探针装进这三个 project 会把「真沙箱能不能跑」也一起弄假,那正是 `check:sandbox` 要验的事。
   it.each(["gates", "slow", "sandbox"])("%s 链没装探针", (project) => {
     expect(projectBlockOf(config, project)).not.toContain(SETUP_FILE);
+  });
+});
+
+describe("真 bwrap 的用例不会被放回快链(探针看不到的那一侧)", () => {
+  const config = readFileSync(`${repoRoot}vitest.config.ts`, "utf8");
+
+  /**
+   * 两条真 bwrap 的用例:探针抓出来的那一条(`gen-cli`)与早就拆出去的那一条(`agent-real-session`)。
+   *
+   * 判据不是「探针会拦住它们」——搬走之后探针就不再跑它们了——而是「排除它的那条链与收着它的
+   * 那条链引用**同一个常量**」。两处各写一份路径的话,谁把 exclude 删了都不会有人发现,而后果是
+   * 快链上重新出现一条要内核能力的用例(本机绿、CI 红的那一种)。
+   *
+   * 断言拆成三段,是因为这份配置的形状是「常量定义一处 + 两处引用」:只查引用会漏掉「常量被改了
+   * 值」,只查字面量会漏掉「exclude 被删了」。
+   */
+  it.each([
+    ["apps/cli/src/gen-cli.test.ts", "GEN_CLI_TEST"],
+    ["apps/cli/src/agent-real-session.test.ts", "SANDBOX_TEST"],
+  ])("%s:unit 排除、sandbox 收着", (path, constant) => {
+    expect(config, `${constant} 的定义被改了值或删了`).toContain(`const ${constant} = "${path}";`);
+    expect(
+      projectBlockOf(config, "unit"),
+      `unit 没排除 ${constant}:快链上重新出现了一条真 bwrap 的用例`,
+    ).toContain(constant);
+    expect(projectBlockOf(config, "sandbox"), `sandbox 没收 ${constant}`).toContain(constant);
+    // 收着它的那条链不能装探针,否则这条用例在真沙箱上也会被探针拒掉。
+    expect(projectBlockOf(config, "sandbox")).not.toContain(SETUP_FILE);
   });
 });

@@ -5,11 +5,35 @@
  * `node:http` 起的**本地假服务**(回一个过得了 tsc + 静态校验的合法脚本),`.env` 写在临时根里提供
  * 假凭证;断言退出码 0 + `archive/<slug>/<runId>/` 三件套落地。
  *
- * ── 为什么不改 `cli.test.ts` ──
+ * ── 它归 `sandbox` project,不归 `unit` ──
  *
- * 契约 §6 给 05 留的缝是「补一条 CLI 子进程冒烟」;`cli.test.ts` 的既有断言(帮助文本、未实现路径、
- * match/verify/map-lint e2e)不在本文件范围。这里新开一个文件,既不把那条 27KB 的用例集撑得更大,
- * 也让这条冒烟的可观察面(真打一次 HTTP、真编一次 tsc)单独成篇。
+ * 它是**真沙箱**的端到端冒烟:bwrap 真起、真网格 32 场真跑,那要非特权 user namespace 与系统装的
+ * bubblewrap,而常跑链(`pnpm run test`)不装。收进 `unit` 的后果与 `agent-real-session.test.ts`
+ * 完全相同:「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」,两种处方
+ * 混成一条红。所以它和那条真会话一起归 `sandbox`(`pnpm run check:sandbox` 的 `--project sandbox`)。
+ *
+ * 这条归属是**被内核探针抓出来的**(`vitest.kernel-guard.setup.ts` 落地后的第一例):在此之前它
+ * 一直挂在 `unit` 上,而 `it.skipIf(!archivePresent)` 让它在「没有冻档的机器」上静默 skip——
+ * `archive/` 不入库,于是本机与 CI 两边都不报红,一条要内核能力的用例就这么藏住了。
+ *
+ * ── 移走不等于丢掉覆盖 ──
+ *
+ * 拆开看它断言的四样东西,各自都有快链上的那一份:
+ * - CLI 产物的 argv 与退出码约定:`cli.test.ts`(`gen --help` 列出的选项、缺 `--config` 非零退出)
+ *   与 `packages/gen/src/run.test.ts`(`generateAndFreeze` 的解析、`--model` 选取、`.env` 加载);
+ * - 「一次 evaluate 产出可装载档案 + 成功/失败两档」:`gen-archive.test.ts` 与
+ *   `agent-session-archive.test.ts` 用**同一份** `withRealBash` 替身验同一条链;
+ * - HTTP 适配器真的打了那个端点、带上了 Bearer 鉴权:`packages/gen/src/http/client.test.ts`
+ *   直接对着假端点验;
+ * - 真网格 32 场跑满:`check:gen-grid`(它要冻档,所以自己是命名脚本)。
+ * 本文件不可替代的那一样是「这四层同时在一条 CLI 进程里成立」——它仍然被验,只是在对的那条链上。
+ *
+ * ── 为什么不给子进程 CLI 注入假执行器 ──
+ *
+ * `withRealBash` 是 `import` 形态的替身,它换的是**本进程**那份 `sandbox` 对象;而本文件 spawn 的是
+ * 打好的单文件产物,替身跟着打包进 bundle 意味着在生产 CLI 上开一个测试专用开关——那正是禁止项。
+ * 另一条路是给子进程塞一个假 `bwrap`(把执行器换成 `/bin/bash` 的 shim),但那要自己重新实现
+ * rootfs 挂载面与 fd 3 语义;一旦实现得与生产不同,这条冒烟就变成在验 shim 自己的正确性。
  *
  * ── 为什么用异步 `spawn` 而不是 `spawnSync` ──
  *
