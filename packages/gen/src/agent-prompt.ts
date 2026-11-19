@@ -35,7 +35,14 @@ import { CONTRACT_TREE_HASH, RULESET_VERSION, type RulesetVersion } from "@model
 
 import { ruleDocsDir } from "./contract.js";
 
-/** 首条消息的模板(仓库相对 `prompts/`)。 */
+/**
+ * 首条消息的模板(仓库相对 `prompts/`)。
+ *
+ * 路径字面量(`prompts/agent.md`)在仓库里共三份:本文件的 `AGENT_TEMPLATE_NAME`、
+ * 门禁包的 `AGENT_TEMPLATE_PATH`、`gates.test.ts` 的探针路径。**这是被迫重复**:零构建的门禁
+ * 不得 import `@model-war/gen`(hld §2.2.8、ADR-0003),而本文件住在那里。它靠「读不到即抛」
+ * 兜底:任一处写错就是读一个不存在的文件,当场红,不会静默放过。
+ */
 export const AGENT_TEMPLATE_NAME = "agent.md";
 
 /** `system` 消息的模板(仓库相对 `prompts/`)。原样使用,不渲染。 */
