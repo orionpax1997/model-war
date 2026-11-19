@@ -3,7 +3,7 @@
  *
  * 用法:`pnpm run check:sandbox`(命名脚本里先 `pnpm run build`,这一条要加载执行器的编译形态)。
  *
- * ── 四件事,一件都不能 skip ──
+ * ── 五件事,一件都不能 skip ──
  *
  * 1. **可用性**:驱动生产执行器的 `sandbox.preflight()`。失败即红,红在**这一行**,而不是变成
  *    后面一串莫名失败的用例。ADR-0033 的立场是「不可用就跳过」的反面:跳过会让环境变化
@@ -14,15 +14,22 @@
  *    同样配正对照:某一步正在跑时,宿主 `/proc` 里**看得到**它——否则「查不到」只是因为扫描
  *    本身看不见东西(空转)。正对照用一步死循环跑满墙钟,顺带把「墙钟到点杀整棵进程树」
  *    这条也真跑一遍(`timedOut` 必须为真)。
- * 4. **rootfs 漂移**:复用 `check:sandbox-rootfs` 的六条判据(同 `rootfs-check.ts` 一份实现)。
+ * 4. **rootfs 漂移**:复用 `check:sandbox-rootfs` 的七条判据(同 `rootfs-check.ts` 一份实现)。
  *    这条放这里是因为「沙箱里跑的东西」与「入库的内容物」是同一件事的两面:前者证明隔离成立,
  *    后者证明隔离住的正是那份字节。
  *
- * 外加两条关于**通道**的:沙箱里调一次薄壳,宿主那边必须收到恰好一行 JSON、并且回得过去;
- * 再让真 `check` 服务经那条通道跑一次 tsc。它们不属于上面四件事,但它们是「可用性」的另一半
- * ——沙箱能跑命令却开不出通道时,`check` / `evaluate` 全都不存在,而这不会以「沙箱坏了」的
- * 形式出现。前一条只认形状(一行、是 JSON),后一条认结果(薄壳拿到的退出码与 stdout、以及
- * 宿主落进 `/workspace/.check.txt` 的全文)。
+ * 5. **命令真能用**:`sed` / `head` / `tail` / `wc` 各跑一条最小调用,并各断言 stdout 逐字节
+ *    相符。这条判据的形状与其余四条不同:它不问「文件在不在」(那是 `check:sandbox-rootfs`
+ *    的事),它问「模型敲下去之后能不能拿到它想要的字节」——`sed -i` 改得动文件、`sed -n`
+ *    取得到 `api.md` 的中间段。没有它们时,`cat` 只能吐出 16 KiB 截断后的首尾两段,中间那
+ *    一半模型**结构性读不到**;而「文件在库里」与「模型读得到」是两件事。
+ *
+ * 外加三条关于**通道与命令面**的:沙箱里调一次薄壳,宿主那边必须收到恰好一行 JSON、并且回得
+ * 过去;再让真 `check` 服务经那条通道跑一次 tsc;以及上面第 5 条那四个 coreutils 的最小调用。
+ * 它们不属于前面四件事,但它们是「可用性」的另一半——沙箱能跑命令却开不出通道时,
+ * `check` / `evaluate` 全都不存在,而这不会以「沙箱坏了」的形式出现。第一条只认形状(一行、
+ * 是 JSON),第二条认结果(薄壳拿到的退出码与 stdout、以及宿主落进 `/workspace/.check.txt`
+ * 的全文),第三条认字节(`sed` / `head` / `tail` / `wc` 的输出)。
  *
  * ── 第五件在本门禁之后跑,不在这份文件里 ──
  *
@@ -41,7 +48,7 @@
  * (`executor-bridge.ts`):起子进程、喂一份 JSON、读回结果。断言——包括「什么算失败」——只写在
  * 这里,执行器那边一行判据也没有。
  *
- * 退出码:0 = 四件事全成立;1 = 任一条不成立(含空转)。
+ * 退出码:0 = 五件事全成立;1 = 任一条不成立(含空转)。
  */
 
 import {
@@ -70,7 +77,7 @@ const NETWORK_TARGET = { host: "1.1.1.1", port: 443 } as const;
 /** 后台进程判据里「立即返回」的口径。一步的回包要远小于单步墙钟(默认 120 s)。 */
 const IMMEDIATE_RETURN_MS = 5_000;
 
-/** 后台进程判据里的探针:bash 死循环,不需要 rootfs 里存在 `sleep`(那里只有五个二进制)。 */
+/** 后台进程判据里的探针:bash 死循环,不需要 rootfs 里存在 `sleep`(那里只有 bash 与 coreutils)。 */
 const spin = (nonce: string): string => `# ${nonce}\nwhile :; do :; done`;
 
 const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
@@ -121,6 +128,7 @@ const main = async (): Promise<number> => {
     outcomes.push(await networkOutcome(workspaceDir));
     outcomes.push(await channelOutcome(workspaceDir));
     outcomes.push(await checkThroughShimOutcome(workspaceDir));
+    outcomes.push(await coreutilsOutcome(workspaceDir));
     outcomes.push(await backgroundOutcome(workspaceDir));
     outcomes.push(rootfsOutcome());
   } finally {
@@ -326,6 +334,124 @@ const checkThroughShimOutcome = async (workspaceDir: string): Promise<Outcome> =
     : { line: "✗ 薄壳跑通 check", failures };
 };
 
+/** 一条最小调用:沙箱里跑什么、期望 stdout 是哪些字节。 */
+type CommandProbe = {
+  /** 报告里怎么称呼这一条(命令名)。 */
+  readonly tool: string;
+  /** 沙箱里的命令。工作目录是 `/workspace`(可写),所以探针文件写相对路径。 */
+  readonly command: string;
+  /** 期望的 stdout,**逐字节**比,不比「包含」。 */
+  readonly stdout: string;
+};
+
+/**
+ * 判据 5:新增的四个 coreutils **真能用**,不是「文件在库里」。
+ *
+ * ── 为什么这条不能由 `check:sandbox-rootfs` 承担 ──
+ *
+ * 那边判的是字节与清单(静态 ELF、树哈希、逐字节副本),它证明「这四份二进制入库了」。
+ * 但模型要的是「敲 `sed -n '120,240p' /contract/api.md` 就能读到中间段」——两件事之间隔着
+ * 一次真执行:参数被 static 版接住、`sed -i` 在 `/workspace` 上改得动、`wc -l` 读得到重定向。
+ * 一条 `if [ -x /bin/sed ]` 的探针会把这三件全放过,所以这里每条都断言**输出字节**。
+ *
+ * 期望值不手抄:`sed` 那条取的是 `/contract/api.md` 的第 120–121 行(现算),其余三条取的是
+ * 探针自己写下的字节。前者顺带证明「中间段可达」那处能力洞真的补上了——`cat` 在 16 KiB 上限
+ * 下吐不出那一段。
+ */
+const coreutilsOutcome = async (workspaceDir: string): Promise<Outcome> => {
+  const failures: string[] = [];
+  const probeWorkspace = join(workspaceDir, "coreutils");
+  mkdirSync(probeWorkspace, { recursive: true });
+
+  // 中间段的期望值现算自真源。抽不出非空的一段时按失败报:空期望 == 什么都没断言。
+  const apiLines = readFileSync(join(repoRoot, CONTRACT_DIR, "api.md"), "utf8").split("\n");
+  const apiSlice = `${apiLines.slice(119, 121).join("\n")}\n`;
+  if (apiSlice.trim() === "" || !apiLines[119]) {
+    failures.push(
+      `判据自己空了:\`${CONTRACT_DIR}/api.md\` 的第 120–121 行读不到内容,` +
+        "「sed 取得到中间段」这条此时什么都没断言。",
+    );
+    return { line: "✗ coreutils 真能用", failures };
+  }
+
+  const probes: readonly CommandProbe[] = [
+    {
+      // 取行段 + 就地改:`sed -i` 是「改一行不必整份重写」那处能力洞的唯一补法。
+      tool: "sed",
+      command: [
+        "printf 'a\\nb\\nc\\n' > sed.txt",
+        "sed -i 's/^b$/B/' sed.txt",
+        "sed -n '1,2p' sed.txt",
+      ].join("\n"),
+      stdout: "a\nB\n",
+    },
+    {
+      // 中间段:这就是 `cat` 在 16 KiB 截断下读不到的那一半。
+      tool: "sed(中间段)",
+      command: "sed -n '120,121p' /contract/api.md",
+      stdout: apiSlice,
+    },
+    {
+      tool: "head",
+      command: "printf 'a\\nb\\nc\\n' > head.txt\nhead -c 4 head.txt",
+      stdout: "a\nb\n",
+    },
+    {
+      tool: "tail",
+      command: "printf 'a\\nb\\nc\\n' > tail.txt\ntail -n 1 tail.txt",
+      stdout: "c\n",
+    },
+    {
+      tool: "wc",
+      command: "printf 'a\\nb\\nc\\n' > wc.txt\nwc -l < wc.txt",
+      stdout: "3\n",
+    },
+  ];
+
+  for (const probe of probes) {
+    const result = await driveExecutor(
+      repoRoot,
+      {
+        action: "run",
+        rootfsDir: join(repoRoot, "packages/gen/sandbox-rootfs"),
+        workspaceDir: probeWorkspace,
+        wallClockMs: 30_000,
+        channel: "none",
+        command: probe.command,
+      },
+      60_000,
+    );
+    if (!result.ok) {
+      failures.push(`沙箱里跑 \`${probe.tool}\` 时执行器报错:${result.message}`);
+      continue;
+    }
+    if (result.exitCode !== 0) {
+      failures.push(
+        `\`${probe.tool}\` 在沙箱里的退出码是 ${String(result.exitCode)}(期望 0;` +
+          `stderr ${JSON.stringify((result.stderr ?? "").slice(0, 300))})。这四件是 rootfs 内容物里的静态二进制,` +
+          "跑不起来说明入库的字节与 `PROVENANCE.md` 说的那份不是同一份。",
+      );
+      continue;
+    }
+    if ((result.stdout ?? "") !== probe.stdout) {
+      failures.push(
+        `\`${probe.tool}\` 的 stdout 是 ${JSON.stringify(result.stdout ?? "")},` +
+          `期望 ${JSON.stringify(probe.stdout)}。命令跑起来了但给出的字节不对——` +
+          "这条判的是「工具能用」,不是「文件在」。",
+      );
+    }
+  }
+
+  return failures.length === 0
+    ? {
+        line:
+          "✓ coreutils 真能用:`sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各跑一条最小调用," +
+          "stdout 逐字节相符(`sed -n '120,121p' /contract/api.md` 取到了 16 KiB 截断下读不到的中间段)",
+        failures,
+      }
+    : { line: "✗ coreutils 真能用", failures };
+};
+
 /** 判据 3:后台进程不残留;正对照是「某一步在跑时宿主看得见它」。 */
 const backgroundOutcome = async (workspaceDir: string): Promise<Outcome> => {
   const failures: string[] = [];
@@ -433,7 +559,7 @@ const report = (outcomes: readonly Outcome[], note: string): void => {
   const asserted = outcomes.filter((outcome) => outcome.line.startsWith("✓")).length;
   const vacuous = vacuousReason(asserted, {
     subject: "真正跑通的沙箱判据",
-    scope: "可用性 / 无网络 / 通道 / 薄壳跑通 check / 后台进程 / rootfs 漂移",
+    scope: "可用性 / 无网络 / 通道 / 薄壳跑通 check / coreutils 真能用 / 后台进程 / rootfs 漂移",
   });
 
   for (const outcome of outcomes) {
@@ -447,7 +573,7 @@ const report = (outcomes: readonly Outcome[], note: string): void => {
   }
   const failed = outcomes.some((outcome) => outcome.failures.length > 0);
   process.stdout.write(
-    `check:sandbox:${failed ? "红" : `绿(执行器入口 ${EXECUTOR_ENTRY},四件事与通道那两条全部真跑)`}\n`,
+    `check:sandbox:${failed ? "红" : `绿(执行器入口 ${EXECUTOR_ENTRY},五件事与通道那几条全部真跑)`}\n`,
   );
 };
 

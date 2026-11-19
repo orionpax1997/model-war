@@ -7,7 +7,7 @@
  *
  * ── 哈希口径与票 02 的契约树哈希同源,但**范围不同,两者不能互换** ──
  * 两边都是「按路径排序、`path\0bytes` 串接后的 sha256」。这边算的是**整棵 rootfs**
- * (`packages/gen/sandbox-rootfs/`):静态 bash、四个 coreutils、三个薄壳、`contract/` 四条。
+ * (`packages/gen/sandbox-rootfs/`):静态 bash、几个静态 coreutils、三个薄壳、`contract/` 四条。
  * 契约包身份(`docs/rules-v2/` 那四条)是另一个数,它由契约包自己算。把两个数当同一个用,
  * 会在「只改了 bash 版本、契约没动」时把契约身份也换掉——那是两种完全不同的断代。
  *
@@ -96,6 +96,9 @@ export const treeDigest = (entries: readonly TreeEntry[]): string => {
   }
   return hash.digest("hex");
 };
+
+/** 一份字节的 sha256。`PROVENANCE.md` 声称的那串 hex 与盘上的字节用同一口径比。 */
+export const sha256Of = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
 /** 一份静态 ELF 的解析结论。`static` 为假时 `reason` 说的是「它为什么不是」。 */
 export type ElfVerdict = { readonly static: boolean; readonly reason: string } | undefined;
