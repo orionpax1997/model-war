@@ -42,6 +42,7 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
   const reasoning = objectOf(policy.reasoning);
   const output = objectOf(policy.output);
   const transport = objectOf(evidence.transport);
+  const cache = policy.cache === undefined ? null : objectOf(policy.cache);
   return {
     // 身份来自目录，不接受服务端模型名或任意证据字符串。
     configId,
@@ -90,6 +91,13 @@ export const requestEvidenceOf = (value: unknown, configId: string) => {
       authentication: enumOf(transport.authentication, ["bearer", "api-key", "both"]),
       versionHeaderRecorded: typeof transport.anthropicVersion === "string",
     },
+    cache:
+      cache === null
+        ? null
+        : {
+            mode: enumOf(cache.mode, ["none", "ephemeral", "ephemeral-1h"]),
+            ...supportOf(cache),
+          },
     backendIdentity: "unverified" as const,
   };
 };
@@ -428,3 +436,15 @@ export const observationEvidenceOf = (
 
 export const failureClassificationOf = (value: unknown) =>
   enumOf(value, ["tsc", "contract", "transport", "selection"]) ?? "unknown";
+
+/**
+ * 一次传输尝试的细分（ADR-0036 的 `AttemptEvidence.failureKind`）：429 / 服务端 / 网络 / 超时。
+ *
+ * 真源在 `packages/gen/src/transport-error.ts`，而 runner **不得 import gen**（hld §3.2），
+ * 日志行又是外部字节——所以这里按白名单独立验证：未知文本不猜成一个分类，也不折进别的格。
+ * 返回 `null` = 这一行没记细分（历史档，或成功尝试）。
+ */
+export const attemptFailureKindOf = (
+  value: unknown,
+): "rate-limited" | "server" | "network" | "timeout" | null =>
+  enumOf(value, ["rate-limited", "server", "network", "timeout"]);

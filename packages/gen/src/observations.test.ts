@@ -394,8 +394,8 @@ it("三层结构：对差表 8 格（座位 × 地图）+ 逐场一行 = 计划�
     "座位3 / corridor-split",
     "座位3 / open-clash",
   ]);
-  // 每格都带与上一阶段的对照列；首轮没有上一阶段就明写，而不是留空或按 0 算。
-  for (const cell of cells) expect(cell).toContain("与上一阶段同一格：无上一阶段。");
+  // 每格都带与上一次评测的对照列；第一次评测没有上一次就明写，而不是留空或按 0 算。
+  for (const cell of cells) expect(cell).toContain("与上一次评测同一格：无上一次评测。");
   // 每格的聚合事实：4 局一格的均值与末位局数（候选在 0 号位时领土分 93 居首）。
   expect(cells[0]).toContain(
     "座位0 / corridor-split：4 局，平均名次 1.00，平均名次积分 3.00，平均领土分 93.00（第一名 93.00，分差 0.00），末位 0 局",
@@ -432,7 +432,7 @@ it("三层结构：对差表 8 格（座位 × 地图）+ 逐场一行 = 计划�
   expect(matchLines(reducedText)).toHaveLength(2);
 });
 
-it("对差表的同格变化按阶段给：Δ = 本阶段 − 上一阶段（含方向与符号）", () => {
+it("对差表的同格变化按评测给：Δ = 本次评测 − 上一次评测（含方向与符号）", () => {
   const gridPlan = gridPlanFixture();
   const current = gridReadingsOf(gridPlan, () => [93, 58, 14, 10]);
   const previous = gridReadingsOf(gridPlan, () => [58, 93, 12, 9]);
@@ -440,17 +440,17 @@ it("对差表的同格变化按阶段给：Δ = 本阶段 − 上一阶段（含
   const cellOf = (seat: number, map: string): string =>
     feedback.split("\n").find((line) => line.startsWith(`  座位${String(seat)} / ${map}：`)) ?? "";
 
-  // 座位0：上一阶段 58 分排第 2（与第一名差 35），本阶段 93 分排第 1（差 0）→ 积分 +1、分差 −35。
+  // 座位0：上一次评测 58 分排第 2（与第一名差 35），本次 93 分排第 1（差 0）→ 积分 +1、分差 −35。
   expect(cellOf(0, "corridor-split")).toContain("平均名次积分 3.00");
   expect(cellOf(0, "corridor-split")).toContain("Δ平均名次积分 +1.00，Δ分差 -35.00");
   // 座位1 反过来：积分 −1、分差 +35（差距扩大）。
   expect(cellOf(1, "open-clash")).toContain("Δ平均名次积分 -1.00，Δ分差 +35.00");
   // 每个格都带变化，不只是其中一格。
-  expect(feedback.match(/与上一阶段同一格：Δ平均名次积分 [+-]/g)).toHaveLength(8);
+  expect(feedback.match(/与上一次评测同一格：Δ平均名次积分 [+-]/g)).toHaveLength(8);
 
-  // 没有上一阶段（第一次回喂）：八格都写「无上一阶段」，全文不出现 Δ。
+  // 没有上一次评测（第一次回喂）：八格都写「无上一次评测」，全文不出现 Δ。
   const first = renderScoreSourceFeedback(current, gridPlan);
-  expect(first.match(/与上一阶段同一格：无上一阶段。/g)).toHaveLength(8);
+  expect(first.match(/与上一次评测同一格：无上一次评测。/g)).toHaveLength(8);
   expect(first).not.toContain("Δ平均名次积分");
 });
 
@@ -515,7 +515,7 @@ it("覆盖缺失单独说明、不补零：缺终局的格不给平均，逐场�
 
 // ── 陪练池身份、代位与镜像标注（spec：反馈必须写明跟谁打、代位、字节相同）─────────
 
-it("反馈写明陪练池身份与代位：角色、role:slug、装载来源，代位时明写「本阶段以 X 代位」", () => {
+it("反馈写明陪练池身份与代位：角色、role:slug、装载来源，代位时明写「本次评测以 X 代位」", () => {
   // 生产口径的四份身份 + 在位代位（`source` 的 `#substitute` 后缀就是代位的唯一标记）。
   const scripts = productionScripts.map((script, index) =>
     index === 3 ? { ...script, source: `${script.source}#substitute` } : script,
@@ -525,16 +525,16 @@ it("反馈写明陪练池身份与代位：角色、role:slug、装载来源，�
     gridReadingsOf(gridPlan, () => [93, 58, 14, 10]),
     gridPlan,
   );
-  expect(feedback).toContain("陪练池（本阶段的对手；每个组合轮空其中一份）：");
+  expect(feedback).toContain("陪练池（本次评测的对手；每个组合轮空其中一份）：");
   // 四份身份都要能被读出来（角色、id、来源），不是只写「四个对手」。
   expect(feedback).toContain("  榜首 top:claude-opus-5-5 ← archive:claude-opus-5-5/r1");
   expect(feedback).toContain("  中位 mid:minimax-m3.1-flash ← archive:minimax-m3.1-flash/r2");
   expect(feedback).toContain("  末位 last:glm-5.3-flash ← archive:glm-5.3-flash/r3");
   // 代位是来源而不是另一个角色：反馈据此明写代位，而且只说一次。
   expect(feedback).toContain(
-    "  在位 incumbent:muse-spark-1.3-contributor ← archive:muse-spark-1.3-contributor/r4#substitute；本阶段以 muse-spark-1.3-contributor 代位",
+    "  在位 incumbent:muse-spark-1.3-contributor ← archive:muse-spark-1.3-contributor/r4#substitute；本次评测以 muse-spark-1.3-contributor 代位",
   );
-  expect(feedback.match(/本阶段以 .* 代位/g)).toHaveLength(1);
+  expect(feedback.match(/本次评测以 .* 代位/g)).toHaveLength(1);
 
   // 没代位的计划（来源不带后缀）不写代位，其余身份照列。
   const ownIncumbent = fixtureScripts.map((script) => ({
@@ -653,7 +653,7 @@ it("体积守上限：32 场的反馈不超过现有 3 场（3 547 字符）的�
   const gridPlan = gridPlanFixture(productionScripts);
   const readings = gridReadingsOf(gridPlan, () => [93, 58, 14, 10]);
   const first = renderScoreSourceFeedback(readings, gridPlan);
-  // 带上一阶段的第二次回喂是对差表最长的一版（八格都要写 Δ），所以上限按它守。
+  // 带上一次评测对照的第二次回喂是对差表最长的一版（八格都要写 Δ），所以上限按它守。
   const second = renderScoreSourceFeedback(readings, gridPlan, readings);
   // 最坏一版：候选字节恰好等于其中一份陪练（24 场逐行多一句镜像标注）。
   const mirrored = renderScoreSourceFeedback(

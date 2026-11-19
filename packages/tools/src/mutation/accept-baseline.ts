@@ -54,6 +54,7 @@ import {
   countsFromReport,
   isShardBaseline,
   mutationScore,
+  nextHistory,
   scoreGapPercent,
   type MutationCounts,
   type MutationRatio,
@@ -189,6 +190,13 @@ const main = (): number => {
   // ③ 造新基线并写盘。写只发生在这一处,且只在参数齐全、报告可用之后。
   const next = baselineFromCounts(shard.name, counts, display(reportPath));
   const previous = readPrevious(baselinePath);
+  // 历史也在这里落(ADR-0027):它是基线的一部分,随基线入库。
+  // 写口只有这一处 —— 抬升是显式动作,所以历史不会被自动路径偷偷改写。
+  const history = nextHistory(
+    previous.kind === "stored" ? previous.baseline : undefined,
+    counts,
+    new Date().toISOString(),
+  );
   const gaps =
     previous.kind === "stored"
       ? scoreGapPercent(counts, {
@@ -196,7 +204,7 @@ const main = (): number => {
           valid: previous.baseline.valid,
         })
       : 0;
-  writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  writeFileSync(baselinePath, `${JSON.stringify({ ...next, history }, null, 2)}\n`, "utf8");
 
   // ④ 打印:抬了哪一片、旧 → 新、写到了哪。
   const previousText =
@@ -221,6 +229,10 @@ const main = (): number => {
     out(`新基线比旧基线高 ${gaps.toFixed(2)} 个百分点 —— 棘轮收紧了。`);
   }
   out(`已写入 ${display(baselinePath)}。`);
+  out(
+    `历史:${history.length} 条(基线文件里的 \`history\`,随仓库走;ADR-0027)。` +
+      `趋势读它:pnpm run mutation:history。`,
+  );
   out(
     "这是显式动作:它不在任何流水线、默认链或常跑入口上,agent 不得运行它" +
       "(AGENTS.md《门禁纪律》)——修测试让分数回去才是 agent 的活。",

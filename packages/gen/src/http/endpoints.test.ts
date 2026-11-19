@@ -5,6 +5,7 @@
 
 import { expect, it } from "vitest";
 import type { ModelConfig } from "../config.js";
+import { policyFixture } from "../generation-policy.fixture.js";
 import type { ChatMessage } from "../model-client.js";
 import { endpointSpec } from "./endpoints.js";
 
@@ -14,6 +15,7 @@ const config = (family: ModelConfig["endpointFamily"]): ModelConfig => ({
   baseUrl: "https://example.invalid/v1",
   modelId: "vendor/model-x",
   credentialEnvVar: "TEST_KEY",
+  channelId: "test-channel",
 });
 
 /** Google 族的模型 id 直接进路径,用真实形状的 id 才能看见路径是不是拼对了。 */
@@ -103,6 +105,104 @@ it("messages 请求体:params 里的 max_tokens 覆盖缺省;无 system 时不�
   );
   expect(body.max_tokens).toBe(512);
   expect("system" in body).toBe(false);
+});
+
+/**
+ * 缓存断点的配置面：只给 messages 族写这一段，其余族不写（缺省即不干预）。
+ * 这里用 fixture 证据声明，不冒充生产模型的渠道证据。
+ */
+const cachedConfig = (
+  family: ModelConfig["endpointFamily"],
+  mode: "none" | "ephemeral" | "ephemeral-1h",
+): ModelConfig => ({
+  ...config(family),
+  generationPolicy: {
+    ...policyFixture(family),
+    cache: {
+      mode,
+      official: { status: "documented", source: "offline-fixture/cache-official" },
+      channel: { status: "accepted", source: "offline-fixture/cache-channel" },
+    },
+  },
+});
+
+it("messages 缓存断点:system 与最后一条 user 消息的最后一个块打 cache_control(1h)", () => {
+  const body = endpointSpec("messages").buildBody(
+    cachedConfig("messages", "ephemeral-1h"),
+    [
+      { role: "system", content: "契约前缀" },
+      { role: "user", content: "第一轮" },
+      { role: "assistant", content: "第一版脚本" },
+      { role: "user", content: "第二轮" },
+    ],
+    { max_tokens: 512 },
+  );
+  const control = { type: "ephemeral", ttl: "1h" };
+  expect(body.system).toEqual([{ type: "text", text: "契约前缀", cache_control: control }]);
+  // 断点在前缀末尾：中间消息保持字符串载荷，只有最后一条消息的最后一个块挂标记。
+  expect(body.messages).toEqual([
+    { role: "user", content: "第一轮" },
+    { role: "assistant", content: "第一版脚本" },
+    { role: "user", content: [{ type: "text", text: "第二轮", cache_control: control }] },
+  ]);
+});
+
+it("messages 缓存断点:ephemeral 不带 ttl;mode none、未配置、非 messages 族都保持字符串载荷", () => {
+  const messages: ChatMessage[] = [
+    { role: "system", content: "s" },
+    { role: "user", content: "u" },
+  ];
+  const ephemeral = endpointSpec("messages").buildBody(
+    cachedConfig("messages", "ephemeral"),
+    messages,
+    {},
+  );
+  expect(ephemeral.system).toEqual([
+    { type: "text", text: "s", cache_control: { type: "ephemeral" } },
+  ]);
+  expect(ephemeral.messages).toEqual([
+    { role: "user", content: [{ type: "text", text: "u", cache_control: { type: "ephemeral" } }] },
+  ]);
+  for (const candidate of [
+    endpointSpec("messages").buildBody(cachedConfig("messages", "none"), messages, {}),
+    endpointSpec("messages").buildBody(config("messages"), messages, {}),
+  ]) {
+    expect(candidate.system).toBe("s");
+    expect(candidate.messages).toEqual([{ role: "user", content: "u" }]);
+  }
+  // chat 族的服务端默认缓存已经生效，加任何缓存参数都是多余干预。
+  expect(
+    endpointSpec("chat-completions").buildBody(
+      cachedConfig("chat-completions", "ephemeral-1h"),
+      messages,
+      {},
+    ),
+  ).toEqual({
+    model: "vendor/model-x",
+    messages: [
+      { role: "system", content: "s" },
+      { role: "user", content: "u" },
+    ],
+  });
+});
+
+it("messages 流式请求体同样带缓存断点，stream 不覆盖断点", () => {
+  const body = requireStreaming("messages").buildBody(
+    cachedConfig("messages", "ephemeral-1h"),
+    [{ role: "user", content: "u" }],
+    { max_tokens: 512 },
+  );
+  expect(body).toEqual({
+    model: "vendor/model-x",
+    max_tokens: 512,
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: "u", cache_control: { type: "ephemeral", ttl: "1h" } }],
+      },
+    ],
+    stream: true,
+  });
 });
 
 it("messages 响应:content 里只拼 type=text 的块;stop_reason 归一", () => {

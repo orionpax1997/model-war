@@ -892,6 +892,86 @@ it("metadata model 必须等于枚举 slug，拒绝借其他模型目录读取�
   expect(issues[0]?.reason).toContain("候选身份不合法");
 });
 
+/**
+ * 失败档的候选字节本来就该不在（发布不变量：失败只写 `failed-<runId>.json`）。
+ * 报告不能把「我们主动没留」写成「字节丢了」——后者是搬运事故的读数。
+ */
+const failureRecordWithSteps = (root: string, extra: Record<string, unknown>): void => {
+  writeRecord(root, "failure", [{ round: 2 }], 2);
+  const path = join(root, "archive/alpha/failed-r1.json");
+  const record = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  writeFileSync(
+    path,
+    JSON.stringify({
+      ...record,
+      archiveSchemaVersion: 3,
+      harnessVersion: "bash-mini/0.1",
+      harnessDigest: "d".repeat(64),
+      contextLength: 100000,
+      termination: "transport",
+      atStep: 2,
+      steps: [1, 2].map((step) => ({
+        step,
+        action: { kind: "evaluate" },
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        atMs: step * 1000,
+        harnessMs: 10,
+      })),
+      ...extra,
+    }),
+  );
+};
+
+const markdownOf = async (root: string): Promise<string> => {
+  const stdout: string[] = [];
+  await runArchiveReport(["--root", root], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => {},
+  });
+  return stdout.join("");
+};
+
+it("失败档：候选描述符缺席时渲染成「未保留」，次数从过程记录数出来", async () => {
+  const root = rootOf();
+  failureRecordWithSteps(root, {});
+  const report = readArchiveReports(root)[0]!;
+  expect(report.kind).toBe("failure");
+  // 数据层不伪造：记录里没写描述符，就没有候选段。
+  expect(report.candidateStages).toBe(0);
+  const md = await markdownOf(root);
+  // 次数不丢：它由过程记录的动作列数出来，不依赖候选描述符。
+  expect(md).toContain("候选：未保留（这一跑 evaluate 2 次");
+  expect(md).not.toContain("候选分数：不适用");
+});
+
+it("失败档：描述符在场而字节被清掉时，状态读成「未保留」而不是 missing", async () => {
+  const root = rootOf();
+  // 手工写一份「描述符还在、字节没了」的失败档：这正是失败记录不修那次修复之前的形状，
+  // 也可能是搬运事故的形状。渲染要说清是哪一种。
+  failureRecordWithSteps(root, {
+    candidates: [
+      {
+        step: 2,
+        scriptFile: "observed-r1-round-2.jsonl.candidate.js",
+        observationsFile: "observed-r1-round-2.jsonl",
+        scriptSha256: "e".repeat(64),
+        params: {},
+        score: { totalPoints: 4, averagePoints: 0.125, countedMatches: 32 },
+        matchCount: 32,
+      },
+    ],
+  });
+  const report = readArchiveReports(root)[0]!;
+  // 数据层照实报：盘上确实没有那份字节。判据不因为措辞而放宽。
+  expect(report.initialCandidate?.scriptState).toBe("missing");
+  const md = await markdownOf(root);
+  expect(md).toContain("状态：未保留（失败档只留 failed-<runId>.json，候选字节随清理撤掉）");
+  // 反例的另一半：候选那一行不许写成 `missing`（观测那一行照旧是 `missing`——那是真的没有）。
+  expect(md).not.toContain("candidate.js；状态：missing");
+});
+
 it.each(["missing", "unreadable"])(
   "Markdown 的 %s 观测标记无可用观测，不称最后完成试跑",
   async (state) => {
@@ -2400,4 +2480,152 @@ it("终局摘要可展示但不放宽完整候选的脚本身份与固定seed边
     observations: { candidate: null, state: "partial", readings: [] },
     finalCandidate: { scriptState: "mismatch" },
   });
+});
+
+it("Anthropic 缓存写的 TTL 分档各有读数：分档不跟总量混成「冲突」", async () => {
+  const root = rootOf();
+  writeRecord(root, "success", [
+    {
+      round: 1,
+      sendMs: 10,
+      usage: {
+        input_tokens: 4,
+        output_tokens: 2,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 14036,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 14036 },
+      },
+    },
+  ]);
+  const round = readArchiveReports(root)[0]!.rounds[0]!;
+  // 总量与分档是不同的指标：总量读总量字段，分档各读自己的路径，不互相判成冲突。
+  expect(round.usage.cacheWrite).toMatchObject({
+    value: 14036,
+    source: "usage.cache_creation_input_tokens",
+    state: "recorded",
+    conflict: false,
+  });
+  expect(round.usage.cacheWrite5m).toMatchObject({
+    value: 0,
+    source: "usage.cache_creation.ephemeral_5m_input_tokens",
+  });
+  expect(round.usage.cacheWrite1h).toMatchObject({
+    value: 14036,
+    source: "usage.cache_creation.ephemeral_1h_input_tokens",
+  });
+  const stdout: string[] = [];
+  await runArchiveReport(["--root", root], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => {},
+  });
+  const md = stdout.join("");
+  expect(md).toContain("缓存写 5m");
+  expect(md).toContain("缓存写 1h");
+  expect(md).toContain("| 1 | 10 | 14040 | 2 | 0 | 14036 | 0 | 14036 | null | 0.0% |");
+});
+
+it("逐轮与合计都渲染缓存命中率；缺项不补成 0%，覆盖不完整时合计只给已记录比率", async () => {
+  const root = rootOf();
+  writeRecord(
+    root,
+    "success",
+    [
+      {
+        round: 1,
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 5,
+          prompt_tokens_details: { cached_tokens: 40 },
+        },
+      },
+      { round: 2, usage: { prompt_tokens: 50, completion_tokens: 5 } },
+    ],
+    2,
+  );
+  const report = readArchiveReports(root)[0]!;
+  expect(report.rounds[0]?.cacheHitRate).toBe(0.4);
+  // 没有缓存读字段的轮不解释成 0% 命中。
+  expect(report.rounds[1]?.cacheHitRate).toBeNull();
+  expect(report.cacheHitRate).toEqual({
+    value: null,
+    recordedValue: 0.4,
+    cacheReadTotal: 40,
+    inputTotal: 100,
+    recordedRounds: 1,
+    expectedRounds: 2,
+  });
+  const stdout: string[] = [];
+  await runArchiveReport(["--root", root], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => {},
+  });
+  const md = stdout.join("");
+  expect(md).toContain("缓存命中率");
+  expect(md).toContain("40.0%");
+  expect(md).toContain("缓存读 40 / 输入 100");
+  expect(md).toContain("覆盖 1/2");
+});
+
+it("合计缓存命中率在覆盖完整时给出比率；分母为零保持 null", () => {
+  const root = rootOf();
+  writeRecord(root, "success", [
+    {
+      round: 1,
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 40 },
+      },
+    },
+  ]);
+  expect(readArchiveReports(root)[0]?.cacheHitRate).toEqual({
+    value: 0.4,
+    recordedValue: 0.4,
+    cacheReadTotal: 40,
+    inputTotal: 100,
+    recordedRounds: 1,
+    expectedRounds: 1,
+  });
+  const zero = rootOf();
+  writeRecord(zero, "success", [
+    {
+      round: 1,
+      usage: {
+        prompt_tokens: 0,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 0 },
+      },
+    },
+  ]);
+  expect(readArchiveReports(zero)[0]?.cacheHitRate).toEqual({
+    value: null,
+    recordedValue: null,
+    cacheReadTotal: null,
+    inputTotal: null,
+    recordedRounds: 0,
+    expectedRounds: 1,
+  });
+});
+
+it("没有 TTL 分档的报告不出 5m/1h 列与小计：缺项不等于零", async () => {
+  const root = rootOf();
+  writeRecord(root, "success", [
+    {
+      round: 1,
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        prompt_tokens_details: { cached_tokens: 40 },
+      },
+    },
+  ]);
+  const stdout: string[] = [];
+  await runArchiveReport(["--root", root], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => {},
+  });
+  const md = stdout.join("");
+  expect(md).toContain("缓存命中率");
+  expect(md).not.toContain("缓存写 5m");
+  expect(md).not.toContain("缓存写 1h");
 });

@@ -1,6 +1,26 @@
 import { USAGE_NUMERIC_FIELDS, USAGE_ENUM_FIELDS } from "@model-war/schema";
+import type { EndpointFamily } from "./config.js";
 import type { ModelResponse } from "./model-client.js";
 import { isRecord } from "./record.js";
+import {
+  TransportError,
+  transportFailureKindOf,
+  type TransportFailureKind,
+} from "./transport-error.js";
+
+/** 用量口径：报告靠它选「哪个字段算输入 / 缓存」那一套读法。 */
+export type UsageCaliber = "openai" | "anthropic";
+
+/**
+ * 端点族 → 用量口径（**缺省值**）。
+ *
+ * 报告靠 `usage_semantic` 选「哪个字段算输入 / 缓存」那一套读法；本包以前从不写它，于是多路径
+ * 都有值时按容器顺序取第一个、冲突时置 `unknown`。端点族是本地已知事实，能给出一个不缺省的默认。
+ * 但它不等于上游形状：chat 线协议也可能回 anthropic 字段，所以服务端回显过的口径不被覆盖。
+ * Google 的 `usageMetadata` 自成一套，没有对应枚举，不写——不往枚举里塞第四个值。
+ */
+export const usageCaliberOf = (family: EndpointFamily): UsageCaliber | undefined =>
+  family === "messages" ? "anthropic" : family === "generate-content" ? undefined : "openai";
 
 const objectAt = (root: unknown, path: string): Record<string, unknown> => {
   const value =
@@ -31,7 +51,10 @@ const setProjected = (
 };
 
 /** 只保留已知数字与语义枚举，不保存模型原文、prompt、错误体；重叠字段不相加。 */
-export const projectUsage = (usage: unknown): Readonly<Record<string, unknown>> | undefined => {
+export const projectUsage = (
+  usage: unknown,
+  caliber?: UsageCaliber,
+): Readonly<Record<string, unknown>> | undefined => {
   if (!isRecord(usage)) return undefined;
   const projected: Record<string, unknown> = {};
   for (const [path, fields] of Object.entries(USAGE_NUMERIC_FIELDS)) {
@@ -55,22 +78,52 @@ export const projectUsage = (usage: unknown): Readonly<Record<string, unknown>> 
     if (typeof value === "string" && (allowed as readonly string[]).includes(value))
       setProjected(projected, path, value);
   }
+  // 端点族口径只补缺省：回显描述的是服务端**实际采用的字段约定**，比我们按线协议推断的单一口径
+  // 更贴近事实（Opus 兼容中转就是 chat 线协议 + anthropic 字段）。回显了任一字段就整对保留。
+  const echoed =
+    Object.hasOwn(projected, "usage_semantic") || Object.hasOwn(projected, "usage_source");
+  // 空 usage 不能被口径字段伪装成「有读数」。
+  if (caliber !== undefined && !echoed && Object.keys(projected).length > 0) {
+    projected.usage_semantic = caliber;
+    projected.usage_source = caliber;
+  }
   return Object.keys(projected).length === 0 ? undefined : projected;
 };
 
 export type AttemptEvidence = {
   readonly attempt: number;
   readonly outcome: "response" | "transport-error";
+  /**
+   * 传输失败的细分(ADR-0036);只有 `outcome === "transport-error"` 的尝试带它。
+   *
+   * 为什么不用原始状态码:读侧要的是「这是限流还是服务端坏了」,不是「哪个号段」。而它必须落盘
+   * ——否则「重试救回来了」在数据里不存在,而「限流压力」恰恰主要由它体现。
+   */
+  readonly failureKind?: TransportFailureKind;
   readonly finishReason?: string;
   readonly stopDetails?: ModelResponse["stopDetails"];
   readonly usage?: Readonly<Record<string, unknown>>;
 };
 
+/** 一条「这次尝试撞了传输失败」的证据。细分由 `TransportError` 自己报,读侧不解析文案。 */
+export const transportFailureAttemptEvidence = (
+  attempt: number,
+  cause: unknown,
+): AttemptEvidence =>
+  cause instanceof TransportError
+    ? {
+        attempt,
+        outcome: "transport-error",
+        failureKind: transportFailureKindOf(cause),
+      }
+    : { attempt, outcome: "transport-error" };
+
 export const responseAttemptEvidence = (
   attempt: number,
   response: ModelResponse,
+  caliber?: UsageCaliber,
 ): AttemptEvidence => {
-  const usage = projectUsage(response.usage);
+  const usage = projectUsage(response.usage, caliber);
   return {
     attempt,
     outcome: "response",

@@ -9,7 +9,21 @@
  * CLI 从 `@model-war/gen` 取 `generateAndFreeze`;后续只**追加**导出,不改既有名字。
  */
 
-export { readRuleDocs, type RuleDocs } from "./contract.js";
+export { readRuleDocs, ruleDocsDir, type RuleDocs } from "./contract.js";
+export {
+  AGENT_SYSTEM_TEMPLATE_NAME,
+  AGENT_TEMPLATE_NAME,
+  CONTRACT_INDEX_NAME,
+  DEFAULT_CONTRACT_IDENTITY,
+  contractIdentityTrailer,
+  loadAgentPrompt,
+  loadAgentSystemTemplate,
+  loadAgentTemplate,
+  readContractIndex,
+  renderAgentTemplate,
+  type AgentPrompt,
+  type ContractIdentity,
+} from "./agent-prompt.js";
 export {
   ENDPOINT_FAMILIES,
   loadModelsConfig,
@@ -34,7 +48,6 @@ export {
   type ModelParams,
   type ModelResponse,
 } from "./model-client.js";
-export { assemblePrompt, loadBaseTemplate, renderBaseTemplate } from "./prompt.js";
 export {
   fail,
   reply,
@@ -46,6 +59,13 @@ export {
   type StubStep,
 } from "./stub-client.js";
 export { createHttpModelClient } from "./http/client.js";
+export {
+  HARNESS_DIGEST,
+  HARNESS_VERSION,
+  harnessIdentity,
+  harnessManifest,
+  type HarnessManifest,
+} from "./agent/identity.js";
 export {
   compileScript,
   deriveScriptTsconfig,
@@ -61,6 +81,19 @@ export {
   type ValidateResult,
 } from "./validate.js";
 export { prepareTrialPlan, runTrialScript, type TrialProbe, type TrialResult } from "./trial.js";
+// 假执行器(`withHostBash` / `withRealBash`)**不从这里出去**:它是测试替身,不是生产 API。
+// 跨包使用走测试支持入口 `@model-war/gen/testing`(理由见 `testing.ts` 的头注),本包自己的测试
+// 相对 import 同一个文件。
+// 评测网格的测试夹具与桩(`stubClient` 同一条纪律:测试要用的东西由本包交出来,不各自手抄)。
+export { fixtureScripts, gridPlanFixture } from "./trial-plan.fixture.js";
+export {
+  FIXTURE_AVERAGE_POINTS,
+  completeGridTrial,
+  fixtureGridSummary,
+  fixtureObservationsText,
+  fixtureReadings,
+  type CompleteGridTrialOptions,
+} from "./trial-grid.fixture.js";
 export {
   ARCHIVE_META_NAME,
   STAGING_DIR_PREFIX,
@@ -76,13 +109,16 @@ export {
 } from "./archive.js";
 export {
   generateOneModel,
+  scoreFromCandidateEvidence,
+  type AgentArchiveFields,
+  type EvaluateScoring,
+  type EvaluateSubmission,
   type FailureClassification,
   type GenerationLogEntry,
   type GenerationTransportLogEntry,
   type ModelFailure,
   type ModelOutcome,
 } from "./pipeline.js";
-export { extractScriptSource } from "./extract.js";
 export {
   generateAndFreeze,
   runGeneration,
@@ -99,10 +135,3 @@ export {
 } from "./failure.js";
 // 失败记录的形状家已下沉到真源包(§2.2.5):对外名字一个不少,只换来源。
 export { FAILURE_RECORD_PREFIX, type FailureIdentity, type FailureRecord } from "@model-war/schema";
-
-export {
-  runSelection,
-  type SelectionProbe,
-  type SelectionProbeOutput,
-  type SelectionArtifact,
-} from "./selection.js";

@@ -52,12 +52,14 @@
  */
 
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1103,6 +1105,87 @@ it("散文禁抄取值门禁挂在 check:quick,且没被挪进按需 / 慢链", 
   expect(tailSteps(), "散文判据被挪进了全量门禁末尾复核组").not.toContain("check:prose");
 });
 
+// ── 契约挂载门禁:四条的字节与目录说明 ────────────────────────────────────
+//
+// 它守两件事:骨架与 API 文档 §6 **逐字节**相同(一致性靠构造,不靠「都能编译」),以及
+// 目录说明与挂载清单互相对得上。反例全部落在真实文件上:手改那份生成物、给说明加一条
+// 不存在的路径、往说明里写可写面。
+
+/** 那份生成出来的骨架。它没有生成头注释(必须逐字节等于 §6),所以手改它看起来就像改普通文件。 */
+const SKELETON_FILE = "docs/rules-v2/examples/minimal.ts";
+
+/** 那四条共用的目录说明。它同时是首条消息的全部内容(ADR-0030)。 */
+const CONTRACT_INDEX_FILE = "docs/rules-v2/README.md";
+
+/** 契约包身份的入库常量。它的书写真源是那四条的字节,门禁证明「现算 == 入库」。 */
+const CONTRACT_IDENTITY_FILE = "packages/schema/src/contract-identity.ts";
+
+it("契约挂载门禁:骨架被手改时变红,还原变绿", () => {
+  const clean = script("check:contract");
+  expect(clean.status, clean.output).toBe(0);
+  // 规模自证:报告必须给出挂载条数与目录里的文件数——「退出 0」只有在真读出东西时才成立。
+  expect(clean.output, clean.output).toContain("条挂载");
+  expect(clean.output, clean.output).toContain("个文件");
+
+  const violated = withPatchedText(
+    SKELETON_FILE,
+    (source) => `${source}\n// 手改一行\n`,
+    () => script("check:contract"),
+  );
+  expect(violated.status, "骨架与 §6 不一致时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("不是同一份字节");
+
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁:入库整树身份常量与现算不一致时变红", () => {
+  // 身份(ADR-0037)是「档案里那串 hex 还指不指得到眼前的字节」的唯一凭据。改契约字节、改挂载清单、
+  // 或改生成骨架的 §6 都会让它漂——而漂了没人拦,档案就会被一个错的版本号“背书”。反例改的是常量本身
+  // (最能代表「档案指向了另一批字节」),同时兼验门禁从真源包**源码文本**抽取常量那条缝没退化。
+  const violated = withPatchedText(
+    CONTRACT_IDENTITY_FILE,
+    (source) => source.replace(/"[0-9a-f]{64}"/, `"${"0".repeat(64)}"`),
+    () => script("check:contract"),
+  );
+  expect(violated.status, "身份漂了但门禁没红").toBe(1);
+  expect(violated.output).toContain("契约整树身份与入库常量不一致");
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁:目录说明点名了不存在的挂载路径时变红", () => {
+  const violated = withPatchedText(
+    CONTRACT_INDEX_FILE,
+    (source) => `${source}\n参见 \`/contract/notes.md\`。\n`,
+    () => script("check:contract"),
+  );
+  expect(violated.status, "说明里点名不存在的文件时必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("/contract/notes.md");
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁:目录说明里出现可写面时变红", () => {
+  const violated = withPatchedText(
+    CONTRACT_INDEX_FILE,
+    (source) => `${source}\n把骨架复制到 \`/workspace\` 再改。\n`,
+    () => script("check:contract"),
+  );
+  expect(violated.status, "说明里出现可写面时必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("/workspace");
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它守的那份生成物没有生成头注释,而日常入口是 `verify:fast`——抓不到等于没有。
+  expect(scripts["check:quick"] ?? "", "契约挂载判据不在快门禁里").toContain("check:contract");
+  // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "契约判据被挪进了按需门禁").not.toContain(
+    "check:contract",
+  );
+  expect(scripts["test:slow"] ?? "", "契约判据被挪进了慢链").not.toContain("check:contract");
+  expect(tailSteps(), "契约判据被挪进了全量门禁末尾复核组").not.toContain("check:contract");
+});
+
 // ── 验收落点门禁:落点表自己的存在性判据 ─────────────────────────────────────
 //
 // 这张表自称「验收写在能被跑出来的东西上」,所以它自己也得有判据:每一行至少一个可执行
@@ -1597,6 +1680,23 @@ it("测试纪律门禁:集中测试 / 禁用测试 / 用例体内无断言各自
   expect(script("lint").status, "撤掉探针后门禁没有回到绿").toBe(0);
 });
 
+it("测试纪律门禁:断言写在用例体之外 → 变红(它属于每条用例的前提时除外)", () => {
+  // 探针:一条 `expect` 写在 `it` 之外——它不属于任何用例,失败时归属也说不清。
+  // 这条规则 2026-11-06 起是 error(此前整条关闭);例外只有 `apps/cli/src/cli.test.ts`
+  // 一个文件(模块级 `beforeAll` 里的共享夹具准备),见 `.oxlintrc.json` 的 `overrides`。
+  const probe = 'import { expect } from "vitest";\n\nexpect(1).toBe(1);\n';
+  const violated = withProbeFile(VITEST_PROBE_PATH, probe, () => script("lint"));
+  expect(violated.status, `no-standalone-expect 没有让门禁非零退出:\n${violated.output}`).toBe(1);
+  expect(violated.output, violated.output).toContain("vitest(no-standalone-expect)");
+
+  // 还原:把同一句断言塞进用例体内就放行——红线是「在用例外」,不是「不许有断言」。
+  const restored =
+    'import { expect, it } from "vitest";\n\nit("规矩的用例", () => {\n  expect(1).toBe(1);\n});\n';
+  const restoredOutcome = withProbeFile(VITEST_PROBE_PATH, restored, () => script("lint"));
+  expect(restoredOutcome.status, `还原后仍被拦下:\n${restoredOutcome.output}`).toBe(0);
+  expect(script("lint").status, "撤掉探针后门禁没有回到绿").toBe(0);
+});
+
 // ── 抛了异常但不检查消息 ───────────────────────────────────────────────────
 
 it("测试纪律门禁:抛了异常但不检查消息变红,补上期望消息后放行", () => {
@@ -1728,6 +1828,55 @@ it("runtime bundle 门禁挂在全量门禁末尾,且不进快门禁", () => {
   expect(manifest().scripts["check:types"]).not.toContain("check:runtime");
 });
 
+// ── rootfs 清单门禁反例:清单与磁盘逐项双向比对 ──────────────────────────────
+
+/**
+ * 反例手法:在**磁盘侧**各动一次(删一份内容物 / 添一份不在清单里的),再看门禁说不说话。
+ *
+ * 为什么不动清单:清单是 `@model-war/schema` 的源码,门禁从它的源码文本里读——改真源会同时
+ * 影响哈希常量与别的断言,那不是这条判据要证明的事。而「组装漏拷一步」「上次组装的残骸没清」
+ * 恰恰是产物目录在生产里真实会变成的样子,它们就是这一条判据的全部内容。
+ *
+ * 两个方向都验:只验「少一份」的话,「多一个」那半可以塌掉而没人发现——而它同样会让
+ * 「整棵树哈希 == 模型可见世界」这句话变成假话(多出来的那份不会被挂载,却看起来像内容物)。
+ */
+it("rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、还原即绿)", () => {
+  const rootfs = `${repoRoot}packages/gen/sandbox-rootfs`;
+  const victim = `${rootfs}/bin/cp`;
+  const bytes = readFileSync(victim);
+  const mode = statSync(victim).mode;
+
+  const clean = script("check:sandbox-rootfs");
+  expect(clean.status, clean.output).toBe(0);
+  expect(clean.output, clean.output).toContain("rootfs 漂移门禁:绿");
+
+  try {
+    rmSync(victim);
+    const missing = script("check:sandbox-rootfs");
+    expect(missing.status, "盘上少了一份内容物,门禁必须非零退出").not.toBe(0);
+    expect(missing.output, missing.output).toContain("bin/cp");
+    expect(missing.output, missing.output).toContain("盘上没有");
+  } finally {
+    // 权限位也是产物的一部分(`bin/*` 必须可执行),所以还原要连它一起。
+    writeFileSync(victim, bytes);
+    chmodSync(victim, mode);
+  }
+
+  const extra = `${rootfs}/bin/__extra-probe`;
+  try {
+    writeFileSync(extra, "不在清单里的一份\n", { mode: 0o755 });
+    const surplus = script("check:sandbox-rootfs");
+    expect(surplus.status, "盘上多了一份不在清单里的文件,门禁必须非零退出").not.toBe(0);
+    expect(surplus.output, surplus.output).toContain("__extra-probe");
+    expect(surplus.output, surplus.output).toContain("不在清单里");
+  } finally {
+    rmSync(extra, { force: true });
+  }
+
+  const restored = script("check:sandbox-rootfs");
+  expect(restored.status, `还原后没有回到绿:\n${restored.output}`).toBe(0);
+});
+
 // ── 契约自证门禁:按需,不在 check 里 ────────────────────────────────────────
 //
 // 四问的退出码与三个反例在 `gates-slow.test.ts`(要跑矩阵,单次约 85s,合计约 350s)。
@@ -1780,6 +1929,10 @@ it.each([
   ["跨进程一致性门禁", "run-cross-process-gate.ts", "check:cross-process"],
   ["单局墙钟与快照回放门禁", "run-limits-gate.ts", "check:limits"],
   ["标定复算门禁", "run-budget-recheck-gate.ts", "check:budget-recheck"],
+  // 真网格那条腿:它不碰内核(所以不进 `check:sandbox`),但要一份别的东西——四份钉死的
+  // 陪练存档,而 `archive/` 不入库。混进 `check:sandbox` 会让「沙箱坏了」与「这台机器没有
+  // 陪练存档」变成同一条红,所以它自己一条腿。
+  ["真网格一次评测门禁", "run-gen-grid-gate.ts", "check:gen-grid"],
 ])("%s按需跑:不在快链里,但有独立入口", (gate, entryFragment, keyword) => {
   const scripts = manifest().scripts;
   // 缺席:它不在任何一个常跑入口里。
@@ -1808,6 +1961,51 @@ it("gates 不在 unit 的拾取范围里(否则 check 会套娃成叉炸弹)", (
   const gatesListed = run("pnpm", ["exec", "vitest", "list", "--project", "gates"]);
   expect(gatesListed.status, gatesListed.output).toBe(0);
   expect(gatesListed.output, gatesListed.output).toContain("gates.test.ts");
+});
+
+it("真 bwrap 的用例不在常跑入口上(sandbox project)", () => {
+  // 它们要非特权 user namespace 与系统装的 bubblewrap,而常跑链不装——收进 `unit` 的后果是
+  // 「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」,两种处方混成一条红。
+  //
+  // `agent-real-session.test.ts` 是早就拆出去的那条真会话;`gen-cli.test.ts` 是内核探针
+  // (`packages/tools/src/vitest/kernel-guard.test.ts` 的头注记着这一例)抓出来的:它 spawn 打好的
+  // CLI 产物、打假端点、**在真沙箱里**跑满一整张网格,却一直以 `it.skipIf(!archivePresent)` 挂在
+  // `unit` 上——`archive/` 不入库,于是「本机 skip、CI 也 skip」把这条要内核能力的用例藏了两边。
+  //
+  // 这里按**文件**列(`--filesOnly`),不按用例名列:被 `it.skipIf(...)` 包着的用例在默认的
+  // 名字列举里一条都不出现(实测),而 `gen-cli.test.ts` 整条都由 `skipIf` 包着——恰好是那种
+  // 「列举不到」的文件,用它做缺席证据会得出反向结论。
+  const filesOf = (project: string): string => {
+    const listed = run("pnpm", ["exec", "vitest", "list", "--filesOnly", "--project", project]);
+    expect(listed.status, listed.output).toBe(0);
+    return listed.output;
+  };
+  const paths = ["agent-real-session.test.ts", "gen-cli.test.ts"] as const;
+  for (const project of ["unit", "property", "gates", "slow"] as const) {
+    const listed = filesOf(project);
+    for (const path of paths) {
+      expect(listed, `${path} 被 ${project} 收进去了`).not.toContain(path);
+    }
+  }
+  // 反面证据:它们确实被自己的 project 收着(排除过头与没排除是同一种失败)。
+  const sandboxListed = filesOf("sandbox");
+  for (const path of paths) {
+    expect(sandboxListed, `${path} 没被 sandbox 收着`).toContain(path);
+  }
+
+  // 默认 `test` 也不带它,而它的入口是命名脚本 `check:sandbox`:
+  // 拆出去是为了「有需要时手工跑」,没有入口这件事就没做完。
+  const test = manifest().scripts["test"] ?? "";
+  expect(test, "默认 test 不该跑真 bwrap 的会话用例").not.toContain("--project sandbox");
+  expect(
+    manifest().scripts["check:sandbox"] ?? "",
+    "真 bwrap 的会话用例没有落进可手工调用的命名脚本",
+  ).toContain("--project sandbox");
+
+  // 同时确认它的**假执行器孪生**还在常跑链上:移走不等于丢掉覆盖。
+  const unitListed = run("pnpm", ["exec", "vitest", "list", "--project", "unit"]);
+  expect(unitListed.status, unitListed.output).toBe(0);
+  expect(unitListed.output, unitListed.output).toContain("agent-session-archive.test.ts");
 });
 
 it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
@@ -2117,6 +2315,138 @@ it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核
   expect(baselineRaiseIn('{"scripts":{"check:quick":"pnpm run check:prose"}}')).toBeUndefined();
 });
 
+// ── 可解释性诊断:在场,但只在按需层 ──────────────────────────────────────────
+//
+// 诊断脚本(`pnpm run mutation:diagnose`)回答的是「这片分数低,是因为测试弱、测不到、
+// 还是口径不对」。它是**观测**:只读报告、只写一份 Markdown 报告。
+// 所以它的位置与抬基线命令相反但同形——
+//   抬基线命令:能改判据,所以必须**不在**任何自动路径上;
+//   诊断脚本:不改判据,但它是按需工具,挂在常跑链上只会白占预算(它要读十几 MB 报告)。
+// 两条纪律合起来是同一句:能改判据的开关不能进判据路径,纯观测的按需工具也不必进。
+it("变异诊断入口在场,但不在任何常跑入口与流水线上,且不改判据", () => {
+  const scripts = manifest().scripts;
+  const diagnose = scripts["mutation:diagnose"] ?? "";
+  // 在场:它是「为什么低」这件事的唯一入口。缺了它,低分片就只能靠猜。
+  expect(diagnose, "诊断入口没落进可手工调用的脚本").toContain("run-mutation-diagnose.ts");
+
+  // 缺席①:五个常跑入口。
+  const frequent = frequentEntryCommands();
+  const onFrequent = Object.entries(frequent)
+    .filter(([, command]) => command.includes("mutation:diagnose"))
+    .map(([name]) => name);
+  expect(onFrequent, "诊断入口被接进了常跑入口").toEqual([]);
+
+  // 缺席②:两条流水线。
+  for (const [name, text] of workflowTexts()) {
+    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("mutation:diagnose");
+  }
+
+  // 缺席③:它不改判据。诊断里出现抬基线入口,就是「观测顺手改了判据」——
+  // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
+  expect(diagnose, "诊断入口里出现了抬基线命令").not.toContain("accept-baseline");
+  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutation:baseline:raise");
+
+  // 反例:把诊断接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run mutation:diagnose`,
+  };
+  expect(
+    Object.entries(tampered)
+      .filter(([, command]) => command.includes("mutation:diagnose"))
+      .map(([name]) => name),
+    "诊断接进 check:quick 却没被判红",
+  ).toEqual(["check:quick"]);
+});
+
+it("测试纪律规则的诊断入口在场,但不在任何常跑入口与流水线上,且不改判据", () => {
+  const scripts = manifest().scripts;
+  const diagnose = scripts["lint:diagnose"] ?? "";
+  // 在场:它是「那 99 处命中到底有没有风险」这件事的唯一入口。缺了它,这个问题只能靠回忆回答。
+  expect(diagnose, "诊断入口没落进可手工调用的脚本").toContain("run-vitest-rules-diagnose.ts");
+
+  // 缺席①:五个常跑入口。它是观测,不该占每轮反馈的预算。
+  const frequent = frequentEntryCommands();
+  const onFrequent = Object.entries(frequent)
+    .filter(([, command]) => command.includes("lint:diagnose"))
+    .map(([name]) => name);
+  expect(onFrequent, "诊断入口被接进了常跑入口").toEqual([]);
+
+  // 缺席②:两条流水线。
+  for (const [name, text] of workflowTexts()) {
+    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("lint:diagnose");
+  }
+
+  // 缺席③:它不改判据。诊断里出现抬基线入口,就是「观测顺手改了判据」——
+  // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
+  expect(diagnose, "诊断入口里出现了抬基线命令").not.toContain("accept-baseline");
+  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutation:baseline:raise");
+
+  // 反例:把诊断接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run lint:diagnose`,
+  };
+  expect(
+    Object.entries(tampered)
+      .filter(([, command]) => command.includes("lint:diagnose"))
+      .map(([name]) => name),
+    "诊断接进 check:quick 却没被判红",
+  ).toEqual(["check:quick"]);
+});
+
+it("三个观测入口都在场,但不在任何常跑入口与流水线上,且不改判据", () => {
+  const scripts = manifest().scripts;
+  // 这三个都是**观测**:只读、只写报告,不判定任何东西。
+  //   · `lint:diagnose`   —— 测试纪律规则的命中到底有没有风险(纯读源码,秒级);
+  //   · `test:report`     —— 慢测试长尾与不稳定用例(**要跑两遍全量测试**,分钟级);
+  //   · `mutation:history` —— 变异分数的趋势(纯读基线,秒级)。
+  // 「按需工具不进任何链」是已被断言钉死的纪律:观测挂在常跑链上只会白占反馈预算
+  // (`test:report` 尤其——它每轮要跑两遍测试),而它的产物默认不被任何门禁消费。
+  const observers = ["lint:diagnose", "test:report", "mutation:history"];
+
+  // 在场:每一个都要能被手工调到。缺了它,对应的问题就只能靠回忆回答。
+  for (const name of observers) {
+    expect(scripts[name] ?? "", `${name} 没落进可手工调用的脚本`).not.toBe("");
+  }
+
+  // 缺席①:五个常跑入口。
+  const frequent = frequentEntryCommands();
+  for (const name of observers) {
+    const onFrequent = Object.entries(frequent)
+      .filter(([, command]) => command.includes(name))
+      .map(([entry]) => entry);
+    expect(onFrequent, `${name} 被接进了常跑入口`).toEqual([]);
+  }
+
+  // 缺席②:两条流水线。
+  for (const [name, text] of workflowTexts()) {
+    for (const observer of observers) {
+      expect(text, `流水线 ${name} 里出现了 ${observer}`).not.toContain(observer);
+    }
+  }
+
+  // 缺席③:它们不改判据。观测里出现抬基线入口,就是「观测顺手改了判据」——
+  // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
+  for (const name of observers) {
+    const command = scripts[name] ?? "";
+    expect(command, `${name} 里出现了抬基线命令`).not.toContain("accept-baseline");
+    expect(command, `${name} 里出现了抬基线脚本名`).not.toContain("mutation:baseline:raise");
+  }
+
+  // 反例:把其中一个接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  const tampered = {
+    ...frequent,
+    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run test:report`,
+  };
+  expect(
+    Object.entries(tampered)
+      .filter(([, command]) => command.includes("test:report"))
+      .map(([name]) => name),
+    "观测接进 check:quick 却没被判红",
+  ).toEqual(["check:quick"]);
+});
+
 it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯文本,不真改 package.json)", () => {
   const frequent = frequentEntryCommands();
   expect(raiseViolationsIn(frequent), "还原状态下就已经是红").toEqual([]);
@@ -2238,6 +2568,13 @@ it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临
     // `source` 如实记下「这个数字打哪来」。
     expect((written as { readonly source?: string }).source).toBe(fixture("report-higher.json"));
 
+    // 历史(ADR-0027):抬升把这一次的数字记进基线文件里的 `history`。
+    // 首次抬升(旧基线不在场)→ 历史从这一条开始。
+    const firstHistory = (written as { readonly history?: readonly { detected: number }[] })
+      .history;
+    expect(firstHistory, "抬升没有把历史写进基线").toHaveLength(1);
+    expect(firstHistory?.[0]?.detected).toBe(10);
+
     // 再抬一次:旧基线在场时打印的旧值是上一次的数字,下降要被点出来。
     const lowered = accept(
       "--shard=replay",
@@ -2247,6 +2584,16 @@ it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临
     expect(lowered.status, lowered.output).toBe(0);
     expect(lowered.output).toContain("旧 → 新:100.00%");
     expect(lowered.output, "基线下降没有被点出来").toContain("棘轮从此更松");
+
+    // 再抬一次:历史续上一条,旧条目不动(历史是追加的,不是覆盖的)。
+    const secondWritten: unknown = JSON.parse(readFileSync(target, "utf8"));
+    const secondHistory = (
+      secondWritten as { readonly history?: readonly { detected: number; score: number }[] }
+    ).history;
+    expect(secondHistory, "第二次抬升没有续上历史").toHaveLength(2);
+    expect(secondHistory?.[0]?.detected).toBe(10);
+    expect(secondHistory?.[1]?.detected).toBe(7);
+    expect(secondHistory?.[1]?.score).toBe(70);
 
     // 空转报告拒绝入基线:valid 0 的基线会让棘轮从此对任何真实报告都判绿。
     const vacuousTarget = join(dir, "vacuous.json");

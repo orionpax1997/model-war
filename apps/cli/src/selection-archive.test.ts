@@ -17,7 +17,9 @@ import {
   RULESET_VERSION,
   SANDBOX_RUNTIME_HASH,
   QUICKJS_WASI_WASM_PATH,
+  OPTIMIZATION_AGENT_VERSION,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
+  SELECTION_AGENT_VERSION,
   TRIAL_GRID_MAP_NAMES,
   TRIAL_MATCHES_PER_CANDIDATE,
   type MatchInput,
@@ -49,6 +51,24 @@ import {
 } from "@model-war/gen";
 import { validateArchiveMeta } from "./validator.js";
 import { assemble } from "./match/assemble.js";
+
+/**
+ * 这个文件造的**全是 one-shot 形态**的档（v1 / v2：候选带 `stage`、选拔带 `stage` 与
+ * `protocolRound`）。v3 的候选没有 `stage`，所以读这些栏之前先按版本收窄——顺便把
+ * 「这个用例造的不是 v3」也钉成一条判据。
+ */
+const legacyCandidatesOf = (meta: ArchiveMeta) => {
+  const optimization = meta.optimization;
+  if (optimization === undefined || optimization.version === OPTIMIZATION_AGENT_VERSION)
+    throw new Error("这个用例只造 one-shot 形态的优化段");
+  return optimization.candidates;
+};
+const legacySelectionCandidatesOf = (meta: ArchiveMeta) => {
+  const selection = meta.selection;
+  if (selection === undefined || selection.version === SELECTION_AGENT_VERSION)
+    throw new Error("这个用例只造 one-shot 形态的选拔段");
+  return selection.candidates;
+};
 
 const scratch = mkdtempSync(join(tmpdir(), "selection-archive-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -123,6 +143,7 @@ const metaOf = (winner: 0 | 1 | 2, scripts = products): ArchiveMeta => {
   return buildArchiveMeta({
     model: "alpha",
     modelVersion: "test",
+    channelId: "test-channel",
     generatedAt: "2026-10-13T00:00:00Z",
     prompts: ["initial", "feedback1", "feedback2"],
     generationLog: [],
@@ -164,7 +185,7 @@ it.each([0, 1, 2] as const)(
       true,
     );
     const directory = join(root, "archive/alpha");
-    for (const candidate of meta.optimization!.candidates) {
+    for (const candidate of legacyCandidatesOf(meta)) {
       writeFileSync(join(directory, candidate.scriptFile), products[candidate.stage]!);
       writeFileSync(
         join(directory, candidate.scriptFile.replace(/\.js$/, ".ts")),
@@ -258,7 +279,8 @@ it("选拔身份/hash/计分被改、缺优化阶段、实际 TS 错配或未测
   const missing = { ...meta };
   delete missing.optimization;
   expect(validateArchiveMeta(missing, provenance(meta)).ok).toBe(false);
-  expect(() => optimizationMetaOf(missing)).toThrow(/三个优化阶段/);
+  // 措辞不再假设「恰好三个阶段」：判据仍是「选拔档必须带优化段」。
+  expect(() => optimizationMetaOf(missing)).toThrow(/必须包含优化段/);
 });
 
 it("发布时冻结文件身份错配拒绝 rename，候选旁挂不变", () => {
@@ -279,7 +301,7 @@ it("发布时冻结文件身份错配拒绝 rename，候选旁挂不变", () => 
 const writeCandidateSidecars = (root: string, meta: ArchiveMeta, scripts = products): void => {
   const directory = join(root, "archive/alpha");
   mkdirSync(directory, { recursive: true });
-  for (const candidate of meta.optimization!.candidates) {
+  for (const candidate of legacyCandidatesOf(meta)) {
     writeFileSync(join(directory, candidate.scriptFile), scripts[candidate.stage]!);
     writeFileSync(
       join(directory, candidate.scriptFile.replace(/\.js$/, ".ts")),
@@ -380,8 +402,8 @@ it("重复 JS 的三个阶段/不同 TS、全部十二场分母、较晚胜者/�
     if (format.length === 0) {
       expect(output.join("")).toContain("不同 JS 数：2");
       expect(output.join("")).toContain("固定分母=12");
-      expect(output.join("")).toContain("实际冻结 stage=1");
-      expect(output.join("")).toContain("最后生成阶段仍是 stage2");
+      expect(output.join("")).toContain("实际冻结候选位置=1");
+      expect(output.join("")).toContain("末位候选位置=2");
     }
   }
 });
@@ -446,10 +468,10 @@ it("selection 失败报告保留三个合法候选及 TS/JS 证据，stage2 是�
       classification: "selection",
       diagnostics: [secret],
       message: secret,
-      candidates: meta.optimization!.candidates,
+      candidates: legacyCandidatesOf(meta),
       selectionFailure: {
         plan: meta.selection!.plan,
-        candidates: meta.selection!.candidates.map(
+        candidates: legacySelectionCandidatesOf(meta).map(
           ({ stage, protocolRound, scriptSha256, sourceSha256 }) => ({
             stage,
             protocolRound,
@@ -772,6 +794,7 @@ const gridMetaOf = (options: { readonly mutateSelection?: boolean } = {}): Archi
   const meta = buildArchiveMeta({
     model: "alpha",
     modelVersion: "test",
+    channelId: "test-channel",
     generatedAt: "2026-10-13T00:00:00Z",
     prompts: ["initial", "feedback1", "feedback2"],
     generationLog: [],

@@ -238,16 +238,20 @@ it.skipIf(!realArchivePresent)(
         .update(readFileSync(join(repoRoot, incumbent.path)))
         .digest("hex"),
     );
-    // 真实数据里那条「不能取字典序最大」的旁挂目录：最新档是 10-19，不是 feedback 目录。
-    if (
-      existsSync(
-        join(
-          repoRoot,
-          "archive/deepseek-v4.1-flash/feedback-2026-10-12T06-44-23-721Z-8477e747/script.js",
-        ),
-      )
-    ) {
-      expect(latestArchiveRunId(repoRoot, "deepseek-v4.1-flash")).toBe("2026-10-19T06-30-58-195Z");
+    // 真实数据里那条「不能取字典序最大」的旁挂目录：`feedback-<runId>-<hash>` 与存档同级、
+    // 也带 `script.js`，而名字排在所有 `20…` 之后。断言只钉「旁挂目录不入选、选中的是真存档」，
+    // **不钉具体日期**：`archive/` 不进版本库，每跑一次真实生成都会让钉死的 runId 过期。
+    const sidecar = "feedback-2026-10-12T06-44-23-721Z-8477e747";
+    if (existsSync(join(repoRoot, "archive", "deepseek-v4.1-flash", sidecar, "script.js"))) {
+      const picked = latestArchiveRunId(repoRoot, "deepseek-v4.1-flash");
+      expect(picked).toBeDefined();
+      if (picked === undefined) return;
+      // 名字排序取最大会挑中旁挂目录——这就是不能那么取的理由。
+      expect(sidecar.localeCompare(picked)).toBeGreaterThan(0);
+      // 选中的那一档是真存档（`script.js` 在位），不是旁的目录。
+      expect(
+        existsSync(join(repoRoot, "archive", "deepseek-v4.1-flash", picked, "script.js")),
+      ).toBe(true);
     }
     // 代位档的那份存档也在库里时，摘要同样对得上钉死值。
     if (

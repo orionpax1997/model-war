@@ -56,6 +56,26 @@
 // engine-runtime:181/803 超时 vs 164 真杀;array-search-shim.ts 58/58、runner/index.ts 2/2。
 // 引用任何分片的分数时,先看该分片的 Timeout 列。
 //
+// ── 静态变异体(stryker 的 static mutant)的判定不可信,已实测坐实 ────────────
+//
+// Stryker 把「模块加载期执行」的变异体(static mutant,如 `export const X = "..."`)
+// 归为一类:它们无法在运行期激活,只能重载环境 + 跑全部测试,覆盖归因也不可用
+// (`coveredBy` 恒空)。本仓库实测:**它们有时能被杀**(gen-core 153/247、runner 148/310、
+// engine-core 9/95),所以「几乎全存活」不是常态。
+//
+// 反例坐实的那一片是 schema:报告里 `packages/schema/src/script-surface.ts` 的
+// 「getTick → 空串」报 **Survived**;按同一位置、同一替换值手工注入后,
+// schema 的测试当场红两条(「注入面就是那 22 个名字」「表里只有裸全局名」)。
+// 也就是说:**测试抓得住那只变异,Stryker 却报存活 —— 变异在测试环境里根本没生效**
+// (ESM 模块缓存没随「重载环境」刷新)。
+//
+// 后果(别把它读反了):
+//   · schema 片的 0% **不是**「测试弱」的证据,那个分片目前没有任何变异证据;
+//   · 任何「静态变异体存活率接近 100%」的分片,其静态部分都不能当质量证据;
+//   · 处置是修**测量口径**(让静态变异真正生效,或把它们排除出分数),不是补测试。
+// 判据与可复跑的诊断在 `packages/tools/src/mutation/diagnose.ts`
+// (入口 `pnpm run mutation:diagnose`,报告落 `reports/mutation/diagnosis.md`)。
+//
 // 没做的事:变异体等价性判审(survived 里含无法杀死的等价变异体,所以「存活」高估了测试缺口)。
 //
 // **决定每变异体成本的不是 mutate 范围,是 testFiles 的宽度。**
