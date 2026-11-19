@@ -7,7 +7,7 @@
 ## 它是什么
 
 模型在沙箱里能看见的**全部**内容物:静态 `bash`、8 个静态 coreutils(`cat` / `ls` / `cp` / `grep` / `head` / `sed` / `tail` / `wc`)、
-三个受限工具的薄壳(`check` / `evaluate` / `done`)与只读契约 `/contract` 四条。
+三个受限工具的薄壳(`check` / `evaluate` / `finish`)与只读契约 `/contract` 四条。
 沙箱的根是空的(`bwrap --tmpfs /`),**只** `--ro-bind` 进这里的 `bin/` 与 `contract/`:
 宿主根目录一个 inode 都不出现,所以「绝对路径能绕过 PATH 白名单」这个问题结构上不存在。
 依据见 `docs/adr/0033-sandbox-executor.md`。

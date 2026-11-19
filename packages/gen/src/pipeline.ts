@@ -26,8 +26,8 @@
  *
  * | 判据 | 家 |
  * |---|---|
- * | 动作语法、`done` 语义、截断、守卫、步数、历史 | `agent/{action,truncate,limits,loop,history}.ts` |
- * | 配额、会话墙钟、`check` / `evaluate` 服务、块切分 | `agent/host/`(票 04) |
+ * | 动作语法、收工命令的语义、截断、守卫、步数、历史 | `agent/{action,truncate,limits,loop,history}.ts` |
+ * | 配额、会话墙钟、`check` / `evaluate` 服务、收工请求 | `agent/host/`(票 04) |
  * | 沙箱隔离与单步墙钟 | `agent/sandbox/`(票 03) |
  * | 档案形状与轮数公式 | `archive.ts` + `packages/schema`(票 01) |
  *
@@ -85,7 +85,6 @@ import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, WallClockExhausted } from "
 import { createBudgetClock } from "./agent/budget-clock.js";
 import { runAgentSession, type AgentLoopResult } from "./agent/loop.js";
 import { sandbox } from "./agent/sandbox/index.js";
-import { splitDoneBlock } from "./agent/host/done.js";
 import { createCheckService } from "./agent/host/check-service.js";
 import {
   candidateObservationsFile,
@@ -378,9 +377,9 @@ const observeServices = (options: {
 /**
  * 把执行器接到沙箱上。
  *
- * 一次调用 = 一次 `sandbox.run`,块在**宿主侧**先按 `done` 切开(ADR-0032「切掉后半段,整块一次
- * `bash -c`」):切开而不是跑两段,是为了让 shell 状态(`cd`、`set -e`、heredoc)在 `done` 那一行
- * 前后保持连续。
+ * 一次调用 = 一次 `sandbox.run`,**整块原样**交给一次 `bash -c`:宿主不再切块。收工是模型在块里
+ * 调用 `finish`(rootfs 里那条薄壳),它经通道报给宿主,宿主据此在本步结束后收工(ADR-0032 修订)。
+ * 手工切块曾经存在,但它与 `for … done` 的收尾撞车——那是「为了一条更弱的保证牺牲整场会话」。
  *
  * 通道端(`requestHandler`)是票 04 的 dispatcher:它是配额的唯一判据源,超限时回一份伪造
  * stderr 且**真执行函数一次都不调**。
@@ -396,13 +395,13 @@ const createExecutor =
   }): AgentExecutor =>
   async (request: AgentExecRequest): Promise<AgentExecResult> => {
     options.facts.reset();
-    const split = splitDoneBlock(request.command);
-    // `done` 是块内第一行时 body 是空串:不跑空 shell(它的副作用只有一次 `bash` 启动)。
+    // 空块(模型只写了围栏行)不跑空 shell:那不是命令,起一次 `bash` 只为退出 0 没有意义。
+    // 收工不再走这条短路——`finish` 是一条真命令,它必须真的跑到薄壳才会上报。
     const executed =
-      split.body.trim() === ""
+      request.command.trim() === ""
         ? { stdout: "", stderr: "", exitCode: 0, timedOut: false }
         : await sandbox.run({
-            command: split.body,
+            command: request.command,
             workspaceDir: options.workspaceDir,
             // 这一步的应答端:步号绑在这里,不经过会话级槽位。
             requestHandler: options.tools.requestHandlerFor(request.step),
@@ -422,7 +421,8 @@ const createExecutor =
       stderr: executed.stderr,
       exitCode: executed.exitCode,
       timedOut: executed.timedOut,
-      ...(split.ended ? { done: true } : {}),
+      // 收工判据是「这一步收到过 `finish` 请求」,不是命令字节里的某一行的形状。
+      ...(options.tools.finishRequested() ? { done: true } : {}),
       ...(facts.result === undefined ? {} : { result: facts.result }),
       ...(facts.submission === undefined
         ? {}
