@@ -1151,12 +1151,27 @@ const candidateSparringOf = (options: {
 /**
  * 自指判据：这一场的在位陪练是不是**本席位自己的上一场**。
  *
- * 两个条件同时成立才标（差一个就不标——宁可不说，也不说错）：
+ * 三个条件同时成立才标（差一个就不标——宁可不说，也不说错）：
  * 1. `incumbent:<slug>` 的 `<slug>` 等于档案所属席位（`archive/<slug>/` 一级目录名）；
- * 2. 来源 `archive:<slug>/<runId>` 里的 `runId` 不是本档的 `runId`（它是「上一场」，不是「本场」）。
+ * 2. 来源 `archive:<slug>/<runId>` 里的 `runId` 不是本档的 `runId`（它是「上一场」，不是「本场」）；
+ * 3. 来源的 `<slug>` 也等于档案所属席位。
  *
- * 来源的 slug 也必须一致：两处都说本席位才是同一个事实，只说一处不算（不猜）。
- * 代位（`#substitute`）的 slug 是另一份档，所以天然不会命中；它的 `source` 仍然是
+ * ── 为何第 3 条比票面更严，以及为何不改成票面那两条 ──
+ * 票写的是「`incumbent:<slug>` 的 slug 是本席位，且 `source` 的 runId 不同于本档」。但那句话
+ * 把「陪练是谁的上一场」这句话拆给了两个字段各说一半：运行时报告的标题是「陪练 = 本席位上一场」，
+ * 这是一个**合取命题**，而它的真假要由两个独立的指针都指向本席位才能成立。
+ *
+ * 两个字段不一致时（`id` 说 `incumbent:gpt-6-luna`、`source` 说 `archive:hy4-flash/<runId>`），
+ * 只有一个解释：计划装配时一处用了本席位、另一处用了别的档（代位、手改、或写盘时的一个 bug）。
+ * 此时只读一个字段会**凭空造出一条声称**：说「你家上一场」——而可核的那个指针指着别家。
+ * 那个代价不是渲染难看，是 A2 拿这一行去判「能不能跨会话比」。所以这里选「不猜」：
+ * 两处都说本席位才标，一处说了就当作「未记录」（渲染仍然出四份身份，只是不附那句自指注）。
+ *
+ * 这也解释了两侧为何都不因为这个加固而变松：它只会**少标**不会多标；而票真正要防的那个
+ * 误读（自家上一场被当成能力提升）在正常档上两处本就一致——加固只是把「两处不一致时怎么办」
+ * 定成一个有理由的答案，不再是隐含的「取第一个字段」。
+ *
+ * 代位（`#substitute`）的 slug 是另一份档，所以它天然不会命中；它的 `source` 仍然是
  * `archive:` 开头，所以这里不靠前缀排除，靠 slug 不等。
  */
 const sparringSelfReferenceOf = (options: {
@@ -2077,30 +2092,34 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
    * 换了陪练池，或者还停在旧的一份）。合并展示会把「第 2 次评测跟第 1 次是同一张网格吗」
    * 这个可查的事实抹平。
    *
-   * ── 为何又去重 ──
+   * ── 为何又去重，与**谁**比 ──
    * 真档（`archive/gpt-6-luna/2026-11-19T01-33-42-820Z`）两个候选的两份 `.grid.json` 是**逐字
    * 相同**的（同一 `planSha256`）：把那四行再排一遍只会让人以为两次评测的对手变了。所以
    * 逐字相同的就写「与第 N 步候选逐字相同」，不重复四份身份——但两个候选各自的文件仍是
    * 分开读的（上一条的那句话只有在两份都读过之后才能说得出来）。
    *
+   * 比对的是**首次出现的那一份**，不是「上一份」：三份档里若第 1、3 份同、第 2 份不同，
+   * 把第 3 份说成「与上一份相同」是假话（上一份恰好是那一份不同的）。指向首次出现的那一份，
+   * 说出的那个步号永远是真的；而「中间隔了一份别的网格」这个事实在别处（上面那份的完整列表）
+   * 已经写出来了，不需要靠去重行去暗示。
+   *
    * 读不到就写「未记录」（并指名找的是哪个文件）——不猜、不抛。
    */
   const renderSparring = (sparring: readonly ReportCandidateSparring[]): string[] => {
     const lines: string[] = [];
-    let previous: ReportCandidateSparring | undefined;
+    // 首次出现且身份可读的那一份：下面每份都与它比，写出来的步号就永远指得到那份真列表。
+    let first: ReportCandidateSparring | undefined;
     for (const reading of sparring) {
       const where = `来源 ${escape(reading.source)}${
         reading.planSha256 === null ? "" : `；planSha256=${reading.planSha256}`
       }`;
       if (reading.scripts === null) {
         lines.push(`- 陪练：未记录（第 ${reading.protocolRound} 步候选，${where}）`);
-        previous = reading;
         continue;
       }
-      const sameAs = previous;
+      const sameAs = first;
       if (
         sameAs !== undefined &&
-        sameAs.scripts !== null &&
         JSON.stringify(sameAs.scripts) === JSON.stringify(reading.scripts) &&
         sameAs.planSha256 === reading.planSha256
       ) {
@@ -2112,7 +2131,6 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
           lines.push(
             `  - **陪练 = 本席位上一场（\`${reading.selfReference.runId}\`）；本场与它不可直接比**`,
           );
-        previous = reading;
         continue;
       }
       lines.push(`- 陪练（第 ${reading.protocolRound} 步候选，${where}）：`);
@@ -2122,7 +2140,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
         lines.push(
           `  - **陪练 = 本席位上一场（\`${reading.selfReference.runId}\`）；本场与它不可直接比**`,
         );
-      previous = reading;
+      first ??= reading;
     }
     return lines;
   };
