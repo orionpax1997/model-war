@@ -151,8 +151,8 @@ export type ReportContamination = {
   /** `failureKind: "rate-limited"` 的尝试次数；`0` 是真实零次，不是缺数据。 */
   readonly rateLimitedAttempts: number;
   /**
-   * 累计退避毫秒。生成侧今天的日志行还**不记**这一格（ADR-0036 定的记账字段，采集归传输那一票），
-   * 所以今天读出来是 `null`：缺数据不补零，也不会被当成 0 秒。
+   * 累计退避毫秒。真源是日志行的 `backoffMs`：生成侧按**实测**等待写，没有退避写 `0`。
+   * `null` = 旧档的日志行没有这一格（不知道），不是“没等”：缺数据不补零，也不会被当成 0 秒。
    */
   readonly backoffMs: number | null;
   readonly reasons: readonly ReportContaminationReason[];

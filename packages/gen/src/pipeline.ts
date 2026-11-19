@@ -136,6 +136,17 @@ export type GenerationLogEntry = {
   readonly attemptEvidence?: readonly AttemptEvidence[];
   /** 模型段墙钟(含退避)。只作记录,deadline 按不含退避的口径判(ADR-0036)。 */
   readonly sendMs: number;
+  /**
+   * 这一步的退避等待**实测**累计毫秒(整数)。
+   *
+   * 为什么是实测:ADR-0036 的受污染判据第一段是「累计退避 > 60 s」,而“等了多久”只能测——
+   * `retryTransport` 给出的是一次等待的**请求值**,`setTimeout` 只会更晚。所以这一格是进出各读
+   * 一次钟的差,不是入参 `ms` 的和。
+   *
+   * 缺数据口径(与报告侧同一条):没有退避的步写 `0`(真的等了 0);旧档没有这一格,读侧读成
+   * `null`(不知道)。两者不许混。
+   */
+  readonly backoffMs?: number;
 };
 
 /** 传输末行:形状上的差别只有 `kind` 与缺少用量/停止原因。 */
@@ -447,7 +458,22 @@ const sendWithTransportRetry = async (options: {
     : { ok: false, message: attempt.failure.message, diagnostics: attempt.failure.diagnostics };
 };
 
+/**
+ * 一次 `send` 的发送侧记账:尝试证据 + 这一次 `send` 里退避**实测**等了多少毫秒。
+ *
+ * 退避为什么搭在这里:退避发生在重试层(`retryTransport`)里,它不知道「步」;而一次 `send`
+ * 可能退避多次。所以「当下等的是哪一次 send」由 `inFlightSend` 在 send 起止处指出,等完累加到
+ * 那一桶上——步的边界是日志行,照旧按 `turn.attempts` 切。
+ */
+type SendRecord = { readonly evidence: AttemptEvidence[]; backoffMs: number };
+
 const logLine = (entry: GenerationLogEntry): string => JSON.stringify(entry);
+
+/** 缺省的真等待。测试按 `GenerationRequest.sleep` 注入虚拟时钟那一版(理由见那里)。 */
+const realSleep: RetrySleep = (ms) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 const nonEmptyLines = (text: string): readonly string[] =>
   text
@@ -601,33 +627,45 @@ export const generateOneModel = async (
   });
   budget.start();
 
-  /** 退避等待:不进 active 墙钟(ADR-0036);预算已到点时干脆不再等。 */
+  /**
+   * 退避等待:不进 active 墙钟(ADR-0036);预算已到点时干脆不再等。
+   *
+   * **等多久是测出来的**:入参 `ms` 是 `retryTransport` 算出的**请求值**(退避序列本身由
+   * `retry.test.ts` 判),而 `setTimeout` 只会晚不会早——所以进出各读一次注入的钟,差多少记多少。
+   * 记到当前在途的那一次 `send` 上:退避发生在重试层里,它不知道「步」,而桶知道。
+   */
   const backoffSleep: RetrySleep = async (ms) => {
     if (budget.expired()) return;
+    const record = inFlightSend;
+    const waitedFrom = request.now().getTime();
     budget.pause();
     try {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-      });
+      await (request.sleep ?? realSleep)(ms);
     } finally {
       budget.resume();
+      // 时钟被往回拨时不记负数:“等了多久”不能是负的,而注入的钟在测试里是可控的。
+      if (record !== undefined)
+        record.backoffMs += Math.max(0, request.now().getTime() - waitedFrom);
     }
   };
   /**
-   * 每次 loop 侧 `send` 的一桶尝试证据,按发生序。
+   * 每次 loop 侧 `send` 的一桶尝试证据 + 这一次 send 里退避实测等了多少,按发生序。
    *
    * 一桶 = 一次 `model.send`(里面可能有若干传输重试),而**一步**可能有两次 `send`
    * (截断重试,ADR-0035)。所以桶与日志行不是一一对应:切行时必须按 `turn.attempts` 数,
    * 不能拿 turn 的下标去取——那样截断那一步的日志会拿到上一步的证据,而第二枪直接丢掉。
    */
-  const sendEvidence: AttemptEvidence[][] = [];
+  const sends: SendRecord[] = [];
+  /** 当前在途的那一次 `send`(退避等待累加到它身上)。会话内 send 串行,一个就够。 */
+  let inFlightSend: SendRecord | undefined;
 
   try {
     const loop = await runAgentSession({
       model: {
         send: async (messages: readonly ChatMessage[], sendParams: ModelParams) => {
-          const evidence: AttemptEvidence[] = [];
-          sendEvidence.push(evidence);
+          const record: SendRecord = { evidence: [], backoffMs: 0 };
+          sends.push(record);
+          inFlightSend = record;
           // 这一次调用挂到会话预算上:到点时 `onExpire` 打断的就是它。
           const controller = new AbortController();
           inFlight = controller;
@@ -636,7 +674,7 @@ export const generateOneModel = async (
               client,
               messages,
               params: sendParams,
-              evidence,
+              evidence: record.evidence,
               caliber,
               signal: controller.signal,
               sleep: backoffSleep,
@@ -650,6 +688,7 @@ export const generateOneModel = async (
             }
             return outcome.response;
           } finally {
+            inFlightSend = undefined;
             inFlight = undefined;
           }
         },
@@ -669,15 +708,18 @@ export const generateOneModel = async (
     // 生成日志:**一个日志行 = 一步 = 一组 attempts**(ADR-0032)。
     //
     // 轮号 = 步号;`attempts` 是截断重试的枪数(不占步)。所以这一行要装上**这一步全部**的
-    // 发送侧证据:按 `turn.attempts` 从发生序里切一段。逐 turn 下标取(`sendEvidence[index]`)
+    // 发送侧证据:按 `turn.attempts` 从发生序里切一段。逐 turn 下标取(`sends[index]`)
     // 在截断重试时是错的——那一步有两次 send,于是下一行会拿到上一行的证据、第二枪丢掉。
     // 编号在**步内**连续(1..n):读侧(`attemptsOf`)按下标校验 `attempt === index + 1`。
+    //
+    // 退避时长同理按那段切:截断重试那一步有两次 send,两边的退避都进同一行(它是这一步的账)。
     let cursor = 0;
     for (const turn of loop.turns) {
-      const evidence = sendEvidence
-        .slice(cursor, cursor + turn.attempts)
-        .flat()
+      const records = sends.slice(cursor, cursor + turn.attempts);
+      const evidence = records
+        .flatMap((record) => record.evidence)
         .map((item, index) => ({ ...item, attempt: index + 1 }));
+      const backoffMs = records.reduce((sum, record) => sum + record.backoffMs, 0);
       cursor += turn.attempts;
       generationLog.push(
         logLine(
@@ -690,6 +732,7 @@ export const generateOneModel = async (
                 params,
                 requestEvidence: generationRequestEvidence(config),
                 attemptEvidence: evidence,
+                backoffMs,
                 sendMs: 0,
               }
             : {
@@ -703,6 +746,7 @@ export const generateOneModel = async (
                 attempts: turn.attempts,
                 requestEvidence: generationRequestEvidence(config),
                 attemptEvidence: evidence,
+                backoffMs,
                 sendMs: turn.sendMs,
               },
         ),

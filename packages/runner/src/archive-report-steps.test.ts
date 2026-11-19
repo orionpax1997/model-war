@@ -641,7 +641,7 @@ it("受污染会话：429 次数达到阈值即单列，成绩与步数保留", 
   expect(report?.contamination).toEqual({
     state: "contaminated",
     rateLimitedAttempts: CONTAMINATION_THRESHOLDS.rateLimitedAttempts,
-    // 累计退避今天没有落点：缺数据不补零。
+    // 这份合成档的日志行没有 backoffMs：旧档缺这一格，读成 null 而不是 0。
     backoffMs: null,
     reasons: ["rate-limited>=3"],
   });
@@ -707,37 +707,77 @@ it("受污染会话：累计退避超过阈值同样单列（日志行记了 bac
   });
 });
 
-it("干净会话：429 次数不到阈值、退避未记录 → clean，退避读成 null", async () => {
+/**
+ * 受污染读数里的「累计退避」有三态，**一张表**走同一条读路径：日志行 → 轮读数 → 会话合计 →
+ * Markdown 那一格。三行差别只在 `backoffMs` 这一键在不在、是多少（ADR-0036 的采集口径：没有退避
+ * 写 0、旧档缺这一格读成 null，两者不混）。拆成三套用例写，那条「不补零」的口径就会各自漂一份。
+ */
+const BACKOFF_READOUT: readonly {
+  readonly name: string;
+  /** 两轮日志行各自带不带 `backoffMs`、带多少。 */
+  readonly backoffs: readonly (number | undefined)[];
+  /** 轮读数：每轮一行，缺字段即 null。 */
+  readonly rounds: readonly (number | null)[];
+  /** 会话合计：全都不知即 null，否则按轮求和。 */
+  readonly total: number | null;
+  /** Markdown 那一格逐字长什么样。 */
+  readonly rendered: string;
+}[] = [
+  {
+    name: "实测有值：两轮的退避合计进会话读数",
+    backoffs: [1_000, 2_500],
+    rounds: [1_000, 2_500],
+    total: 3_500,
+    rendered: "3500 ms",
+  },
+  {
+    name: "真等 0：写 0 而不是缺数据",
+    backoffs: [0, 0],
+    rounds: [0, 0],
+    total: 0,
+    rendered: "0 ms",
+  },
+  {
+    name: "旧档缺字段：读成 null，不补零",
+    backoffs: [undefined, undefined],
+    rounds: [null, null],
+    total: null,
+    rendered: "null（旧档的日志行没有 backoffMs：缺数据不补零）",
+  },
+];
+
+it.each(BACKOFF_READOUT)("受污染读数三态：$name", async ({ backoffs, rounds, total, rendered }) => {
   const root = rootOf();
   writeV3(root, {
-    slug: "clean",
+    slug: "backoff-state",
     runId: "2026-01-06T00-00-00-003Z",
-    steps: [{ action: "done", atMs: 0, harnessMs: 1 }],
-    logs: [
-      {
-        round: 1,
-        kind: "converged",
-        responseConverged: true,
-        sendMs: 10,
-        usage: usageOf(100, 0),
-        attemptEvidence: [
-          { attempt: 1, outcome: "transport-error", failureKind: "rate-limited" },
-          { attempt: 2, outcome: "response" },
-        ],
-      },
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 1 },
+      { action: "done", atMs: 10, harnessMs: 1 },
     ],
+    logs: backoffs.map((backoffMs, index) => ({
+      round: index + 1,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 10,
+      ...(backoffMs === undefined ? {} : { backoffMs }),
+      attemptEvidence: [
+        { attempt: 1, outcome: "transport-error", failureKind: "rate-limited" },
+        { attempt: 2, outcome: "response" },
+      ],
+    })),
   });
   const [report] = readArchiveReports(root);
+  expect(report?.rounds.map((round) => round.backoffMs)).toEqual(rounds);
   expect(report?.contamination).toEqual({
     state: "clean",
-    rateLimitedAttempts: 1,
-    backoffMs: null,
+    rateLimitedAttempts: 2,
+    backoffMs: total,
     reasons: [],
   });
   const md = await markdownOf(root);
-  expect(md).toContain(
-    "受污染：clean（429 尝试 1 次；累计退避 null（生成侧日志行还不记退避时延）；命中判据=无）",
-  );
+  expect(md).toContain(`累计退避 ${rendered}；命中判据=无`);
+  // 三行都是 clean：受污染分层那一节里没有行，但“没有行”与“没有看”是两件事，逐字写出来。
   expect(md).toContain("- 本次报告里没有受污染会话（one-shot 档该列恒 null，不代表干净）。");
 });
 

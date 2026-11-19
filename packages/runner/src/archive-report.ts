@@ -1916,7 +1916,9 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     if (reading === null)
       return "不适用（one-shot 档该列恒 null：`readFailureRecords` 刻意跳过参赛模型，本报告不改那条口径——不是「没撞过限流」）";
     const backoff =
-      reading.backoffMs === null ? "null（生成侧日志行还不记退避时延）" : `${reading.backoffMs} ms`;
+      reading.backoffMs === null
+        ? "null（旧档的日志行没有 backoffMs：缺数据不补零）"
+        : `${reading.backoffMs} ms`;
     return `${reading.state}（429 尝试 ${reading.rateLimitedAttempts} 次；累计退避 ${backoff}；命中判据=${reading.reasons.length === 0 ? "无" : reading.reasons.join(" / ")}）`;
   };
   const labels = {
@@ -2352,7 +2354,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       "## 受污染会话（单列，成绩保留）",
       "",
       `> 判据在报告侧（ADR-0036）：累计退避 > ${CONTAMINATION_THRESHOLDS.backoffMs} ms 或 429 次数 ≥ ${CONTAMINATION_THRESHOLDS.rateLimitedAttempts} 即受污染。两个数都是估值不是实测；返第一季数据时改的只是报告侧阈值，不动采集。撞过限流的会话**成绩不作废**：步数、被挡次数、等了多少秒、分数都在下面的表里。`,
-      "> one-shot 档这一格恒 null：`readFailureRecords` 刻意跳过参赛模型（`reporter.ts`），本报告不为封存的历史榜改那条口径——所以「没有受污染会话」不等于「所有会话都干净」。累计退避今天没有落点（生成侧日志行还不记 `backoffMs`），那一格写 null 而不是 0：缺数据不补零，此时判据实际由 429 次数承担。",
+      "> one-shot 档这一格恒 null：`readFailureRecords` 刻意跳过参赛模型（`reporter.ts`），本报告不为封存的历史榜改那条口径——所以「没有受污染会话」不等于「所有会话都干净」。累计退避读的是日志行的 `backoffMs`（生成侧按**实测**等待写：没有退避写 0）；旧档没有这一格时写 null 而不是 0：缺数据不补零，那些会话的判据仍只由 429 次数承担。",
       "",
     );
     if (contaminated.length === 0)

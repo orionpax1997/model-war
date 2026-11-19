@@ -37,6 +37,7 @@ import {
 } from "@model-war/schema";
 
 import { fail, reply, replies, stubClient } from "./stub-client.js";
+import { TransportError } from "./transport-error.js";
 import { generateOneModel } from "./pipeline.js";
 import { runGeneration, type GenerationRequest } from "./run.js";
 import type { ModelConfig } from "./config.js";
@@ -306,6 +307,41 @@ it("传输耗尽:那次调用不进 steps、不进协议轮数,生成日志留�
     (line) => (JSON.parse(line) as { kind: string }).kind,
   );
   expect(kinds).toEqual(["converged", "transport"]);
+});
+
+it("退避记账取实测:等待实现没真等就写 0,不按请求时长记", async () => {
+  // ADR-0036 的两段判据要有数据,而「等了多少」只能是实测:请求值(`backoffSleep` 的入参)是
+  // `retryTransport` 算出来的打算,`setTimeout` 只会更晚。这里把两者人为拉开——请求 1s + 2s,
+  // 而钟一步没走——于是「估」与「测」在这条断言上会给出不同答案。
+  const root = mkRoot();
+  const model = stubClient([
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    reply(ACTION),
+    reply("```bash\ndone\n```"),
+  ]);
+  const outcome = await withHostBash(
+    () => stepOk(),
+    () =>
+      generateOneModel(
+        requestWith(root, {
+          createClient: () => model,
+          maxSteps: 2,
+          // 不真等:退避序列本身由 `retry.test.ts` 判,这里判的是记账。
+          sleep: async () => {},
+        }),
+        configOf(),
+      ),
+  );
+
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  const [first] = outcome.failure.generationLog.map(
+    (line) => JSON.parse(line) as { attemptEvidence: unknown[]; backoffMs: number },
+  );
+  // 两次 429 都落进同一行的尝试证据:请求值合计 ≥ 3000 ms。
+  expect(first?.attemptEvidence).toHaveLength(3);
+  expect(first?.backoffMs).toBe(0);
 });
 
 it("传输耗尽在第一步:零步会话的 prompts 为空、steps 为空", async () => {
