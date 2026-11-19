@@ -10,14 +10,14 @@
  * 产物落 `packages/gen/sandbox-rootfs/`(路径真源在 `@model-war/schema` 的 `SANDBOX_ROOTFS_DIR`):
  *
  * ```
- * bin/{bash,cat,cp,grep,ls}       五个静态 ELF,不从宿主借、不带动态库闭包
+ * bin/{bash,cat,cp,grep,head,ls,sed,tail,wc}   九个静态 ELF,不从宿主借、不带动态库闭包
  * bin/{check,evaluate,done}       `packages/gen/src/agent/shim/shim.sh` 的逐字节副本
  * contract/{README.md,rules.md,api.md,examples/minimal.ts}   `docs/rules-v2/` 的逐字节副本
  * PROVENANCE.md                   来路说明书(生成物,不在挂载面上)
  * ```
  *
  * ── 两半:能现算的,与只能对账的 ──
- * `contract/` 与三个薄壳是**纯派生**:源在仓库里,重跑一次逐字节相同。五个二进制不是——
+ * `contract/` 与三个薄壳是**纯派生**:源在仓库里,重跑一次逐字节相同。静态二进制不是——
  * 它们要么来自发行版包(`bash-static` 的 deb),要么来自钉版 tarball 的 `gcc -static` 构建过程,
  * 重跑需要网络与工具链。所以这里对它们只做一件事:**核对 sha256 与钉死的表一致再拷进来**。
  * 来路写进 `PROVENANCE.md`,`SANDBOX_ROOTFS_TREE_HASH` 钉住最终字节;两者一起回答
@@ -65,13 +65,16 @@ const shimNamesFromSchema = (): readonly string[] => {
 };
 
 /**
- * 五个静态二进制**钉死**的来源。`sha256` 是唯一判据:拷进产物前逐个核对,不一致就停。
+ * 静态二进制**钉死**的来源。`sha256` 是唯一判据:拷进产物前逐个核对,不一致就停。
  *
  * 表的家在这里而不是在 schema:它不是运行时事实,只有本脚本与 `PROVENANCE.md` 读它。
+ *
+ * **每一条的来源按它自己的出处写,不按别人的出处抄**:`sed` 是 GNU sed 的独立包,不与 coreutils
+ * 同一个 tarball;把它的版本写成「coreutils 9.x」会让来路说明书在第一位核对者面前就是假的。
  */
 export type StaticBinaryPin = {
   /** 产物里的文件名(也是 `--static-bin-dir` 下的文件名)。 */
-  readonly name: "bash" | "cat" | "cp" | "grep" | "ls";
+  readonly name: "bash" | "cat" | "cp" | "grep" | "head" | "ls" | "sed" | "tail" | "wc";
   /** 版本号(写进 PROVENANCE)。 */
   readonly version: string;
   /** 从哪来:包名或 tarball 的 URL(写进 PROVENANCE)。 */
@@ -124,6 +127,39 @@ export const STATIC_BINARY_PINS: readonly StaticBinaryPin[] = [
       'tar xf grep-3.12.tar.xz && cd grep-3.12 && ./configure --disable-nls --without-selinux LDFLAGS=-static && make -j"$(nproc)" && strip src/grep',
     sha256: "5e9b74e48985c2150f438b3dfa6ee98984d4d7622adb38da89876267164fe407",
   },
+  {
+    name: "head",
+    version: "coreutils 9.12",
+    source: "https://mirrors.aliyun.com/gnu/coreutils/coreutils-9.12.tar.xz",
+    command:
+      'tar xf coreutils-9.12.tar.xz && cd coreutils-9.12 && ./configure --disable-nls --without-selinux --disable-libcap LDFLAGS=-static && make -j"$(nproc)" && strip src/head',
+    sha256: "acde1eb0bf4747d5b854c05c19cb2391cd4117d0a5a091cabd07d71e6b52c012",
+  },
+  {
+    // sed 不属于 coreutils:GNU sed 是独立包、独立 tarball。来源照它的真实出处写。
+    name: "sed",
+    version: "GNU sed 4.9",
+    source: "https://mirrors.aliyun.com/gnu/sed/sed-4.9.tar.xz",
+    command:
+      'tar xf sed-4.9.tar.xz && cd sed-4.9 && ./configure --disable-nls --without-selinux LDFLAGS=-static && make -j"$(nproc)" && strip sed/sed',
+    sha256: "a4fa1ca78a7f39f00ca83d297a69757458d8c23f7b536f24c927a7d6556ce03a",
+  },
+  {
+    name: "tail",
+    version: "coreutils 9.12",
+    source: "https://mirrors.aliyun.com/gnu/coreutils/coreutils-9.12.tar.xz",
+    command:
+      'tar xf coreutils-9.12.tar.xz && cd coreutils-9.12 && ./configure --disable-nls --without-selinux --disable-libcap LDFLAGS=-static && make -j"$(nproc)" && strip src/tail',
+    sha256: "97f0d2232637febe15b2cdecc0811d82dc63084fadb943399c3260e13baf422c",
+  },
+  {
+    name: "wc",
+    version: "coreutils 9.12",
+    source: "https://mirrors.aliyun.com/gnu/coreutils/coreutils-9.12.tar.xz",
+    command:
+      'tar xf coreutils-9.12.tar.xz && cd coreutils-9.12 && ./configure --disable-nls --without-selinux --disable-libcap LDFLAGS=-static && make -j"$(nproc)" && strip src/wc',
+    sha256: "6af0e7d9a8d07b1dd28e147805879efcef604353bd08e13e12c21efbc64a5dde",
+  },
 ] as const;
 
 /** tarball 自身的 sha256(复核「拉下来的源码是不是那份源码」用)。 */
@@ -135,6 +171,10 @@ export const SOURCE_ARCHIVE_PINS: readonly { readonly file: string; readonly sha
   {
     file: "grep-3.12.tar.xz",
     sha256: "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9",
+  },
+  {
+    file: "sed-4.9.tar.xz",
+    sha256: "6e226b732e1cd739464ad6862bd1a1aba42d7982922da7a53519631d24975181",
   },
 ];
 
@@ -154,6 +194,12 @@ const provenanceMarkdown = (): string => {
       `来源:\`${pin.source}\`\n\n\`\`\`sh\n${pin.command}\n\`\`\`\n\n` +
       `得到的字节 sha256 = \`${pin.sha256}\`。\n`,
   ).join("\n");
+  // 计数与名字都从 pin 表派生:这张表长一条而正文还写着「五个」时,读起来毫无异样。
+  const coreutils = STATIC_BINARY_PINS.filter((pin) => pin.name !== "bash").map(
+    (pin) => `\`${pin.name}\``,
+  );
+  const binaryCount = String(STATIC_BINARY_PINS.length);
+  const coreutilsCount = String(coreutils.length);
 
   return `# 沙箱 rootfs 的来路
 
@@ -163,7 +209,7 @@ const provenanceMarkdown = (): string => {
 
 ## 它是什么
 
-模型在沙箱里能看见的**全部**内容物:静态 \`bash\`、四个静态 coreutils(\`cat\` / \`cp\` / \`ls\` / \`grep\`)、
+模型在沙箱里能看见的**全部**内容物:静态 \`bash\`、${coreutilsCount} 个静态 coreutils(${coreutils.join(" / ")})、
 三个受限工具的薄壳(\`check\` / \`evaluate\` / \`done\`)与只读契约 \`/contract\` 四条。
 沙箱的根是空的(\`bwrap --tmpfs /\`),**只** \`--ro-bind\` 进这里的 \`bin/\` 与 \`contract/\`:
 宿主根目录一个 inode 都不出现,所以「绝对路径能绕过 PATH 白名单」这个问题结构上不存在。
@@ -176,7 +222,7 @@ const provenanceMarkdown = (): string => {
 \`ldd\` 闭包门禁也整条不需要。产物入库、以字节为准,配 \`check:sandbox-rootfs\` 的「现算 == 入库」
 漂移门禁——与 ADR-0007 对 runtime bundle 的处理同款。
 
-## 五个二进制
+## ${binaryCount} 个二进制
 
 | 产物 | 版本 | 字节 sha256 |
 |---|---|---|
@@ -186,10 +232,11 @@ build-id)就会得到另一份字节——本仓实测过:照表里的命令重�
 的那两份不同。所以这张表的语义是「**入库的这份字节**是什么、它是照哪条命令得到的」,不是
 「照着跑一遍必然得到同一份字节」。稳定性由入库字节 + 漂移门禁提供,不由可重复构建提供。
 
-五者都已核对是**静态 ELF**(无 \`PT_INTERP\`):不向宿主要动态链接器,也不需要任何 \`.so\`。
+这 ${binaryCount} 份都已核对是**静态 ELF**(无 \`PT_INTERP\`):不向宿主要动态链接器,也不需要任何 \`.so\`。
 门禁用自带的 ELF 解析判这一条,不靠 \`ldd\`(它会执行目标文件)也不靠 \`file\`(输出随版本漂)。
 
-取它们的方式只有两条,都不涉及「从这台机器上顺手抄一个」:
+取它们的方式不只一条(同一个 tarball 里的几个命令共用一套 \`configure\` 参数),都不涉及
+「从这台机器上顺手抄一个」:
 
 ${commands}
 
@@ -233,8 +280,8 @@ const main = (): number => {
   const staticBinDir = parseStaticBinDir(process.argv.slice(2));
   const rootfsDir = join(repoRoot, ROOTFS_DIR);
 
-  // ① 先把五个二进制的字节定下来(**在清空产物目录之前**):给了 `--static-bin-dir` 就从那里
-  // 取并核对 sha256;没给就沿用产物里已有的那四份。两者都没有 = 第一次落库漏了参数,当场停,
+  // ① 先把二进制的字节定下来(**在清空产物目录之前**):给了 `--static-bin-dir` 就从那里
+  // 取并核对 sha256;没给就沿用产物里已有的那些。两者都没有 = 第一次落库漏了参数,当场停,
   // 不能先清空再发现——那样会把人已经组装好的产物删掉。
   const binaries = STATIC_BINARY_PINS.map((pin) => {
     const existing = join(rootfsDir, "bin", pin.name);
