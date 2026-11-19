@@ -97,7 +97,7 @@
 - 首条消息与 system 是数据文件(`prompts/agent.md` / `prompts/agent-system.md`),判据文本**不复制**,真源仍是 `docs/rules-v2`。契约正文**不进首条消息**:读契约要花几步,那是模型的策略决策(ADR-0030)。
 - 契约读入:每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘,不嵌入副本;目录名 / 文件缺失即报错退出。
 - 模型 API 客户端:gen 内定义 `ModelClient` 接口,真实实现 = HTTP 客户端 + **四个端点族分支**(`chat-completions` / `messages` / `responses` / `generate-content`),按**线协议**分族而不是按厂商分,**不引厂商 SDK**(取舍见 ADR-0021)。
-- 模型配置(`models.yaml`)只登记本季参赛集;凭证一律走环境变量。**新模型接入只改配置,不改代码**。
+- 模型配置(`models.yaml`)只登记本季参赛集;凭证一律走环境变量。**新模型接入只改配置,不改代码**。该文件不入库(`.gitignore`),随赛季变,所以 hld 与 ADR 都不枚举名单、也不写它有几条——查不到名单不是漏了,它的家在本机。
 - 重试与限流参数是 gen 内部常量,**不进 `rulesets/*.json`**——那是与厂商 API 打交道的工程参数,与对局规则无关。重试分三套预算(429 / 连接级抖动 / 截断)互不侵占,5xx 不重试(ADR-0036);单模型失败只收口该模型,不中止同批。
 
 #### 2.2.7 脚本分层与 CI 质量门禁
