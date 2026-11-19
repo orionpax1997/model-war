@@ -53,6 +53,7 @@ import {
   type ArchiveStep,
   type ArchiveTermination,
   type ArchiveValidation,
+  type FailureClassification,
   type FailureRecord,
   type TrialGridScore,
   type TrialPlan,
@@ -149,13 +150,33 @@ export type GenerationTransportLogEntry = GenerationLogEntry & { readonly kind: 
  * 把「agent 形态又填了 prompts」当成两份会漂的奇据拒掉——所以这里只放空数组。
  */
 export type ModelFailure = {
-  readonly classification: "tsc" | "contract" | "transport" | "selection";
+  readonly classification: FailureClassification;
   readonly prompts: readonly string[];
   readonly generationLog: readonly string[];
   readonly diagnostics: readonly string[];
   readonly message: string;
   readonly candidates?: readonly ArchiveOptimizationCandidateAgent[];
   readonly selectionFailure?: FailureRecord["selectionFailure"];
+};
+
+/**
+ * 终止原因 → 失败分类。
+ *
+ * 按**终止原因**分派,不看错误消息文本:终止原因是 loop 已经判定的结论,而同一个字面量在不同
+ * 消息里含义不同。`max-steps` / `wall-clock` 是会话预算耗尽——它们不是「模型违反契约」,读报告的
+ * 人不必再靠 `termination` 反推。`done` 仍落在 `contract`:它表示模型自己收工,而零候选是这一场
+ * 没交出成绩,与预算无关。
+ *
+ * 写成 `Record<ArchiveTermination, …>` 而不是带 `default` 的 `switch`:新增一个终止原因时这里
+ * 编译不过,而不是悄悄折进 `contract`。
+ */
+const FAILURE_CLASSIFICATION_OF_TERMINATION: Record<ArchiveTermination, FailureClassification> = {
+  done: "contract",
+  "max-steps": "budget",
+  "wall-clock": "budget",
+  context: "contract",
+  "action-parse": "contract",
+  transport: "transport",
 };
 
 /**
@@ -766,7 +787,7 @@ export const generateOneModel = async (
         runId,
         agent: agentFields,
         failure: {
-          classification: loop.termination === "transport" ? "transport" : "contract",
+          classification: FAILURE_CLASSIFICATION_OF_TERMINATION[loop.termination],
           prompts: [],
           generationLog,
           diagnostics: diagnosticLines(loop),
@@ -796,6 +817,8 @@ export const generateOneModel = async (
         runId,
         agent: agentFields,
         failure: {
+          // 会话已经走完并交出了候选;冻不住是落档环节的契约问题,与预算无关——预算耗尽已在
+          // `FAILURE_CLASSIFICATION_OF_TERMINATION` 那一处归成 `budget`。
           classification: "contract",
           prompts: [],
           generationLog,
@@ -828,6 +851,7 @@ export const generateOneModel = async (
         runId,
         agent: agentFields,
         failure: {
+          // 同冻结失败:候选已评估完,写不进 `archive/` 是落档环节的问题,不是预算耗尽。
           classification: "contract",
           prompts: [],
           generationLog,
