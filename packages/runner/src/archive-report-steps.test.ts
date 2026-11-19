@@ -20,11 +20,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TRIAL_MATCHES_PER_CANDIDATE } from "@model-war/schema";
+import {
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_GRID_SUMMARY_VERSION,
+  TRIAL_MATCHES_PER_CANDIDATE,
+  type TrialPlanScript,
+} from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 
 import { readArchiveReports, runArchiveReport } from "./archive-report.js";
 import { CONTAMINATION_THRESHOLDS, stepGroupsOf } from "./archive-report-steps.js";
+import { buildTrialPlan, trialGridMatchesOf } from "./trial-plan.js";
 
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-archive-steps-"));
 afterAll(() => rmSync(scratch, { force: true, recursive: true }));
@@ -73,6 +79,64 @@ type V3Input = {
   readonly atStep?: number;
   /** `false` = 造一个「声明了 v3、却没有过程记录」的档（读侧必须拒读，不许静默当旧档）。 */
   readonly withSteps?: boolean;
+  /** 给这几步真写旁挂网格汇总（按步号索引）；没给的步就没有 `.grid.json`。 */
+  readonly grids?: readonly { readonly step: number; readonly summary: Record<string, unknown> }[];
+};
+
+/**
+ * 一份旁挂网格汇总（`<观测文件>.grid.json`）的**真数据形状**：整份计划 + 分数 + 逐场身份。
+ *
+ * 与 `archive/gpt-6-luna/observed-2026-11-19T01-33-42-820Z-round-20.jsonl.grid.json` 同形：
+ * 报告要读的四份陪练身份在 `plan.scripts` 里（`id` / `role` / `source` / `scriptSha256`）。
+ * 这里只造形状，不跑对局：本节的判据是「读不读得出身份」，不是「分数算得对不对」。
+ */
+const gridSummaryOf = (options: {
+  readonly incumbent: { readonly id: string; readonly source: string };
+  readonly scriptSha256: string;
+}): Record<string, unknown> => {
+  const scripts: readonly TrialPlanScript[] = [
+    {
+      id: "top:claude-opus-5-5",
+      role: "top",
+      source: "archive:claude-opus-5-5/2026-10-16T08-40-12-578Z",
+      scriptSha256: "1".repeat(64),
+    },
+    {
+      id: "mid:minimax-m3.1-flash",
+      role: "mid",
+      source: "archive:minimax-m3.1-flash/2026-10-13T13-48-45-729Z",
+      scriptSha256: "2".repeat(64),
+    },
+    {
+      id: "last:glm-5.3-flash",
+      role: "last",
+      source: "archive:glm-5.3-flash/2026-10-13T22-30-50-602Z",
+      scriptSha256: "3".repeat(64),
+    },
+    {
+      id: options.incumbent.id,
+      role: "incumbent",
+      source: options.incumbent.source,
+      scriptSha256: "4".repeat(64),
+    },
+  ];
+  const plan = buildTrialPlan({
+    ruleset: "v2",
+    rulesetSha256: "9".repeat(64),
+    sandboxRuntimeHash: "8".repeat(64),
+    scripts,
+    maps: [
+      { name: TRIAL_GRID_MAP_NAMES[0], sha256: "f".repeat(64) },
+      { name: TRIAL_GRID_MAP_NAMES[1], sha256: "e".repeat(64) },
+    ],
+  });
+  return {
+    version: TRIAL_GRID_SUMMARY_VERSION,
+    plan,
+    scriptSha256: options.scriptSha256,
+    score: { totalPoints: 8, averagePoints: 0.25, countedMatches: TRIAL_MATCHES_PER_CANDIDATE },
+    matches: trialGridMatchesOf(plan),
+  };
 };
 
 /**
@@ -80,6 +144,9 @@ type V3Input = {
  *
  * 侧车（`.candidate.js` / `.candidate.ts`）与冻结的 `script.js` / `script.ts` 都真写，所以报告
  * 的 `scriptState` 是 `verified`——那是「候选按位置可读」里最要紧的一半。
+ *
+ * `grids` 给那几步真写一份旁挂网格汇总（`<观测文件>.grid.json`）：v3 档的 `meta` 不装计划，
+ * 所以「这 32 场跟谁打」只在那里（ADR-0035）。
  */
 const writeV3 = (root: string, input: V3Input): void => {
   const slugDir = join(root, "archive", input.slug);
@@ -104,6 +171,12 @@ const writeV3 = (root: string, input: V3Input): void => {
     const product = SCRIPT(`candidate-${String(index)}`);
     writeFileSync(join(slugDir, `${observationsFile}.candidate.js`), product);
     writeFileSync(join(slugDir, `${observationsFile}.candidate.ts`), product);
+    for (const grid of input.grids ?? [])
+      if (grid.step === step)
+        writeFileSync(
+          join(slugDir, `${observationsFile}.grid.json`),
+          `${JSON.stringify(grid.summary, null, 2)}\n`,
+        );
     return {
       step,
       scriptFile: `${observationsFile}.candidate.js`,
@@ -217,6 +290,270 @@ const copyFixture = (name: string): string => {
   cpSync(join(FIXTURE_ROOT, name), root, { recursive: true });
   return root;
 };
+
+/**
+ * 抽出 Markdown 里「陪练」那一段的全部行（`- 陪练（…）` 及其下的身份行）。
+ *
+ * 段尾落在下一个既不是 `- ` 也不是 `  - ` 开头的非空行或空行。
+ */
+const sparringLinesOf = (md: string): readonly string[] => {
+  const lines = md.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("- 陪练"));
+  if (start === -1) return [];
+  const entries: string[] = [];
+  for (const line of lines.slice(start)) {
+    if (line.trim() === "") {
+      if (entries.length > 0) break;
+      continue;
+    }
+    if (!/^(-|\s{2}-) /.test(line)) break;
+    entries.push(line);
+  }
+  return entries;
+};
+
+// ── 陪练身份（v3：计划不在 `meta` 里，读候选旁挂的 `.grid.json`）────────────────
+
+it("陪练：候选旁挂 `.grid.json` 的四份身份读得出，自指（本席位上一场）显式标出", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-self",
+    runId: "2026-01-05T00-00-00-001Z",
+    steps: [
+      { action: "bash", atMs: 0, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 30 },
+      { action: "done", atMs: 2_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [2],
+    termination: "done",
+    grids: [
+      {
+        step: 2,
+        summary: gridSummaryOf({
+          // 在位陪练 = 本席位自己的上一场（runId 与本档不同）。
+          incumbent: {
+            id: "incumbent:sparring-self",
+            source: "archive:sparring-self/2026-01-01T00-00-00-009Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  // 一组头 + 四份身份 + 自指标记。
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(1);
+  expect(sparring[0]).toContain("第 2 步候选");
+  expect(sparring[0]).toContain("planSha256=");
+  const identities = sparring.join("\n");
+  // 四个身份的 id / role / source / scriptSha256 都在。
+  expect(identities).toContain("top:claude-opus-5-5（role=top；");
+  expect(identities).toContain("mid:minimax-m3.1-flash（role=mid；");
+  expect(identities).toContain("last:glm-5.3-flash（role=last；");
+  expect(identities).toContain("incumbent:sparring-self（role=incumbent；");
+  expect(identities).toContain(
+    "source=archive:sparring-self/2026-01-01T00-00-00-009Z；scriptSha256=",
+  );
+  expect(identities.match(/scriptSha256=/g)).toHaveLength(4);
+  // 自指：显式标出「本席位上一场」且写出那一场的 runId。
+  expect(md).toContain("陪练 = 本席位上一场（`2026-01-01T00-00-00-009Z`）；本场与它不可直接比");
+});
+
+it("陪练：在位陪练指向别席位时不标自指，四份身份照旧列出", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-other",
+    runId: "2026-01-05T00-00-00-002Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+    grids: [
+      {
+        step: 1,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:another-seat",
+            source: "archive:another-seat/2026-01-04T00-00-00-003Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(1);
+  expect(sparring.join("\n")).toContain("incumbent:another-seat");
+  // 反例：在位指向别席位 → 不写「本席位上一场」。
+  expect(md).not.toContain("本席位上一场");
+});
+
+it("陪练：`plan` 缺席写「未记录」而不是异常", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-no-plan",
+    runId: "2026-01-05T00-00-00-003Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+    // 只有外层形状、没有 `plan`：真档里唯一可能缺的就是计划（v3 不装进 `meta`）。
+    grids: [{ step: 1, summary: { version: TRIAL_GRID_SUMMARY_VERSION } }],
+  });
+  const md = await markdownOf(root);
+  expect(md).toContain("陪练：未记录");
+  expect(md).not.toContain("本席位上一场");
+});
+
+it("陪练：`.grid.json` 不在盘上也写「未记录」", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-absent",
+    runId: "2026-01-05T00-00-00-004Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+  });
+  const md = await markdownOf(root);
+  expect(md).toContain("陪练：未记录");
+});
+
+it("陪练：两个候选各自那份 `.grid.json` 的身份都读得到", async () => {
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-two",
+    runId: "2026-01-05T00-00-00-005Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "bash", atMs: 1_000, harnessMs: 5 },
+      { action: "evaluate", atMs: 2_000, harnessMs: 40 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1, 3],
+    termination: "done",
+    grids: [
+      {
+        step: 1,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:early-seat",
+            source: "archive:early-seat/2026-01-02T00-00-00-001Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+      {
+        step: 3,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:sparring-two",
+            source: "archive:sparring-two/2026-01-03T00-00-00-002Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-1")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  // 两候选各自一份：两组头 + 各四份身份。
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(2);
+  expect(sparring.join("\n")).toContain("第 1 步候选");
+  expect(sparring.join("\n")).toContain("第 3 步候选");
+  expect(sparring.join("\n")).toContain("incumbent:early-seat");
+  expect(sparring.join("\n")).toContain("incumbent:sparring-two");
+  // 只有第 3 步那份是自指。
+  expect(md).toContain("陪练 = 本席位上一场（`2026-01-03T00-00-00-002Z`）");
+  expect(md).not.toContain("本席位上一场（`2026-01-02T00-00-00-001Z`）");
+});
+
+it("陪练：两份 `.grid.json` 逐字相同时四份身份不重列，但仍各自读过、自指照说", async () => {
+  const root = rootOf();
+  // 真档（Luna 2026-11-19）的形状：两次提交用的是同一张网格（同一 `planSha256`）。
+  const shared = gridSummaryOf({
+    incumbent: {
+      id: "incumbent:sparring-same",
+      source: "archive:sparring-same/2026-01-02T00-00-00-001Z",
+    },
+    scriptSha256: sha256Of(SCRIPT("candidate-0")),
+  });
+  writeV3(root, {
+    slug: "sparring-same",
+    runId: "2026-01-05T00-00-00-006Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "bash", atMs: 1_000, harnessMs: 5 },
+      { action: "evaluate", atMs: 2_000, harnessMs: 40 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1, 3],
+    termination: "done",
+    grids: [
+      { step: 1, summary: shared },
+      { step: 3, summary: shared },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md);
+  // 两个候选各自一份条目（两份文件都读过），但四份身份只排一遍。
+  expect(sparring.filter((line) => line.startsWith("- 陪练（"))).toHaveLength(2);
+  expect(sparring.join("\n")).toContain("与第 1 步候选逐字相同");
+  expect(sparring.join("\n").match(/top:claude-opus-5-5（role=top；/g)).toHaveLength(1);
+  // 去重不影响自指：两份都是自指，各说一句。
+  expect(md).toContain("陪练 = 本席位上一场（`2026-01-02T00-00-00-001Z`）");
+  expect(md.match(/本席位上一场/g)).toHaveLength(2);
+});
 
 // ── 步级度量 ──────────────────────────────────────────────────────────────────
 
