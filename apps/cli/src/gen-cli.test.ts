@@ -314,7 +314,7 @@ it.skipIf(!archivePresent)(
     const endpoint = await startFakeEndpoint([
       writeScriptAction(VALID_SCRIPT),
       "```bash\nevaluate\n```",
-      "```bash\ndone\n```",
+      "```bash\nfinish\n```",
     ]);
     try {
       const root = mkRoot(endpoint.baseUrl);
@@ -457,7 +457,7 @@ it.skipIf(!archivePresent)(
     const endpoint = await startFakeEndpoint([
       writeScriptAction(HABITUAL_SCRIPT),
       "```bash\nevaluate\n```",
-      "```bash\ndone\n```",
+      "```bash\nfinish\n```",
     ]);
     try {
       const root = mkRoot(endpoint.baseUrl);

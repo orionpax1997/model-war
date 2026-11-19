@@ -44,7 +44,7 @@ describe("从 schema 源码文本里抽常量", () => {
     expect(parsed.constants.dir).toBe("packages/gen/sandbox-rootfs");
     expect(parsed.constants.files).toContain("bin/bash");
     expect(parsed.constants.treeHash).toMatch(/^[0-9a-f]{64}$/u);
-    expect(parsed.constants.shims).toEqual(["check", "done", "evaluate"]);
+    expect(parsed.constants.shims).toEqual(["check", "evaluate", "finish"]);
   });
 
   it("抽不出来时点名缺的是哪一个,并按失败交回(不猜、不跳过)", () => {
@@ -89,16 +89,16 @@ describe("「谁是什么」从清单推出来,不另写一张表", () => {
     // 现在是反过来的——新增内容物写进清单,它自动被静态 ELF 判据覆盖。
     const binaries = staticBinariesOf(
       ["bin/bash", "bin/check", "bin/cp", "contract/rules.md"],
-      ["check", "done", "evaluate"],
+      ["check", "evaluate", "finish"],
     );
     expect(binaries).toEqual(["bin/bash", "bin/cp"]);
   });
 
   it("薄壳路径带 bin/ 前缀,而且按字典序(报文顺序稳定)", () => {
-    expect(shimPathsOf(["evaluate", "check", "done"])).toEqual([
+    expect(shimPathsOf(["finish", "check", "evaluate"])).toEqual([
       "bin/check",
-      "bin/done",
       "bin/evaluate",
+      "bin/finish",
     ]);
   });
 });

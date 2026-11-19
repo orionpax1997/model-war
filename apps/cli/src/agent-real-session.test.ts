@@ -101,14 +101,17 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
 
-  // 四步:起手式(`cp`,首条消息写的就是它) → 跑 check → evaluate → done。
+  // 五步:起手式(`cp`,首条消息写的就是它) → 跑一个 `for … done` 的批量读 → check → evaluate → 收工。
+  // 第 2 步是有意加的:它是 hy4-flash 报废整场会话的那个形状(收尾 `done` 曾被当哨兵切掉)。
   // 每一步都是一次真的 `sandbox.run`。用 `cp` 而不是 heredoc 是有意的:那是模型真正会照做的第一步,
   // 它曾因 rootfs 里没有 `cp` 而以 `exit 127` 白费一步。
   const model = stubClient([
     reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
+    // 真 bwrap 下跑一个 `for … do … done`:它必须整块跑完(退出码 0),而不是被切成半截。
+    reply('```bash\nfor f in /contract/api.md /contract/rules.md; do\n  wc -l "$f"\ndone\n```'),
     reply("```bash\ncheck\n```"),
     reply("```bash\nevaluate\n```"),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
 
   const outcome = await generateOneModel(
@@ -141,13 +144,19 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   expect(meta.harnessDigest).toBe(HARNESS_DIGEST);
   expect(meta.contextLength).toBe(100_000);
   expect(meta.termination).toBe("done");
-  expect(meta.atStep).toBe(4);
+  expect(meta.atStep).toBe(5);
 
-  // ── 步 = 一次模型调用;四步里第三步那次 evaluate 产出一个候选 ──
-  expect(meta.steps).toHaveLength(4);
-  expect(meta.protocolRounds).toBe(4);
+  // ── 步 = 一次模型调用;五步里第四步那次 evaluate 产出一个候选 ──
+  expect(meta.steps).toHaveLength(5);
+  expect(meta.protocolRounds).toBe(5);
   expect(meta.prompts).toHaveLength(1);
-  expect(meta.steps?.map((step) => step.action.kind)).toEqual(["bash", "bash", "evaluate", "done"]);
+  expect(meta.steps?.map((step) => step.action.kind)).toEqual([
+    "bash",
+    "bash",
+    "bash",
+    "evaluate",
+    "done",
+  ]);
 
   // ── 真沙箱里跑出来的东西真的在:起手式那步的退出码是 0,check 那步有 tsc 版本 ──
   expect(meta.steps?.[0]?.exitCode).toBe(0);
@@ -155,11 +164,18 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   expect(readFileSync(join(workspaceDir, "script.ts"), "utf8")).toBe(
     readFileSync(join(repoRoot, "docs/rules-v2/examples/minimal.ts"), "utf8"),
   );
-  expect(meta.steps?.[1]?.stdout).toContain("类型检查通过");
+  // 第 2 步的 `for … do … done` 整块跑完了:退出码 0,两行 `wc -l` 都在,没有语法错误。
+  // 这正是旧实现里报废整场会话的那一格(`bash -c` 拿到半截块 → exit 2)。
+  expect(meta.steps?.[1]?.action.kind).toBe("bash");
+  expect(meta.steps?.[1]?.exitCode).toBe(0);
+  expect(meta.steps?.[1]?.stderr).toBe("");
+  expect(meta.steps?.[1]?.stdout).toContain("/contract/api.md");
+  expect(meta.steps?.[1]?.stdout.trim().split("\n")).toHaveLength(2);
+  expect(meta.steps?.[2]?.stdout).toContain("类型检查通过");
   // 结果侧证据:check 那一步带着契约侧的规则标签(通过时是空集合)。
-  expect(meta.steps?.[1]?.result).toBeUndefined();
+  expect(meta.steps?.[2]?.result).toBeUndefined();
   // evaluate 那一步真的产出了观测出口。
-  expect(meta.steps?.[2]?.stdout).toContain("完整观测");
+  expect(meta.steps?.[3]?.stdout).toContain("完整观测");
 
   // ── 候选的旁挂快照真的在盘上,哈希对得上 ──
   expect(meta.optimization).toMatchObject({ version: 3 });
@@ -175,7 +191,7 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   // 候选条数 1..3:这次只评了一次。
   expect(optimization.candidates).toHaveLength(1);
   const candidate = optimization.candidates[0]!;
-  expect(candidate.step).toBe(3);
+  expect(candidate.step).toBe(4);
   const candidateBytes = readFileSync(join(root, "archive/alpha", candidate.scriptFile));
   expect(candidateBytes.byteLength).toBeGreaterThan(0);
   // 候选条目的 `scriptSha256` 是**产物**字节的哈希(报告侧复算的就是它)。
@@ -193,8 +209,8 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
 
   // ── 装载器读得出来:这一步才是「可装载」的判据 ──
   const [report] = readArchiveReports(root);
-  expect(report?.protocolRounds).toBe(4);
-  expect(report?.rounds).toHaveLength(4);
+  expect(report?.protocolRounds).toBe(5);
+  expect(report?.rounds).toHaveLength(5);
   // 报告侧认得出这个候选:字节哈希对得上、观测行数等于计划场数(32)。
   expect(report?.kind).toBe("success");
   // 只有一个候选:它既是首候选也是末候选(没有 selection 时胜者取末位,ADR-0030/0031)。
@@ -218,7 +234,7 @@ it(
     mkdirSync(workspaceDir, { recursive: true });
 
     // 只 done、不 evaluate:一个候选都没有(ADR-0030「失败 = 一个候选都没有」)。
-    const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\ndone\n```")]);
+    const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
 
     const outcome = await generateOneModel(
       {
@@ -265,7 +281,7 @@ it(
     const model = stubClient([
       reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
       reply("```bash\nevaluate\n```"),
-      reply("```bash\ndone\n```"),
+      reply("```bash\nfinish\n```"),
     ]);
     const grid = completeGridTrial();
     const outcome = await generateOneModel(

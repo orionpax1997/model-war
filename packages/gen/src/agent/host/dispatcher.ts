@@ -2,7 +2,7 @@
  * 宿主侧的 **dispatcher**:薄壳通道的应答端,也是配额与会话墙钟的唯一判据源。
  *
  * ── 它只做三件判定(ADR-0033「薄壳走 fd,宿主是唯一的判据源」) ──
- * 1. 工具名在**白名单**里(`check` / `evaluate` / `done`);
+ * 1. 工具名在**白名单**里(`check` / `evaluate` / `finish`);
  * 2. `evaluate` 的**调用次数**未超会话上限(默认 `EVALUATE_CALL_LIMIT` = 3);
  * 3. 会话**墙钟**未到点。
  *
@@ -106,8 +106,8 @@ export type SessionTools = {
   readonly requestHandlerFor: (step: number) => (line: string) => Promise<string>;
   /** 已执行的 `evaluate` 次数(超限被拒的不算)。 */
   readonly evaluateCalls: () => number;
-  /** 模型有没有通过薄壳喊过 `done`(权威信号仍是宿主侧块切分,见 `done.ts`)。 */
-  readonly doneRequested: () => boolean;
+  /** 模型有没有通过薄壳报过「收工」(`finish`;它就是 `termination: "done"` 的唯一真源)。 */
+  readonly finishRequested: () => boolean;
   /** 会话墙钟是否已到点。 */
   readonly expired: () => boolean;
   /** 距到点还剩多少毫秒(已过期时为 0)。 */
@@ -131,7 +131,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
   const limit = options.evaluateLimit ?? EVALUATE_CALL_LIMIT;
   const now = options.now ?? Date.now;
   let evaluateCalls = 0;
-  let done = false;
+  let finish = false;
 
   const expired = (): boolean => now() >= options.deadlineAtMs;
   const remainingMs = (): number => Math.max(0, options.deadlineAtMs - now());
@@ -172,9 +172,9 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
         });
       }
       default:
-        // `done` 的权威判定在宿主侧的块切分(`splitDoneBlock`),薄壳被调到只在模型把它写进
-        // 管道之类的地方;那是「认得但不做事」的一条合法请求。
-        done = true;
+        // `finish`:模型这一步写了收工,会话在这一步结束后停。它是**那一刻的请求**,不是命令
+        // 字节里的标记——bash 已经解析完整块,`finish` 之后的行照常执行(ADR-0032 修订)。
+        finish = true;
         return { exitCode: 0, stdout: "", stderr: "" };
     }
   };
@@ -196,7 +196,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
   return {
     requestHandlerFor: handlerFor,
     evaluateCalls: () => evaluateCalls,
-    doneRequested: () => done,
+    finishRequested: () => finish,
     expired,
     remainingMs,
   };

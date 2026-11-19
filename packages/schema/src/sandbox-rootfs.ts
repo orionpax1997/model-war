@@ -48,8 +48,8 @@ export const SANDBOX_ROOTFS_FILES = [
   "bin/cat",
   "bin/check",
   "bin/cp",
-  "bin/done",
   "bin/evaluate",
+  "bin/finish",
   "bin/grep",
   "bin/head",
   "bin/ls",
@@ -68,8 +68,13 @@ export const SANDBOX_ROOTFS_FILES = [
  * 与 `SANDBOX_ROOTFS_FILES` 是同一件事的两种投影——清单说「有这些文件」,这里说「其中这三个不是
  * ELF」。门禁据此反推「`bin/` 里其余每一个都必须是静态 ELF」,于是新增二进制只有一处要改:
  * 写进清单。漏写进清单的文件由「磁盘 == 清单」那条双向判据红,漏分类不可能发生(分类是推出来的)。
+ *
+ * **收工工具叫 `finish`,不叫 `done`**:`done` 是 bash 的保留字,裸写一行 `done` 是语法错误
+ * (`未预期的记号 "done"`),薄壳永远不可达。“整块交给一次 bash”配上那个名字,等于让模型最常用
+ * 的收工写法杀整块。改名的裁决与代价写在 ADR-0032 的修订段;档案侧的 `action.kind: "done"` /
+ * `termination: "done"` 是 v3 形状里的常量,不随工具名改(改名就是升档案版本)。
  */
-export const SANDBOX_ROOTFS_SHIMS = ["check", "done", "evaluate"] as const;
+export const SANDBOX_ROOTFS_SHIMS = ["check", "evaluate", "finish"] as const;
 
 /**
  * 整棵 rootfs 的树哈希:**按路径排序、每份拼 `path\0bytes`、串接后 sha256**。
@@ -78,7 +83,7 @@ export const SANDBOX_ROOTFS_SHIMS = ["check", "done", "evaluate"] as const;
  * 门禁证明「现算 == 这里写的」。它是「模型看见的世界还是不是那份字节」的唯一判据。
  */
 export const SANDBOX_ROOTFS_TREE_HASH =
-  "06084237b107650177e7794ac60ef0a36bc5044ccc0dd07cd196677e2f2d6b8f";
+  "b575315a7f7784a6c2fa12c9757a84412f3bbb442f2226ad17637bdee37a7488";
 
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const SANDBOX_ROOTFS_BIN_DIR = "bin";

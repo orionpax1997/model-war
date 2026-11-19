@@ -47,9 +47,9 @@ it("分组规则:`bin/` 减薄壳是静态二进制,薄壳单独一组,两组的
   expect(
     derivedCommandGroups(
       ["bin/sed", "bin/zsh", "bin/bash", "bin/check", "contract/api.md"],
-      ["done", "check"],
+      ["finish", "check"],
     ),
-  ).toEqual({ binaries: ["bash", "sed", "zsh"], shims: ["check", "done"] });
+  ).toEqual({ binaries: ["bash", "sed", "zsh"], shims: ["check", "finish"] });
   // 清单里没有 `bin/` 前缀的项不参与(契约文件不是命令)。
   expect(derivedCommandGroups(["contract/api.md"], ["check"])).toEqual({
     binaries: [],

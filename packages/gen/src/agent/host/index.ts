@@ -11,16 +11,16 @@
  *   evaluate: createEvaluateService({ root, model, runId, plan: () => plan, trial }),
  * });
  *
- * const split = splitDoneBlock(modelOutput);        // 块级哨兵:切掉 done 之后的部分
  * const step = await sandbox.run({
- *   command: split.body,                            // 整块一次 bash -c,不是两段
+ *   command: modelOutput,                           // 整块一次 bash -c,宿主不切块
  *   workspaceDir,
  *   requestHandler: tools.requestHandlerFor(step),  // 薄壳的 fd 3 由此应答(步号绑在这里)
  * });
+ * if (tools.finishRequested()) break;               // 模型在块里调过 `finish`:本步结束后收工
  * ```
  *
- * 三件事在这一层就位:**块切分**(纯函数)、**通道应答**(带配额与会话墙钟)、**两个服务**
- * (check / evaluate)。执行器仍然只有 `sandbox.run` 一个动作,通道只是它的一个入参。
+ * 三件事在这一层就位:**通道应答**(带配额与会话墙钟)、**两个服务**(check / evaluate)、
+ * **收工信号**(`finish` 请求)。执行器仍然只有 `sandbox.run` 一个动作,通道只是它的一个入参。
  *
  * ── 为什么这个目录叫 `host` ──
  * 它与 `agent/sandbox`(执行器)和 `agent/shim`(沙箱里的薄壳)是**三个位置**,不是三份实现:
@@ -66,4 +66,3 @@ export {
   type EvaluateServiceDeps,
   type EvaluateSubmission,
 } from "./evaluate-service.js";
-export { splitDoneBlock, type DoneSplit } from "./done.js";

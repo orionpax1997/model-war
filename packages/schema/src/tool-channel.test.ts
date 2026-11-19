@@ -153,8 +153,10 @@ describe("响应解析", () => {
 });
 
 describe("工具名取值域", () => {
-  it("三个受限工具,`done` 也在里面(它被写进管道时仍是一条合法请求)", () => {
-    expect([...TOOL_NAMES]).toEqual(["check", "evaluate", "done"]);
+  it("三个受限工具:收工工具叫 `finish`(`done` 是 bash 保留字,当不了命令名)", () => {
+    expect([...TOOL_NAMES]).toEqual(["check", "evaluate", "finish"]);
+    // 保住这条断言的理由是它是**可达性**判据,不是命名癖:`done` 当命令名时,整块先撞语法错误。
+    expect([...TOOL_NAMES]).not.toContain("done");
   });
 });
 

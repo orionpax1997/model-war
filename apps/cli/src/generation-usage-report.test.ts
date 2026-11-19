@@ -214,7 +214,7 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
     }),
     // 第三步收工:不 done 的话会话会一直跑后续 evaluate 直到步数耗尽(每次都是一次调用)。
     JSON.stringify({
-      choices: [{ message: { content: "```bash\ndone\n```" }, finish_reason: "stop" }],
+      choices: [{ message: { content: "```bash\nfinish\n```" }, finish_reason: "stop" }],
       // 后续步骤不带 usage:这些用例的合计口径都对着**第一步**那一条响应。
       usage: null,
     }),
@@ -349,7 +349,7 @@ it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h
       usage: null,
     }),
     JSON.stringify({
-      content: [{ type: "text", text: "```bash\ndone\n```" }],
+      content: [{ type: "text", text: "```bash\nfinish\n```" }],
       stop_reason: "end_turn",
       // 后续步骤不带 usage:合计口径只对着第一条响应。
       usage: null,
