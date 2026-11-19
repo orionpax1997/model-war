@@ -25,6 +25,7 @@ import type { AgentPrompt } from "./agent-prompt.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
 import type { ModelClient } from "./model-client.js";
+import type { RetrySleep } from "./retry.js";
 import { sandbox } from "./agent/sandbox/index.js";
 import { generateOneModel, type EvaluateScoring } from "./pipeline.js";
 
@@ -68,6 +69,15 @@ export type GenerationRequest = {
    * 形态与源码形态算出同一个路径。
    */
   readonly rootfsDir?: string;
+  /**
+   * 退避等待的实现。缺席即真等(`setTimeout`)。
+   *
+   * 与 `retryTransport` 的 `sleep` 是同一个缝,理由也同一条:真等 1s / 2s 的用例会跟机器负载
+   * 赛跑,而「退避序列算得对不对」由 `retry.test.ts` 判。这里需要它的地方更窄——验证**退避记账
+   * 取的是实测而不是请求值**:注入一个推进虚拟时钟的实现,于是「等了多少」与「请求了多少」可以
+   * 人为拉开,而那正是这条判据的全部。生产路径永远走真等。
+   */
+  readonly sleep?: RetrySleep;
   /**
    * 试跑探针(被 `evaluate` 服务调,一次评测一张整网格)。缺席即真子进程
    * (`runTrialScript`):生产路径上没有「假网格」这回事。测试注入桩。
