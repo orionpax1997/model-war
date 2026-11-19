@@ -12,7 +12,7 @@ agent 化把每模型的调用数从 ~15 抬到 30–60，传输失败的基数�
 
 1. **一套预算装四类失败**。429、5xx、网络失败、空闲超时、`finishReason=length` 截断共享同一次重试预算（500 ms → 1 s → 2 s，共 3 枪，最坏总共等 3.5 s）。于是「一次 429」花掉了本该留给网络抖动的耐心，而 3.5 s 对速率限制来说又短得可笑。
 2. **退避吃掉墙钟**。`sendMs` 的口径明写含退避等待（ADR-0035 曾把这条钉成「重试等待由步级 `sendMs` 覆盖」）。agent 形态下 `totalWallClockMs` 是唯一硬约束之二，于是**慢模型 + 被限流会双重受罚，用不完自己的步数预算**——而资源本该只被记录、不被门槛化。
-3. **失败不可读**。`AttemptEvidence` 只有 `attempt / outcome / finishReason / stopDetails / usage`，**没有状态码**；`FailureClassification` 只有 `tsc / contract / transport / selection`。于是 429、500、超时、连接重置在报告侧**加成一个数**，而重试成功时连诊断文本都被丢弃（`retry.ts` 的 `diagnostics` 是局部量，成功路径直接蒸发）。
+3. **失败不可读**。`AttemptEvidence` 只有 `attempt / outcome / finishReason / stopDetails / usage`，**没有状态码**；`FailureClassification` 只有 `tsc / contract / transport / selection`（2026-11-19 起多一档 `budget`：会话预算耗尽——步数或墙钟用完；见 `packages/schema/src/failure-record.ts` 的 `FAILURE_CLASSIFICATIONS`）。于是 429、500、超时、连接重置在报告侧**加成一个数**，而重试成功时连诊断文本都被丢弃（`retry.ts` 的 `diagnostics` 是局部量，成功路径直接蒸发）。
 
 还有一条前提必须先说清，因为整册的判断都建在它上面：**渠道不该限流，也不该配额耗尽**。这是本季的**假设**，不是观测——观测是反过来的（S4 有真 429；本册起草当天，一个子代理就被自家通道的配额上限打死）。所以本册要的不是「完美处理限流」，而是**在假设成立时几乎不付代价、在假设破裂时数据仍然可读**。
 

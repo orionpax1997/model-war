@@ -16,6 +16,8 @@
 import { expect, it } from "vitest";
 
 import {
+  BINARY_GROUP_HEADING,
+  SHIM_GROUP_HEADING,
   absentToolFindings,
   commandListFindings,
   derivedCommandGroups,
@@ -26,12 +28,12 @@ import {
 const TEMPLATE = [
   "## 沙箱里有什么",
   "",
-  "### 静态二进制:通用命令",
+  BINARY_GROUP_HEADING,
   "",
   "- `bash` — 动作块的执行者。",
   "- `sed` — 取行段与就地改。",
   "",
-  "### 工具薄壳:经通道交给宿主执行",
+  SHIM_GROUP_HEADING,
   "",
   "- `check` — 检查当前脚本。",
   "",
@@ -68,6 +70,16 @@ it("解析:只收分组标题下面的清单项,行号指得到,用途原样留�
   expect(listed[1]?.purpose).toBe("取行段与就地改。");
   // 分组之外(顶层段落、其余标题下面)的清单项不算:它们不是命令清单的一部分。
   expect(listedCommands("## 别的\n\n- `nope` — 不在组里。")).toEqual([]);
+});
+
+it("分组标题换词:红在标题上,而不是报一堆「沙箱里有而清单没写」", () => {
+  const renamed = TEMPLATE.replace(SHIM_GROUP_HEADING, "### 宿主工具:经通道执行");
+  const findings = commandListFindings(renamed, DERIVED);
+  const text = red(findings);
+  expect(text).toContain("分组标题");
+  expect(text).toContain(SHIM_GROUP_HEADING);
+  // 第一条就是标题那条:标题不对时下面那句「沙箱里有而清单没写」是噪声,指错了地方。
+  expect(findings[0]?.detail).toContain("没有那条分组标题");
 });
 
 it("两组集合相等时绿", () => {

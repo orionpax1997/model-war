@@ -671,8 +671,14 @@ const corruptions: readonly { mode: string; damage: (path: string) => void }[] =
   { mode: "unreadable", damage: (path) => mkdirSync(path) },
 ];
 
-/** 记录读不出来时读侧只给一句总说法——它不对外分解「是缺、是坏、还是不可读」。 */
-const unreadableReason = "记录 JSON、优化/选拔元数据或候选身份不合法，无法生成摘要";
+/**
+ * 记录读不出来时读侧只给一句总说法——它不对外分解「是缺、是坏、还是不可读」。
+ *
+ * 这里只钉一句**稳定片段**，不逐字抄那句原文（原文住在
+ * `packages/runner/src/archive-report.ts`）：抄一份就等于报告改一句措辞、一条与措辞无关的
+ * 用例跟着红。强度不在那句话上，而在下面两趟格式里「24 条来源逐条对得上」那两处。
+ */
+const UNREADABLE_REASON_FRAGMENT = "无法生成摘要";
 
 /** slug 既是目录名也是 `meta.model`：让它自己说明坏的是哪个文件、哪一种坏法。 */
 const tamperSlugOf = (mode: string, relative: string): string =>
@@ -761,9 +767,9 @@ it(
         onReadIssue: (issue) => sampledIssues.push(issue),
       }),
     ).toEqual([]);
-    expect(sampledIssues).toEqual([
-      { source: `archive/${sample}/r1/meta.json`, reason: unreadableReason },
-    ]);
+    expect(sampledIssues).toHaveLength(1);
+    expect(sampledIssues[0]?.source).toBe(`archive/${sample}/r1/meta.json`);
+    expect(sampledIssues[0]?.reason).toContain(UNREADABLE_REASON_FRAGMENT);
 
     // 格式一：真进程、`--json`。
     const json = reportCli(root, true);

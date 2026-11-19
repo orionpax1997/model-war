@@ -1,5 +1,5 @@
 /**
- * 动作块解析的单测:四种拒绝、与「整块一次 `bash -c`」的边界。
+ * 动作块解析的单测:拒绝形状、与「整块一次 `bash -c`」的边界。
  *
  * 断言的都是**回给模型的字面结论**(命令原文 / 纠正消息说了什么),不是内部步骤:解析器的
  * 全部作用就是把一段文本变成这两种结论之一,中间过程没有第二个观察点。
@@ -33,14 +33,18 @@ it("纠正消息带逐字正例与逐字反例,并标出这一次踩到的是哪
   if (parsed.kind !== "reject") throw new Error("期望被拒");
   // 正例是逐字的、最小可执行的:模型抄一行就能过。
   expect(parsed.correction).toContain("```bash\nls /workspace\n```");
-  // 四种反例逐字在场——这是「拒过什么」的可读证据,不只是「格式不对」。
+  // 每条反例逐字在场——这是「拒过什么」的可读证据,不只是「格式不对」。
   expect(parsed.correction).toContain("<function=bash>");
   expect(parsed.correction).toContain("<parameter=command>ls /workspace</parameter=command>");
   expect(parsed.correction).toContain("```ts");
   expect(parsed.correction).toContain("const x = 1;");
-  // 被点名的是零块那条,其余三条不带标记。
+  // 被点名的是零块那条,其余几条不带标记。
   expect(parsed.correction).toContain("那个块本身不存在」。 ◀");
   expect(parsed.correction.match(/^- .*◀$/gmu)).toHaveLength(1);
+  // 句子里的条数由数组长度生成:数一数消息真列了几条,那句话必须说同一个数。
+  // 写死一个数字时,加第五种会让这句话变成谎话,而没有任何断言会红——这一条就是那条断言。
+  const listed = (parsed.correction.match(/^- /gmu) ?? []).length;
+  expect(parsed.correction).toContain(`${String(listed)} 种都会被拒`);
 });
 
 it("XML 工具调用单独一档:被拒的是 `<function=bash>` 那一处,不是泛泛的「格式不对」", () => {

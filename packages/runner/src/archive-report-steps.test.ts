@@ -406,6 +406,46 @@ it("陪练：在位陪练指向别席位时不标自指，四份身份照旧列�
   expect(md).not.toContain("本席位上一场");
 });
 
+it("陪练：`id` 是本席位而 `source` 指向别家时不标自指（两个指针都得指本席位）", async () => {
+  // 两个字段说两件事：`id` 说「本席位」，`source` 说「另一家的档」。它们不可能同时为真，
+  // 而报告那句是一句**合取**的声称，所以这里选「不标」而不是「取第一个字段」（见
+  // `sparringSelfReferenceOf` 头注）。
+  const root = rootOf();
+  writeV3(root, {
+    slug: "sparring-mismatch",
+    runId: "2026-01-05T00-00-00-007Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "done", atMs: 1_000, harnessMs: 1 },
+    ],
+    logs: [1, 2].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1],
+    termination: "done",
+    grids: [
+      {
+        step: 1,
+        summary: gridSummaryOf({
+          incumbent: {
+            id: "incumbent:sparring-mismatch",
+            source: "archive:another-seat/2026-01-04T00-00-00-003Z",
+          },
+          scriptSha256: sha256Of(SCRIPT("candidate-0")),
+        }),
+      },
+    ],
+  });
+  const md = await markdownOf(root);
+  // 四份身份照旧列出（不因自指不标就不读那一份）。
+  expect(sparringLinesOf(md).join("\n")).toContain("incumbent:sparring-mismatch");
+  expect(md).not.toContain("本席位上一场");
+});
+
 it("陪练：`plan` 缺席写「未记录」而不是异常", async () => {
   const root = rootOf();
   writeV3(root, {
@@ -553,6 +593,58 @@ it("陪练：两份 `.grid.json` 逐字相同时四份身份不重列，但仍�
   // 去重不影响自指：两份都是自指，各说一句。
   expect(md).toContain("陪练 = 本席位上一场（`2026-01-02T00-00-00-001Z`）");
   expect(md.match(/本席位上一场/g)).toHaveLength(2);
+});
+
+it("陪练：去重比的是首次出现的那一份，不是上一份", async () => {
+  const root = rootOf();
+  // 三候选：第 1、5 步同一张网格，中间第 3 步换了一张。第二份条目的步号必须指得到第 1 步：
+  // 说「与上一份相同」在这里是假话——上一份恰好是那张不一样的。
+  const shared = gridSummaryOf({
+    incumbent: {
+      id: "incumbent:sparring-gap",
+      source: "archive:sparring-gap/2026-01-02T00-00-00-001Z",
+    },
+    scriptSha256: sha256Of(SCRIPT("candidate-0")),
+  });
+  const other = gridSummaryOf({
+    incumbent: {
+      id: "incumbent:other-seat",
+      source: "archive:other-seat/2026-01-02T00-00-00-002Z",
+    },
+    scriptSha256: sha256Of(SCRIPT("candidate-1")),
+  });
+  writeV3(root, {
+    slug: "sparring-gap",
+    runId: "2026-01-05T00-00-00-008Z",
+    steps: [
+      { action: "evaluate", atMs: 0, harnessMs: 30 },
+      { action: "bash", atMs: 500, harnessMs: 5 },
+      { action: "evaluate", atMs: 1_000, harnessMs: 40 },
+      { action: "bash", atMs: 1_500, harnessMs: 5 },
+      { action: "evaluate", atMs: 2_000, harnessMs: 50 },
+      { action: "done", atMs: 3_000, harnessMs: 1 },
+    ],
+    logs: [1, 2, 3, 4, 5, 6].map((round) => ({
+      round,
+      kind: "converged",
+      responseConverged: true,
+      sendMs: 100,
+      usage: usageOf(1_000 + round * 100, 0),
+    })),
+    evaluateSteps: [1, 3, 5],
+    termination: "done",
+    grids: [
+      { step: 1, summary: shared },
+      { step: 3, summary: other },
+      { step: 5, summary: shared },
+    ],
+  });
+  const md = await markdownOf(root);
+  const sparring = sparringLinesOf(md).join("\n");
+  expect(sparring).toContain("与第 1 步候选逐字相同");
+  expect(sparring).not.toContain("与第 3 步候选逐字相同");
+  // 中间那份自己的四份身份照旧列出（它是那一格唯一的分家）。
+  expect(sparring).toContain("incumbent:other-seat");
 });
 
 // ── 步级度量 ──────────────────────────────────────────────────────────────────
