@@ -210,3 +210,87 @@ $ echo $?
 **这一版的实测结论（2026-11-19，`archive/hy4-flash/failed-2026-11-19T05-42-42-929Z`）**：`hy4-flash` 三回合都发 `<tool_calls:<id>><tool_call:<id>bash>…</attribute>`，逐字正例与「被拒的是 `<function=bash>` 这一处」的纠正消息没能让它改形状（第 2/3 步它自己在文本里说「我明白了，要写一个 bash 围栏块」，随后照旧发 XML）。按上面那条裁决：**这是该席位与 bash-only 协议不适配，不是协议要放宽**。同一版契约下 `gpt-6-luna`（`archive/gpt-6-luna/2026-11-19T05-32-34-331Z`，17 步、3 个候选、以 `finish` 收工）与 `minimax-m3.1-flash`（`archive/minimax-m3.1-flash/2026-11-19T06-04-46-434Z`，32 步、2 个候选、以 `finish` 收工）都正常走完。
 
 这批改动动三处身份（收工语义、被拒格式、`visibleBinaries` 的上一票改动），对外只断代一次 `harnessDigest`。
+
+## 修订（2026-11-20）：协议从文本围栏块换成原生 tool calling
+
+初版把动作写成「一轮一个 `bash` 围栏代码块」，并把「结构化动作」明确列进落选。这一版把协议整个换掉：请求里带 `tools`，响应里读 `tool_calls`，**一步恰好一次调用**。下面五件按顺序记。
+
+初版正文与上一节修订（`done` → `finish`）**一个字都没有改**——ADR 的价值在「当初为什么这么想」。本节只说清哪几条已经作废，以及为什么。
+
+### ① 初版那条前提从来没有被验证过，而它是错的
+
+问题节那句「只暴露 bash 意味着没有 tool-calling 接口，所以『一次输出算几个动作』这条协议要由我们发明」，「一次输出恰好一个动作块」整节都建立在它上面。
+
+它的错法不是「模型不服从」，而是**我们从没发过 `tools` 字段**：改动之前全仓 `grep` 的结果是 0 处 `tools` / `tool_choice` / `functions`，请求体只有 `model` + `messages` + `params`，解析只读 `choices[0].message.content`。而这批渠道（commandcode，`chat-completions` 族）上的模型，训练分布里熟的是**原生工具调用**——渠道的 chat template 会把工具调用渲染成文本塞进 `content`：
+
+```
+<tool_calls:6124c78e><tool_call:6124c78e>bash
+<命令原文>
+```
+
+那个 `6124c78e` 是**模板里的固定字面量**（三场、11 步、46 次出现全是同一个 id；真实工具调用 id 每次都不同）。于是模型在复述「它见过的工具调用形状」，我们的解析器在找围栏块，两边错开。
+
+2026-11-19 拿真实首条消息（`prompts/agent-system.md` + `prompts/agent.md` 的渲染结果，与真会话逐字相同）打同一端点，唯一变量是请求里有没有 `tools`：
+
+| 席位 | 不给 `tools` | 给 `tools` |
+|---|---|---|
+| `tencent/hy4-flash` | XML 6/6 次 | **tool_calls 6/6**，0 XML |
+| `xiaomi/mimo-v2.6-flash` | XML 3/5，围栏块 1 | **tool_calls 3/4** |
+| `stealth/glyph-cluster:free` | `finish=length`，content 空 | **tool_calls 1/1** |
+| `minimax/m3.1-flash` | 围栏块 ✓ | tool_calls ✓ |
+| `thinkingmachines/inkling-2-small:free` | **content 空**（`finishReason: tool_calls`） | 免费档已下线 |
+
+`hy4` 那 6/6 是在同一份 message 上重复六次得到的，无一次退化成 XML。同一批模型、同一渠道、同一份提示词，唯一变量是请求里有没有 `tools`——所以「这个席位与 bash-only 协议不适配」那条上一节裁决的适用范围要收窄：**当时不适配的是我们没发的那个字段**。
+
+`inkling-2-small` 那一场是最干净的证据：`steps[i].raw == ""`（0 字节）、`generationLog[0].finishReason == "tool_calls"`、`completion_tokens 55`。**它不是没说话，是它说的话全在 `tool_calls` 字段里，而我们只读 `content`。** 这同时是 ADR-0031「模型看到的字节 = 落盘的字节」的一次结构性违背——那一册的修订段接住了它（`steps[i].toolCall.argumentsJson` 逐字落档）。
+
+### ② 「结构化动作等于把 tool-calling 偷回来」这条落选理由失效了
+
+初版落选「结构化 `write-file` 动作」，理由是「等于把 tool-calling 偷回一小块」。这条推理成立的前提是**协议由我们发明**：既然不承认工具调用这层接口，任何结构化动作都是在一个自造协议里偷偷开第二套语法。
+
+那个前提已经不存在。现在的形状是：**协议由渠道提供，我们只做声明**——`tools` 是一等发送参数，动作就是模型发起的调用，判据变成「恰好一次、名字在声明里、`arguments` 是合法 JSON」。这不是把 tool-calling 偷回来，这是承认它本来就在那儿。
+
+顺带一并失效的还有两条：
+
+- **「围栏块用 `bash` 标记而不是 mini 的私有串」**那整段（初版「一次输出恰好一个动作块」末段）——没有围栏了，标记服从率也不再是一个问题。
+- 上一节修订里「**默认不接受 XML 工具调用**，接受它等于给协议开第二套语法」——方向反了：XML 工具调用是同一份 `tool_calls` 被 chat template 渲染出来的样子，接受它才是接受渠道给的事实，而我们的自造文本形状才是第二套语法。那一条裁决随本修订作废。
+
+### ③ 观测的角色从 `user` 改成 `tool`，初版那条理由作废
+
+初版写「观测消息的角色是 `user`，不是 `tool`」，理由是「不走 tool-calling 就没有 `tool_use_id` / `tool_call_id` 可配对，用 `tool` 角色在 messages 族会被要求配对、在 chat 族会被要求带 id」。
+
+理由的前提同样没了：现在**有** id 可配对。而 `user` 在这个形状下反而是错的——工具调用那一轮 assistant 的 `content` 是空串（它没说话，只调了一次工具），后面跟一条 `user` 会让模型读到「它什么都没说，然后我自己说了一段」，历史读起来像自言自语。`tool` + `tool_call_id` 配对是渠道唯一认的配对方式（不配对与缺 `id` 分别会静默读错与 400）。
+
+配对的 id 由我们**确定性派生**（`call-<步号>`），不用渠道给的那串每次不同的字节：id 的唯一用途是让 assistant 与 `tool` 消息在自己的历史里配对，两处都由我们写，于是重跑一次历史的字节仍然相等。真请求已验证自己编的 id 被渠道接受。
+
+`renderObservation` 仍是观测文本的唯一渲染处，只是信封从 `{role:"user", content}` 换成 `{role:"tool", toolCallId, content}`。
+
+### ④ 删了什么，留了什么
+
+**删掉的**（都是为「自造文本协议」付的账）：
+
+- 围栏块与它的正则/切块/白名单（`action.ts` 的正则与 `fencedBlocks` 整段）；
+- **fd 3 薄壳通道**：`shim/shim.sh` 145 行、`sandbox/execute.ts` 的 `wireChannel`、`tool-channel.ts` 的请求/响应序列化与七条转义、rootfs 里三个薄壳副本与 `SANDBOX_ROOTFS_SHIMS`；
+- 清单里的 `actionSyntax.fenceTag` / `actionSyntax.rejectExitCode` / `finish.stopsRemainingCommands` / `services.channelFd` / `services.args.exitCode`——**清单的作用是「模型当时面对的世界」，留一格旧协议就是清单在说谎**；
+- 上一节修订的「`finish` 之后写的行仍会执行」那条行为放宽：一次调用就是一个动作，没有「之后的行」这个位置。
+
+**留下来的铁律**（换协议不动它们）：
+
+- **一步一次 `bash -c`**：整串命令交给一个独立无状态子进程，多行 / `&&` / `for … do … done` / heredoc 都按 shell 的规则走。这是「步 = 一次模型调用」在进程侧的落点，也是进程树回收（ADR-0033）成立的前提。
+- **超长输出带可执行建议**：截断仍发生在生成侧，告警仍给 `head -c` / `tail -c` / `sed -n` / `grep -n` / 重定向这些方向。那是唯一能教会模型「怎么在 16 KiB 上限下工作」的地方。
+- 严格解析那一半也不动：零次 / 多次 / 名字不认识 / 参数坏了，一律不执行、计一步、回带逐字正反例的纠正消息。换的只是「被拒的是哪一处」的措辞（从「不是 `bash` 标记」变成「不在声明的五个里」「`arguments` 坏了」）。
+
+### ⑤ 新的残余风险
+
+1. **三族工具形状不同，而 `messages` 族零证据。** 它的声明是 `name` / `description` / `input_schema`，结果是 `tool_result` 块，与 chat 族不是一份翻译。2026-11-20 主线程真请求探针的读数（`claude-haiku-5-5`，`/messages`）：
+
+   ```
+   without tools → HTTP 403 {"type":"error","error":{"type":"permission_error",
+                   "message":"The provider refused this request. The refused request wasn't charged."}}
+   with tools    → HTTP 403 同上
+   ```
+
+   **不带 `tools` 也 403**：该席位在本账号档位下整体被渠道拒。所以「声明形状会不会 400」「`tool_result` 能否配对」**零证据**。按 fail-closed，这一族**不声明** `tools`，用它的席位在会话起跑前拒跑并点名——不是「没试过」，是「试了，席位被拒，所以没有证据，不写未验证的翻译」。`responses` / `generate-content` 两族同一条规矩（本季名册不用）。
+2. **`arguments` 是模型写的 JSON 字符串，可以被写坏。** 归 `malformed-arguments` 拒绝档：不执行任何工具、计一步、回纠正消息。解析放在动作层而不是传输层，是因为它是一条模型能自我修正的格式失败——放进传输层就变成了端点错误。
+3. **并行调用被拒，但渠道可能自己并行。** 判据在动作层（一次以上一律拒绝），而请求体里**不发** `parallel_tool_calls: false`（那是 OpenAI 专有键，别的渠道收到不认识的键可能直接 400）。于是存在一个渠道侧的可能：它一次给我们多条 `tool_calls`——那正好落进 `multiple-tool-calls` 的拒绝档，代价是浪费一步，不是静默执行一条。
+4. **`raw` 在工具调用轮次里常态为空，逐字字节搬到了 `toolCall.argumentsJson`。** 初版「`raw` 不截断」（残余风险 2）那条的关切没有消失，只是换了字段：真正的正文在 `argumentsJson` 里，而它同样不截断、原样落档。读侧必须知道「两个字段各管一件事」，否则会从 `raw == ""` 误判成「模型什么都没说」——`inkling` 那场就是这个误判的真实样本。
