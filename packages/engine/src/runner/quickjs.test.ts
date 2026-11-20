@@ -244,6 +244,108 @@ it("三件套:对局内、跨 VM、跨重跑三个维度得到同一序列", asy
   expect(new Set(randoms).size).toBeGreaterThan(1);
 });
 
+// ── 占用读数(peakUsage) ────────────────────────────────────────────────────
+//
+// 「没越线时也有读数」是探针(`probe`)的地基:今天各轨只在 `value >= limit` 时产一条 `tripped`,
+// 正常返回时 `observations` 是空数组,于是"用了 480/500"这个数**根本不存在**。
+// 下面这一组钉住那条新通道,并钉住它与 `Observation` 不相交(`observations` 仍为空数组)。
+
+/** 一份只用一部分预算的脚本:有界重计算 + 几次 API 调用,两条轨都远不到线。 */
+const SIXTY_PERCENT_SCRIPT = `
+function loop() {
+  getTick();
+  for (let i = 0; i < 20000; i += 1) {
+    Math.abs(i);
+  }
+  move(7, 1, 0);
+}
+`;
+
+it("没越线时也有占用读数:只用约 60% 预算的脚本交回非空 peakUsage,且值正确", async () => {
+  // 先量一遍不加限制时的读数:它是这条轨的"用了多少"。
+  const measured = await drainOneTick(SIXTY_PERCENT_SCRIPT, {
+    eventTickLimit: 1000 * INTERRUPT_EVENT_GRANULARITY,
+  });
+  expect(measured.observations).toEqual([]);
+  const events = measured.peakUsage?.eventCount;
+  const apis = measured.peakUsage?.apiCalls;
+  if (events === undefined || apis === undefined) {
+    throw new Error("没越线时也该有读数:peakUsage 缺席");
+  }
+  // 「观测为空 = 本 tick 无事」这条既有判据没被读数污染。
+  expect(events).toBeGreaterThan(0);
+  expect(apis).toBeGreaterThan(0);
+
+  // 把上限摆到"用到约 60%"的位置:同一条脚本既不越线,读数照样在。
+  const limit = Math.ceil(events / 0.6);
+  const atSixty = await drainOneTick(SIXTY_PERCENT_SCRIPT, { eventTickLimit: limit });
+  expect(atSixty.observations).toEqual([]);
+  expect(atSixty.intents).toHaveLength(1);
+  expect(atSixty.peakUsage?.eventCount).toBe(events);
+  expect(atSixty.peakUsage?.eventCount).toBeLessThan(limit);
+  // 60% 上下(计数按 `INTERRUPT_EVENT_GRANULARITY` 取整,故按粒度容差判)。
+  const ratio = events / limit;
+  expect(ratio).toBeGreaterThan(0.5);
+  expect(ratio).toBeLessThan(0.7);
+});
+
+it("越线那一 tick 的读数也在:事件轨早退路径照样带 peakUsage(探针最想看的场景)", async () => {
+  const limit = 10 * INTERRUPT_EVENT_GRANULARITY;
+  const output = await drainOneTick(EVENT_SPIN_SCRIPT, { eventTickLimit: limit });
+  // 早退:意图作废、一条 tripped——但它同时是"这一 tick 用了多少"的唯一读数面。
+  expect(output.intents).toEqual([]);
+  expect(output.observations[0]).toMatchObject({ kind: "tripped", track: EVENT_TRACK });
+  expect(output.peakUsage?.eventCount).toBe(output.observations[0]?.value);
+  // 早退不排 drain,所以 API 数无从得知:缺席,不是 0。
+  expect(output.peakUsage?.apiCalls).toBeUndefined();
+});
+
+it("未吞异常与墙钟硬超时两条早退路径也带读数(它们同样是采样点)", async () => {
+  const thrown = await drainOneTick("function loop() { throw new Error('boom'); }", {
+    eventTickLimit: 1000 * INTERRUPT_EVENT_GRANULARITY,
+  });
+  expect(thrown.observations[0]).toMatchObject({
+    kind: "tripped",
+    track: UNCAUGHT_EXCEPTION_TRACK,
+  });
+  const thrownEvents = thrown.peakUsage?.eventCount;
+  if (thrownEvents === undefined) {
+    throw new Error("未吞异常那条早退路径没带占用读数");
+  }
+  expect(thrownEvents).toBeGreaterThanOrEqual(0);
+  expect(thrown.peakUsage?.apiCalls).toBeUndefined();
+
+  const timedOut = await drainOneTick(EVENT_SPIN_SCRIPT, { wallClockHardTimeout: 1 });
+  expect(timedOut.fault).toBe("uncertain-timeout");
+  // 作废前用了多少仍是这一跑学得到的东西(整场随后作废,但读数不因此变成 0)。
+  expect(timedOut.peakUsage?.eventCount).toBeGreaterThan(0);
+});
+
+it("内存读数的口径:只有内存轨启用时才有 memoryBytes(没跑 GC 的读数不可比)", async () => {
+  // 未启用内存轨:哪怕别的轨在跑,`memoryBytes` 也缺席——读一次未回收的堆会给出一个
+  // 与判罚口径不可比的数,那比没有读数更糟。
+  const noMemory = await drainOneTick("function loop() { move(7, 1, 0); }", {
+    eventTickLimit: 1000 * INTERRUPT_EVENT_GRANULARITY,
+  });
+  expect(noMemory.peakUsage?.memoryBytes).toBeUndefined();
+  expect(noMemory.peakUsage?.eventCount).toBeGreaterThanOrEqual(0);
+
+  // 启用内存轨:读数就是判限那一次(复用,不额外 `runGC`),与观测/基线同一口径。
+  const baseline = await baselineAliveHeap();
+  const ceiling = baseline + 8 * MIB;
+  const withMemory = await drainOneTick("function loop() { move(7, 1, 0); }", {
+    memoryTickCeiling: ceiling,
+  });
+  const memoryBytes = withMemory.peakUsage?.memoryBytes;
+  if (memoryBytes === undefined) {
+    throw new Error("内存轨启用时也该有 memoryBytes 读数");
+  }
+  // 空脚本的存活堆与基线同量级(判罚线远在其上,故这一 tick 没有内存观测)。
+  expect(memoryBytes).toBeGreaterThan(0);
+  expect(memoryBytes).toBeLessThan(ceiling);
+  expect(withMemory.observations.filter((item) => item.track === MEMORY_TRACK)).toEqual([]);
+});
+
 // ── 内存判据 ────────────────────────────────────────────────────────────────
 //
 // 判据读数 = 每 tick 末**强制 `runGC()` 之后**的存活堆(`mallocSize`)。夹具在
@@ -1331,6 +1433,9 @@ it("行动事实：API 超限仍交回已采计数，但本 tick 意图作废", 
         calls: { ...NO_ACTION_FACTS.calls, move: 1 },
         errors: { ...NO_ACTION_FACTS.errors, move: { ...NO_ACTION_ERRORS, ERR_INVALID_UNIT: 1 } },
       },
+      // 占用读数只报告**采到的那几条**:本 runner 只启用了 API 轨(没有事件计数回调、
+      // 没有内存轨的强制回收),所以这里只有 `apiCalls`——不是"另两条为 0"。
+      peakUsage: { apiCalls: 2 },
     });
   } finally {
     dispose();

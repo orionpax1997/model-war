@@ -74,6 +74,28 @@ export type TrialProbe = (options: {
   // 异步形态只为一件事:让「服务在宿主侧要跑几秒」能在测试里如实地演出来(见调用点)。
   | Promise<TrialResult>;
 
+/**
+ * 探针的执行缝：**同一个入口**，加一个 `--match-limit N`。
+ *
+ * ── 为什么它不是第三条执行路径 ──
+ *
+ * 探针要跑的是「当前编译产物 × 完整计划的前 N 场」。另起一条 spawn 就等于给同一件事第二个
+ * 执行路径：两处的参数、退出码、装载校验会立刻开始分叉，而分叉的形状是「探针跑的和 evaluate
+ * 跑的不是同一张网格」，读侧完全看不出来。所以它只是同一入口的另一个模式。
+ *
+ * ── 没有 `observationsPath`，这不是省掉的一个参数 ──
+ *
+ * 探针**不写观测**（不产出候选，写半张观测会让"跑过几场"变成要猜的事），所以这条缝上就没有
+ * 落盘点这个输入。type 里没有它，实现里也就没有"顺手传一个"的路。
+ */
+export type TrialProbeScript = (options: {
+  readonly root: string;
+  readonly model: string;
+  readonly artifactPath: string;
+  /** 跑计划的前几场（真源是 `@model-war/schema` 的 `PROBE_MATCH_LIMIT`）。 */
+  readonly matchLimit: number;
+}) => TrialResult | Promise<TrialResult>;
+
 /** 试跑入口在安装根下的位置（`apps/cli` 的构建产物，调用约定见那份入口的头注）。 */
 const TRIAL_ENTRY = join("apps", "cli", "dist", "trial", "run-trial-script.js");
 
@@ -131,7 +153,7 @@ export const runTrialScript = (options: {
   if (options.plan === undefined) {
     return resultOf(
       spawnSync(process.execPath, args, { encoding: "utf8" }),
-      options.observationsPath,
+      `观测 ${options.observationsPath}`,
     );
   }
   const planDir = mkdtempSync(join(tmpdir(), "modelwar-trial-plan-"));
@@ -140,15 +162,48 @@ export const runTrialScript = (options: {
     writeFileSync(planPath, JSON.stringify(options.plan));
     return resultOf(
       spawnSync(process.execPath, [...args, "--expected-plan", planPath], { encoding: "utf8" }),
-      options.observationsPath,
+      `观测 ${options.observationsPath}`,
     );
   } finally {
     rmSync(planDir, { recursive: true, force: true });
   }
 };
 
+/**
+ * 跑一次**探针**：同一入口的 `--match-limit` 模式，`stdout` 是三档占用读数文案。
+ *
+ * 退出码沿用同一套私有协议：`0` = 前 N 场没越线、`1` = 已越线（`stdout` 仍是回喂文本）、
+ * 其余 = infra。**没有 `--observations`，也没有 `--expected-plan`**：探针不写证据，也不拿计划
+ * 身份当判据（它跑的就是现场重建的那份完整计划的前缀）。
+ */
+export const runTrialProbeScript = (options: {
+  readonly root: string;
+  readonly model: string;
+  readonly artifactPath: string;
+  readonly matchLimit: number;
+}): TrialResult => {
+  const entry = join(options.root, TRIAL_ENTRY);
+  return resultOf(
+    spawnSync(
+      process.execPath,
+      [
+        entry,
+        options.artifactPath,
+        "--root",
+        options.root,
+        "--model",
+        options.model,
+        "--match-limit",
+        String(options.matchLimit),
+      ],
+      { encoding: "utf8" },
+    ),
+    `探针前 ${String(options.matchLimit)} 场`,
+  );
+};
+
 /** 子进程结果 → 试跑结论（退出码是私有协议：0 过、1 拦下、其余 infra）。 */
-const resultOf = (result: SpawnSyncReturns<string>, observationsPath: string): TrialResult => {
+const resultOf = (result: SpawnSyncReturns<string>, label: string): TrialResult => {
   if (result.error !== undefined) {
     throw result.error;
   }
@@ -161,6 +216,6 @@ const resultOf = (result: SpawnSyncReturns<string>, observationsPath: string): T
     return { passed: false, stdout };
   }
   throw new Error(
-    `试跑子进程异常退出（码 ${String(status)}，观测 ${observationsPath}）：${result.stderr ?? ""}`.trim(),
+    `试跑子进程异常退出（码 ${String(status)}，${label}）：${result.stderr ?? ""}`.trim(),
   );
 };
