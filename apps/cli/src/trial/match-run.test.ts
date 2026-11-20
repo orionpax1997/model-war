@@ -65,6 +65,26 @@ const recordingStub = (options: {
   };
 };
 
+/**
+ * 会报占用读数的桩：`usageAt` 按"第几次交回"给读数，其余 tick 什么都不带（缺席）。
+ * 真沙箱那边早退路径正是这样（只带事件计数），于是聚合器必须容忍"有的 tick 没这个字段"。
+ */
+const usageStub = (usageAt: readonly { readonly at: number; readonly peak: unknown }[]) => {
+  let calls = 0;
+  return {
+    setSnapshot: (_snapshot: unknown): void => {},
+    drainIntents: () => {
+      calls += 1;
+      const peak = usageAt.find((entry) => entry.at === calls)?.peak;
+      return {
+        intents: [],
+        observations: [],
+        ...(peak === undefined ? {} : { peakUsage: peak as never }),
+      };
+    },
+  };
+};
+
 const quiet = [recordingStub({}), recordingStub({}), recordingStub({}), recordingStub({})] as const;
 
 it("候选座的触限被记下：座位/tick/轨名/读数/上限逐字对", { timeout: 30_000 }, () => {
@@ -638,4 +658,71 @@ it("timeout 存活优先于已淘汰高分方，异常留下的真实兵力和�
     { territoryScore: 4, rank: 1, rankPoints: 2 },
     { territoryScore: 4, rank: 1, rankPoints: 2 },
   ]);
+});
+
+// ── 占用读数：只对候选座位聚合，且逐 tick 取更坏值 ─────────────────────────────
+//
+// 这两条钉的是"聚合"这一层：读数不是最后一 tick 的瞬时值，也不是四个座位的最大值（对手座位的
+// 占用不是候选的账）。真沙箱的计数准不准由 `packages/engine` 的 `quickjs.test.ts` 覆盖。
+
+it("候选座位的占用读数逐 tick 取更坏值，缺席的 tick 不把已有读数抹掉", { timeout: 30_000 }, () => {
+  const runners = [
+    usageStub([
+      { at: 1, peak: { eventCount: 30000, apiCalls: 100 } },
+      // 第 2 次什么都不带（早退路径的形状）：不该把上面那两个数清掉。
+      { at: 3, peak: { eventCount: 48000 } },
+      { at: 4, peak: { eventCount: 12000, apiCalls: 640 } },
+    ]),
+    recordingStub({}),
+    recordingStub({}),
+    recordingStub({}),
+  ] as const;
+  const outcome = runTrialMatch({
+    runners: [...runners],
+    players: [...players],
+    ruleset,
+    map,
+    seed: 101,
+    budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  // 事件:30000 → 48000 → 48000（12000 更小，不覆盖）；
+  // API:100 → 640；
+  // 内存:一次都没采到 → 缺席，不是 0。
+  expect(outcome.peakUsage).toEqual({ eventCount: 48000, apiCalls: 640 });
+});
+
+it("对手座位的占用读数不进候选的账（与触限只看候选座位同一条纪律）", { timeout: 30_000 }, () => {
+  const runners = [
+    usageStub([{ at: 1, peak: { eventCount: 12000 } }]),
+    recordingStub({}),
+    usageStub([{ at: 1, peak: { eventCount: 49000 } }]),
+    recordingStub({}),
+  ] as const;
+  const outcome = runTrialMatch({
+    runners: [...runners],
+    players: [...players],
+    ruleset,
+    map,
+    seed: 101,
+    budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  expect(outcome.peakUsage?.eventCount).toBe(12000);
+});
+
+it("一次读数都没采到 → peakUsage 缺席（不补零）", { timeout: 30_000 }, () => {
+  const outcome = runTrialMatch({
+    runners: [...quiet],
+    players: [...players],
+    ruleset,
+    map,
+    seed: 101,
+    budget: { exceptionTickLimit: 3, eventTickLimit: 50000, apiCallTickLimit: 800 },
+    head: { runner: "stub", timezoneOffset: "+00:00", mapHash: "test" },
+    matchIndex: 0,
+  });
+  expect(outcome.peakUsage).toBeUndefined();
 });

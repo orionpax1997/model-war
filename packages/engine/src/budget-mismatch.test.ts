@@ -194,6 +194,17 @@ type BenchmarkOutcome = {
   readonly trips: readonly Observation[];
   /** 本场里执行器报出的全部 `memory-pressure` 观测(只观测不判罚;终值下应当为空)。 */
   readonly pressures: readonly Observation[];
+  /**
+   * 四方逐 tick 的最坏占用读数(只披露、不判罚)。
+   *
+   * 取四个座位的最大值:本文件要证的是「没越线时读数也在」,不区分是谁的占用——
+   * 按座位收窄是试跑(`apps/cli/src/trial/match-run.ts`)的口径。
+   */
+  readonly peakUsage?: {
+    readonly eventCount?: number;
+    readonly apiCalls?: number;
+    readonly memoryBytes?: number;
+  };
   readonly finalState?: GameState;
 };
 
@@ -230,6 +241,12 @@ const runBenchmarkMatch = async (
   );
   const trips: Observation[] = [];
   const pressures: Observation[] = [];
+  /** 四方逐 tick 的最坏占用读数(逐轨取大者);缺席=没采到。 */
+  const peak: {
+    eventCount?: number;
+    apiCalls?: number;
+    memoryBytes?: number;
+  } = {};
   const runners: SeatRunner[] = handles.map((handle) => ({
     setSnapshot: handle.runner.setSnapshot,
     drainIntents: () => {
@@ -240,6 +257,12 @@ const runBenchmarkMatch = async (
         } else if (observation.kind === "memory-pressure") {
           pressures.push(observation);
         }
+      }
+      // 占用读数只披露:原样收下、不参与任何判定(判定只在 `trips` 与状态变更上)。
+      for (const key of ["eventCount", "apiCalls", "memoryBytes"] as const) {
+        const value = output.peakUsage?.[key];
+        if (value === undefined) continue;
+        peak[key] = Math.max(peak[key] ?? 0, value);
       }
       return output;
     },
@@ -260,9 +283,10 @@ const runBenchmarkMatch = async (
       budget,
       sink: { write: () => {} },
     });
+    const usage = Object.keys(peak).length === 0 ? {} : { peakUsage: peak };
     return result.status === "completed"
-      ? { status: result.status, trips, pressures, finalState: result.finalState }
-      : { status: result.status, trips, pressures };
+      ? { status: result.status, trips, pressures, finalState: result.finalState, ...usage }
+      : { status: result.status, trips, pressures, ...usage };
   } finally {
     for (const handle of handles) {
       handle.dispose();
@@ -450,6 +474,44 @@ it("反向:三份基准脚本在终值下不被任何轨截停、也不产内存
   for (const [seat, player] of finalState.players.entries()) {
     expect(player.exceptionTicks, `座位 ${seat} 在终值下累计了异常`).toBe(0);
   }
+}, 180_000);
+
+// ── 地基:「没越线时也有读数」(探针 `probe` 的前提)────────────────────────────
+//
+// `tripped` 只在越线时出现,所以「最坏那 tick 用了 480/500」这个数在只披露观测的时代**不存在**。
+// 这一条钉的是那条新通道(`RunnerOutput.peakUsage`)的两件事:① 没越线时读数照样在;② 它是
+// **只披露**的——不改变上面那些判据的任何一个结论。
+
+it("地基:终值下基准脚本不越线,但每一条启用轨的占用读数都在(且与上限之比在 60% 以内)", async () => {
+  const outcome = await runBenchmarkMatch(MIXED_SCENARIO, BUDGET);
+  expect(outcome.status).toBe("completed");
+  // 没越线——这是这个夹具的条件,不是被测的性质。
+  expect(outcome.trips).toEqual([]);
+  const peak = outcome.peakUsage;
+  if (peak === undefined) {
+    throw new Error("没越线时也该有占用读数:peakUsage 缺席,探针就没有原料");
+  }
+  // 三条轨的上限都启用着,所以三条读数都该采到。
+  expect(peak.eventCount, "事件计数读数缺席").toBeDefined();
+  expect(peak.apiCalls, "API 计数读数缺席").toBeDefined();
+  expect(peak.memoryBytes, "存活堆读数缺席(内存轨启用着)").toBeDefined();
+  // 读数与判据同源:都在各自上限之下,且远低于它(这正是「充裕」那一档的形状)。
+  expect(peak.eventCount ?? 0).toBeLessThan(required(BUDGET.eventTickLimit, "eventTickLimit"));
+  expect(peak.apiCalls ?? 0).toBeLessThan(required(BUDGET.apiCallTickLimit, "apiCallTickLimit"));
+  expect(peak.memoryBytes ?? 0).toBeLessThan(
+    required(BUDGET.memoryTickCeiling, "memoryTickCeiling"),
+  );
+  // 计数轨的读数不是 0:「没量」与「用了 0」是两件事,而基准脚本确实在调 API。
+  expect(peak.apiCalls ?? 0).toBeGreaterThan(0);
+}, 180_000);
+
+it("地基的反例:读数不参与判定——同一场对局在越线时照样只按 `tripped` 拦", async () => {
+  // 把事件计数上限压到一格:基准脚本越线。此时读数比上限大,但**拦下它的仍是 tripped**
+  // (峰值读数一个字节都不进 `verdict`/状态变更)。
+  const lowered: BudgetConfig = { ...BUDGET, eventTickLimit: INTERRUPT_EVENT_GRANULARITY };
+  const outcome = await runBenchmarkMatch(MIXED_SCENARIO, lowered);
+  expect(outcome.trips.length).toBeGreaterThan(0);
+  expect(outcome.peakUsage?.eventCount ?? 0).toBeGreaterThanOrEqual(INTERRUPT_EVENT_GRANULARITY);
 }, 180_000);
 
 // ── 反向用例:把判据参数化,证明上面两条能弄红 ────────────────────────────────

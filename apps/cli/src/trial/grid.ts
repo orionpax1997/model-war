@@ -37,7 +37,13 @@ import { budgetOf, budgetTracksOf, headForMap } from "../match/assemble.js";
 import type { LoadedTrial } from "./load.js";
 import { runTrialMatch, type TrialMatchOutcome } from "./match-run.js";
 import type { TrialObservationLine } from "./observations.js";
-import { renderScoreSourceObservation, type RecordedTrip } from "./trial.js";
+import {
+  mergePeakUsage,
+  peakUsageOf,
+  type PeakUsageAccumulator,
+  type PeakUsageReading,
+} from "./peak-usage.js";
+import { renderScoreSourceObservation, verdictOfTrips, type RecordedTrip } from "./trial.js";
 
 /** 汇总文件的落点：与观测文件同目录、同前缀（`<观测文件>.grid.json`）。 */
 export const gridSummaryPathOf = (observationsPath: string): string =>
@@ -62,6 +68,20 @@ const codesOf = (loaded: LoadedTrial): ReadonlyMap<string, string> =>
 export type TrialGridRun = {
   readonly trips: readonly RecordedTrip[];
   readonly readings: readonly TrialObservationLine[];
+  /**
+   * 候选座位逐 tick 的最坏占用读数（跨已跑的场取更坏值）。**只披露、不参与判定**。
+   *
+   * 缺席 = 一场都没采到（例如计划为空，或各轨全未启用）。探针拿它出三档文案，
+   * `evaluate` 那一侧不读它——读与不读都不改变任何结论。
+   */
+  readonly peakUsage?: PeakUsageReading;
+  /**
+   * 真正跑过几场。子集运行时小于计划场数；`stopOnFirstTrip` 为真时停在那场为止。
+   *
+   * 它是「不早停」这条判据的读数面：探针要的是跑完前缀的峰值，中途停下就拿不到
+   * 「第 6 场才贴边」这种情况。
+   */
+  readonly matchesRun: number;
 };
 
 /**
@@ -71,17 +91,44 @@ export type TrialGridRun = {
  * 作废（墙钟硬超时）同一种子重跑一次：仍作废则抛 infra（无法判定，大声失败，不回喂）。
  * 非判定触限（对手座位/非看轨）只留痕，不进结论。**没有早停**（见文件头注）。
  */
-export const runTrialGrid = async (loaded: LoadedTrial, plan: TrialPlan): Promise<TrialGridRun> => {
+export const runTrialGrid = async (loaded: LoadedTrial, plan: TrialPlan): Promise<TrialGridRun> =>
+  runTrialGridSubset(loaded, plan, plan.matches.length, false);
+
+/**
+ * 跑计划的**前 `matchLimit` 场**（探针的那条路），与 `runTrialGrid` 共用同一条执行链。
+ *
+ * ── 计划对象逐字节不动，只是执行时少跑几场 ──
+ *
+ * 裁掉的是**循环范围**，不是计划：`match.matchIndex` 与 `match.candidateSeat` 仍取自完整计划，
+ * 于是判定查座位时用的是**完整计划**。反过来做（先 `slice` 计划再交给整张网格那条路）会静默
+ * 假绿：`verdictOfTrips` 用传进来的计划查候选座位，裁剪后 `matches[10]` 缺席 → 座位兜底成 0
+ * → 座位 3 的触限对不上 → 判成通过。这条差别在 `trial.test.ts` 里有一个专门的反例（判据 3）。
+ *
+ * ── 为什么留 `stopOnFirstTrip` 这个参数，而且探针传 `false` ──
+ *
+ * 早停能省时间，但探针要的**恰恰是跑完前缀的峰值**：中途停下就拿不到"第 6 场才贴边"这种情况，
+ * 而"贴边"正是探针在没越线时唯一有价值的那句话。所以参数留着（让"早停"成为一次显式的选择
+ * 而不是未来的默认行为），探针明确传 `false`；`runTrialGrid`（`evaluate` 那一侧）同样传
+ * `false`，理由见文件头注《跑满，不再早停》。若日后有人以为早停能省时间，这两行注释就是答案。
+ */
+export const runTrialGridSubset = async (
+  loaded: LoadedTrial,
+  plan: TrialPlan,
+  matchLimit: number,
+  stopOnFirstTrip: boolean,
+): Promise<TrialGridRun> => {
   const budget = budgetOf(loaded.ruleset);
   const tracks = budgetTracksOf(budget);
   const codes = codesOf(loaded);
   const wasmModule = await WebAssembly.compile(loaded.wasmBytes);
   const trips: RecordedTrip[] = [];
   const readings: TrialObservationLine[] = [];
+  const peak: PeakUsageAccumulator = {};
+  let matchesRun = 0;
   // 哈希绑定与 runner 共用已加载的源码，不重读候选路径，也不使用前轮产物。
   const scriptSha256 = trialScriptSha256(loaded);
 
-  for (const match of plan.matches) {
+  for (const match of plan.matches.slice(0, Math.max(0, matchLimit))) {
     const map = loaded.maps.find((candidate) => candidate.name === match.map);
     if (map === undefined) throw new Error(`计划里的地图 ${match.map} 不在装载面上`);
     if (map.sha256 !== match.mapSha256)
@@ -137,7 +184,9 @@ export const runTrialGrid = async (loaded: LoadedTrial, plan: TrialPlan): Promis
         );
       }
     }
+    matchesRun += 1;
     trips.push(...outcome.trips);
+    mergePeakUsage(peak, outcome.peakUsage);
     const observation = renderScoreSourceObservation(match.matchIndex, outcome.scoreSource);
     if (observation !== null) {
       process.stderr.write(`${observation}\n`);
@@ -158,8 +207,19 @@ export const runTrialGrid = async (loaded: LoadedTrial, plan: TrialPlan): Promis
         ...outcome.actionFacts,
       },
     });
+    // 早停只在调用方**显式**要求时发生（探针传 false，见上面的头注）。判据与结论同源：
+    // 候选座位在看轨上首触即停。
+    if (stopOnFirstTrip && !verdictOfTrips(outcome.trips, () => match.candidateSeat).passed) {
+      break;
+    }
   }
-  return { trips, readings };
+  const measured = peakUsageOf(peak);
+  return {
+    trips,
+    readings,
+    matchesRun,
+    ...(measured === undefined ? {} : { peakUsage: measured }),
+  };
 };
 
 /** 候选编译产物摘要（执行器绑定观测行与汇总用的同一份字节）。 */

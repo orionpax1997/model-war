@@ -3,7 +3,8 @@
  *
  * ── 它做的三件判定(ADR-0033「宿主是唯一的判据源」) ──
  * 1. 工具名在**白名单**里(工具声明减掉 `bash`,后者由 loop 交给沙箱);
- * 2. `evaluate` 的**调用次数**未超会话上限(默认 `EVALUATE_CALL_LIMIT` = 3);
+ * 2. `evaluate` 的**调用次数**未超会话上限(默认 `EVALUATE_CALL_LIMIT` = 3),
+ *    以及 `probe` 自己的上限(默认 `PROBE_CALL_LIMIT` = 5,与那三次互不侵占);
  * 3. 会话**墙钟**未到点。
  *
  * 三条任一不成立,就回一份 `isError: true` 的结果且**真执行函数一次都不调**。
@@ -33,11 +34,12 @@
  * 并发跑两场会话时计数互相吃。所以每次会话 `createSessionTools(...)` 一次,状态封在闭包里。
  */
 
-import { EVALUATE_CALL_LIMIT, type ToolOutcome } from "@model-war/schema";
+import { EVALUATE_CALL_LIMIT, PROBE_CALL_LIMIT, type ToolOutcome } from "@model-war/schema";
 
 import { HOST_SERVICE_TOOLS, acceptsArgumentsOf, type ToolCall, type ToolName } from "../tools.js";
 import type { CheckService } from "./check-service.js";
 import type { EvaluateService } from "./evaluate-service.js";
+import type { ProbeService } from "./probe-service.js";
 
 /** 拒绝时用的退出码:与「命令跑了但失败」同档(模型看到的是一次失败的工具调用)。 */
 export const REFUSAL_EXIT_CODE = 1;
@@ -53,6 +55,15 @@ export const PROTOCOL_EXIT_CODE = 2;
  * `isError: true` 的工具结果。
  */
 export const QUOTA_EXHAUSTED_MESSAGE = `evaluate: 工具不可用:本会话的评测额度已用完(${String(EVALUATE_CALL_LIMIT)}/${String(EVALUATE_CALL_LIMIT)} 次)。`;
+
+/**
+ * 探针额度用完时的拒绝文案:与 `QUOTA_EXHAUSTED_MESSAGE` **同形**(同一个载体、同一种说法),
+ * 只换工具名与那个数。
+ *
+ * 为什么探针需要有上限:一次探针 = 跑 8 场 ≈ 21.6 s。不设上限,"跑前 8 场"就是一条免费的
+ * 无限循环——模型可以一直问而不付任何代价,会话墙钟会在那里被吃掉,而它本可以用来改脚本。
+ */
+export const PROBE_QUOTA_EXHAUSTED_MESSAGE = `probe: 工具不可用:本会话的探针额度已用完(${String(PROBE_CALL_LIMIT)}/${String(PROBE_CALL_LIMIT)} 次)。`;
 
 /** 会话墙钟到点时的拒绝文案(前面拼工具名)。 */
 export const SESSION_EXPIRED_MESSAGE = "工具不可用:会话墙钟已到点,这一次不执行。";
@@ -72,12 +83,18 @@ export const UNKNOWN_TOOL_MESSAGE = `工具不可用:不在受限工具白名单
  */
 export const TOOL_USAGE = {
   check: "用法:check(不接受参数)——检查当前 /workspace/script.ts 的类型与静态校验,计一步。",
+  probe:
+    "用法:probe(不接受参数)——把当前 /workspace/script.ts 跑完整计划的前 8 场," +
+    "回每一条预算轨的最坏占用读数,计一步、占用一次探针额度。",
   evaluate:
     "用法:evaluate(不接受参数)——把当前 /workspace/script.ts 送去跑一次完整评测,计一步、占用一次配额。",
 } as const;
 
 /** 带参数时的拒绝:一句用法 + 点名多出来的参数(不执行、不吃配额)。 */
-const argumentRefusal = (tool: "check" | "evaluate", argumentsJson: string): ToolOutcome =>
+const argumentRefusal = (
+  tool: "check" | "probe" | "evaluate",
+  argumentsJson: string,
+): ToolOutcome =>
   refusal(
     PROTOCOL_EXIT_CODE,
     `${tool}: ${TOOL_USAGE[tool]}\n` +
@@ -105,8 +122,16 @@ export type SessionToolsOptions = {
   readonly deadlineAtMs: number;
   readonly check: CheckService;
   readonly evaluate: EvaluateService;
+  /**
+   * 探针服务。**可选**:跨包的那段字面量桥(`packages/tools` 的 `executor-bridge`)造工具面时
+   * 不传它——那一侧归票 04。缺席时 `probe` 是一条 fail-closed 的拒绝(不是静默成功,也不是
+   * 当成 `finish`),于是那条桥上"没有探针"这件事与"探针被拒"在读侧是同一件事。
+   */
+  readonly probe?: ProbeService;
   /** `evaluate` 的会话上限;缺省 `EVALUATE_CALL_LIMIT`(3)。 */
   readonly evaluateLimit?: number;
+  /** `probe` 的会话上限;缺省 `PROBE_CALL_LIMIT`(5)。与 `evaluate` 的额度互不侵占。 */
+  readonly probeLimit?: number;
   /** 时钟注入缝(单测用)。缺省 `Date.now`。 */
   readonly now?: () => number;
 };
@@ -128,6 +153,8 @@ export type SessionTools = {
   readonly dispatch: (step: number, call: ToolCall) => Promise<ToolOutcome>;
   /** 已执行的 `evaluate` 次数(超限被拒的不算)。 */
   readonly evaluateCalls: () => number;
+  /** 已执行的 `probe` 次数(超限被拒的不算)。与 `evaluateCalls` 各记各的。 */
+  readonly probeCalls: () => number;
   /** 模型有没有通过 `finish` 工具报过「收工」(`termination: "done"` 的唯一真源)。 */
   readonly finishRequested: () => boolean;
   /** 会话墙钟是否已到点。 */
@@ -152,8 +179,10 @@ const refusal = (exitCode: number, stderr: string): ToolOutcome => ({
  */
 export const createSessionTools = (options: SessionToolsOptions): SessionTools => {
   const limit = options.evaluateLimit ?? EVALUATE_CALL_LIMIT;
+  const probeLimit = options.probeLimit ?? PROBE_CALL_LIMIT;
   const now = options.now ?? Date.now;
   let evaluateCalls = 0;
+  let probeCalls = 0;
   let finish = false;
 
   const expired = (): boolean => now() >= options.deadlineAtMs;
@@ -173,7 +202,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
     // 参数面在**执行与计数之前**判:被拒的一次不是一次评测,不扣额度。
     // 判据从工具声明派生(`acceptsArgumentsOf`),与动作层同一个真源。
     if (!acceptsArgumentsOf(tool) && !hasNoArguments(call.argumentsJson)) {
-      if (tool === "check" || tool === "evaluate") {
+      if (tool === "check" || tool === "probe" || tool === "evaluate") {
         return argumentRefusal(tool, call.argumentsJson);
       }
       return refusal(
@@ -186,6 +215,20 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
     switch (tool) {
       case "check":
         return await options.check({ workspaceDir: options.workspaceDir });
+      case "probe": {
+        const probe = options.probe;
+        if (probe === undefined) {
+          // 没接上服务时 fail-closed:既不静默成功,也不当成收工。
+          return refusal(REFUSAL_EXIT_CODE, `${tool}: 工具不可用:这个工具的执行体还没有接上。`);
+        }
+        if (probeCalls >= probeLimit) {
+          return refusal(REFUSAL_EXIT_CODE, PROBE_QUOTA_EXHAUSTED_MESSAGE);
+        }
+        // 计数发生在调用之前,理由与 `evaluate` 逐字相同(见下一格):一次**尝试**就是一次调用,
+        // 否则「让服务失败」就成了一条刷额度的路。
+        probeCalls += 1;
+        return await probe({ workspaceDir: options.workspaceDir });
+      }
       case "evaluate": {
         if (evaluateCalls >= limit) {
           return refusal(REFUSAL_EXIT_CODE, QUOTA_EXHAUSTED_MESSAGE);
@@ -205,11 +248,9 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
         finish = true;
         return { exitCode: 0, stdout: "", stderr: "" };
       default:
-        // 声明里有、执行体还没接上的工具(`probe`,票 08 给它自己的计数器与计划源)。
-        //
-        // **不是** `finish`:把它悄悄当收工,会让一次探针调用直接结束会话,而读侧只会看到
-        // 「模型收工了」。所以这里 fail-closed 地拒绝,理由说清是「还没有执行体」。
-        return refusal(REFUSAL_EXIT_CODE, `${tool}: 工具不可用:这个工具的执行体还没有接上。`);
+        // 四个宿主工具都已接线,只剩 `bash` 落在这里(它在白名单外,见上面那条 `find`)。
+        // fail-closed:一个走不到的分支也不许静默成功。
+        return refusal(REFUSAL_EXIT_CODE, `${String(tool)}: ${UNKNOWN_TOOL_MESSAGE}`);
     }
   };
 
@@ -225,6 +266,7 @@ export const createSessionTools = (options: SessionToolsOptions): SessionTools =
       }
     },
     evaluateCalls: () => evaluateCalls,
+    probeCalls: () => probeCalls,
     finishRequested: () => finish,
     expired,
     remainingMs,
