@@ -131,8 +131,27 @@ export const OPTIMIZATION_CANDIDATE_LIMIT = EVALUATE_CALL_LIMIT;
  *
  * 它必填于**新档**、缺席于历史档；装载器与报告按它分派，不认识的版本**拒读**而不是猜。
  * 它是唯一能覆盖「失败档没有优化段」的版本号——优化段版本回答不了「这份文件按哪种形状读」。
+ *
+ * ── 写侧只写 4，读侧 3 与 4 都认（v3 不迁移）──
+ *
+ * 4 是协议从「文本围栏块 + fd 3 薄壳」换成「原生 tool calling」那一次：`action.kind` 多了
+ * `check` / `probe` 两档，`steps[i]` 多了 `toolCall`（逐字字节的家），`raw` 因此可以是空串。
+ *
+ * v3 档**照旧可读、不迁移、不回填**：`archive/` 下已经有真档，它们是校准 harness 的证据，
+ * 改写它们的形状等于改证据。两个版本的差别只有一条，而且判据只有一处（见 runner 的
+ * `archiveShapeIssuesOf` 的 `archive-step-shape`）：**v3 的步里不许出现 `check` / `probe`，
+ * 也不许带 `toolCall`**——那时这两样在世界里根本不存在。
+ *
+ * 所以常量分两件：`ARCHIVE_SCHEMA_VERSION` 是**写侧**写的那个数，`ARCHIVE_SCHEMA_VERSIONS`
+ * 是**读侧**认的那些数。写成一件（`enum` 里含本版的 const）会让「新档写哪个」变成一个巧合。
  */
-export const ARCHIVE_SCHEMA_VERSION = 3 as const;
+export const ARCHIVE_SCHEMA_VERSION = 4 as const;
+
+/** 读侧认的形状版本（v3 与 v4 并认）。写侧只写 `ARCHIVE_SCHEMA_VERSION`。 */
+export const ARCHIVE_SCHEMA_VERSIONS = [3, ARCHIVE_SCHEMA_VERSION] as const;
+
+/** 一份档案的形状版本：`"legacy"` = 缺席（v1/v2 历史档），其余是两个认得的版本号。 */
+export type ArchiveShapeVersion = "legacy" | (typeof ARCHIVE_SCHEMA_VERSIONS)[number];
 
 export type ArchiveOptimizationCandidate = {
   readonly stage: (typeof OPTIMIZATION_STAGES)[number];
@@ -208,28 +227,83 @@ export type ArchiveOptimization =
  * 是可选键——ADR-0031 已裁决「条目可选键不升形状版本」，ADR-0036 沿用同一条先例。
  */
 export type ArchiveStepAction =
-  /** 整块交给一次 `bash -c`；`command` 是执行的那段原文。 */
+  /**
+   * 这一步调用了 `bash` 工具：`command` 是那次调用 `arguments.command` 的**解析值**（一条命令串，
+   * 可以含换行），原样交给一次 `bash -c`。
+   *
+   * 它是**派生值**，逐字字节的家是 `steps[i].toolCall.argumentsJson`。v4 起这一档的语义收窄成
+   * 「真的跑了一个 shell」：`check` / `probe` / `evaluate` / `finish` 都有自己的档，模型调它们
+   * 时不再借道 `bash`（新世界里没有一次 `bash -c` 跑过它们）。
+   */
   | { readonly kind: "bash"; readonly command: string }
-  /** 整块去空白后恰为 `evaluate`：这一次 `evaluate` 产出一个候选。 */
+  /**
+   * 这一步调用了 `check` 工具：tsc + 静态校验，一个候选都不产出。
+   *
+   * **v4 新增**。独立成档而不记成 `{kind:"bash", command:"check"}`：那是让档案说谎——新世界里
+   * 没有一次 `bash -c` 跑过 `check`。读侧因此能把「跑了 4 次 bash」与「check 了 4 次」分开。
+   */
+  | { readonly kind: "check" }
+  /**
+   * 这一步调用了 `probe` 工具：拿当前脚本跑完整计划的**前 8 场**，回每轨最坏占用读数。
+   *
+   * **v4 新增，本批是一个没有写者的合法成员**——`probe` 要到票 08 才接进 dispatcher。这一档
+   * 现在就定型是**有意的**：它让 `archiveSchemaVersion: 4` 一次定死，票 08 不必再动一次版本号。
+   * 在那之前，v4 的写者从不产出它；v3 档更是**拒读**它（v3 的世界里没有这个工具）。
+   */
+  | { readonly kind: "probe" }
+  /** 这一步调用了 `evaluate` 工具：这一次评测产出一个候选（ADR-0030「`evaluate` 即提交」）。 */
   | { readonly kind: "evaluate" }
   /**
-   * 这一步以**收工工具**结束（模型在块里调用了 `finish`，宿主收到那条请求）。
+   * 这一步以**收工工具**结束：模型调用了 `finish`，会话在这一步之后停下。
    *
-   * 枚举值仍叫 `done`：那是 v3 档案形状里的常量，语义是「这一步以收工工具结束」，与模型敲的
-   * 那条命令叫什么名字无关。模型侧的收工命令叫 `finish`——`done` 是 bash 保留字，裸写一行就是
-   * 语法错误（ADR-0032 修订）。改这个枚举等于升 `archiveSchemaVersion`，本批不升。
+   * 枚举值仍叫 `done`：那是 v3 档案形状里的常量，语义是「这一步以收工工具结束」，与工具叫什么
+   * 名字无关（工具叫 `finish`，而 `done` 是 bash 保留字）。改名在 v4 上已无版本代价，但读侧与
+   * 报告的改动量为零收益——那处不一致已在 ADR-0032 修订②写在唯一需要读它的地方。
    */
   | { readonly kind: "done" }
   /**
-   * 这一步**没有可执行的动作**：零个块 / 多个块 / 块标记不是 `bash`，或者响应两次都被输出上限
-   * 截断而转了格式反馈。命令一条都没跑，但这一步照样计入步数与过程记录（ADR-0032「`done` 不是
-   * 免费出口」的同一条计数口径：一次模型调用就是一步）。
+   * 这一步**没有可执行的动作**：零次工具调用 / 多于一次 / 工具名不在声明集合里 / `arguments`
+   * 不是合法 JSON 或形状不符，或者响应两次都被输出上限截断而转了格式反馈。一条命令都没跑，
+   * 但这一步照样计入步数与过程记录（ADR-0032「`done` 不是免费出口」的同一条计数口径：一次
+   * 模型调用就是一步）。
    *
    * 为什么不复用 `bash` 加一个空 `command`：空命令在 `bash` 那一格是不合法的（`minLength: 1`），
    * 而放宽它等于让「跑了空 shell」与「什么都没跑」在档案里同形——后者恰恰是校准 harness 时最
    * 想看见的那种步。
    */
   | { readonly kind: "none" };
+
+/**
+ * 这一步发起的**那一次工具调用**（v4 新增）：逐字字节的家（ADR-0031「模型看到的字节 = 落盘的
+ * 字节」）。
+ *
+ * ── 为什么它必须存在 ──
+ *
+ * 工具调用那一轮的 `choices[0].message.content` 通常是空串（模型没说话，只调了一次工具），于是
+ * `raw` 会是空串。而那里的真正产物是渠道给的 `tool_calls`，没有这一格就整条丢掉——「模型看到
+ * 的字节 = 落盘的字节」当场作废。
+ *
+ * ── 两个字段的分工 ──
+ *
+ * `argumentsJson` 是**渠道给的原始 JSON 字符串**，原样落档、不重编码：发回历史时
+ * `tool_calls[0].function.arguments` 就是这串字节，所以「发回去的 == 落盘的」重新成立。
+ * `action.command` 则是它 `JSON.parse` 之后的派生值（注解）——与 `optimization.candidates`
+ * 之于动作标签同一条纪律：逐字字节一个家，解析后的语义另一个家。
+ *
+ * 渠道给的 `tool_call_id` **不在这里**：那是每次不同的无意义字节，进档案就进了 digest 的路径；
+ * 配对 id 由历史构造处确定性派生（`call-<步号>`）。
+ */
+export type ArchiveStepToolCall = {
+  /** 调用的工具名，逐字来自渠道。 */
+  readonly name: string;
+  /**
+   * `arguments` 的**原文**：渠道给的 JSON 字符串，原样落档、不重编码。
+   *
+   * 空串是合法的（有些渠道对不收参数的工具给 `""`），而它必须是合法 JSON 能解析成对象这一点
+   * 由 `action.kind` 回答：能走到 `bash` / `check` / … 就说明这一步的 `arguments` 解析过。
+   */
+  readonly argumentsJson: string;
+};
 
 /** 结果侧证据：这一轮被什么驱动、编译错误码（发送侧证据在 `generationLog` 里）。 */
 export type ArchiveStepResult = {
@@ -244,8 +318,21 @@ export type ArchiveStep = {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number;
-  /** 模型当时的原始文本（与发回去的字节同源）。不截断：截它会让模型看到自己被砍断的代码。 */
+  /**
+   * 模型当时的原始文本 = `message.content`（与发回去的字节同源）。不截断：截它会让模型看到自己
+   * 被砍断的代码。
+   *
+   * **空串在 v4 里是合法的**，而且常见：工具调用那一轮模型常常什么都没说，真正的产物在
+   * `toolCall` 里。「`raw` 为空」本身不是丢数据的证据——「`raw` 为空**且** `toolCall` 也缺席」
+   * 才是。
+   */
   readonly raw?: string;
+  /**
+   * 这一步发起的那一次工具调用（v4 新增）。逐字字节的家，`action` 是它的派生注解。
+   *
+   * 缺席有两种：v3 档（那时还没有工具调用信封）、以及一步没跑任何工具（`action.kind === "none"`）。
+   */
+  readonly toolCall?: ArchiveStepToolCall;
   /** 步起点相对会话起点的偏移（毫秒）。 */
   readonly atMs: number;
   /** 沙箱执行加观测回填（毫秒）。 */
@@ -344,7 +431,7 @@ export type ArchiveMeta = {
    * `additionalProperties: false` 与「一档一读法」的冲突由它解开：装载器先看这一格分派，
    * 带 agent 字段却没有它、或写了个不认识的数字，一律拒读（不猜、不降级）。
    */
-  readonly archiveSchemaVersion?: typeof ARCHIVE_SCHEMA_VERSION;
+  readonly archiveSchemaVersion?: (typeof ARCHIVE_SCHEMA_VERSIONS)[number];
   /** 模型席位的上下文窗口（token）。档案自足优先：历史报告不用今天的配置解释昨天的行为。 */
   readonly contextLength?: number;
   /** harness 的叙事版本（如 `bash-mini/0.1`）：人维护的「模型面对的世界」的代号。 */
@@ -518,7 +605,21 @@ const OPTIMIZATION_GRID_JSON_SCHEMA = {
   },
 } as const;
 
-/** 一步的动作：判别联合（`bash` / `evaluate` / `done`）。`smoke` 不在 v3 的联合里。 */
+/**
+ * 一步的动作：判别联合，六档（`bash` / `check` / `probe` / `evaluate` / `done` / `none`）。
+ *
+ * ── 为什么这里只有**一套** schema，不并排两套（v3 与 v4）──
+ *
+ * 「v3 档不许有 `check` / `probe`」这条判据需要按 `archiveSchemaVersion` 分派，而分派只能用
+ * `if/then` 表达；读入端有两条——`apps/cli` 的 ajv 与 runner 的 `z.fromJSONSchema`——后者不支持
+ * 条件 schema（`if/then/else` 直接报错）。并排两套进 `oneOf` 也不行：`oneOf` 要**恰好一条**匹配，
+ * 而 v4 的 `bash` 分支是 v3 的 `bash` 分支的超集，两个分支会同时命中。
+ *
+ * 所以形状这一层收**并集**（六档 + 可选 `toolCall`），按版本的排除写在装载期那一条判据里
+ * （runner 的 `archiveShapeIssueOf` / `archiveShapeIssuesOf` 的 `archive-step-shape`，CLI 它渲染成
+ * 诊断、runner 它抛成拒读）。代价是「v3 档塞 `{kind:"check"}`」由装载期而不是 ajv 拒；收益是
+ * 判据只有一处，而且它能**点名** `check`——ajv 的 `oneOf` 失败给不出这个名字。
+ */
 const ARCHIVE_STEP_ACTION_JSON_SCHEMA = {
   oneOf: [
     {
@@ -529,6 +630,18 @@ const ARCHIVE_STEP_ACTION_JSON_SCHEMA = {
         kind: { type: "string", const: "bash" },
         command: { type: "string", minLength: 1 },
       },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind"],
+      properties: { kind: { type: "string", const: "check" } },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind"],
+      properties: { kind: { type: "string", const: "probe" } },
     },
     {
       type: "object",
@@ -549,6 +662,26 @@ const ARCHIVE_STEP_ACTION_JSON_SCHEMA = {
       properties: { kind: { type: "string", const: "none" } },
     },
   ],
+} as const;
+
+/** v4 新增、v3 世界里不存在的那两档动作。装载期按形状版本拒读 v3 里的它们。 */
+export const V4_ONLY_STEP_ACTION_KINDS = ["check", "probe"] as const;
+
+/**
+ * 一步发起的那一次工具调用（v4 新增）：逐字字节的家。
+ *
+ * `argumentsJson` **不重编码**——它必须与 `tool_calls[0].function.arguments` 逐字相同，否则
+ * 「发回去的 == 落盘的」（ADR-0031）立刻不成立。它不写 `minLength`：空串是常见形状（不收参数的
+ * 工具），而它到底有没有被解析成合法参数由 `action.kind` 回答。
+ */
+const ARCHIVE_STEP_TOOL_CALL_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "argumentsJson"],
+  properties: {
+    name: { type: "string", minLength: 1 },
+    argumentsJson: { type: "string" },
+  },
 } as const;
 
 /** 结果侧证据：驱动来源与编译错误码（发送侧证据在 `generationLog` 里，不在这里）。 */
@@ -579,6 +712,7 @@ export const ARCHIVE_STEP_JSON_SCHEMA = {
     stderr: { type: "string" },
     exitCode: { type: "integer" },
     raw: { type: "string" },
+    toolCall: ARCHIVE_STEP_TOOL_CALL_JSON_SCHEMA,
     atMs: { type: "integer", minimum: 0 },
     harnessMs: { type: "integer", minimum: 0 },
     result: ARCHIVE_STEP_RESULT_JSON_SCHEMA,
@@ -646,7 +780,7 @@ export const ARCHIVE_META_JSON_SCHEMA = {
   properties: {
     archiveSchemaVersion: {
       type: "integer",
-      const: ARCHIVE_SCHEMA_VERSION,
+      enum: [...ARCHIVE_SCHEMA_VERSIONS],
       description:
         "档案形状版本(读兼容契约)。新档必写、历史档缺席;不认识的版本拒读而不是猜。它与优化段版本、harness 身份三者各管一件事。",
     },

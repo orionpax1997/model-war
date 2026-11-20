@@ -119,14 +119,24 @@ export const ARCHIVE_PROTOCOL_ROUNDS_KEYWORD = "archive-protocol-rounds-mismatch
  */
 export const ARCHIVE_SCHEMA_VERSION_KEYWORD = "archive-schema-version";
 
-/** v3 档案缺 agent 必写字段(`steps` / `contextLength` / `harnessVersion` / `harnessDigest` / `termination` / `atStep`)。 */
+/** agent 形状(v3 / v4)的档案缺必写字段(`steps` / `contextLength` / `harnessVersion` / `harnessDigest` / `termination` / `atStep`)。 */
 export const ARCHIVE_AGENT_FIELDS_KEYWORD = "archive-agent-fields";
+
+/**
+ * 档案的**步**里出现了它那一版不该有的东西(v3 档里有 `check` / `probe` 动作或 `toolCall`)。
+ *
+ * 与「形状不合法」分开报:后者是 schema 的 `oneOf` / `additionalProperties`,修法是改字段;
+ * 这一条是**版本错配**——那份档案声称自己是 v3,却带着 v4 才存在的形状。修法只有一种:要么
+ * 把版本号改成 4(那些形状确实来自新世界),要么把那一步换成它当时真做过的事。
+ */
+export const ARCHIVE_STEP_SHAPE_KEYWORD = "archive-step-shape";
 
 /** 形状判据的类别 → 诊断关键字。类别由 runner 给(判据在那儿),关键字是**本包**的词汇。 */
 const SHAPE_KEYWORD_OF: Readonly<Record<ArchiveShapeIssue["kind"], string>> = {
   "archive-schema-version": ARCHIVE_SCHEMA_VERSION_KEYWORD,
   "archive-agent-fields": ARCHIVE_AGENT_FIELDS_KEYWORD,
   "archive-protocol-rounds": ARCHIVE_PROTOCOL_ROUNDS_KEYWORD,
+  "archive-step-shape": ARCHIVE_STEP_SHAPE_KEYWORD,
 };
 
 /** 拒绝时的那一半结果。几类数据的形状相同,所以共用这一个类型而不是各写一遍。 */
@@ -279,7 +289,8 @@ const MODEL_PHRASE: Readonly<Record<string, string>> = {
   [ARCHIVE_FILES_INCOMPLETE_KEYWORD]: "存档缺档(三件套不全或某个座位没有存档)",
   [ARCHIVE_PROTOCOL_ROUNDS_KEYWORD]: "协议迭代轮数与逐轮 prompt 的条数不一致",
   [ARCHIVE_SCHEMA_VERSION_KEYWORD]: "档案形状版本不认识或与 agent 字段不匹配",
-  [ARCHIVE_AGENT_FIELDS_KEYWORD]: "v3 档案缺少 agent 必写字段",
+  [ARCHIVE_AGENT_FIELDS_KEYWORD]: "agent 形状的档案缺少必写字段",
+  [ARCHIVE_STEP_SHAPE_KEYWORD]: "过程记录里的步带了这一版档案不该有的形状",
 };
 
 const phraseOf = (keyword: string): string => MODEL_PHRASE[keyword] ?? `不满足 ${keyword} 约束`;

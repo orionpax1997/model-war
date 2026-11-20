@@ -13,7 +13,7 @@
  * 3. **一行 `finish` 就是收工**:薄壳被调用、宿主记下 `finishRequested()`;
  * 4. **改名理由可复算**:裸写一行 `done` 会让整块语法错误、薄壳一次都没被调到。
  *
- * 空块 / 两块 / 非 `bash` 标记仍是拒绝(退出码 64),XML 形状单独一档并进身份清单。
+ * 零次 / 多于一次 / 名字不认识 / 参数坏了仍是拒绝(退出码 64),四档都进身份清单。
  */
 
 import { spawn } from "node:child_process";
@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { ACTION_REJECT_EXIT_CODE, ACTION_REJECT_REASONS, parseAction } from "../action.js";
+import type { ToolCall } from "../tools.js";
 import { harnessManifest } from "../identity.js";
 import { createSessionTools, type CheckService, type EvaluateService } from "./index.js";
 
@@ -223,29 +224,47 @@ describe("收工是命令,不是「之后的命令不执行」", () => {
 });
 
 describe("被拒的格式:仍然是零执行,退出码不变", () => {
-  const rejected = (block: string): ReturnType<typeof parseAction> => parseAction(block);
+  const rejected = (calls: readonly ToolCall[]): ReturnType<typeof parseAction> =>
+    parseAction(calls);
+  const call = (name: string, args: unknown): ToolCall => ({
+    name,
+    argumentsJson: JSON.stringify(args),
+  });
 
-  it("空回复 / 两块 / 非 bash 标记:三种都被拒,退出码仍是 64", () => {
-    expect(rejected("我想先想想。")).toMatchObject({ kind: "reject", reason: "no-block" });
-    expect(rejected("```bash\nls\n```\n```bash\nwc -l a\n```")).toMatchObject({
+  it("零次 / 多于一次 / 名字不认识:三种都被拒,退出码仍是 64", () => {
+    expect(rejected([])).toMatchObject({ kind: "reject", reason: "no-tool-call" });
+    expect(
+      rejected([call("bash", { command: "ls" }), call("bash", { command: "wc -l a" })]),
+    ).toMatchObject({
       kind: "reject",
-      reason: "multiple-blocks",
+      reason: "multiple-tool-calls",
     });
-    expect(rejected("```ts\nconst x = 1;\n```")).toMatchObject({
+    expect(rejected([call("shell", { command: "ls" })])).toMatchObject({
       kind: "reject",
-      reason: "non-bash",
+      reason: "unknown-tool",
     });
     expect(ACTION_REJECT_EXIT_CODE).toBe(64);
   });
 
-  it("空块本身不是拒绝:交给 shell 空转,不在解析层猜意图", () => {
-    expect(parseAction("```bash\n```")).toEqual({ kind: "ok", command: "" });
+  it("坏参数单独一档:它不执行,而「空命令」也归它(空 command 不合法)", () => {
+    expect(rejected([{ name: "bash", argumentsJson: "{oops" }])).toMatchObject({
+      kind: "reject",
+      reason: "malformed-arguments",
+    });
+    expect(rejected([call("bash", { command: "" })])).toMatchObject({
+      kind: "reject",
+      reason: "malformed-arguments",
+    });
+    // 不带参数的那四个工具收了参数,同样归这一档(判据与 dispatcher 的 `argumentRefusal` 同源)。
+    expect(rejected([call("check", { command: "ls" })])).toMatchObject({
+      kind: "reject",
+      reason: "malformed-arguments",
+    });
   });
 
-  it("XML 工具调用单独一档,并且作为「拒过的形状」进身份清单", () => {
-    const parsed = rejected("<tool_call>\n<function=bash>\n</function>\n</tool_call>");
-    expect(parsed).toMatchObject({ kind: "reject", reason: "xml-tool-call" });
+  it("四档都被身份清单记着:清单是 `actionSyntax.rejects` 的唯一真源", () => {
     expect(harnessManifest().actionSyntax.rejects).toEqual([...ACTION_REJECT_REASONS]);
-    expect(harnessManifest().actionSyntax.rejects).toContain("xml-tool-call");
+    for (const reason of ACTION_REJECT_REASONS)
+      expect(harnessManifest().actionSyntax.rejects).toContain(reason);
   });
 });

@@ -53,11 +53,19 @@ it("清单里的数字取自真源,不是在本文件里抄的第二份", () => 
   expect(current.observation.stdout.headRatio).toBe("3/10");
   expect(current.observation.stderr.headRatio).toBe("7/10");
   expect(current.observation.raw.limitBytes).toBe(RAW_PATHOLOGICAL_LIMIT_BYTES);
-  expect(current.actionSyntax.fenceTag).toBe("bash");
+  // ⚠️ `fenceTag` 是票 06 要删的占位格:票 02 删了围栏常量,这一格暂时记 `"none"`。
+  // 它不再是「旧协议还在」的证据,只是「这一格还没被重写」的痕迹。
+  expect(current.actionSyntax.fenceTag).toBe("none");
   expect(current.actionSyntax.rejectExitCode).toBe(ACTION_REJECT_EXIT_CODE);
-  // 被拒的四种形状都在清单里,而 XML 是其中之一:「拒过什么」下一次调协议时有据可查。
+  // 被拒的四种形状都在清单里:「拒过什么」下一次调协议时有据可查。
   expect(current.actionSyntax.rejects).toEqual([...ACTION_REJECT_REASONS]);
-  expect(current.actionSyntax.rejects).toContain("xml-tool-call");
+  for (const reason of [
+    "no-tool-call",
+    "multiple-tool-calls",
+    "unknown-tool",
+    "malformed-arguments",
+  ])
+    expect(current.actionSyntax.rejects).toContain(reason);
   // 收工工具取自 rootfs 与白名单,不是在本文件里再抄一个名字。
   expect(current.finish.command).toBe("finish");
   expect(SANDBOX_ROOTFS_FILES).toContain(`bin/${current.finish.command}`);

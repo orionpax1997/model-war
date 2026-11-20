@@ -13,6 +13,8 @@ v1 / v2 成功档与失败档仍要能被报告、复跑与回放读出。那些
 | `legacy-plain/` | `archive/claude-haiku-5-5/2026-10-10T16-31-38-484Z/` | 最早的 11 键形状：无 `optimization`、无 `selection`、无 `channelId` |
 | `legacy-failure-transport/` | `archive/deepseek-v4.1-flash/failed-2026-10-08T14-49-44-003Z.json` | 零 prompt 的传输失败记录（无候选、无日志行） |
 | `legacy-failure-candidates/` | `archive/mimo-v2.6-pro/failed-2026-11-09T04-05-15-241Z.json` | 带一个 `stage: 0` 候选的传输失败记录（候选描述 + 传输末行） |
+| `v3-glyph-cluster/` | `archive/glyph-cluster/2026-11-19T11-29-52-739Z/` | **v3 真档的唯一副本**（12 步 `bash` + 3 步 `evaluate`、`wall-clock`、3 候选）。升到 v4 之后它证明「v3 照旧可读、不迁移」 |
+| `v4-tool-call/` | 由生成侧写入器造（非真档） | **v4 的形状**：一条 steps 里 `bash` / `check` / `probe` / `evaluate` / `done` 五档齐全、`steps[i].toolCall` 带逐字 `argumentsJson`（含 `\u003c` 与多余空格两种与 `action.command` **不同形**的写法） |
 
 每个目录都是一个**报告根的雏形**：`<dir>/archive/<slug>/…`，直接 `cp -r` 到临时目录就能喂
 `readArchiveReports(root)`（测试里就是这么做的）。
@@ -32,6 +34,24 @@ v1 / v2 成功档与失败档仍要能被报告、复跑与回放读出。那些
 观测文件（`observed-*.jsonl`）与网格汇总（`*.grid.json`）**没有**复制：读侧对缺席的观测写
 `state: "missing"` 而不是伪造读数，那本身就是一条要覆盖的分支（`packages/runner/src/archive-report.test.ts`
 另有「观测在位」的用例）。
+
+## v3 与 v4 两份新夹具的改写清单
+
+前五份是 one-shot 时代（v1 / v2）的档，改写纪律见上一节。这两份是 agent 形态（分步）的档，
+纪律相同、只有两处新增：
+
+1. **v3 那份是真档的瘦身副本**（不是合成）。它保住了 20 个顶层键、15 条步的动作与耗时、
+   16 行生成日志的用量读数，以及三份候选的 `.candidate.js` / `.candidate.ts` **逐字节**——
+   所以 `scriptSha256` 与文件实测值仍然对得上，「身份能核实」这条判据在副本上照旧成立。
+   改写的有三处：`model` 换成中性 slug（目录名同步）、`runId` 换成中性值（文件名与候选的
+   `scriptFile` / `observationsFile` 同步）、`prompts` 与每步的 `stdout` / `raw` 与日志里的
+   **证据来源自由文本**截短（它们是体积大头，而读侧只认 `status` 与长度无关的结构）。
+2. **v4 那份由写入器造**（`@model-war/gen` 的 `buildArchiveMeta` + `commitArchive`），因为
+   v4 真档还不存在（第一次真会话是票 07）。它必须造而不是手写：`meta.json` 的键序、`prompts`
+   公式与三件套的 `scriptSha256` 都得是**写入口径**，手写一份等于把判据钉在一个不存在的
+   形状上。它带的那两种 `argumentsJson` 写法（`\u003c`、`{ "command" : … }`）刻意为「逐字字节」
+   那条反例服务：它们与 `action.command` 解析后的值**不同形**，所以「按 `argumentsJson` 读」
+   与「按 `action.command` 重编码」在这份夹具上给出不同答案。
 
 ## 为什么不参与格式与类型检查
 
