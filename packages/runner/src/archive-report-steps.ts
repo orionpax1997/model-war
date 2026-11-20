@@ -21,13 +21,16 @@
  */
 
 import {
+  ARCHIVE_STEP_JSON_SCHEMA,
   ARCHIVE_TERMINATIONS,
   type ArchiveShapeVersion,
+  type ArchiveStepAction,
   type ArchiveTermination,
 } from "@model-war/schema";
 
 import type { ArchiveReport, ArchiveReportRound } from "./archive-report.js";
 import { numberOf, objectOf } from "./archive-report-evidence.js";
+import { isAgentShape } from "./archive-optimization.js";
 
 /**
  * 分位读数。`count` 是参与计算的值个数——它是「这些分位由几个数得来」的唯一凭据：
@@ -58,11 +61,20 @@ export type ReportArchiveShape = {
 /**
  * 过程记录里那一步的**动作**（ADR-0031 的闭集，v4 起六档）。`null` = 档案里的取值不在闭集里。
  *
- * 下标数组（`actions`）与这份类型是**同一件事的两份写法**：新增一档要两处都改，否则步级表那一格
- * 会渲染成 `null`（看起来像「档案里没这一项」而不是「这一项没被认识」）。这条纪律归票 05 收口，
- * 本票只保证 `check` / `probe` 两档两处都在。
+ * ── 它不是第二份枚举 ──
+ *
+ * 类型从 `ArchiveStepAction` 的判别字段派生，运行期的闭集从 `ARCHIVE_STEP_JSON_SCHEMA` 的
+ * `oneOf` 派生（那是装载期实际校验用的那一份）。上一轮复核删掉过一处同款的手抄白名单
+ * （`archive-report-evidence.ts` 的失败分类），教训是「两份枚举之间总有一条路会红」：
+ * 新加一档忘了抄进运行期数组时，步级表那一格渲染成 `null`——看起来像「档案里没这一项」
+ * 而不是「这一项没被认识」。
  */
-export type ReportStepAction = "bash" | "check" | "probe" | "evaluate" | "done" | "none";
+export type ReportStepAction = ArchiveStepAction["kind"];
+
+/** 运行期闭集（与上面那个类型同源，两处都不手写）：动作名 → 它自己，顺序即 schema 的书写序。 */
+const actions: readonly ReportStepAction[] = ARCHIVE_STEP_JSON_SCHEMA.properties.action.oneOf.map(
+  (branch) => branch.properties.kind.const,
+);
 
 /** 结果侧证据（`steps[i].result`）：这一轮被什么驱动、编译错误码。 */
 export type ReportStepResult = {
@@ -91,6 +103,15 @@ export type ReportStep = {
   readonly cacheHitRate: number | null;
   readonly result: ReportStepResult | null;
   readonly exitCode: number | null;
+  /**
+   * 这一步交给 `bash` 的那条命令串：`steps[i].action.command` 的解析值（只有 `bash` 那一档有）。
+   *
+   * 它**不是**从 `toolCall.argumentsJson` 重解一份。v4 的逐字字节住在 `toolCall`，这一格是写侧
+   * 解析出来给人读的值——ADR-0031 的两个家。两者可以不同形（`\u003c` 与 `<`、多余空格），所以
+   * 报告两个都给：读者看得出「发回去的字节」与「我们实际跑的命令」在哪里分岔，也就能一眼看出
+   * `raw` 为空串的那一步到底做了什么。
+   */
+  readonly command: string | null;
   /**
    * 这一步发起的那一次工具调用（v4 才有）：`name` 与**逐字**的 `argumentsJson`。
    *
@@ -230,14 +251,15 @@ const toolCallOf = (raw: unknown): ReportStepToolCall | null => {
   return { name, argumentsJson };
 };
 
-const actions: readonly ReportStepAction[] = ["bash", "check", "probe", "evaluate", "done", "none"];
-
 const actionOf = (raw: unknown): ReportStepAction | null => {
   const kind = objectOf(raw).kind;
   return typeof kind === "string" && (actions as readonly string[]).includes(kind)
     ? (kind as ReportStepAction)
     : null;
 };
+
+/** `steps[i].action.command` 的读入：只有 `bash` 那一档带它，其余档与旧档都是 `null`。 */
+const commandOf = (raw: unknown): string | null => stringOf(objectOf(raw).command);
 
 /**
  * 结果侧证据的读入。
@@ -299,12 +321,15 @@ export const stepsOf = (input: {
   readonly rounds: readonly ArchiveReportRound[];
   readonly protocolRounds: number;
 }): ReportSteps | null => {
-  if (input.shape === "legacy") return null;
+  if (!isAgentShape(input.shape)) return null;
   const raw = input.record.steps;
-  if (!Array.isArray(raw)) throw new Error("v3 档案缺过程记录 steps：形状版本 3 要求它，拒读");
+  if (!Array.isArray(raw))
+    throw new Error(`档案形状版本 ${String(input.shape)} 缺过程记录 steps：这一版要求它，拒读`);
   const numbers = raw.map((item) => numberOf(objectOf(item).step));
   if (numbers.length !== input.protocolRounds || numbers.some((step, index) => step !== index + 1))
-    throw new Error("v3 档案的过程记录步号不是 1..协议轮数 的连续序列：拒读");
+    throw new Error(
+      `档案形状版本 ${String(input.shape)} 的过程记录步号不是 1..协议轮数 的连续序列：拒读`,
+    );
 
   // 传输末行不占步（ADR-0031）：它没有过程记录条目，也不该被数成「轮号多余」。
   const converged = input.rounds.filter((round) => round.responseConverged);
@@ -332,6 +357,7 @@ export const stepsOf = (input: {
       cacheHitRate: round?.cacheHitRate ?? null,
       result: resultOf(value.result),
       exitCode: integerOf(value.exitCode),
+      command: commandOf(value.action),
       toolCall: toolCallOf(value.toolCall),
       roundLinked: round !== undefined,
     };
@@ -389,7 +415,7 @@ export const contaminationOf = (input: {
   readonly shape: ArchiveShapeVersion;
   readonly rounds: readonly ArchiveReportRound[];
 }): ReportContamination | null => {
-  if (input.shape === "legacy") return null;
+  if (!isAgentShape(input.shape)) return null;
   let rateLimitedAttempts = 0;
   let backoffMs: number | null = null;
   for (const round of input.rounds) {
