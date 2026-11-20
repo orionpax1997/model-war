@@ -6,8 +6,9 @@
 
 ## 它是什么
 
-模型在沙箱里能看见的**全部**内容物:静态 `bash`、8 个静态 coreutils(`cat` / `ls` / `cp` / `grep` / `head` / `sed` / `tail` / `wc`)、
-三个受限工具的薄壳(`check` / `evaluate` / `finish`)与只读契约 `/contract` 四条。
+模型在沙箱里能看见的**全部**内容物:静态 `bash`、8 个静态 coreutils(`cat` / `ls` / `cp` / `grep` / `head` / `sed` / `tail` / `wc`)
+与只读契约 `/contract` 四条。`check` / `evaluate` / `finish` **不在这里**:它们是模型发起的
+工具调用,由宿主分派,沙箱里连这三个名字都没有
 沙箱的根是空的(`bwrap --tmpfs /`),**只** `--ro-bind` 进这里的 `bin/` 与 `contract/`:
 宿主根目录一个 inode 都不出现,所以「绝对路径能绕过 PATH 白名单」这个问题结构上不存在。
 依据见 `docs/adr/0033-sandbox-executor.md`。
@@ -159,5 +160,4 @@ tar xf coreutils-9.12.tar.xz && cd coreutils-9.12 && ./configure --disable-nls -
 
 - `PROVENANCE.md`(本文件)不在挂载面上,也不算进整棵树哈希:树哈希的口径是**模型可见世界的
   哈希**,改一句说明不该改变模型看见的字节。
-- 薄壳的源码真源在 `packages/gen/src/agent/shim/shim.sh`;这里的三个名字是它的逐字节副本。
 - 契约的真源是 `docs/rules-v2/`;这里的 `contract/` 是它的逐字节副本(运行期不 bind 宿主 checkout)。

@@ -138,21 +138,6 @@ const noActionObservation = (message: string): StepObservation => ({
   exitCode: ACTION_REJECT_EXIT_CODE,
 });
 
-/**
- * 这一步交给执行器的**命令串**。
- *
- * `bash` 交那条命令本身;另外四个交**工具名**(`check` / `probe` / `evaluate` / `finish`)——
- * 它们由宿主受理,不经 `bash -c`。
- *
- * ⚠️ 这一处是**过渡态**:执行器的入参现在仍是 `{step, command}` 一格命令串,而 `check` /
- * `evaluate` / `finish` 在沙箱里仍有同名薄壳认得这个串(票 03 把分派器入口改形、删掉 fd 3
- * 薄壳之后,这里换成「工具名 + 参数」的显式入参)。`probe` 在这条过渡路径上没有执行体,模型
- * 真调它只会拿到一条「命令不存在」的观测——**这是有意的**:`probe` 要到票 08 才接进分派器,
- * 而档案形状(含 `{kind:"probe"}` 一档)本票就定型。
- */
-const commandOf = (parsed: Extract<ActionParse, { kind: "ok" }>): string =>
-  parsed.tool === "bash" ? (parsed.command ?? "") : parsed.tool;
-
 /** 这一步发起的**那一次**工具调用;零次或多于一次时没有「那一次」可指,回 `undefined`。 */
 const toolCallOf = (toolCalls: readonly ToolCall[] | undefined): ToolCall | undefined =>
   toolCalls?.length === 1 ? toolCalls[0] : undefined;
@@ -311,8 +296,16 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
         observation = noActionObservation(parsed.correction);
       } else {
         parseFailures = 0;
-        const executed = await request.executor({ step, command: commandOf(parsed) });
-        done = parsed.tool === "finish";
+        // 执行器拿到的是一次**工具调用**:`bash` 由它交给沙箱,其余四个交给宿主的 dispatch。
+        // loop 不判断哪一个是谁的事——它只把解析出来的那一次调用原样递下去。
+        const executed = await request.executor({
+          step,
+          call: { name: parsed.tool, argumentsJson: parsed.argumentsJson },
+          ...(parsed.command === undefined ? {} : { command: parsed.command }),
+        });
+        // 收工判据是「宿主收下了这次 `finish`」,不是「模型调了一个叫 finish 的东西」:
+        // 被拒的那一次(会话到点、参数误用)不算收工,与旧世界拒绝不置位同理。
+        done = executed.done === true;
         action = actionOf(parsed);
         observation = observationOf(executed);
         result = executed.result;

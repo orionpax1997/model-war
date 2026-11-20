@@ -1,13 +1,13 @@
 /**
  * 入库 rootfs 的**树口径**:文件枚举、整棵树哈希、以及「这是不是静态 ELF」的单份判断。
  *
- * 哪几个文件要过这条判断**不在这里**:清单与薄壳名只有一份,住在 `@model-war/schema` 的
+ * 哪几个文件要过这条判断**不在这里**:清单只有一份,住在 `@model-war/schema` 的
  * `sandbox-rootfs.ts`(本包零构建,经 `rootfs-drift.ts` 从源码文本里取,理由见那里)。本文件只提供
  * 「怎么枚举一棵树」「怎么判一份字节是静态 ELF」这两块与清单无关的口径。
  *
  * ── 哈希口径与票 02 的契约树哈希同源,但**范围不同,两者不能互换** ──
  * 两边都是「按路径排序、`path\0bytes` 串接后的 sha256」。这边算的是**整棵 rootfs**
- * (`packages/gen/sandbox-rootfs/`):静态 bash、几个静态 coreutils、三个薄壳、`contract/` 四条。
+ * (`packages/gen/sandbox-rootfs/`):静态 bash、八个静态 coreutils、`contract/` 四条。
  * 契约包身份(`docs/rules-v2/` 那四条)是另一个数,它由契约包自己算。把两个数当同一个用,
  * 会在「只改了 bash 版本、契约没动」时把契约身份也换掉——那是两种完全不同的断代。
  *
@@ -37,9 +37,6 @@ import { join } from "node:path";
  * 路径——那边是给消费者读的常量,这边是组装脚本与门禁用的字面量,门禁核对两者一致。
  */
 export const ROOTFS_DIR = "packages/gen/sandbox-rootfs";
-
-/** 薄壳的唯一源码真源(相对仓库根)。三个名字是同一份字节的三个副本(工具名取自 `$0`)。 */
-export const SHIM_SOURCE = "packages/gen/src/agent/shim/shim.sh";
 
 /** 产物旁边的来路说明书。它不在挂载面上,也不算进整棵树哈希(理由见头注)。 */
 export const ROOTFS_PROVENANCE_DOC = "PROVENANCE.md";
@@ -131,5 +128,5 @@ export const staticElfVerdict = (bytes: Buffer): ElfVerdict => {
   return { static: true, reason: "" };
 };
 
-/** 文件在磁盘上是否可执行(薄壳与二进制都必须可执行,否则挂进去也跑不起来)。 */
+/** 文件在磁盘上是否可执行(`bin/*` 都必须可执行,否则挂进去也跑不起来)。 */
 export const isExecutableFile = (path: string): boolean => (statSync(path).mode & 0o111) !== 0;

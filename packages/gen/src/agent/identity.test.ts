@@ -23,7 +23,7 @@ import {
   type HarnessManifest,
 } from "./identity.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
-import { CHANNEL_FD, DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
+import { DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
 import { OBSERVATION_LIMITS, RAW_PATHOLOGICAL_LIMIT_BYTES } from "./truncate.js";
 
 const manifest = (): HarnessManifest => harnessManifest();
@@ -66,25 +66,23 @@ it("清单里的数字取自真源,不是在本文件里抄的第二份", () => 
     "malformed-arguments",
   ])
     expect(current.actionSyntax.rejects).toContain(reason);
-  // 收工工具取自 rootfs 与白名单,不是在本文件里再抄一个名字。
+  // 收工工具取自声明与白名单,不是在本文件里再抄一个名字。
   expect(current.finish.command).toBe("finish");
-  expect(SANDBOX_ROOTFS_FILES).toContain(`bin/${current.finish.command}`);
   expect(HOST_SERVICE_TOOLS).toContain(current.finish.command);
 });
 
-it("收工语义与实现同义:它是命令、经通道上报、不阻断块内剩余命令", () => {
+it("收工语义与实现同义:它是一次工具调用,不是沙箱里的命令", () => {
   const current = manifest().finish;
   expect(current).toEqual({
     command: "finish",
-    form: "rootfs-shim",
-    signal: "host-channel",
+    form: "host-tool",
+    signal: "tool-call",
     stopsRemainingCommands: false,
     endsSession: true,
     countsAsStep: true,
   });
-  // `stopsRemainingCommands: false` 是这一版的行为放宽,不是笔误:整块交给 bash,
-  // `finish` 之后写的行仍会执行(ADR-0032 修订)。
-  expect(current.stopsRemainingCommands).toBe(false);
+  // 它是宿主的工具,所以**不在** `bin/` 里:模型在沙箱里连这个名字都敲不到。
+  expect(SANDBOX_ROOTFS_FILES).not.toContain(`bin/${current.command}`);
 });
 
 it("参数面进清单:工具不收参数,拒绝的退出码取自 dispatcher", () => {
@@ -100,16 +98,17 @@ it("参数面进清单:工具不收参数,拒绝的退出码取自 dispatcher", 
   expect(TOOL_USAGE.evaluate).toContain("不接受参数");
 });
 
-it("可见面取自真源:二进制清单与 rootfs 一致,三件受限工具确实存在", () => {
+it("可见面取自真源:二进制清单与 rootfs 一致,宿主工具一个都不在 `bin/` 里", () => {
   const current = manifest();
   expect(current.visibleBinaries).toEqual(
     SANDBOX_ROOTFS_FILES.filter((file) => file.startsWith("bin/")),
   );
+  // 判据的**方向反过来了**:旧世界要求这几件工具在 `bin/` 里是薄壳(它们在沙箱里,只是不干
+  // 实事);新世界它们不在沙箱里,「敲不到」正是这条判据要保住的性质。
+  expect(current.services.tools).toEqual(HOST_SERVICE_TOOLS);
   for (const tool of HOST_SERVICE_TOOLS) {
-    expect(SANDBOX_ROOTFS_FILES).toContain(`bin/${tool}`);
+    expect(SANDBOX_ROOTFS_FILES).not.toContain(`bin/${tool}`);
   }
-  // 通道 fd 取自执行器:宿主与薄壳写的是同一个数。
-  expect(current.services.channelFd).toBe(CHANNEL_FD);
 });
 
 it("挂载面与网络取自 bwrap 的参数表,不是另抄一张表", () => {

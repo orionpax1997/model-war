@@ -57,33 +57,16 @@ export {
   SANDBOX_ROOTFS_CONTRACT_DIR,
   SANDBOX_ROOTFS_DIR,
   SANDBOX_ROOTFS_FILES,
-  SANDBOX_ROOTFS_SHIMS,
   SANDBOX_ROOTFS_TREE_HASH,
 } from "./sandbox-rootfs.js";
 
-// 薄壳—宿主通道的协议体(ADR-0032「受限工具不是二进制,是宿主侧的服务」):一行 JSON 一请求
-// 一响应,跨进程交换。宿主侧的 dispatcher / 服务与 gate、单测读同一份;沙箱里那一侧是 bash,
-// 它按本模块定死的键序与转义表切字段(`packages/gen/src/agent/shim/shim.sh`)。
-export {
-  EVALUATE_CALL_LIMIT,
-  TOOL_CHANNEL_FD,
-  TOOL_NAMES,
-  TOOL_REQUEST_JSON_SCHEMA,
-  TOOL_RESPONSE_JSON_SCHEMA,
-  escapePayload,
-  parseToolRequest,
-  parseToolResponse,
-  serializeToolRequest,
-  serializeToolResponse,
-} from "./tool-channel.js";
-export type {
-  ToolName,
-  ToolRequest,
-  ToolRequestParse,
-  ToolResponse,
-  ToolResponseParse,
-  ToolResult,
-} from "./tool-channel.js";
+// `evaluate` 的会话配额真源(ADR-0030)。它以前和一条 fd 3 通道的协议体住在一起,通道已删
+// (票 03):现在这里只剩这个数,理由与「为什么没跟着通道一起删」写在那个文件头注里。
+export { EVALUATE_CALL_LIMIT } from "./tool-channel.js";
+
+// 宿主工具的一次结果(dispatcher 交回、两个服务产出、执行器读)。它以前是那条通道的响应体,
+// 现在是一个宿主内的对象——不序列化,所以也没有键序与转义表要守。
+export type { ToolOutcome } from "./tool-outcome.js";
 
 /** 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。

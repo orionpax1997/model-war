@@ -1208,7 +1208,7 @@ it("命令清单门禁:常量加了二进制而文案没跟上时变红并点名
   expect(clean.status, clean.output).toBe(0);
   // 规模自证:报告必须给出两组各自的条数——「退出 0」只有在真比过两个集合时才成立。
   expect(clean.output, clean.output).toContain("静态二进制");
-  expect(clean.output, clean.output).toContain("薄壳");
+  expect(clean.output, clean.output).toContain("宿主工具");
 
   const violated = withPatchedText(
     ROOTFS_MANIFEST_FILE,

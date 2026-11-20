@@ -1,10 +1,10 @@
 /**
- * `check` 服务:宿主侧的**类型检查 + 静态校验**,经薄壳通道交给沙箱里的模型。
+ * `check` 服务:宿主侧的**类型检查 + 静态校验**,由 `check` 工具调用交给模型。
  *
  * ── 复用什么、不复用什么 ──
  * 复用的是生成侧既有的两条调用缝:`compileScript`(tsc CLI,现场读版本)与 `validateScript`
  * (静态校验器的子进程入口,参数与相位照旧)。它们已经是「一次命令」的形状,这里只做三件
- * 薄壳不该做的事:读 `/workspace/script.ts`、把结果压成**前若干条 + 总数**、把全文落进
+ * 工具链里不该做的事:读 `/workspace/script.ts`、把结果压成**前若干条 + 总数**、把全文落进
  * 工作区(`/workspace/.check.txt`)。
  *
  * ── 为什么 stdout 只给前 20 条 + 总数(ADR-0030「观测外置」) ──
@@ -28,7 +28,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ToolResponse } from "@model-war/schema";
+import type { ToolOutcome } from "@model-war/schema";
 
 import { SCRIPT_SOURCE_NAME } from "../../archive.js";
 import { compileScript, type CompileResult } from "../../compile.js";
@@ -70,7 +70,7 @@ export type ValidateFn = (options: {
 export type CheckRequest = { readonly workspaceDir: string };
 
 /** 服务形态:给 dispatcher 调的那一个函数。 */
-export type CheckService = (request: CheckRequest) => Promise<ToolResponse>;
+export type CheckService = (request: CheckRequest) => Promise<ToolOutcome>;
 
 /** `createCheckService` 的依赖。除 `root` 全部可注入(单测不跑真 tsc、也不读规则集)。 */
 export type CheckServiceDeps = {
@@ -171,7 +171,7 @@ export const createCheckService = (deps: CheckServiceDeps): CheckService => {
   const validate = deps.validate ?? validateScript;
   const phase = deps.phase ?? "iteration";
 
-  return async (request: CheckRequest): Promise<ToolResponse> => {
+  return async (request: CheckRequest): Promise<ToolOutcome> => {
     const sourcePath = join(request.workspaceDir, SCRIPT_SOURCE_NAME);
     let source: string;
     try {
