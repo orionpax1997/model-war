@@ -245,7 +245,7 @@ it("判据 1（地基）：只用约 60% 预算 → 「充裕」档，三条轨�
   expect(report.nearLimit).toBe(false);
   const text = report.text;
   // 前 8 场 = 1 个组合 × 4 个座位 × 2 张地图（形状取自计划，不手写）。
-  // 充裕档按票面模板只说"前 8 场"；形状那句话在贴边档（见下一条用例）。
+  // 三档的开头都是同一个 `head`（形状那句话也在里面），充裕档不再另写一遍。
   expect(text).toContain("前 8 场");
   expect(text).toContain("最坏读数");
   // 三条轨的最坏读数都在，且带占用比例。
@@ -257,8 +257,11 @@ it("判据 1（地基）：只用约 60% 预算 → 「充裕」档，三条轨�
   expect(text).not.toContain("API 0/");
   // 充裕档必须自带两句免责。
   expect(text).toContain("这不等于整张 32 场通过");
-  expect(text).toContain("漏检率：真档四例预算触限发生在第 1、8、25、11 场");
+  // 漏检率那句：场数派生自 `PROBE_MATCH_LIMIT`，而四个场号只写在 `probe-limits.ts`
+  // （那组读数的唯一一份）——文案里**不逐场列号**，这一条盯的就是那个边界。
+  expect(text).toContain("漏检率：真档四例预算触限里");
   expect(text).toContain("2/4");
+  expect(text).not.toContain("第 1、8、25、11 场");
 });
 
 it("充裕档与贴边档都催复测：改过脚本就得重新 probe，否则读数对不上被评的那一版", () => {

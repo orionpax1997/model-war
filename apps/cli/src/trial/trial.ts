@@ -9,10 +9,14 @@
  *
  * ── 探针的三档文案也在这里，理由同一条 ──
  *
- * `probe` 与 `evaluate` 共用同一段**看轨话术**（`TRACK_LABELS` / `TRACK_HINTS`）：探针的
- * 「已越线」那一档必须是 `evaluate` 拦下时的那几句话，**逐字相同**——两处各写一份就会分叉，
- * 而分叉的形状是「模型在探针里读到 X、evaluate 里读到 Y」，读侧完全看不出来。
+ * 探针的「已越线」那一档**直接调** `renderBlockedTrip`：不是"也写了一份相似的话"，而是同一次调用
+ * ——分叉的形状是「模型在探针里读到 X、evaluate 里读到 Y」，读侧完全看不出来。
  *
+ * 另两档（贴边 / 充裕）的读数栏另有自己的说法（`PROBE_TRACK_NAMES`），两层不是同一张表：
+ * 拦下话术说的是"某某**计数**超限（读数…）"（句子的主语是轨名，而轨名的真源是
+ * `TRACK_LABELS`）；读数栏说的是"轨名 + 值/上限（占比）"的**键值对**，那里三条轨都在
+ * （含内存），而 `TRACK_LABELS` 只覆盖会被判负的两条轨：内存不产生触限记录，它在拦下话术里
+ * 没有句子可用。所以两张表**不重叠也不应合并**：一张是判负句子的词汇，一张是读数行的列名。
  *
  * 场数、地图、种子、座位、对手都在**试跑计划**里（形状在 `@model-war/schema` 的
  * `trial-plan.ts`，构造与校验在 `@model-war/runner` 的 `trial-plan.ts`）。本文件只接计划、
@@ -191,6 +195,13 @@ type ProbeTrack = {
   readonly limit: number;
 };
 
+/**
+ * 读数行的列名：拦下话术那一张表（`TRACK_LABELS`）不覆盖内存，见文件头注那段。
+ *
+ * `label` 比 `TRACK_LABELS` 少两个字（"计数"）：那两个字在拦下句子里是主语的一部分
+ * （"…计数超限（读数 61234，上限 50000）"），而在一条读数行里紧跟着数字（"…事件
+ * 48000/50000（96%）"）就成了重复。两种说法服务两种句式，不是两份真源。
+ */
 const PROBE_TRACK_NAMES = {
   eventTickLimit: { label: "单 tick 控制流事件", short: "事件" },
   apiCallTickLimit: { label: "单 tick API 调用", short: "API" },
@@ -256,11 +267,12 @@ export type ProbeReport = {
  *
  * ── 后两档必须自带两句免责 ──
  *
- * 1. **这不等于整张 32 场通过**：探针只跑前缀，另 24 场若越线 `evaluate` 仍会拦下；
- * 2. **漏检率 2/4**：真档四例预算触限发生在第 1、8、25、11 场，前 8 场只抓得到前两例。
+ * 1. **这不等于整张网格通过**：探针只跑前缀，窗外那些场若越线 `evaluate` 仍会拦下；
+ * 2. **漏检率**：真档四例预算触限里，前缀只抓得到一半。
  *
  * 两句都不是客套：没有它们，"探针绿了"会被读成"整张网格过了"，而那是 50% 的错误率。
- * N=8 与 80% 的来历见 `@model-war/schema` 的 `probe-limits.ts`。
+ * N=8 与 80% 的来历、以及那四例的场号与 2/4 只写在 `@model-war/schema` 的 `probe-limits.ts`
+ * （它头注的漏检率一段是那组读数的唯一一份：这一格与 `host/probe-service.ts` 都只说结论）。
  *
  * ── 后两档还有第三句：读数对应的是**哪一版**脚本 ──
  *
@@ -313,9 +325,12 @@ export const probeReportOf = (options: {
   const disclaimer =
     `**这不等于整张 ${String(total)} 场通过**：另 ${String(remaining)} 场若越线，` +
     "evaluate 仍会拦下。";
+  // 漏检率那句只说**事实**（前缀只抓得到一半），不逐场列号：四个场号与 2/4 的唯一一份在
+  // `@model-war/schema` 的 `probe-limits.ts` 头注。模型需要的只是"绿了也不等于赢了"，不需要
+  // 知道老档里那四例是哪几场（那是给人查的证据，不是给它看的任务）。
   const missRate =
-    `漏检率：真档四例预算触限发生在第 1、8、25、11 场，` +
-    `前 ${String(PROBE_MATCH_LIMIT)} 场只抓得到两例（2/4）。`;
+    `漏检率：真档四例预算触限里，前 ${String(PROBE_MATCH_LIMIT)} 场只抓得到两例（2/4）——` +
+    "另外两例落在窗口外，这一次的读数看不到它们。";
   // 有读数的两档共用这一句（来历见函数头注第三段）：防止模型拿旧读数去 evaluate 新脚本。
   const retest =
     "改过脚本之后要重新 probe 再 evaluate：否则 evaluate 评的是新脚本，" +
@@ -342,9 +357,7 @@ export const probeReportOf = (options: {
   }
   const readings = tracks.map((track) => describeTrack(track, "short")).join("、");
   return {
-    text:
-      `probe：前 ${String(options.matchCount)} 场跑完。最坏读数：${readings}。` +
-      `${retest}\n${disclaimer}\n${missRate}`,
+    text: `${head}最坏读数：${readings}。` + `${retest}\n${disclaimer}\n${missRate}`,
     verdict,
     nearLimit: false,
   };

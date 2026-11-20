@@ -15,6 +15,13 @@
  * 但它不知道);文案里写了 `evaluate` 而声明里改了名,模型照着调,拿一次 `unknown-tool` 拒绝换
  * 一条纠正。所以判据是**集合相等**,两个方向都判。
  *
+ * ── 第二条判据:`probe` 那一项写的场数 == `PROBE_MATCH_LIMIT` ──
+ *
+ * 它不是集合关系,而是**同一个数的两份手写**:工具声明的描述是模板字符串(gen 侧 import 得动
+ * schema,所以那份是派生的),首条消息里那句是散文(不能派生)。集合判据只比 `name:`,所以把
+ * 常量改成 4 而散文还写着"前 8 场"时,没有任何东西会红——模型照旧读到 8。这一条把散文与常量
+ * 绑上,理由与那条集合判据相同:两个给模型读的地方不能说两个数。
+ *
  * ── 为什么本文件与 `prompt-commands.ts` 是两条门禁 ──
  *
  * 首条消息的两节各有**不同的真源**:二进制那一节的真源是 `SANDBOX_ROOTFS_FILES`(归
@@ -30,11 +37,11 @@
  *
  * 本门禁挂在 `check:quick` 上,而快门禁必须零构建(`@model-war/gen` 与 `@model-war/schema` 的
  * `exports` 都指向 `dist/`,import 就让这条链依赖一次 `tsc -b`,hld §2.2.8、ADR-0003)。
- * 所以工具名与 rootfs 清单都按**源码文本**取(`rootfs-drift.ts` 的 `literalBody` 那一套)。
+ * 所以工具名与探针场数都按**源码文本**取(`rootfs-drift.ts` 的 `literalBody` 那一套)。
  * 抽不出来时**按失败处理并说明原因**,不静默放行——那正是「判据失明但门禁全绿」的形态。
  *
- * 这份源码文本读取是**被迫的重复**(第三处,前两处是 `prompts/agent.md` 的模板文本与 schema 的
- * 常量源码):`packages/gen/src/agent/tools.ts` 的头注写着「改常量写法就同步改门禁取法」。
+ * 这份源码文本读取是**被迫的重复**(第三、四处,前两处是 `prompts/agent.md` 的模板文本与
+ * schema 的常量源码):`packages/gen/src/agent/tools.ts` 的头注写着「改常量写法就同步改门禁取法」。
  */
 
 import {
@@ -64,7 +71,6 @@ export const AGENT_SYSTEM_PATH = "prompts/agent-system.md";
 
 /** `AGENT_TOOLS` 声明里每个工具的开头:`name: "..."`。 */
 const DECLARED_NAME = /\bname:\s*"([A-Za-z][A-Za-z0-9-]*)"/gu;
-
 /** `AGENT_TOOLS` 那段数组字面量的两端。抽不到任一端 = 判据失明,入口按失败处理。 */
 const ARRAY_START = /export const AGENT_TOOLS = \[/u;
 const ARRAY_END = /\] as const;/u;
@@ -216,6 +222,101 @@ export const hostToolFindings = (
   }
 
   return findings;
+};
+
+/**
+ * 探针场数常量的家(仓库相对)。
+ *
+ * 为什么不和另外两份源码路径合一个常量:三者读的是**不同门禁判据的真源**——本文件读两份
+ * (工具名、探针场数),`sandbox-rootfs/rootfs-drift.ts` 读 rootfs 清单。合起来会让"哪份文本
+ * 喂哪个判据"看不见。零构建下不得 import `@model-war/schema`(它的 `exports` 指向 `dist/`),
+ * 所以这份路径只能由门禁自己写一遍(与 `SCHEMA_CONSTANTS_SOURCE` 同类)。
+ */
+export const PROBE_LIMITS_SOURCE = "packages/schema/src/probe-limits.ts";
+
+/**
+ * `prompts/agent.md` 里 `probe` 那一项写的场数:`**前 8 场**`里的那个 `8`。
+ *
+ * 只认这一种写法(`前 N 场`)——它正是模型读到的那句话里的数。认不出来 = 判据失明,按失败处理:
+ * 散文重写而门禁安静放过,就是这一整条判据白给。
+ */
+const PROBE_MATCH_COUNT = /前\s*(\d+)\s*场/u;
+
+/** 从 schema 源码文本里抽 `PROBE_MATCH_LIMIT` 的正文。 */
+const PROBE_MATCH_LIMIT_TAIL = /export const PROBE_MATCH_LIMIT\s*(?::[^=]+)?=\s*/u;
+
+/** 抽出来的探针场数。抽不出来时带原因返回,调用方按失败处理(不猜、不跳过)。 */
+export type ProbeMatchLimit =
+  | { readonly ok: true; readonly limit: number }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * 从 `packages/schema/src/probe-limits.ts` 的源码文本里取 `PROBE_MATCH_LIMIT` 的整数值。
+ *
+ * 取法与 `declaredToolNamesFrom` 同一套:先用一个形状去定位,**抽不出来就是红**,不是 0 也不是
+ * 修默。那个常量是 `8 as const`(数字字面量),所以只认前导整数;改成表达式、改成从别处引用
+ * 都会让这里抽不到——那时该改的是本函数的取法。
+ */
+export const probeMatchLimitFrom = (source: string): ProbeMatchLimit => {
+  const head = PROBE_MATCH_LIMIT_TAIL.exec(source);
+  const tail = head === null ? "" : source.slice(head.index + head[0].length);
+  const digits = /^(\d+)/u.exec(tail);
+  if (digits?.[1] === undefined) {
+    return {
+      ok: false,
+      reason:
+        `从 ${PROBE_LIMITS_SOURCE} 的源码文本里取不到 \`PROBE_MATCH_LIMIT\` 的整数:` +
+        "本门禁零构建、只能读源码文本(不 import 真源包)。改过常量的写法就同步改本门禁的取法" +
+        "(`probeMatchLimitFrom`)。",
+    };
+  }
+  return { ok: true, limit: Number(digits[1]) };
+};
+
+/**
+ * 判据:`prompts/agent.md` 里 `probe` 那一项写的场数,必须等于 `PROBE_MATCH_LIMIT`。
+ *
+ * ── 为什么要这条 ──
+ *
+ * 场数在两个地方给模型读:工具声明的描述(那份是**模板字符串,从常量派生**,见
+ * `packages/gen/src/agent/tools.ts`)与首条消息那句散文(那份**手写**,不能派生)。上面那条集合
+ * 相等的判据只比 `name:`,所以散文里写死"前 8 场"时,把常量改成 4 也不会有任何门禁变红——
+ * 模型会照旧读到 8。这一条把散文与常量绑上,红的时候指得到那一行。
+ *
+ * 找不到 `probe` 那一项时**不在这里报**:那是 `hostToolFindings` 的主方向(缺项),这一条只
+ * 负责"写了的那个数对不对"。找不到那个数时按失败处理(散文换了写法)。
+ */
+export const probeCountFindings = (
+  template: string,
+  limit: number,
+): readonly PromptCommandFinding[] => {
+  const probe = listedCommands(template).find(
+    (item) => item.group === "hostTools" && item.name === "probe",
+  );
+  if (probe === undefined) return [];
+  const written = PROBE_MATCH_COUNT.exec(probe.purpose)?.[1];
+  if (written === undefined) {
+    return [
+      {
+        where: `${AGENT_TEMPLATE_PATH}:${String(probe.index)}`,
+        detail:
+          "`probe` 那一项里读不到「前 N 场」这个数:本门禁按这个形状把散文与 " +
+          "`PROBE_MATCH_LIMIT` 绑在一起。模型要靠这句话知道探针只跑前缀,连场数都不说" +
+          "(或换了写法),它就只能猜——要么写回「前 N 场」,要么同步改本门禁的取法(`probeCountFindings`)。",
+      },
+    ];
+  }
+  if (Number(written) === limit) return [];
+  return [
+    {
+      where: `${AGENT_TEMPLATE_PATH}:${String(probe.index)}`,
+      detail:
+        `\`probe\` 那一项写的是「前 ${written} 场」,而 ${PROBE_LIMITS_SOURCE} 的 ` +
+        `\`PROBE_MATCH_LIMIT\` 是 ${String(limit)}:工具声明的描述是**派生**的(已经说 ${String(limit)} 场),` +
+        "这份散文是手写的、不会自己跟上。模型读到的两处会各说一个数——把这一行的场数改成 " +
+        `${String(limit)}。`,
+    },
+  ];
 };
 
 /**

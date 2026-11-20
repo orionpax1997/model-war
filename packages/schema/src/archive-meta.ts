@@ -244,11 +244,20 @@ export type ArchiveStepAction =
    */
   | { readonly kind: "check" }
   /**
-   * 这一步调用了 `probe` 工具：拿当前脚本跑完整计划的**前 8 场**，回每轨最坏占用读数。
+   * 这一步调用了 `probe` 工具：拿当前脚本跑完整计划的**前几场**（场数与来历见
+   * `probe-limits.ts` 的 `PROBE_MATCH_LIMIT`），回每轨最坏占用读数。
    *
-   * **v4 新增，本批是一个没有写者的合法成员**——`probe` 要到票 08 才接进 dispatcher。这一档
-   * 现在就定型是**有意的**：它让 `archiveSchemaVersion: 4` 一次定死，票 08 不必再动一次版本号。
-   * 在那之前，v4 的写者从不产出它；v3 档更是**拒读**它（v3 的世界里没有这个工具）。
+   * **v4 新增**。独立成档而不记成 `{kind:"bash", command:"probe"}`：那是让档案说谎——新世界里
+   * 没有一次 `bash -c` 跑过 `probe`。读侧因此能把「跑了 4 次 bash」与「probe 了 4 次」分开。
+   *
+   * **定档时它是一个没有写者的合法成员，那是有意的**：票 02 定 v4 形状时 `probe` 还没接进
+   * dispatcher（写者要到票 08），现在就定型是为了让 `archiveSchemaVersion: 4` **一次定死**，
+   * 票 08 接线时不必再动一次版本号。留空窗的代价只有一条——那段时间里 v4 的写者从不产出它，
+   * 而读侧认得它。
+   *
+   * **现在它有写者了**：票 08 已接线，`agent/loop.ts` 把 `probe` 调用归成
+   * `{kind: "probe"}`，`host/dispatcher.ts` 与 `host/probe-service.ts` 执行它。
+   * v3 档仍**拒读**这一档（v3 的世界里没有这个工具）。
    */
   | { readonly kind: "probe" }
   /** 这一步调用了 `evaluate` 工具：这一次评测产出一个候选（ADR-0030「`evaluate` 即提交」）。 */
