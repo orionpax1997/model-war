@@ -157,6 +157,27 @@ it("缺档即拒绝：理由指名缺的是哪一份，不崩、不静默跳过"
   expect(result.reason).toContain(last.runId);
   expect(result.reason).toContain(`archive/${last.id}/${last.runId}/script.js`);
   expect(result.reason).toContain("读不到");
+  // 存档目录还在、只是那一跑没落 `script.js`：理由指向「那一跑没落产物」，不提拓存档。
+  expect(result.reason).toContain("该运行标识下没有 script.js");
+  expect(result.reason).not.toContain("整个不存在");
+});
+
+it("整个 archive/<slug>/ 不在时理由说清是要拓存档（新 worktree / 干净克隆的真形状）", () => {
+  // 真会话常见的那一种：worktree 里 `archive/` 是 gitignored，一份都没有。
+  // 与「目录在但缺 script.js」是两种成因，做法也不同，所以文案必须能分开。
+  const { root, ladder, substitute } = fixture();
+  const last = ladder[2]!;
+  rmSync(join(root, "archive", last.id), { recursive: true, force: true });
+  expect(existsSync(join(root, "archive", last.id))).toBe(false);
+  const result = loadSparringPool({ root, model: "brand-new-model", ladder, substitute });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.reason).toContain(last.id);
+  expect(result.reason).toContain(`archive/${last.id}/`);
+  expect(result.reason).toContain("整个不存在");
+  // 指向可做的事：拓存档，且指到写那条命令的文档。
+  expect(result.reason).toContain("archive/");
+  expect(result.reason).toContain("README");
 });
 
 it("在位取该模型最近一次冻结存档：字典序最大的旁挂目录不算，且摘要随文件而定", () => {

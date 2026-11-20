@@ -489,7 +489,7 @@ const createExecutor =
 const assertToolSurface = (config: ModelConfig): void => {
   if (endpointSpec(config.endpointFamily).tools === undefined) {
     throw new Error(
-      `模型 ${config.slug}:端点位 ${config.endpointFamily} 未声明工具调用能力（未经验证），拒绝起跑` +
+      `模型 ${config.slug}:端点位 ${config.endpointFamily} 未声明工具调用能力（未经验证），拒绝起跑 ` +
         `agent 会话。这不等于该席位被渠道拒：原因是本族的工具翻译零证据，不是账号档位。`,
     );
   }
