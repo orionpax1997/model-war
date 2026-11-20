@@ -14,6 +14,7 @@ import { generationParams, generationRequestEvidence } from "../generation-polic
 import { policyFixture } from "../generation-policy.fixture.js";
 import { createHttpModelClient as createExportedModelClient } from "../index.js";
 import type { ChatMessage, ModelClient } from "../model-client.js";
+import { AGENT_TOOLS } from "../agent/tools.js";
 import { TransportError } from "../transport-error.js";
 import { createHttpModelClient } from "./client.js";
 
@@ -553,6 +554,57 @@ it("baseUrl 末尾斜杠不产生双斜杠", async () => {
   await client.send([user("hi")], {});
 
   expect(ep.requests[0]?.path).toBe("/chat/completions");
+});
+
+it("options.tools:请求体带上 `tools` 与 `tool_choice: auto`,响应把 `tool_calls` 读成结构字段", async () => {
+  const argumentsJson = '{"command": "ls /contract"}';
+  const ep = await endpoint((_captured, res) =>
+    json(res, 200, {
+      choices: [
+        {
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "bash", arguments: argumentsJson },
+              },
+            ],
+          },
+        },
+      ],
+      usage: { total_tokens: 5 },
+    }),
+  );
+  const client = createHttpModelClient(config("chat-completions", ep.baseUrl));
+
+  const response = await client.send([user("hi")], {}, { tools: AGENT_TOOLS });
+
+  const body = ep.requests[0]?.body as Record<string, unknown>;
+  expect(body.tool_choice).toBe("auto");
+  expect((body.tools as unknown[]).length).toBe(AGENT_TOOLS.length);
+  // 不发 `parallel_tool_calls`:那是 OpenAI 专有键,别的渠道可能 400(ADR-0032 落选段)。
+  expect("parallel_tool_calls" in body).toBe(false);
+  // 工具调用那一轮 content 是 `null`,产物在 tool_calls 里。
+  expect(response.text).toBe("");
+  expect(response.finishReason).toBe("tool_calls");
+  expect(response.toolCalls).toEqual([{ name: "bash", argumentsJson }]);
+});
+
+it("options.tools 传给未声明工具能力的端点族:当场拒发(不发一个上游认不出的请求)", async () => {
+  const ep = await endpoint((_captured, res) => json(res, 200, {}));
+  // 这道防线挡的是「绕过 pipeline 直调适配器」:静默丢掉声明会让「本族不支持」与
+  // 「忘了传」在代码里长得一模一样。
+  for (const family of ["messages", "responses", "generate-content"] as const) {
+    const client = createHttpModelClient(config(family, ep.baseUrl));
+    await expect(client.send([user("hi")], {}, { tools: AGENT_TOOLS })).rejects.toThrow(
+      /未声明工具调用能力/,
+    );
+  }
+  expect(ep.requests).toHaveLength(0);
 });
 
 it("缺凭证环境变量:抛明确错误(点名变量名)、不发请求、消息不含任何 key", async () => {

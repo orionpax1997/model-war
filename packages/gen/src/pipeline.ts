@@ -69,7 +69,15 @@ import {
   type UsageCaliber,
 } from "./generation-evidence.js";
 import { generationParams, generationRequestEvidence } from "./generation-policy.js";
-import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./model-client.js";
+import type {
+  ChatMessage,
+  ModelClient,
+  ModelParams,
+  ModelResponse,
+  SendOptions,
+} from "./model-client.js";
+import { endpointSpec } from "./http/endpoints.js";
+import { AGENT_TOOLS, type ToolDeclaration } from "./agent/tools.js";
 import {
   SCRIPT_PRODUCT_NAME,
   SCRIPT_SOURCE_NAME,
@@ -431,6 +439,30 @@ const createExecutor =
   };
 
 /**
+ * 会话起跑前的**工具能力拒跑**(ADR-0032「未验证的翻译不写」)。
+ *
+ * ── 为什么在起跑前,而不是第一步 ──
+ *
+ * 不支持工具调用的席位不会「报错」:它的每一步都是一次零调用,仃步累积到 `action-parse`,
+ * 墙钟与 token 全部白花,而读报告的人只能看到「0 候选」。同样一件事在这里只需一句抛错就能
+ * 说清,而且一分钱不花。
+ *
+ * ── 文案说的是「本族未声明」,不是「该席位被渠道拒」──
+ *
+ * 后者是**运行期**事实（`claude-haiku-5-5` 在本账号档位下整个 `/messages` 都 403），归渠道
+ * 与档位管;而本函数判的是**协议**:「这一族的工具翻译被真实响应验证过吗」。把两件事写成
+ * 一句话,只会让后人以为「修好席位就能跑」,而实际要修的是翻译。
+ */
+const assertToolSurface = (config: ModelConfig): void => {
+  if (endpointSpec(config.endpointFamily).tools === undefined) {
+    throw new Error(
+      `模型 ${config.slug}:端点位 ${config.endpointFamily} 未声明工具调用能力（未经验证），拒绝起跑` +
+        `agent 会话。这不等于该席位被渠道拒：原因是本族的工具翻译零证据，不是账号档位。`,
+    );
+  }
+};
+
+/**
  * 一次 `send` 的传输层包装:`retryTransport` 负责 429 / 连接级两套预算(ADR-0036)。
  *
  * ── 截断**不**在这里重试 ──
@@ -445,6 +477,8 @@ const sendWithTransportRetry = async (options: {
   readonly params: ModelParams;
   readonly evidence: AttemptEvidence[];
   readonly caliber: UsageCaliber | undefined;
+  /** 本会话的工具声明;缺席即不带 `tools` 发请求。 */
+  readonly tools?: readonly ToolDeclaration[];
   /** 会话总墙钟的中止信号(ADR-0029/0035):到点即打断进行中的调用。 */
   readonly signal: AbortSignal;
   /** 退避等待的实现(会话预算在这里停表,ADR-0036)。 */
@@ -462,6 +496,7 @@ const sendWithTransportRetry = async (options: {
       try {
         const response = await options.client.send(options.messages, options.params, {
           signal: options.signal,
+          ...(options.tools === undefined ? {} : { tools: options.tools }),
         });
         options.evidence.push(responseAttemptEvidence(number, response, options.caliber));
         return response;
@@ -559,6 +594,8 @@ export const generateOneModel = async (
     );
 
   const prompt: AgentPrompt = request.agentPrompt ?? loadAgentPrompt(request.root);
+  // 起跑前拒跑:本族的工具翻译零证据就不开始(理由见 `assertToolSurface`)。
+  assertToolSurface(config);
   // ── 工作区不住在 `archive/` 里 ──
   //
   // 那个目录的发布不变量是「目录存在 ⇔ 三件套完整」(ADR-0031),而工作区是一个**中途"留下来**的
@@ -683,7 +720,11 @@ export const generateOneModel = async (
   try {
     const loop = await runAgentSession({
       model: {
-        send: async (messages: readonly ChatMessage[], sendParams: ModelParams) => {
+        send: async (
+          messages: readonly ChatMessage[],
+          sendParams: ModelParams,
+          sendOptions?: SendOptions,
+        ) => {
           const record: SendRecord = { evidence: [], backoffMs: 0 };
           sends.push(record);
           inFlightSend = record;
@@ -695,6 +736,7 @@ export const generateOneModel = async (
               client,
               messages,
               params: sendParams,
+              ...(sendOptions?.tools === undefined ? {} : { tools: sendOptions.tools }),
               evidence: record.evidence,
               caliber,
               signal: controller.signal,
@@ -717,6 +759,8 @@ export const generateOneModel = async (
       executor,
       system: prompt.system,
       firstUser: prompt.user,
+      // 五个工具的声明(票 01 的 `AGENT_TOOLS`)。这是**协议面**:它每轮都带,不从 `params` 走。
+      tools: AGENT_TOOLS,
       params,
       contextLength,
       maxSteps,

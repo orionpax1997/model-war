@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -298,7 +306,7 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
   }
 });
 
-it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h 分档与命中率", async () => {
+it("messages 族：起跑前拒跑并点名「本族未声明工具能力」,一次模型调用都不发", async () => {
   const root = makeRoot();
   const config: ModelConfig = {
     slug: "alpha",
@@ -321,116 +329,48 @@ it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h
       transport: { authentication: "bearer" },
     },
   };
-  // 真实 Anthropic 响应形状：写入量拆 5m / 1h 两档，总量与分档同时出现。
-  const usage = {
-    input_tokens: 4,
-    output_tokens: 5,
-    cache_creation_input_tokens: 14024,
-    cache_read_input_tokens: 0,
-    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 14024 },
-    output_tokens_details: { thinking_tokens: 0 },
-  };
-  // 三步:写脚本 → evaluate → done(不 done 的话会话会跑到步数耗尽)。
-  const bodies = [
-    JSON.stringify({
-      content: [
-        {
-          type: "text",
-          text: `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${script}EOF\n\`\`\``,
-        },
-      ],
-      stop_reason: "end_turn",
-      usage: { ...usage, prompt: secret, provider_error: secret },
-    }),
-    JSON.stringify({
-      content: [{ type: "text", text: "```bash\nevaluate\n```" }],
-      stop_reason: "end_turn",
-      // 后续步骤不带 usage:合计口径只对着第一条响应。
-      usage: null,
-    }),
-    JSON.stringify({
-      content: [{ type: "text", text: "```bash\nfinish\n```" }],
-      stop_reason: "end_turn",
-      // 后续步骤不带 usage:合计口径只对着第一条响应。
-      usage: null,
-    }),
-  ];
-  let call = 0;
-  const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => {
-    const body = bodies[call] ?? bodies[bodies.length - 1]!;
-    call += 1;
-    return new Response(body, { headers: { "content-type": "application/json" } });
-  });
+  const fetch = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ content: [], stop_reason: "end_turn", usage: null }), {
+        headers: { "content-type": "application/json" },
+      }),
+  );
   vi.stubGlobal("fetch", fetch);
   vi.stubEnv("USAGE_REPORT_TEST_KEY", secret);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   try {
-    const outcome = await withRealBash(workspaceDir, () =>
-      generateOneModel(
-        {
-          root,
-          runId: "r1",
-          agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
-          createClient: createHttpModelClient,
-          workspaceDir,
-          // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
-          // 「会话已到点」,而那与被测的 usage 投影毫无关系。
-          now: () => new Date(),
-          trial: completeGridTrial(),
-          trialPlan: () => gridPlanFixture(),
-        },
-        config,
+    // ── 这条用例以「拒跑」为被测行为,不是以 usage 投影为被测行为 ──
+    //
+    // 2026-11-20 真请求探针:该席位在 `/messages` 上**带不带 `tools` 都是 HTTP 403
+    // permission_error**(整套端点被渠道拒),所以「`tool_use` / `tool_result` 能不能配对」
+    // 零证据;零证据就不写翻译(票 01 / ADR-0032)。于是 agent 会话在**起跑前**被拒,
+    // 而不是花 20 分钟跑到 0 候选才发现。
+    //
+    // 它原先覆盖的三件事仍然各有自己的家,没有丢:
+    // - 缓存断点进请求体 → `packages/gen/src/http/endpoints.test.ts`(messages 族 buildBody);
+    // - 口径 `anthropic` 的投影 → `packages/gen/src/generation-policy.test.ts` 的 `projectUsage`;
+    // - 报告侧 `缓存写 1h` 的渲染 → `packages/runner/src/archive-report.test.ts`。
+    await expect(
+      withRealBash(workspaceDir, () =>
+        generateOneModel(
+          {
+            root,
+            runId: "r1",
+            agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
+            createClient: createHttpModelClient,
+            workspaceDir,
+            now: () => new Date(),
+            trial: completeGridTrial(),
+            trialPlan: () => gridPlanFixture(),
+          },
+          config,
+        ),
       ),
-    );
-    expect(outcome.kind).toBe("frozen");
-    const requestBody = fetch.mock.calls[0]?.[1]?.body;
-    if (typeof requestBody !== "string") throw new Error("请求体不是字符串");
-    const body = JSON.parse(requestBody) as {
-      messages: {
-        role: string;
-        content: { type: string; text: string; cache_control?: unknown }[];
-      }[];
-      system?: unknown;
-      stream?: unknown;
-    };
-    // 断点打在前缀末尾:首条 user 消息(此时是唯一一条 dialog 消息)的内容块挂缓存标记;
-    // system 协议提示被抽到顶层 `system` 字段(Anthropic 没有 system 角色)。
-    expect(body.stream).toBe(true);
-    expect(body.system).toBeDefined();
-    expect(body.messages).toHaveLength(1);
-    expect(body.messages[0]?.content).toHaveLength(1);
-    expect(body.messages[0]?.content[0]).toMatchObject({
-      type: "text",
-      cache_control: { type: "ephemeral", ttl: "1h" },
-    });
-    const meta: ArchiveMeta = JSON.parse(
-      readFileSync(join(root, "archive/alpha/r1/meta.json"), "utf8"),
-    );
-    const log = JSON.parse(meta.generationLog[0]!) as { usage: Record<string, unknown> };
-    // 服务端没回显口径，按端点族补 anthropic。
-    expect(log.usage).toMatchObject({ ...usage, usage_semantic: "anthropic" });
-    expect(JSON.stringify(meta.generationLog)).not.toContain(secret);
-    const [report] = readArchiveReports(root);
-    expect(report?.rounds[0]?.usage.cacheWrite).toMatchObject({ value: 14024 });
-    expect(report?.rounds[0]?.usage.cacheWrite1h).toMatchObject({
-      value: 14024,
-      source: "usage.cache_creation.ephemeral_1h_input_tokens",
-    });
-    expect(report?.rounds[0]?.cacheHitRate).toBe(0);
-    // 会话三步、只有第一步带 usage:命中率同理不给单步冒充全程的合计(ADR-0035 那条纪律)。
-    expect(report?.cacheHitRate).toMatchObject({ recordedRounds: 1, expectedRounds: 3 });
-    expect(report?.rounds[0]?.requestEvidence?.cache).toEqual({
-      mode: "ephemeral-1h",
-      official: "documented",
-      channel: "accepted",
-    });
-    const output: string[] = [];
-    await runArchiveReport(["--root", root], {
-      stdout: (text) => output.push(text),
-      stderr: () => {},
-    });
-    expect(output.join("")).toContain("缓存写 1h");
+    ).rejects.toThrow(/端点位 messages 未声明工具调用能力/);
+    // 拒跑在第一次模型调用之前:一分钱没花,也没有落任何档。
+    expect(fetch).not.toHaveBeenCalled();
+    expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

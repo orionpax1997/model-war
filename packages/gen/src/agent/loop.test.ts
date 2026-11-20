@@ -222,8 +222,9 @@ it("连续三次动作解析失败即停:每一次都记成非零退出码的步
     expect(step.exitCode).toBe(ACTION_REJECT_EXIT_CODE);
     expect(step.stderr).toContain("恰好一个");
   }
-  // 纠正消息进了历史,模型下一步能看见自己违反了哪一条(逐次累积)。
-  expect(model.calls[1]?.messages.at(-1)?.role).toBe("user");
+  // 纠正消息进了历史,模型下一步能看见自己违反了哪一条(逐次累积)。信封是 `tool`(观测消息
+  // 回答的是上一次调用),不是 `user`——旧协议下没有 `tool_call_id` 可配对,现在有了。
+  expect(model.calls[1]?.messages.at(-1)?.role).toBe("tool");
   expect(model.calls[1]?.messages.at(-1)?.content).toContain("没有 ```bash 代码块");
   expect(model.calls[2]?.messages.at(-1)?.content).toContain("它的标记是 ```ts,不是 ```bash");
 });
@@ -315,7 +316,7 @@ it("第二次仍截断:转格式反馈,不执行也不退避,步照记", async (
   expect(result.termination).toBe("max-steps");
 });
 
-it("历史形状:system + 首条 user + 每步一对,原文不改写", async () => {
+it("历史形状:system + 首条 user + 每步一对(assistant 原文 + tool 观测),原文不改写", async () => {
   const model = stubClient([reply(ACTION), reply(ACTION), reply("```bash\nfinish\n```")]);
   const executor = fakeExecutor([
     { stdout: "README\n", stderr: "", exitCode: 0 },
@@ -329,15 +330,15 @@ it("历史形状:system + 首条 user + 每步一对,原文不改写", async () 
     "system",
     "user",
     "assistant",
-    "user",
+    "tool",
   ]);
   expect(model.calls[2]?.messages.map((message) => message.role)).toEqual([
     "system",
     "user",
     "assistant",
-    "user",
+    "tool",
     "assistant",
-    "user",
+    "tool",
   ]);
   // assistant 那一条是模型当时写的原文。
   expect(model.calls[2]?.messages[4]?.content).toBe(ACTION);
