@@ -30,7 +30,6 @@ import {
   AGENT_ARCHIVE_FIELD_KEYS,
   AGENT_ARCHIVE_REQUIRED_KEYS,
   ARCHIVE_META_JSON_SCHEMA,
-  ARCHIVE_SCHEMA_VERSION,
   ARCHIVE_SCHEMA_VERSIONS,
   V4_ONLY_STEP_ACTION_KINDS,
   OPTIMIZATION_AGENT_VERSION,
@@ -92,7 +91,7 @@ export const archiveShapeVersionOf = (record: unknown): ArchiveShapeVersion => {
   const stray = AGENT_ARCHIVE_FIELD_KEYS.find((key) => Object.hasOwn(record, key));
   if (stray !== undefined)
     throw new Error(
-      `档案带 agent 字段 ${stray} 却缺 archiveSchemaVersion: ${String(ARCHIVE_SCHEMA_VERSION)}：新形状必须显式声明`,
+      `档案带 agent 字段 ${stray} 却缺 archiveSchemaVersion: ${ARCHIVE_SCHEMA_VERSIONS.join(" 或 ")}：新形状必须显式声明`,
     );
   return "legacy";
 };
