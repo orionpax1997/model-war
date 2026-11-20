@@ -294,6 +294,10 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
       if (parsed.kind === "reject") {
         parseFailures += 1;
         observation = noActionObservation(parsed.correction);
+        // 被哪一种拒绝档拒了,是**档案里的一格**(`steps[i].action.rejectReason`),不只是纠正消息
+        // 正文里的一段散文:纠正消息写给模型,读档的人看的是这一格(两类读者不会去读对方的通道)。
+        // 两处都写不是双存——一个是给模型的处方,一个是给读档的诊断标签,它们回答的不是同一件事。
+        action = { kind: "none", rejectReason: parsed.reason };
       } else {
         parseFailures = 0;
         // 执行器拿到的是一次**工具调用**:`bash` 由它交给沙箱,其余四个交给宿主的 dispatch。

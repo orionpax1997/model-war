@@ -313,7 +313,8 @@ it("连续三次 `malformed-arguments` 即停:每步都是 none + 退出码 64,�
   expect(result.steps).toHaveLength(3);
   expect(executor.requests).toHaveLength(0);
   for (const step of result.steps) {
-    expect(step.action).toEqual({ kind: "none" });
+    // 被拒的**哪一档**是档案里的一格,不只是纠正消息里的一段散文:三次都是 `malformed-arguments`。
+    expect(step.action).toEqual({ kind: "none", rejectReason: "malformed-arguments" });
     expect(step.exitCode).toBe(ACTION_REJECT_EXIT_CODE);
     expect(step.stderr).toContain("arguments 不能用");
     // 被拒的那一次调用的字节仍落档:读侧看得见模型当时写的到底是什么(ADR-0031)。
@@ -340,10 +341,11 @@ it("四档拒绝各自计一步,并且都回纠正消息", async () => {
     requestOf({ model, executor: fakeExecutor([]).executor, maxSteps: 10 }),
   );
   expect(result.termination).toBe("action-parse");
+  // 四档各自的名字都落了档:读侧不必再从纠正消息的措辞反推「这一步踩的是哪一条」。
   expect(result.steps.map((step) => step.action)).toEqual([
-    { kind: "none" },
-    { kind: "none" },
-    { kind: "none" },
+    { kind: "none", rejectReason: "no-tool-call" },
+    { kind: "none", rejectReason: "multiple-tool-calls" },
+    { kind: "none", rejectReason: "unknown-tool" },
   ]);
   expect(result.steps[0]?.stderr).toContain("没有发起任何工具调用");
   expect(result.steps[1]?.stderr).toContain("发起了 2 次工具调用");
@@ -429,6 +431,8 @@ it("第二次仍截断:转格式反馈,不执行也不退避,步照记", async (
   );
 
   expect(result.steps).toHaveLength(1);
+  // 一个 `none` 步**没有** `rejectReason`:两次截断转格式反馈不是「被哪一档拒了」,两者在档案里
+  // 必须分得开(读侧靠这一格判「诊断里要不要报档名」)。
   expect(result.steps[0]?.action).toEqual({ kind: "none" });
   expect(result.steps[0]?.stderr).toBe(TRUNCATED_RESPONSE_FEEDBACK);
   expect(result.steps[0]?.exitCode).toBe(ACTION_REJECT_EXIT_CODE);

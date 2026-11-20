@@ -135,12 +135,13 @@ export const OPTIMIZATION_CANDIDATE_LIMIT = EVALUATE_CALL_LIMIT;
  * ── 写侧只写 4，读侧 3 与 4 都认（v3 不迁移）──
  *
  * 4 是协议从「文本围栏块 + fd 3 薄壳」换成「原生 tool calling」那一次：`action.kind` 多了
- * `check` / `probe` 两档，`steps[i]` 多了 `toolCall`（逐字字节的家），`raw` 因此可以是空串。
+ * `check` / `probe` 两档，`steps[i]` 多了 `toolCall`（逐字字节的家），`none` 档多了
+ * `rejectReason`（这一步被哪一档拒了），`raw` 因此可以是空串。
  *
  * v3 档**照旧可读、不迁移、不回填**：`archive/` 下已经有真档，它们是校准 harness 的证据，
  * 改写它们的形状等于改证据。两个版本的差别只有一条，而且判据只有一处（见 runner 的
  * `archiveShapeIssuesOf` 的 `archive-step-shape`）：**v3 的步里不许出现 `check` / `probe`，
- * 也不许带 `toolCall`**——那时这两样在世界里根本不存在。
+ * 也不许带 `toolCall` 或 `action.rejectReason`**——那时这三样在世界里根本不存在。
  *
  * 所以常量分两件：`ARCHIVE_SCHEMA_VERSION` 是**写侧**写的那个数，`ARCHIVE_SCHEMA_VERSIONS`
  * 是**读侧**认的那些数。写成一件（`enum` 里含本版的 const）会让「新档写哪个」变成一个巧合。
@@ -221,6 +222,33 @@ export type ArchiveOptimization =
   | ArchiveOptimizationAgent;
 
 /**
+ * 一步**被拒**的那一档（`action.kind === "none"` 里 `rejectReason` 的值域）：零次调用、多于一次
+ * 调用、工具名不在声明集合里、`arguments` 不是合法 JSON 或形状不符（ADR-0032）。
+ *
+ * ── 为什么这里有一份，而真源在 `packages/gen/src/agent/action.ts` ──
+ *
+ * 依赖方向是 **gen → schema**（本包不 import 任何包，hld §3.2），所以本包不能引用 gen 的
+ * `ACTION_REJECT_REASONS`。而「这一步被哪一种拒绝档拒了」要成为档案里的一格，归档契约就需要
+ * 这组名字的枚举，于是它在这里再写一遍。漂移不靠自觉，靠 gen 侧一条类型级断言
+ * （`agent/action.ts` 的 `ArchiveRejectReasonsMatchAction`）：任一侧多一个、少一个、改一个字母，
+ * `tsc -b` 就红。反方向（schema → gen）不存在——本包不认识 gen，也不需要认识。
+ *
+ * ── 为什么这组名字值得进档案 ──
+ *
+ * 四个拒绝原因在过程记录里原本全部塌成 `action.kind === "none"`，档名只活在纠正消息的散文里；
+ * 而纠正消息是**给模型的**，读档的人（报告、复盘）看不到是哪一档。四档的处方不同——
+ * 「一次都别漏调用」「别并行」「名字拼错」「参数写坏」——所以档名是诊断要指的那件事本身。
+ */
+export const ARCHIVE_STEP_REJECT_REASONS = [
+  "no-tool-call",
+  "multiple-tool-calls",
+  "unknown-tool",
+  "malformed-arguments",
+] as const;
+
+export type ArchiveStepRejectReason = (typeof ARCHIVE_STEP_REJECT_REASONS)[number];
+
+/**
  * 一步（一次模型调用）的过程记录条目（ADR-0031 / ADR-0032）。
  *
  * 最小键集合现在定死：装载器要靠它判完整性。`raw`（模型原文）与 `result`（结果侧证据）
@@ -279,8 +307,17 @@ export type ArchiveStepAction =
    * 为什么不复用 `bash` 加一个空 `command`：空命令在 `bash` 那一格是不合法的（`minLength: 1`），
    * 而放宽它等于让「跑了空 shell」与「什么都没跑」在档案里同形——后者恰恰是校准 harness 时最
    * 想看见的那种步。
+   *
+   * ── `rejectReason` 挂在**这一档里**，不挂在 `steps[i]` 上 ──
+   *
+   * 它只对「被某一档拒了」的 `none` 步有意义：`{kind:"bash", rejectReason:…}` 是一句自相矛盾的
+   * 话，而挂在 `steps[i]` 上没有任何东西拦得住它。判别联合的这一档就是「被拒」这个前提本身，
+   * 写在这里，读侧必须先窄化 `kind` 才够得着它——编译器顺手替契约做了一次检查。
+   *
+   * 它是**可选**键，缺席有两种含义，读侧不许合并：`none` 却没有它 = 两步截断转了格式反馈（那次
+   * 没有「被哪一种拒绝档拒」这回事）；有它 = 那一步的纠正消息属于这一档。
    */
-  | { readonly kind: "none" };
+  | { readonly kind: "none"; readonly rejectReason?: ArchiveStepRejectReason };
 
 /**
  * 这一步发起的**那一次工具调用**（v4 新增）：逐字字节的家（ADR-0031「模型看到的字节 = 落盘的
@@ -668,7 +705,12 @@ const ARCHIVE_STEP_ACTION_JSON_SCHEMA = {
       type: "object",
       additionalProperties: false,
       required: ["kind"],
-      properties: { kind: { type: "string", const: "none" } },
+      properties: {
+        kind: { type: "string", const: "none" },
+        // 可选键(ADR-0031 先例:可选键不升形状版本);`enum` 与 gen 侧的
+        // `ACTION_REJECT_REASONS` 同源,漂移由 gen 的类型级断言兜住。
+        rejectReason: { type: "string", enum: ARCHIVE_STEP_REJECT_REASONS },
+      },
     },
   ],
 } as const;
