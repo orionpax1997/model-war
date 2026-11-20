@@ -298,9 +298,20 @@ it("动作解析失败三次即停:每一步都是非零退出码,一条命令�
   // 协议不服从是模型违反契约那一格,不因新增 `budget` 档而改写。
   expect(outcome.failure.classification).toBe("contract");
   for (const step of outcome.agent.steps) {
-    expect(step.action).toEqual({ kind: "none" });
+    expect(step.action.kind).toBe("none");
     expect(step.exitCode).toBe(ACTION_REJECT_EXIT_CODE);
   }
+  // 三步的拒绝档各是各的:两步「一次调用都没有」,中间那步「参数坏了」。
+  expect(outcome.agent.steps.map((step) => step.action)).toEqual([
+    { kind: "none", rejectReason: "no-tool-call" },
+    { kind: "none", rejectReason: "malformed-arguments" },
+    { kind: "none", rejectReason: "no-tool-call" },
+  ]);
+  // 票 05 那条判据的落点:**失败档的诊断文本里出现档名本身**,不是「拒绝档」三个字的占位。
+  // 名字的真源是动作层的 `ACTION_REJECT_REASONS`,这里用真值钉住,不写正则。
+  expect(outcome.failure.diagnostics.join("\n")).toContain(
+    "第 2 步(none,exit 64,拒绝档=malformed-arguments):",
+  );
 });
 
 it("传输耗尽:那次调用不进 steps、不进协议轮数,生成日志留一条传输末行", async () => {

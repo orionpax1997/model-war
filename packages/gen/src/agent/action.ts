@@ -29,6 +29,8 @@
  * 纯 `ToolCall[]` 进、纯结论出,所以「零次调用怎么办」可以被单测逐字钉住,而 loop 只消费结论。
  */
 
+import type { ArchiveStepRejectReason } from "@model-war/schema";
+
 import { TOOL_NAMES, acceptsArgumentsOf, type ToolCall, type ToolName } from "./tools.js";
 
 /**
@@ -57,6 +59,20 @@ export const ACTION_REJECT_REASONS = [
 ] as const;
 
 export type ActionRejectReason = (typeof ACTION_REJECT_REASONS)[number];
+
+/**
+ * 档案形状那一侧的值域是 `@model-war/schema` 的 `ARCHIVE_STEP_REJECT_REASONS`：本包这一份是**真源**，
+ * 它那一份是归档契约的需求（schema 不能 import gen，依赖方向是 gen → schema）。
+ *
+ * 于是「同一组名字写两遍」成了必须付的账，而下面这条类型级断言就是不让它漂的那根钉子：任一侧多
+ * 一个、少一个、改一个字母，`tsc -b` 就非零退出。它比「两边注释里都写一句请保持一致」硬，也比
+ * 运行期对表省——这组名字是编译期常量，没有一份能在运行期不对。
+ */
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type Assert<T extends true> = T;
+export type ArchiveRejectReasonsMatchAction = Assert<
+  MutuallyAssignable<ActionRejectReason, ArchiveStepRejectReason>
+>;
 
 /** 一条回复的解析结论。 */
 export type ActionParse =

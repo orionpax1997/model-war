@@ -282,13 +282,18 @@ $ echo $?
 
 ### ⑤ 新的残余风险
 
-1. **三族工具形状不同，而 `messages` 族零证据。** 它的声明是 `name` / `description` / `input_schema`，结果是 `tool_result` 块，与 chat 族不是一份翻译。2026-11-20 主线程真请求探针的读数（`claude-haiku-5-5`，`/messages`）：
+1. **三族工具形状不同，而 `messages` 族零证据。** 它的声明是 `name` / `description` / `input_schema`，结果是 `tool_result` 块，与 chat 族不是一份翻译。2026-11-20 主线程真请求探针的读数（`claude-haiku-5-5`，`/messages`；两次的 `rawHead` 逐字原文都抄在这里，不写「同上」——「两次一样」这个事实要能被核对，而不是靠一句断言）：
 
    ```
    without tools → HTTP 403 {"type":"error","error":{"type":"permission_error",
                    "message":"The provider refused this request. The refused request wasn't charged."}}
-   with tools    → HTTP 403 同上
+   with tools    → HTTP 403 {"type":"error","error":{"type":"permission_error",
+                   "message":"The provider refused this request. The refused request wasn't charged."}}
    ```
+
+   两次的响应体逐字节相同（`rawHead` 全串一致），状态码同为 403，`blocks` 皆为空。落盘证据：
+   `/tmp/agent-toolcall-notes/01-probe-raw-messages.json` 的两条记录（`withTools: false` / `true`），
+   以及紧随其后的第三条 `{"skipped":"no tool_use in step 1"}`——第二步跑不起来，因为没有 `tool_use` 可回送。
 
    **不带 `tools` 也 403**：该席位在本账号档位下整体被渠道拒。所以「声明形状会不会 400」「`tool_result` 能否配对」**零证据**。按 fail-closed，这一族**不声明** `tools`，用它的席位在会话起跑前拒跑并点名——不是「没试过」，是「试了，席位被拒，所以没有证据，不写未验证的翻译」。`responses` / `generate-content` 两族同一条规矩（本季名册不用）。
 2. **`arguments` 是模型写的 JSON 字符串，可以被写坏。** 归 `malformed-arguments` 拒绝档：不执行任何工具、计一步、回纠正消息。解析放在动作层而不是传输层，是因为它是一条模型能自我修正的格式失败——放进传输层就变成了端点错误。
