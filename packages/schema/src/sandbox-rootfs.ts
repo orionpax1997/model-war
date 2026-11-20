@@ -11,20 +11,26 @@
  *
  * ── 这个哈希与契约包身份不是同一个数 ──
  * 两边口径同源(`按路径排序 → path\0bytes 串接 → sha256`),但**范围不同**:这里是
- * **整棵 rootfs**(bash + 八个 coreutils + 三个薄壳 + `contract/` 四条),契约包身份只算
+ * **整棵 rootfs**(静态 bash + 八个静态 coreutils + `contract/` 四条),契约包身份只算
  * `docs/rules-v2/` 那四条。别把两个数当同一个用:只换 bash 版本时,模型世界的哈希应该变,
  * 契约身份不应该变——合成一个数就把两种断代混成一种。
  *
  * ── 为什么是手写常量,而不是「运行时现算」 ──
  * 与 runtime bundle 同一条纪律:判据锚定确切字节,不锚运行目录。改产物后跑
  * `pnpm run sandbox:rootfs:build` 重算并手写回这里,门禁(`check:sandbox-rootfs`)负责证明
- * 两者一致,并顺带证明清单不多不少、`bin/` 里每个二进制(三个薄壳之外)确实是静态 ELF、
- * `contract/` 与 `docs/rules-v2/` 逐字节相同、薄壳与 `packages/gen/src/agent/shim/shim.sh` 逐字节相同。
+ * 两者一致,并顺带证明清单不多不少、`bin/` 里**每一个**都是静态 ELF、`contract/` 与
+ * `docs/rules-v2/` 逐字节相同。
  *
  * ── 清单与「谁是什么」只在这里写一遍 ──
- * 门禁侧(`packages/tools/src/sandbox-rootfs/`)不另抄「哪些是二进制、哪些是薄壳」:它从本文件的
- * `SANDBOX_ROOTFS_FILES` 与 `SANDBOX_ROOTFS_SHIMS` 推出来——`bin/*` 里除薄壳之外的每一个都必须是
- * 静态 ELF。上一轮给 `cp` 补清单时要同时改两处手写表,那种双家正是「漏一处不红」的形状。
+ * 门禁侧(`packages/tools/src/sandbox-rootfs/`)不另抄「哪些是二进制」:它从本文件的
+ * `SANDBOX_ROOTFS_FILES` 推出来——`bin/*` 的**每一个**都必须是静态 ELF。上一轮给 `cp` 补清单时
+ * 要同时改两处手写表,那种双家正是「漏一处不红」的形状。
+ *
+ * ── `bin/` 里曾经有三个**不是**二进制的名字 ──
+ *
+ * `check` / `evaluate` / `finish` 以前是同一份薄壳脚本的三个副本(经 fd 3 通道交给宿主执行)。
+ * 那条通道与三个副本**已删除**(票 03):模型在这三个名字上只有一条路——**工具调用**,由宿主
+ * 分派。所以清单里不再有它们,「不是 ELF 的东西」这条分类也随之消失。
  *
  * ── `PROVENANCE.md` 不在清单里 ──
  * 它是产物旁边的来路说明书,不是挂载面:沙箱只 `--ro-bind` 这棵树的 `bin/` 与 `contract/`
@@ -41,15 +47,12 @@ export const SANDBOX_ROOTFS_DIR = "packages/gen/sandbox-rootfs";
  * 与命令清单由生成物与门禁跟着走,ADR-0033 不再枚举清单——那边抄一份只会过期)。
  *
  * 清单里 `bin/` 之外的分组是数据而不是形状:门禁按**路径前缀**分组(`contract/` 对真源、`bin/`
- * 里除薄壳之外必须都是静态 ELF),所以这里不需要再写「哪几个是二进制」。
+ * 里每一个都必须是静态 ELF),所以这里不需要再写「哪几个是二进制」。
  */
 export const SANDBOX_ROOTFS_FILES = [
   "bin/bash",
   "bin/cat",
-  "bin/check",
   "bin/cp",
-  "bin/evaluate",
-  "bin/finish",
   "bin/grep",
   "bin/head",
   "bin/ls",
@@ -63,27 +66,13 @@ export const SANDBOX_ROOTFS_FILES = [
 ] as const;
 
 /**
- * 三个薄壳的名字(相对 `bin/`):它们不是二进制,是 `shim.sh` 的三个副本(工具名取自 `$0`)。
- *
- * 与 `SANDBOX_ROOTFS_FILES` 是同一件事的两种投影——清单说「有这些文件」,这里说「其中这三个不是
- * ELF」。门禁据此反推「`bin/` 里其余每一个都必须是静态 ELF」,于是新增二进制只有一处要改:
- * 写进清单。漏写进清单的文件由「磁盘 == 清单」那条双向判据红,漏分类不可能发生(分类是推出来的)。
- *
- * **收工工具叫 `finish`,不叫 `done`**:`done` 是 bash 的保留字,裸写一行 `done` 是语法错误
- * (`未预期的记号 "done"`),薄壳永远不可达。“整块交给一次 bash”配上那个名字,等于让模型最常用
- * 的收工写法杀整块。改名的裁决与代价写在 ADR-0032 的修订段;档案侧的 `action.kind: "done"` /
- * `termination: "done"` 是 v3 形状里的常量,不随工具名改(改名就是升档案版本)。
- */
-export const SANDBOX_ROOTFS_SHIMS = ["check", "evaluate", "finish"] as const;
-
-/**
  * 整棵 rootfs 的树哈希:**按路径排序、每份拼 `path\0bytes`、串接后 sha256**。
  *
  * **本常量的书写真源是产物本身**:`pnpm run sandbox:rootfs:build` 打印它,人抄回这里,
  * 门禁证明「现算 == 这里写的」。它是「模型看见的世界还是不是那份字节」的唯一判据。
  */
 export const SANDBOX_ROOTFS_TREE_HASH =
-  "b575315a7f7784a6c2fa12c9757a84412f3bbb442f2226ad17637bdee37a7488";
+  "ef41793a006a0395c55cca2899cd7e2a0afe0ca99a8e3caa1952e36c9d7a95c9";
 
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const SANDBOX_ROOTFS_BIN_DIR = "bin";

@@ -383,14 +383,21 @@ const observeServices = (options: {
 };
 
 /**
- * 把执行器接到沙箱上。
+ * 把执行器接到两条路上:**`bash` 去沙箱,其余四个去宿主**。
  *
- * 一次调用 = 一次 `sandbox.run`,**整块原样**交给一次 `bash -c`:宿主不再切块。收工是模型在块里
- * 调用 `finish`(rootfs 里那条薄壳),它经通道报给宿主,宿主据此在本步结束后收工(ADR-0032 修订)。
- * 手工切块曾经存在,但它与 `for … done` 的收尾撞车——那是「为了一条更弱的保证牺牲整场会话」。
+ * ── 分流只按工具名,不按任何字节的形状 ──
  *
- * 通道端(`requestHandler`)是票 04 的 dispatcher:它是配额的唯一判据源,超限时回一份伪造
- * stderr 且**真执行函数一次都不调**。
+ * `bash` 那一步 = 一次 `sandbox.run`,整条命令串原样交给一次 `bash -c`(宿主不切块:手工切块与
+ * `for … done` 的收尾撞车)。`check` / `probe` / `evaluate` / `finish` 一步 = 一次
+ * `tools.dispatch`:它们**不在沙箱里**,沙箱里连这三个名字都没有。旧世界那条「薄壳经 fd 3
+ * 敲宿主」的通道已删(票 03)——分流的判据从「沙箱里有没有同名薄壳」变成「这次调用的是谁」。
+ *
+ * ── 两条路的回包形状不同,而差别是有意义的 ──
+ *
+ * 沙箱回 `{stdout, stderr, exitCode, timedOut}`:那是一条命令的过程记录。宿主回
+ * `ToolOutcome`:它多了 `isError`(这次**调用**失败,不是命令非零退出)与 `result`(tsc /
+ * contract 的稳定错误码)。执行器把它们归一成 `AgentExecResult`,额外那两位原样带上——loop
+ * 要用 `isError` 守住「被拒的 `finish` 不是收工」。
  */
 const createExecutor =
   (options: {
@@ -403,21 +410,27 @@ const createExecutor =
   }): AgentExecutor =>
   async (request: AgentExecRequest): Promise<AgentExecResult> => {
     options.facts.reset();
-    // 空块(模型只写了围栏行)不跑空 shell:那不是命令,起一次 `bash` 只为退出 0 没有意义。
-    // 收工不再走这条短路——`finish` 是一条真命令,它必须真的跑到薄壳才会上报。
+    // 两条路各交回自己的形状,在这里归一成「这一步跑了什么」。不并成一种中间类型的理由:
+    // 沙箱的 `timedOut` 只对命令有意义,宿主的 `isError` / `result` 只对工具调用有意义,
+    // 压成一个「什么都有」的桶就等于把两种语义混成一种。
     const executed =
-      request.command.trim() === ""
-        ? { stdout: "", stderr: "", exitCode: 0, timedOut: false }
-        : await sandbox.run({
-            command: request.command,
-            workspaceDir: options.workspaceDir,
-            // 这一步的应答端:步号绑在这里,不经过会话级槽位。
-            requestHandler: options.tools.requestHandlerFor(request.step),
-            ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
-            ...(options.stepWallClockMs === undefined
-              ? {}
-              : { wallClockMs: options.stepWallClockMs }),
-          });
+      request.call.name === "bash"
+        ? // `bash` 且命令串只有空白:不起一次只为退出 0 的 `bash`。动作层已经拒掉了**空**
+          // `command`(归 `malformed-arguments`),所以这里只剩「一串空白」这一种。
+          (request.command ?? "").trim() === ""
+          ? { stdout: "", stderr: "", exitCode: 0, timedOut: false, isError: undefined }
+          : {
+              ...(await sandbox.run({
+                command: request.command ?? "",
+                workspaceDir: options.workspaceDir,
+                ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
+                ...(options.stepWallClockMs === undefined
+                  ? {}
+                  : { wallClockMs: options.stepWallClockMs }),
+              })),
+              isError: undefined,
+            }
+        : await options.tools.dispatch(request.step, request.call);
     const facts = options.facts.current;
     // 宿主侧报告基础设施失败:这一刻才大声失败(loop 的 executor reject 是 infra 的专用通道),
     // 而不是把它折成模型的一次手滑。既然这次会话的网格身份已经不可信,后面的步也没意义了。
@@ -428,10 +441,13 @@ const createExecutor =
       stdout: executed.stdout,
       stderr: executed.stderr,
       exitCode: executed.exitCode,
-      timedOut: executed.timedOut,
-      // 收工判据是「这一步收到过 `finish` 请求」,不是命令字节里的某一行的形状。
+      ...("timedOut" in executed && executed.timedOut !== undefined
+        ? { timedOut: executed.timedOut }
+        : {}),
+      // 收工判据是「宿主收下了这一步的 `finish` 调用」,不是命令字节里的某一行的形状。
       ...(options.tools.finishRequested() ? { done: true } : {}),
       ...(facts.result === undefined ? {} : { result: facts.result }),
+      ...(executed.isError === undefined ? {} : { isError: executed.isError }),
       ...(facts.submission === undefined
         ? {}
         : { submission: facts.submission, evaluateCall: facts.evaluateCall ?? 1 }),

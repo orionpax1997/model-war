@@ -1,5 +1,5 @@
 /**
- * `evaluate` 服务:宿主侧的**提交 + 整张网格 + 观测外置**,经薄壳通道交给沙箱里的模型。
+ * `evaluate` 服务:宿主侧的**提交 + 整张网格 + 观测外置**,由 `evaluate` 工具调用交给模型。
  *
  * ── `evaluate` 就是提交(ADR-0030) ──
  *
@@ -59,7 +59,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { TRIAL_GRID_SUMMARY_SUFFIX, type ToolResponse, type TrialPlan } from "@model-war/schema";
+import { TRIAL_GRID_SUMMARY_SUFFIX, type ToolOutcome, type TrialPlan } from "@model-war/schema";
 
 import { SCRIPT_SOURCE_NAME, sha256Hex } from "../../archive.js";
 import { compileScript, type CompileResult } from "../../compile.js";
@@ -190,7 +190,7 @@ export type EvaluateSubmission = {
 };
 
 /** 一次 `evaluate` 的结论:协议响应 + 提交身份。`submission` 缺席 = 这一次没有产出候选。 */
-export type EvaluateOutcome = ToolResponse & { readonly submission?: EvaluateSubmission };
+export type EvaluateOutcome = ToolOutcome & { readonly submission?: EvaluateSubmission };
 
 /** 一次 `evaluate` 的入参。 */
 export type EvaluateRequest = {
@@ -202,7 +202,7 @@ export type EvaluateRequest = {
    *
    * **必填而不是可选**:以前它是「当前步」槽里读出来的,缺了就用 `NaN` 兜底再由服务拒——那让
    * 「这一步是第几步」变成一个要按时序保证的东西。现在步号由执行器请求带进来
-   * (`requestHandlerFor(step)` 把它绑进通道应答端),缺了是类型错误,不是运行期惊喜。
+   * (`dispatch(step, call)` 把它作为显式入参收下),缺了是类型错误,不是运行期惊喜。
    */
   readonly step: number;
 };

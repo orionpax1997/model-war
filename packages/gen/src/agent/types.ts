@@ -23,6 +23,8 @@
 
 import type { ArchiveStep, ArchiveStepResult, ArchiveTermination } from "@model-war/schema";
 
+import type { ToolCall } from "./tools.js";
+
 /** 会话的终止原因(ADR-0032):六个取值,与落档判据正交。 */
 export type AgentTermination = ArchiveTermination;
 
@@ -30,22 +32,28 @@ export type AgentTermination = ArchiveTermination;
 export type AgentStep = ArchiveStep;
 
 /**
- * 一步的执行请求。
+ * 一步的执行请求:**这一次调用的工具名与参数原文**,加上 `bash` 的派生命令串。
  *
- * 只有两格:第几步、这一步要跑的命令串。
+ * ── 为什么是工具调用,而不是一段命令串 ──
  *
- * ── `command` 的含义在 v4 之后变窄了一半 ──
+ * 旧形状是 `{ step, command }`,非 `bash` 的工具把**工具名**塞进 `command` 那一格,指望沙箱里
+ * 有同名薄壳认得它。那是过渡态(票 03 的边界):两个意思挤在一格,而「哪一个是命令、哪一个是
+ * 工具调用」只能靠字符串猜。现在执行器拿到的就是解析后的动作:`call` 说「调了谁、参数原文是
+ * 什么」,`command` 是 `bash` 那一步的派生值。
  *
- * `bash` 那一步交的是那条命令串本身;`check` / `probe` / `evaluate` / `finish` 交的是**工具名**
- * ——它们由宿主受理,不经 `bash -c`。这一格现在承担两种东西,是**过渡态**:票 03 会把入口改形
- * 成「工具名 + 参数」的显式入参,那时 `command` 只剩前一种含义。在此之前沙箱里仍有同名薄壳
- * 认得这个串,所以两种形状都跑得通。
+ * 收工(`finish`)也一样走这条:它是执**行器**的事吗?不,它是宿主的事——执行器把非 `bash`
+ * 的调用原样交给 `tools.dispatch`,自己只负责 `bash` 那一条路。
  */
 export type AgentExecRequest = {
   /** 步号,1 起。 */
   readonly step: number;
-  /** `bash` 的那条命令串(可含换行),或者工具名。见上面那段「过渡态」。 */
-  readonly command: string;
+  /** 这一步发起的**那一次**工具调用(名字 + `arguments` 原文,逐字不改写)。 */
+  readonly call: ToolCall;
+  /**
+   * `bash` 那一步要跑的命令串:动作层从 `call.argumentsJson` 解析并校验过的**派生值**。
+   * 其余四个工具没有这一格(它们做什么由 `/workspace/script.ts` 决定)。
+   */
+  readonly command?: string;
 };
 
 /** 一步的执行结果。命令自己的非零退出不是异常;起不来才是(执行器 reject)。 */
@@ -56,13 +64,14 @@ export type AgentExecResult = {
   /** 被单步墙钟杀掉(执行器自己的读数,只作记录)。 */
   readonly timedOut?: boolean;
   /**
-   * 这一步里模型报过收工(`finish` 薄壳经通道上报给宿主)。
+   * 这一步里宿主**收下了**一次收工请求(`finish` 工具被受理)。
    *
-   * 字段名是 `done` 而命令叫 `finish`——**这是有意的不一致,不是漏改**:它与档案枚举
+   * 字段名是 `done` 而工具叫 `finish`——**这是有意的不一致,不是漏改**:它与档案枚举
    * `action.kind: "done"`(`packages/schema/src/archive-meta.ts`)同源,该枚举是 v3 形状里的
    * 常量,改名等于升 `archiveSchemaVersion`(与 `identity.finish` 那处同源)。
    *
-   * 它**不**意味着块里 `finish` 之后的行没执行——整块由 `bash` 解析,那些行照常跑(ADR-0032 修订)。
+   * 判据是**宿主收下了那次调用**,不是「模型调了一个叫 finish 的东西」:被拒的 `finish`
+   * (会话到点、参数误用)不算收工,这一点与旧世界的薄壳同理——那时的拒绝也不会置位。
    */
   readonly done?: boolean;
   /** 结果侧证据(`tsc` / `contract` 与错误码);没有结果时缺席,不写空壳。 */
@@ -82,6 +91,13 @@ export type AgentExecResult = {
   };
   /** 这是第几次 `evaluate`(1 起,由 dispatcher 的计数器给)。 */
   readonly evaluateCall?: number;
+  /**
+   * 这一次**工具调用**本身失败(宿主拒绝 / 服务抛错),不是「命令跑了但非零退出」。
+   *
+   * 旧世界把两者混成一个伪造的退出码,读侧只能靠文案猜。这一位是从 `ToolOutcome` 原样搬过来
+   * 的**唯一依据**:loop 用它守住「被拒的 `finish` 不是收工」那条判据。
+   */
+  readonly isError?: boolean;
 };
 
 /** 执行一步。 */

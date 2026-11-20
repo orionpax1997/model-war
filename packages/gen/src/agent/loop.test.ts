@@ -62,6 +62,15 @@ const fakeExecutor = (steps: readonly (AgentExecResult | (() => AgentExecResult)
 
 const OK: AgentExecResult = { stdout: "", stderr: "", exitCode: 0 };
 
+/**
+ * 宿主**收下了**那次 `finish` 时执行器交回的形状。
+ *
+ * `done` 是宿主侧的事实(`SessionTools.finishRequested()`),不是 loop 从工具名猜的:被拒的
+ * `finish`(会话到点、参数误用)回的是 `{ ...OK, isError: true }`,会话不该结束。所以夹具必须
+ * 显式给这一位,否则「收工」这条判据在单测里根本没有被测到。
+ */
+const FINISHED: AgentExecResult = { ...OK, done: true };
+
 /** 手控时钟:只在测试显式推进时前进,于是墙钟边界是确定的。 */
 const clockOf = () => {
   let elapsed = 0;
@@ -84,7 +93,7 @@ const requestOf = (
 
 it("`finish` 收工:动作照跑、步照记,终止原因是 done", async () => {
   const model = stubClient([ACTION, FINISH]);
-  const executor = fakeExecutor([OK, OK]);
+  const executor = fakeExecutor([OK, FINISHED]);
   const result = await runAgentSession(requestOf({ model, executor: executor.executor }));
 
   expect(result.termination).toBe("done");
@@ -96,7 +105,27 @@ it("`finish` 收工:动作照跑、步照记,终止原因是 done", async () => 
     { kind: "done" },
   ]);
   expect(result.prompts).toEqual([FIRST_USER]);
-  // 收工判据是工具名,不是执行器回包里的 `done` 位——那一位在新协议下不再参与判据。
+});
+
+it("被拒的 `finish` 不是收工:会话照常往下走", async () => {
+  // 宿主拒绝那一次调用(会话到点 / 参数误用)时 `done` 缺席。旧实现判「模型调了一个叫
+  // finish 的东西」就停,于是「墙钟到点的会话里模型发一次 finish」会被记成正常收工。
+  const model = stubClient([FINISH, ACTION]);
+  const executor = fakeExecutor([
+    {
+      stdout: "",
+      stderr: "工具不可用:会话墙钟已到点,这一次不执行。\n",
+      exitCode: 1,
+      isError: true,
+    },
+    OK,
+  ]);
+  const result = await runAgentSession(
+    requestOf({ model, executor: executor.executor, maxSteps: 2 }),
+  );
+
+  expect(result.termination).toBe("max-steps");
+  expect(result.steps).toHaveLength(2);
 });
 
 it("`action.kind` 是工具名的投影:check / probe / evaluate 各归各档", async () => {
@@ -114,11 +143,17 @@ it("`action.kind` 是工具名的投影:check / probe / evaluate 各归各档", 
     { kind: "probe" },
     { kind: "evaluate" },
   ]);
-  // 三者都不经 `bash -c`:交给执行器的是工具名(过渡形态,票 03 换成显式入参)。
-  expect(executor.requests.map((request) => request.command)).toEqual([
+  // 三者都不经 `bash -c`:执行器收到的是**工具名 + 参数原文**,`command` 那一格缺席
+  // (它只对 `bash` 有值)。
+  expect(executor.requests.map((request) => request.call.name)).toEqual([
     "check",
     "probe",
     "evaluate",
+  ]);
+  expect(executor.requests.map((request) => request.command)).toEqual([
+    undefined,
+    undefined,
+    undefined,
   ]);
 });
 
@@ -439,7 +474,7 @@ it("历史形状:system + 首条 user + 每步一对(assistant 原文与调用 +
 
 it("steps 条数 = 协议轮数 = 响应条数,且首条 prompt 只存一份", async () => {
   const model = stubClient([ACTION, ACTION, FINISH]);
-  const executor = fakeExecutor([OK, OK, OK]);
+  const executor = fakeExecutor([OK, OK, FINISHED]);
   const result = await runAgentSession(requestOf({ model, executor: executor.executor }));
 
   expect(result.steps).toHaveLength(3);
@@ -467,14 +502,17 @@ it("观测截断在生成侧:落盘的字节就是模型看到的字节", async 
   expect(step?.raw).toBe("");
 });
 
-it("配额拒绝是模型可见的:宿主伪造的那条 stderr 原样进观测", async () => {
+it("配额拒绝是模型可见的:宿主那条文案原样进观测", async () => {
   const refusal = "evaluate: 配额已用尽(3/3),这一次没有执行。";
   const model = stubClient([toolCall("evaluate", "{}"), FINISH]);
-  const executor = fakeExecutor([{ stdout: "", stderr: refusal, exitCode: 1 }, OK]);
+  const executor = fakeExecutor([
+    { stdout: "", stderr: refusal, exitCode: 1, isError: true },
+    FINISHED,
+  ]);
   const result = await runAgentSession(requestOf({ model, executor: executor.executor }));
 
   // 被拒的那一次**仍然记成 evaluate 动作**:动作种类归解析层(那一次调用的确是 evaluate),
-  // 而配额拒绝是宿主侧的结论(`stderr` + 非零退出码)。
+  // 而配额拒绝是宿主侧的结论(`isError` + 那段文案)。
   expect(result.steps[0]?.action).toEqual({ kind: "evaluate" });
   expect(result.steps[0]?.stderr).toBe(refusal);
   // 被拒的那一次没有提交身份:配额没用掉,也没有成绩。
@@ -493,14 +531,20 @@ it("一次真评出成绩的 evaluate 把提交身份记下来,步号即候选�
   expect(result.submissions).toEqual([{ step: 1, call: 1, ...SUBMISSION }]);
 });
 
-it("执行请求的 `command` 是那条命令串本身,不是围栏块", async () => {
+it("执行请求带的是那一次调用本身,`command` 是它的派生值", async () => {
   // 模型写循环时,收尾的 `done` 是 bash 的语法,不是宿主的标记:命令串原样下去,一个字节都不改。
+  // `call.argumentsJson` 是那串字节的**家**(原样下去、原样落档),`command` 是解析后的派生值。
   const command = "for f in a b; do\n  echo $f\ndone\necho 之后照跑";
-  const model = stubClient([toolCall("bash", JSON.stringify({ command }))]);
+  const argumentsJson = JSON.stringify({ command });
+  const model = stubClient([toolCall("bash", argumentsJson)]);
   const executor = fakeExecutor([OK]);
   await runAgentSession(requestOf({ model, executor: executor.executor }));
 
-  expect(executor.requests[0]).toEqual({ step: 1, command });
+  expect(executor.requests[0]).toEqual({
+    step: 1,
+    call: { name: "bash", argumentsJson },
+    command,
+  });
 });
 
 it("结果侧证据原样落步,没有结果时不写空壳", async () => {

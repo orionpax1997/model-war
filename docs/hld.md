@@ -535,11 +535,11 @@ archive/<modelSlug>/<runId>/
 | 四方对等 | `modelwar map-lint` + `apps/cli/src/map-lint/map-lint.test.ts`(四重旋转对称是静态判定 + 单测,不是属性测试) |
 | 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
 | 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `check:budget`(结构门禁)+ `check:budget-recheck`(探针复核) |
-| 生成期沙箱执行器 | `check:sandbox`(真跑四件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移,外加通道两条:fd 3 能进能出、薄壳经它跑通一次 `check`,与 coreutils 五条最小调用;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
-| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里除三个薄壳之外每个二进制都是静态 ELF / 契约与薄壳逐字节 / `PROVENANCE.md` 的来路表与入库字节的 sha256 一一相符)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
+| 生成期沙箱执行器 | `check:sandbox`(真跑七件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移 / coreutils 五条最小调用 / 沙箱里敲不到宿主工具名 / 宿主分派跑通一次 `check`;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
+| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里每一份都是静态 ELF / 契约逐字节 / `PROVENANCE.md` 的来路表与入库字节的 sha256 一一相符)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
 | 模型知道自己有什么命令 | `check:prompt-commands`(首条消息里的命令清单与 `SANDBOX_ROOTFS_FILES` 推出的集合**逐项相等**,两组分开判;缺项 `awk` / `sleep` 与替代写法在场)+ `packages/tools/src/prompt-commands.test.ts`(两个方向 / 分组 / 每项一句用途)+ `check:sandbox`(真 bwrap 里 `sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各一条最小调用,断言输出字节) |
-| 宿主工具面与 fd 通道 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 沙箱伪造的「响应」只被当成请求)+ `packages/gen/src/agent/shim/shim.test.ts`(真 bash 对真序列化的往返:退出码 / 两路输出 / 形态不对就退出 2)+ `check:sandbox`(真 bwrap 下薄壳走 fd 跑通一次 `check`,真 tsc) |
-| 动作协议与收工命令 | `packages/gen/src/agent/host/finish.test.ts`(真 bash + 真薄壳 + 真 dispatcher:`for … done` 整块跑完且退出码 0、`finish` 之后的行仍执行、整块只有一行 `finish` 也收工)+ `packages/gen/src/agent/action.test.ts`(四种被拒形状与逐字正/反例)+ `packages/gen/src/agent/identity.test.ts`(`actionSyntax.rejects` 与 `finish` 那一格进 `harnessDigest`) |
+| 宿主工具面 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 参数面 / 拒绝是 `isError` 而不是伪造退出码)+ `check:sandbox`(沙箱里敲不到这四个工具名;宿主分派真的跑通一次 `check`,真 tsc) |
+| 动作协议与收工命令 | `packages/gen/src/agent/action.test.ts`(四种被拒形状与逐字正/反例)+ `packages/gen/src/agent/host/dispatcher.test.ts`(`finish` 被受理才置位:被拒的那一次不是收工)+ `packages/gen/src/agent/loop.test.ts`(收工判据读宿主交回的 `done`,不读工具名)+ `packages/gen/src/agent/identity.test.ts`(`actionSyntax.rejects` 与 `finish` 那一格进 `harnessDigest`) |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
 | 评测网格与选拔复算 | `packages/runner/src/trial-plan.test.ts`(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ `packages/runner/src/selection-grid.test.ts`(逐场复算比对)+ `packages/runner/src/archive-report-v2.test.ts`(生成阶段分数与赛季口径分离) |

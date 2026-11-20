@@ -17,15 +17,15 @@
  *
  * ── 这个钟只计**沙箱自身**的时间 ──
  * 它只杀挂起,不是 deadline(ADR-0029);而「服务调用不受单步约束,只受总墙钟约束」是同一句
- * 裁决的另一半。所以宿主服务请求在途时它冻结(`agent/budget-clock.ts`):那段时间这一步只是在等一行
- * 响应,不是在跑。
+ * 裁决的另一半。新协议下那一半由**位置**保住,不由停表保住:宿主服务是 `dispatch` 的一次调用,
+ * 根本不经过 `sandbox.run`,所以沙箱这只钟从来不会把一次评测计进自己的账上。
  *
- * ── fd 3:宿主与薄壳之间唯一的通道 ──
- * `stdio` 的第 4 项给 `"pipe"`,POSIX 上 Node 为它建的是 **socketpair**,所以那是一个**双向**
- * fd:薄壳往里写一行请求,也从那读一行响应。宿主这一端只在宿主进程里(`child.stdio[3]`),
- * 跨步读不到;每一步一对新管道。**协议体的字段集不在这里**:它落在 `@model-war/schema` 的
- * 协议模块(`tool-channel.ts`)里;本模块只提供传输(一行进、一行出)与那个 `requestHandler`
- * 缝——接上它的是宿主侧 dispatcher(`agent/host`),沙箱那一侧永远只看得到一行 JSON。
+ * ── 这里只有一条管道对:stdin 关掉,stdout / stderr 各一路 ──
+ *
+ * `stdio` 曾经是四个 `"pipe"`:第 4 个是继承给沙箱里薄壳的 fd 3,一行请求进、一行响应出,
+ * 对面是沙箱里 `bash` 手写的序列化。那条通道**已删除**(票 03):`check` / `evaluate` /
+ * `finish` 不再是沙箱里的命令,而是模型发起的工具调用,由宿主分派(`agent/host`)。所以这一步
+ * 只是「起一个 bwrap、收两路输出、墙钟到点杀整棵树」——没有第二个方向。
  *
  * ── 输出上限 ──
  * 采集有一个字节上限,理由与生成侧的截断口径(ADR-0032 的三条键级上限)无关:那是「模型该看到
@@ -35,13 +35,8 @@
 
 import { spawn } from "node:child_process";
 
-import { TOOL_CHANNEL_FD } from "@model-war/schema";
-
 import { bwrapArgv, type StepCommand, type StepLimits } from "./argv.js";
 import { createBudgetClock, type BudgetClock } from "../budget-clock.js";
-
-/** 宿主侧收请求的那一端。一行请求进,一行响应出。 */
-export type RequestHandler = (requestLine: string) => string | Promise<string>;
 
 /** 一步的入参。 */
 export type SandboxStepRequest = {
@@ -53,14 +48,6 @@ export type SandboxStepRequest = {
   readonly rootfsDir: string;
   /** 单步墙钟上限(毫秒)。默认 `DEFAULT_STEP_WALL_CLOCK_MS`;超时即 `timedOut: true`。 */
   readonly wallClockMs?: number;
-  /**
-   * 通道的宿主侧服务:一行请求进、一行响应出。
-   *
-   * 生产实现是 `createSessionTools(...).requestHandler`(`agent/host`,带白名单、`evaluate`
-   * 配额与会话墙钟)。给了就按行转发;不给则 fd 3 照样打开(薄壳据此判断通道在不在),但宿主
-   * 不读不写——那一步里任何受限工具都会以「工具不可用」退出 2。
-   */
-  readonly requestHandler?: RequestHandler;
   /** 覆盖 bwrap 路径(测试 / 调试用)。 */
   readonly bwrapPath?: string;
   /** 覆盖单步额度。 */
@@ -90,28 +77,6 @@ export const KILL_GRACE_MS = 2_000;
 
 /** 被墙钟杀掉时交回的退出码(借 `timeout(1)` 的口径,不冒充命令自己的退出码)。 */
 export const TIMEOUT_EXIT_CODE = 124;
-
-/**
- * 通道用的 fd 序号。真源是 `@model-war/schema` 的 `TOOL_CHANNEL_FD`(薄壳与协议体同一份);
- * 这里只是给执行器一个本地名字,别在两处各写一个 `3`。
- */
-export const CHANNEL_FD = TOOL_CHANNEL_FD;
-
-/** `child.stdio[3]` 的类型太宽;只认「既能读又能写」的那种,不猜。 */
-type DuplexChannel = {
-  on(event: "data", listener: (chunk: Buffer) => void): unknown;
-  on(event: "error", listener: (error: Error) => void): unknown;
-  write(chunk: string): boolean;
-  destroy(): void;
-};
-
-const isDuplexChannel = (stream: unknown): stream is DuplexChannel =>
-  typeof stream === "object" &&
-  stream !== null &&
-  "on" in stream &&
-  "write" in stream &&
-  "destroy" in stream &&
-  typeof (stream as { write?: unknown }).write === "function";
 
 /**
  * 杀整棵进程树:先打进程组,再补那一枪打组长本身。
@@ -182,7 +147,7 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
   const child = spawn(request.bwrapPath ?? "bwrap", [...bwrapArgv(command)], {
     // detached:子进程成为进程组组长,`kill(-pid)` 才打得到整组(见头注)。
     detached: true,
-    stdio: ["ignore", "pipe", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
   const stdout = collector();
@@ -202,9 +167,9 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
   let escalation: ReturnType<typeof setTimeout> | undefined;
   // ── 单步墙钟只计**沙箱自身执行**的时间 ──
   //
-  // ADR-0029:「服务调用不受单步约束,只受总墙钟约束」。这一步阻塞在宿主服务上(`evaluate`
-  // 要跑一整张网格)的那段时间在通道里冻结、回包后续上。不冻的后果不是慢,而是错杀一次真
-  // 评测:观测原料与网格汇总已经落盘,而这一步以 `timedOut` 收场,会话留下半个提交。
+  // ADR-0029:「服务调用不受单步约束,只受总墙钟约束」。新世界里这条口径由**位置**保住:
+  // 一次 `evaluate` 是宿主的 `dispatch` 调用,不经过 `runStep`,所以它根本不计进这只钟——
+  // 旧世界的做法是「服务请求在途时把钟冻住」,那是为了同一件事花的一份实现代价,现在没了。
   const clock: BudgetClock = createBudgetClock({
     limitMs: wallClockMs,
     onExpire: () => {
@@ -215,14 +180,10 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
   });
   clock.start();
 
-  const channel = child.stdio[CHANNEL_FD];
-  const stopChannel = wireChannel(channel, request.requestHandler, clock);
-
   return await new Promise<SandboxStepResult>((resolve, reject) => {
     child.on("error", (error: Error) => {
       clock.stop();
       if (escalation !== undefined) clearTimeout(escalation);
-      stopChannel();
       reject(
         new Error(
           `沙箱执行器起不来(${request.bwrapPath ?? "bwrap"}):${error.message}。` +
@@ -233,7 +194,6 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
     child.on("close", (code, signal) => {
       clock.stop();
       if (escalation !== undefined) clearTimeout(escalation);
-      stopChannel();
       const settled = stdout.truncated() || stderr.truncated();
       const notes = settled
         ? `\n[sandbox] 两路输出超过 ${String(OUTPUT_LIMIT_BYTES)} 字节上限,其余字节被宿主侧丢弃。`
@@ -247,69 +207,4 @@ export const runStep = async (request: SandboxStepRequest): Promise<SandboxStepR
       });
     });
   });
-};
-
-/**
- * 把 fd 3 接上(或不接)。返回一个收尾函数:无论成败都要关掉,否则宿主这边留着一个半开的
- * socket,进程退出后才被回收。
- *
- * 一行进、一行出;按到达顺序**串行**处理(响应要按序回给同一端)。请求行按 `\n` 切,
- * 多字节字符不会被切断(Buffer 上切,切完再解码)。
- *
- * 服务请求**在途**期间把单步墙钟冻结(`clock.pause` / `resume`):那段时间里这一步只是在等一行
- * 响应,不是沙箱在跑(ADR-0029「服务调用不受单步约束」)。
- */
-const wireChannel = (
-  stream: unknown,
-  handler: RequestHandler | undefined,
-  clock: BudgetClock,
-): (() => void) => {
-  if (!isDuplexChannel(stream)) {
-    return () => {
-      // 没有通道可接:这一步的薄壳会以「工具不可用」退出 2,那是设计好的行为。
-    };
-  }
-  if (handler === undefined) {
-    // 通道开着、宿主不读:那一步里的薄壳会以「工具不可用」退出 2(那是设计好的行为)。
-    return () => {
-      stream.destroy();
-    };
-  }
-
-  let pending = Buffer.alloc(0);
-  let queue: Promise<void> = Promise.resolve();
-
-  const respond = (line: string): void => {
-    queue = queue.then(async () => {
-      clock.pause();
-      try {
-        const response = await handler(line);
-        stream.write(`${response}\n`);
-      } catch {
-        // 服务自己保证「永远回一行」(`agent/host` 的 dispatcher 把异常折成伪造响应);
-        // 真漏到这里也只丢一条响应,由薄壳变成「脚本工具不可用」,传输层不发明一套语义。
-      } finally {
-        clock.resume();
-      }
-    });
-  };
-
-  stream.on("data", (chunk: Buffer) => {
-    pending = Buffer.concat([pending, chunk]);
-    for (;;) {
-      const newline = pending.indexOf(0x0a);
-      if (newline < 0) break;
-      const line = pending.subarray(0, newline).toString("utf8");
-      pending = pending.subarray(newline + 1);
-      if (line !== "") respond(line);
-    }
-  });
-  // 通道断开不是这一步的失败:模型可能没调用任何薄壳。
-  stream.on("error", () => {
-    // 忽略:另一端关了。
-  });
-
-  return () => {
-    stream.destroy();
-  };
 };

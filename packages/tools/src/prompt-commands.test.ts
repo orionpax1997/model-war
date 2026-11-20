@@ -21,6 +21,7 @@ import {
   absentToolFindings,
   commandListFindings,
   derivedCommandGroups,
+  hostToolNamesFrom,
   listedCommands,
 } from "./prompt-commands.ts";
 
@@ -40,23 +41,40 @@ const TEMPLATE = [
   "没有 `awk`,也没有 `sleep`:要等一会儿用 `read -t 1 </dev/null`。",
 ].join("\n");
 
-const DERIVED = { binaries: ["bash", "sed"], shims: ["check"] };
+const DERIVED = { binaries: ["bash", "sed"], hostTools: ["check"] };
+
+/** 一份最小可用的 `AGENT_TOOLS` 源码:与真文件的形态一致(`name:` 逐条列出)。 */
+const TOOLS_SOURCE = [
+  "export const AGENT_TOOLS = [",
+  '  { name: "bash", parameters: {} },',
+  '  { name: "check", parameters: {} },',
+  '  { name: "probe", parameters: {} },',
+  "] as const;",
+].join("\n");
 
 const red = (findings: readonly { where: string; detail: string }[]): string =>
   findings.map((finding) => `${finding.where}:${finding.detail}`).join("\n");
 
-it("分组规则:`bin/` 减薄壳是静态二进制,薄壳单独一组,两组的名字都排序", () => {
+it("分组规则:`bin/` 里每一个都是静态二进制,宿主工具单独一组,两组的名字都排序", () => {
   expect(
     derivedCommandGroups(
-      ["bin/sed", "bin/zsh", "bin/bash", "bin/check", "contract/api.md"],
+      ["bin/sed", "bin/zsh", "bin/bash", "contract/api.md"],
       ["finish", "check"],
     ),
-  ).toEqual({ binaries: ["bash", "sed", "zsh"], shims: ["check", "finish"] });
+  ).toEqual({ binaries: ["bash", "sed", "zsh"], hostTools: ["check", "finish"] });
   // 清单里没有 `bin/` 前缀的项不参与(契约文件不是命令)。
   expect(derivedCommandGroups(["contract/api.md"], ["check"])).toEqual({
     binaries: [],
-    shims: ["check"],
+    hostTools: ["check"],
   });
+});
+
+it("宿主工具的名字从工具声明的源码文本取,`bash` 归二进制那一组", () => {
+  // `bash` 是沙箱里敲的,不是宿主工具:它在声明里存在,但要从这一组里减掉。
+  expect(hostToolNamesFrom(TOOLS_SOURCE)).toEqual(["check", "probe"]);
+  // 抽不出来时返回空数组(入口按空转判红):静默放行是这套判据最怕的形状。
+  expect(hostToolNamesFrom("export const AGENT_TOOLS = [")).toEqual([]);
+  expect(hostToolNamesFrom("没有那个常量")).toEqual([]);
 });
 
 it("解析:只收分组标题下面的清单项,行号指得到,用途原样留下", () => {
@@ -64,7 +82,7 @@ it("解析:只收分组标题下面的清单项,行号指得到,用途原样留�
   expect(listed.map((item) => `${item.group}/${item.name}`)).toEqual([
     "binaries/bash",
     "binaries/sed",
-    "shims/check",
+    "hostTools/check",
   ]);
   expect(listed[1]?.index).toBe(6);
   expect(listed[1]?.purpose).toBe("取行段与就地改。");
@@ -90,10 +108,26 @@ it("两组集合相等时绿", () => {
 it("常量里加了、文案没加:红并点名那个命令", () => {
   const findings = commandListFindings(TEMPLATE, {
     binaries: [...DERIVED.binaries, "__probe"],
-    shims: DERIVED.shims,
+    hostTools: DERIVED.hostTools,
   });
   expect(findings).toHaveLength(1);
   expect(red(findings)).toContain("__probe");
+});
+
+it("宿主工具组只判一个方向:声明里有而文案没写,本票不红(那半归票 04)", () => {
+  // 反方向的判据要等首条消息换成「宿主工具」那一节(票 04 的 `check:prompt-tools`)——
+  // 在那之前声明里的 `probe` 会让这条门禁红在一个还没轮到改的文件上。
+  expect(commandListFindings(TEMPLATE, { ...DERIVED, hostTools: ["check", "probe"] })).toEqual([]);
+  // 但反过来的那一条照判:文案点名了一个声明里没有的工具,红。
+  const findings = commandListFindings(
+    TEMPLATE.replace(
+      "- `check` — 检查当前脚本。",
+      "- `check` — 检查当前脚本。\n- `__ghost` — 不存在。",
+    ),
+    DERIVED,
+  );
+  expect(findings).toHaveLength(1);
+  expect(red(findings)).toContain("__ghost");
 });
 
 it("文案里写了、常量里没有:红并点名那个命令", () => {
@@ -105,18 +139,16 @@ it("文案里写了、常量里没有:红并点名那个命令", () => {
   expect(red(findings)).toContain("python3");
 });
 
-it("把薄壳整个挪进静态二进制组:两组各报一次(模型会以为它是本地命令)", () => {
-  const mixed = TEMPLATE.replace("- `sed` —", "- `check` — 混进来了。\n- `sed` —").replace(
-    "- `check` — 检查当前脚本。",
-    "",
-  );
+it("把宿主工具挪进静态二进制组:红在「沙箱里没有它」那一侧", () => {
+  // 这一条守的是分组的意义:写着 `check` 却放在二进制一节,模型会以为它是本地命令。
+  // 静态二进制那一侧照旧两个方向都判,所以它当场红。
+  const mixed = TEMPLATE.replace("- `sed` —", "- `check` — 混进来了。\n- `sed` —");
   const findings = commandListFindings(mixed, DERIVED);
-  // 静态二进制组多一个 `check`;薄壳组缺 `check`。
-  expect(findings.length).toBe(2);
+  expect(findings).toHaveLength(1);
   expect(red(findings)).toContain("check");
 });
 
-it("同一个名字两组都写:多出来的那一组报红(模型看到的是两条命令)", () => {
+it("同一个名字两组都写:静态二进制那一侧报红(模型看到的是两条命令)", () => {
   const twice = TEMPLATE.replace("- `sed` —", "- `check` — 混进来了。\n- `sed` —");
   const findings = commandListFindings(twice, DERIVED);
   expect(findings).toHaveLength(1);

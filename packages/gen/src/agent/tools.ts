@@ -154,6 +154,18 @@ export type ToolName = (typeof AGENT_TOOLS)[number]["name"];
 export const TOOL_NAMES: readonly ToolName[] = AGENT_TOOLS.map((tool) => tool.name);
 
 /**
+ * **宿主服务**那几个工具的名字:`bash` 之外的全部。
+ *
+ * 分界线只有一条:`bash` 由 loop 交给沙箱执行(「一步一次 `bash -c`」那条铁律的落点),
+ * 其余四个由宿主分派。所以这一份是**派生值**,不手写第二份——手写的那一份会与声明分叉,而
+ * 分叉的形状是「声明里加了工具、宿主不认」或反过来,两种都不报错。
+ *
+ * 两处读它:dispatcher 的白名单(`host/dispatcher.ts`)与身份清单的 `services.tools`
+ * (`identity.ts`)。
+ */
+export const HOST_SERVICE_TOOLS: readonly ToolName[] = TOOL_NAMES.filter((name) => name !== "bash");
+
+/**
  * 这个工具收不收 `arguments`。
  *
  * 只有 `bash` 收(`{command}`);另外四个做什么由「当前的 `/workspace/script.ts`」唯一决定,
