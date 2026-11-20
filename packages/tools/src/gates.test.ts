@@ -1206,9 +1206,9 @@ const AGENT_TEMPLATE_FILE = "prompts/agent.md";
 it("命令清单门禁:常量加了二进制而文案没跟上时变红并点名,还原变绿", () => {
   const clean = script("check:prompt-commands");
   expect(clean.status, clean.output).toBe(0);
-  // 规模自证:报告必须给出两组各自的条数——「退出 0」只有在真比过两个集合时才成立。
+  // 规模自证:报告必须给出条数与名字——「退出 0」只有在真比过两个集合时才成立。
   expect(clean.output, clean.output).toContain("静态二进制");
-  expect(clean.output, clean.output).toContain("宿主工具");
+  expect(clean.output, clean.output).toContain("条(bash");
 
   const violated = withPatchedText(
     ROOTFS_MANIFEST_FILE,
@@ -1248,12 +1248,15 @@ it("命令清单门禁:删掉「没有 sleep / awk」那句时变红(缺项也�
   expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("命令清单门禁:分组标题换词时红在标题上(不把整组报成「清单没写」)", () => {
-  // 标题是分组的判据:它一换词,整组清单就不再算数。诊断必须指得到那一行,
+it("命令清单门禁:二进制那一节的标题换词时红在标题上(不把整组报成「清单没写」)", () => {
+  // 标题是分组的判据:它一换词,整节清单就不再算数。诊断必须指得到那一行,
   // 否则人会去补八九条清单项,而真正该改的只是一行标题。
+  //
+  // 反例落在**二进制**那一节:宿主工具那一节的标题归 `check:prompt-tools`
+  // (下一条用例),两条标题各有一条反例盯着。
   const violated = withPatchedText(
     AGENT_TEMPLATE_FILE,
-    (source) => source.replace("### 工具薄壳", "### 宿主工具"),
+    (source) => source.replace("### 静态二进制:通用命令", "### 本地命令:通用命令"),
     () => script("check:prompt-commands"),
   );
   expect(violated.status, "分组标题换词时门禁必须非零退出").toBe(1);
@@ -1277,6 +1280,114 @@ it("命令清单门禁挂在 check:quick,且没被挪进按需 / 慢链", () => 
   expect(tailSteps(), "命令清单判据被挪进了全量门禁末尾复核组").not.toContain(
     "check:prompt-commands",
   );
+});
+
+// ── 工具清单门禁:首条消息的「宿主工具」一节 == 工具声明 ────────────────────────
+//
+// 与上一条是同一个洞的另一半:那一半守「沙箱里有什么」,这一半守「能调什么」。工具声明在 API 层
+// 看得见、文案在手写散文里,两处漂的方向各有一个后果——声明加了工具而文案没提(一整个工具白给),
+// 文案点名了声明里没有的工具(每一步拿一次 `unknown-tool`)。两条都落在这道门禁上。
+
+/** 工具声明的唯一真源。加它一条 = 会话里多一个可调用的工具。 */
+const AGENT_TOOLS_FILE = "packages/gen/src/agent/tools.ts";
+
+/** `system` 模板。它的判决是「点到的每个反引号单词都得有着落」。 */
+const AGENT_SYSTEM_FILE = "prompts/agent-system.md";
+
+it("工具清单门禁:全绿,且报告给出声明与宿主工具两档的规模", () => {
+  const clean = script("check:prompt-tools");
+  expect(clean.status, clean.output).toBe(0);
+  // 规模自证:报告必须给出个数与名字——「退出 0」只有在真比过三个集合时才成立。
+  expect(clean.output, clean.output).toContain("声明的工具");
+  expect(clean.output, clean.output).toContain("宿主工具");
+  // `bash` 归二进制那一节,不该出现在宿主工具那一档里。
+  expect(clean.output, clean.output).toContain("其余归静态二进制那一节");
+});
+
+it("工具清单门禁:声明里加了工具而文案没跟上时变红并点名,还原变绿", () => {
+  // 这一条是判据的主方向:新工具在声明里(`models.yaml` 换了、dispatcher 接了),而散文没提,
+  // 模型不会去调一个没被点名的工具——一整个能力白给,没有任何别的东西会红。
+  const violated = withPatchedText(
+    AGENT_TOOLS_FILE,
+    (source) =>
+      source.replace(
+        '  {\n    name: "finish",',
+        '  {\n    name: "diagnose",\n    description: "探针工具。",\n    parameters: NO_PARAMETERS,\n  },\n  {\n    name: "finish",',
+      ),
+    () => script("check:prompt-tools"),
+  );
+  expect(violated.status, "声明里多一个工具而文案没写时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("diagnose");
+  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("工具清单门禁:文案点名了声明里没有的工具时变红并点名", () => {
+  // 反方向:模型照散文去调一个不存在的工具,拿一次 `unknown-tool` 拒绝换一条纠正——那一步白花。
+  const violated = withPatchedText(
+    AGENT_TEMPLATE_FILE,
+    (source) => source.replace("- `finish` —", "- `__ghost` — 不存在的工具。\n- `finish` —"),
+    () => script("check:prompt-tools"),
+  );
+  expect(violated.status, "文案里写了声明没有的工具时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("__ghost");
+  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("工具清单门禁:宿主工具那一节的标题换词时红在标题上", () => {
+  // 与上一条门禁同一条纪律:标题是分组的判据,换词等于把整节抹掉。诊断必须指得到那一行,
+  // 否则人会去补四条清单项,而真正该改的只是一行标题。
+  const violated = withPatchedText(
+    AGENT_TEMPLATE_FILE,
+    (source) => source.replace("### 宿主工具:调用它们,不在沙箱里", "### 宿主工具:换个词"),
+    () => script("check:prompt-tools"),
+  );
+  expect(violated.status, "分组标题换词时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("没有那条分组标题");
+  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("工具清单门禁:`system` 里点了一个既不是工具、也没登记的词时变红并点名", () => {
+  // `system` 里的反引号单词会被模型读成协议里的名字。新写一个而不给着落,等于在教它调一个
+  // 不存在的东西——它照着试一次,拿一条纠正,再花一步改。
+  const violated = withPatchedText(
+    AGENT_SYSTEM_FILE,
+    (source) => `${source}\n也可以用 \`shell\` 跑。\n`,
+    () => script("check:prompt-tools"),
+  );
+  expect(violated.status, "`system` 里出现没着落的反引号单词时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("shell");
+  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("工具清单门禁:声明的写法变了、抽不出名字时按失败处理(空转反例)", () => {
+  // 抽不出来 = 判据失明。此时「没有违规」不是「声明与文案一致」,而是「什么也没比」——
+  // 必须按失败处理并说明原因,那正是这套判据最容易假绿的形状。
+  const violated = withPatchedText(
+    AGENT_TOOLS_FILE,
+    (source) => source.replace("export const AGENT_TOOLS = [", "const SHADOWED_TOOLS = ["),
+    () => script("check:prompt-tools"),
+  );
+  expect(violated.status, "抽不出声明时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("AGENT_TOOLS");
+  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("工具清单门禁挂在 check:quick(紧跟命令清单门禁),且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它零构建(读三份文本、比三个集合),而日常入口是 `verify:fast`——抓不到等于没有。
+  expect(scripts["check:quick"] ?? "", "工具清单判据不在快门禁里").toContain("check:prompt-tools");
+  // 位置:它紧跟在命令清单判据之后——两条判的是同一条首条消息的两节,排一起才读得懂报告。
+  expect(scripts["check:quick"] ?? "", "工具清单判据没跟在命令清单判据之后").toContain(
+    "check:prompt-commands && pnpm run check:prompt-tools",
+  );
+  // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "工具清单判据被挪进了按需门禁").not.toContain(
+    "check:prompt-tools",
+  );
+  expect(scripts["test:slow"] ?? "", "工具清单判据被挪进了慢链").not.toContain(
+    "check:prompt-tools",
+  );
+  expect(tailSteps(), "工具清单判据被挪进了全量门禁末尾复核组").not.toContain("check:prompt-tools");
 });
 
 // ── 验收落点门禁:落点表自己的存在性判据 ─────────────────────────────────────
