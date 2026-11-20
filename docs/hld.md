@@ -106,7 +106,7 @@
 
 | 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、首条消息命令清单门禁(`check:prompt-commands`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
+| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、首条消息命令清单门禁(`check:prompt-commands`)、首条消息宿主工具清单门禁(`check:prompt-tools`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
 | 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
@@ -537,7 +537,7 @@ archive/<modelSlug>/<runId>/
 | 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `check:budget`(结构门禁)+ `check:budget-recheck`(探针复核) |
 | 生成期沙箱执行器 | `check:sandbox`(真跑七件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移 / coreutils 五条最小调用 / 沙箱里敲不到宿主工具名 / 宿主分派跑通一次 `check`;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
 | 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里每一份都是静态 ELF / 契约逐字节 / `PROVENANCE.md` 的来路表与入库字节的 sha256 一一相符)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
-| 模型知道自己有什么命令 | `check:prompt-commands`(首条消息里的命令清单与 `SANDBOX_ROOTFS_FILES` 推出的集合**逐项相等**,两组分开判;缺项 `awk` / `sleep` 与替代写法在场)+ `packages/tools/src/prompt-commands.test.ts`(两个方向 / 分组 / 每项一句用途)+ `check:sandbox`(真 bwrap 里 `sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各一条最小调用,断言输出字节) |
+| 模型知道自己有什么命令 | `check:prompt-commands`(首条消息里「静态二进制」一节的命令清单与 `SANDBOX_ROOTFS_FILES` 推出的 `bin/` 集合**逐项相等**;缺项 `awk` / `sleep` 与替代写法在场)+ `check:prompt-tools`(首条消息里「宿主工具」一节点名的工具集合与 `AGENT_TOOLS` 声明的 `name` 集合**逐项相等**,`system` 里点的每个名字都有着落)+ `packages/tools/src/prompt-commands.test.ts` + `packages/tools/src/prompt-tools.test.ts`(两个方向 / 分节 / 每项一句用途)+ `check:sandbox`(真 bwrap 里 `sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各一条最小调用,断言输出字节) |
 | 宿主工具面 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 参数面 / 拒绝是 `isError` 而不是伪造退出码)+ `check:sandbox`(沙箱里敲不到这四个工具名;宿主分派真的跑通一次 `check`,真 tsc) |
 | 动作协议与收工命令 | `packages/gen/src/agent/action.test.ts`(四种被拒形状与逐字正/反例)+ `packages/gen/src/agent/host/dispatcher.test.ts`(`finish` 被受理才置位:被拒的那一次不是收工)+ `packages/gen/src/agent/loop.test.ts`(收工判据读宿主交回的 `done`,不读工具名)+ `packages/gen/src/agent/identity.test.ts`(`actionSyntax.rejects` 与 `finish` 那一格进 `harnessDigest`) |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |

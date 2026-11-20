@@ -172,5 +172,21 @@ it("`system` 原样用 `prompts/agent-system.md`:不渲染、无占位符", () =
   expect(system).not.toContain("{{");
   // 协议那一半与任务那一半是两条消息(ADR-0032):system 里不写任务,首条消息里不写协议。
   expect(system).not.toContain("你的任务");
-  expect(prompt().user).not.toContain("每一步一个动作块");
+});
+
+it("围栏块话术已随协议删除:`system` 与首条消息里都不再提它", () => {
+  // 新协议是「一步一次工具调用」,围栏块已经不存在——两份提示词里若还留着「恰好一个 `bash`
+  // 代码块」「动作块」这类话术,模型会照着旧形状输出,而那种输出现在只能拿到一条纠正。
+  const { system, user } = prompt();
+  for (const [what, text] of [
+    ["system", system],
+    ["首条消息", user],
+  ] as const) {
+    for (const phrase of ["代码块", "动作块", "围栏"]) {
+      expect(text, `${what} 里还留着旧协议的「${phrase}」话术`).not.toContain(phrase);
+    }
+  }
+  // 反过来:协议那一半得把新形状说清楚——「一次调用」与「工具声明」是它的两个落点。
+  expect(system).toContain("一次工具调用");
+  expect(system).toContain("工具声明");
 });
