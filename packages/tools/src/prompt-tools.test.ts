@@ -22,6 +22,8 @@ import {
   declaredToolNamesFrom,
   hostToolFindings,
   mentionedToolWords,
+  probeCountFindings,
+  probeMatchLimitFrom,
   systemMentionFindings,
 } from "./prompt-tools.ts";
 
@@ -151,4 +153,57 @@ it("`system` 里点了一个既不是工具、也没登记的词:红并点名", 
   // 免登记清单不是白名单:把同一个词放进声明,它就该放行。
   const declared = [...DECLARED, "shell"];
   expect(systemMentionFindings(`${SYSTEM}\n- 用 \`shell\` 也能跑。\n`, declared)).toEqual([]);
+});
+
+// ── 探针场数:散文里的那个数 == `PROBE_MATCH_LIMIT` ─────────────────────────────
+//
+// 这两条守的是一条**手写的重复**:工具声明的描述是模板字符串(从常量派生),而
+// `prompts/agent.md` 那一句是散文。只改常量时,散文不会自己跟上,而模型读到的正是散文。
+
+/** 一份最小可用的 schema 源码:形态与真文件一致(`8 as const`)。 */
+const PROBE_LIMITS_SOURCE = [
+  "/** 头注里的 `PROBE_MATCH_LIMIT = 4` 不该被当成真值 */",
+  "export const PROBE_MATCH_LIMIT = 8 as const;",
+  "export const PROBE_CALL_LIMIT = 5 as const;",
+].join("\n");
+
+it("场数从 schema 源码文本取:取第一个 `export const` 声明的那个数", () => {
+  const parsed = probeMatchLimitFrom(PROBE_LIMITS_SOURCE);
+  expect(parsed.ok && parsed.limit).toBe(8);
+});
+
+it("抽不出 `PROBE_MATCH_LIMIT` 时按失败处理并说明原因,不退化成 0", () => {
+  const missing = probeMatchLimitFrom("export const PROBE_CALL_LIMIT = 5 as const;");
+  expect(missing.ok).toBe(false);
+  expect(missing.ok ? "" : missing.reason).toContain("PROBE_MATCH_LIMIT");
+
+  // 写法变了(从别处引用、不是整数)——同样抽不到,而不是读成一个"差不多"的数。
+  const computed = probeMatchLimitFrom(
+    "export const PROBE_MATCH_LIMIT = TRIAL_GRID_SEAT_COUNT * 2 as const;",
+  );
+  expect(computed.ok).toBe(false);
+});
+
+it("散文里的场数与常量相等时放行,不等时红并同时说出两个数", () => {
+  // `TEMPLATE` 里那句是「跑前 8 场回预算读数」。
+  expect(probeCountFindings(TEMPLATE, 8)).toEqual([]);
+
+  const mismatched = probeCountFindings(TEMPLATE, 4);
+  expect(mismatched).toHaveLength(1);
+  expect(red(mismatched)).toContain("前 8 场");
+  expect(red(mismatched)).toContain("是 4");
+});
+
+it("散文里读不到「前 N 场」时按失败处理:判据失明不能安静放行", () => {
+  const rewritten = probeCountFindings(
+    TEMPLATE.replace("跑前 8 场回预算读数", "跑一段回预算读数"),
+    8,
+  );
+  expect(rewritten).toHaveLength(1);
+  expect(red(rewritten)).toContain("前 N 场");
+});
+
+it("散文里没有 `probe` 那一项时不在这里报:缺项归集合判据(不重复计一条)", () => {
+  const withoutProbe = TEMPLATE.replace("- `probe` — 跑前 8 场回预算读数。\n", "");
+  expect(probeCountFindings(withoutProbe, 8)).toEqual([]);
 });
