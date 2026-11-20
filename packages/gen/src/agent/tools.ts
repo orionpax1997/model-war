@@ -27,7 +27,19 @@
  * **源码文本**并按 `name: "xxx"` 取名字(`packages/tools/src/prompt-commands.ts` 与
  * `rootfs-drift.ts` 同一套 fail-closed 取法)。所以这里必须是**字面量数组**:别改成函数生成、
  * 别跨文件拼装、别用 `satisfies`,否则那条门禁读不到五个名字。
+ *
+ * **`name:` 那一行必须仍是字符串字面量,`description` 可以是模板字符串**——门禁只按 `name:`
+ * 取名字,描述里出现什么都不影响它。`probe` 那一条正是模板字符串:它报的场数(`PROBE_MATCH_LIMIT`)
+ * 与"另几场仍可能越线"(网格总场数减去它)都是**派生值**,手写第二份就会与常量分叉,而模型读到
+ * 的是描述、不是常量。
  */
+
+import {
+  PROBE_MATCH_LIMIT,
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_GRID_SEAT_COUNT,
+  TRIAL_MATCHES_PER_CANDIDATE,
+} from "@model-war/schema";
 
 /**
  * 一条工具声明。
@@ -120,10 +132,16 @@ export const AGENT_TOOLS = [
   },
   {
     name: "probe",
+    // 三个数都从 `@model-war/schema` 派生:前几场(`PROBE_MATCH_LIMIT`)、整张网格几场
+    // (`TRIAL_MATCHES_PER_CANDIDATE`)与"另几场"(两者之差)。场序是「组合 → 座位 → 地图」,
+    // 所以前缀覆盖的是第 1 个组合的每个座位 × 每张地图——座位与地图数也从网格常量取。
     description:
-      "拿当前 /workspace/script.ts 跑完整评测计划的**前 8 场**(1 个组合 × 4 个座位 × 2 张地图)," +
+      `拿当前 /workspace/script.ts 跑完整评测计划的**前 ${String(PROBE_MATCH_LIMIT)} 场**` +
+      `(按「组合 → 座位 → 地图」的场序取前缀,每个组合 ${String(TRIAL_GRID_SEAT_COUNT)} 个座位 × ` +
+      `${String(TRIAL_GRID_MAP_NAMES.length)} 张地图),` +
       "回每一条预算轨的最坏占用读数(单 tick 控制流事件、单 tick API 调用、内存),而不是只回过或不过。" +
-      "**这不等于整张 32 场网格通过**:另 24 场仍可能越线,evaluate 会照旧拦下。" +
+      `**这不等于整张 ${String(TRIAL_MATCHES_PER_CANDIDATE)} 场网格通过**:` +
+      `另 ${String(TRIAL_MATCHES_PER_CANDIDATE - PROBE_MATCH_LIMIT)} 场仍可能越线,evaluate 会照旧拦下。` +
       "不收参数,计一步,不占 evaluate 的三次额度。",
     parameters: NO_PARAMETERS,
   },

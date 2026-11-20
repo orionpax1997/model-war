@@ -74,7 +74,7 @@ export type ArchiveShapeVersion = import("@model-war/schema").ArchiveShapeVersio
  * 只有一处（v3 的步里不许有 `check` / `probe` / `toolCall`），而那条判据在
  * `archiveShapeIssueOf` 里——分派这一层只回答「按哪一版读」。
  *
- * 第二个拒读分支防的是一件真会发生的��：**只写了一半升级的档**。那些 agent 字段在旧读法里
+ * 第二个拒读分支防的是一件真会发生的事：**只写了一半升级的档**。那些 agent 字段在旧读法里
  * 全是额外属性，`additionalProperties: false` 会拒它，但拒的理由是「多了几个键」，而真正的事实
  * 是「形状版本没跟上」。先把事实说出来。
  *
