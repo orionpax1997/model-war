@@ -261,6 +261,46 @@ it("判据 1（地基）：只用约 60% 预算 → 「充裕」档，三条轨�
   expect(text).toContain("2/4");
 });
 
+it("充裕档与贴边档都催复测：改过脚本就得重新 probe，否则读数对不上被评的那一版", () => {
+  // 真档（mimo 2026-11-20）第 18 步读到充裕就把脚本整份重写、第 22 步直接 evaluate，
+  // 白烧一次（总共三次）。充裕档原本没有这句话，贴边档原本只有「先降下来再 evaluate」。
+  const ample = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips: [],
+    peakUsage: { eventCount: 30000, apiCalls: 480, memoryBytes: 300000 },
+    limits: PROBE_LIMITS,
+  });
+  expect(ample.nearLimit).toBe(false);
+  expect(ample.text).toContain("重新 probe");
+  expect(ample.text).toContain("改过脚本之后");
+
+  const nearLimit = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips: [],
+    peakUsage: { eventCount: 48000, apiCalls: 100, memoryBytes: 200000 },
+    limits: PROBE_LIMITS,
+  });
+  expect(nearLimit.nearLimit).toBe(true);
+  expect(nearLimit.text).toContain("重新 probe");
+});
+
+it("已越线档不催复测：那一档与 evaluate 的拦下话术逐字同源，不许多一句", () => {
+  // 越线时该做的是改，不是复测；加一句就与 `renderTrialFeedback` 的逐字复用不再一致。
+  const seat = candidateSeatOfPlan(plan)(0);
+  const report = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips: [
+      { matchIndex: 0, tick: 102, seat, track: "eventTickLimit", value: 61234, limit: 50000 },
+    ],
+    peakUsage: { eventCount: 61234, apiCalls: 120 },
+    limits: PROBE_LIMITS,
+  });
+  expect(report.text).not.toContain("重新 probe");
+});
+
 it("判据 2（已越线）：一位候选在第 1 场某 tick 越线 → 「已越线」+ evaluate 的同一段话术", () => {
   // 夹具按形状构造：候选在第 1 场（matchIndex 0）坐在计划给的座位上。
   const seat = candidateSeatOfPlan(plan)(0);
@@ -357,6 +397,8 @@ it("贴边档：任一条轨 ≥ 80% 即切档，且带「已经贴边」与那�
   expect(report.text).not.toContain("API 100/800");
   // 免责两句照样在：贴边也不是"整张通过"。
   expect(report.text).toContain("这不等于整张 32 场通过");
+  // 催复测那句也在这档（充裕档见上一条用例）。
+  expect(report.text).toContain("重新 probe");
 });
 
 it("没采到读数时不假装全 0：缺席就写「没采到」，不写 0/50000", () => {
