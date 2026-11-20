@@ -34,7 +34,12 @@
  * 并发跑两场会话时计数互相吃。所以每次会话 `createSessionTools(...)` 一次,状态封在闭包里。
  */
 
-import { EVALUATE_CALL_LIMIT, PROBE_CALL_LIMIT, type ToolOutcome } from "@model-war/schema";
+import {
+  EVALUATE_CALL_LIMIT,
+  PROBE_CALL_LIMIT,
+  PROBE_MATCH_LIMIT,
+  type ToolOutcome,
+} from "@model-war/schema";
 
 import { HOST_SERVICE_TOOLS, acceptsArgumentsOf, type ToolCall, type ToolName } from "../tools.js";
 import type { CheckService } from "./check-service.js";
@@ -60,8 +65,9 @@ export const QUOTA_EXHAUSTED_MESSAGE = `evaluate: 工具不可用:本会话的�
  * 探针额度用完时的拒绝文案:与 `QUOTA_EXHAUSTED_MESSAGE` **同形**(同一个载体、同一种说法),
  * 只换工具名与那个数。
  *
- * 为什么探针需要有上限:一次探针 = 跑 8 场 ≈ 21.6 s。不设上限,"跑前 8 场"就是一条免费的
- * 无限循环——模型可以一直问而不付任何代价,会话墙钟会在那里被吃掉,而它本可以用来改脚本。
+ * 为什么探针需要有上限:一次探针 ≈ 21.6 s(场数见 `@model-war/schema` 的 `PROBE_MATCH_LIMIT`)。
+ * 不设上限,探针就是一条免费的无限循环——模型可以一直问而不付任何代价,会话墙钟会在那里
+ * 被吃掉,而它本可以用来改脚本。
  */
 export const PROBE_QUOTA_EXHAUSTED_MESSAGE = `probe: 工具不可用:本会话的探针额度已用完(${String(PROBE_CALL_LIMIT)}/${String(PROBE_CALL_LIMIT)} 次)。`;
 
@@ -84,7 +90,7 @@ export const UNKNOWN_TOOL_MESSAGE = `工具不可用:不在受限工具白名单
 export const TOOL_USAGE = {
   check: "用法:check(不接受参数)——检查当前 /workspace/script.ts 的类型与静态校验,计一步。",
   probe:
-    "用法:probe(不接受参数)——把当前 /workspace/script.ts 跑完整计划的前 8 场," +
+    `用法:probe(不接受参数)——把当前 /workspace/script.ts 跑完整计划的前 ${String(PROBE_MATCH_LIMIT)} 场,` +
     "回每一条预算轨的最坏占用读数,计一步、占用一次探针额度。",
   evaluate:
     "用法:evaluate(不接受参数)——把当前 /workspace/script.ts 送去跑一次完整评测,计一步、占用一次配额。",

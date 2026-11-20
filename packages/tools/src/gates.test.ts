@@ -1291,6 +1291,9 @@ it("命令清单门禁挂在 check:quick,且没被挪进按需 / 慢链", () => 
 /** 工具声明的唯一真源。加它一条 = 会话里多一个可调用的工具。 */
 const AGENT_TOOLS_FILE = "packages/gen/src/agent/tools.ts";
 
+/** 探针场数的家。首条消息里那个手写的场数就是与它对齐的。 */
+const PROBE_LIMITS_FILE = "packages/schema/src/probe-limits.ts";
+
 /** `system` 模板。它的判决是「点到的每个反引号单词都得有着落」。 */
 const AGENT_SYSTEM_FILE = "prompts/agent-system.md";
 
@@ -1369,6 +1372,43 @@ it("工具清单门禁:声明的写法变了、抽不出名字时按失败处理
   );
   expect(violated.status, "抽不出声明时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("AGENT_TOOLS");
+  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("工具清单门禁:探针场数改了而首条消息的散文没跟上时变红并点名两边", () => {
+  // 这一条盯的是一对**手写的重复**:工具声明的描述是模板字符串(从 `PROBE_MATCH_LIMIT` 派生),
+  // 而 `prompts/agent.md` 里那句是散文。只改常量时,模型读到的散文不会自己跟上——集合判据只比
+  // `name:`,这一条把那两个数绑上。
+  const violated = withPatchedText(
+    PROBE_LIMITS_FILE,
+    (source) =>
+      source.replace(
+        "export const PROBE_MATCH_LIMIT = 8 as const;",
+        "export const PROBE_MATCH_LIMIT = 4 as const;",
+      ),
+    () => script("check:prompt-tools"),
+  );
+  expect(violated.status, "散文与常量各说一个场数时门禁必须非零退出").toBe(1);
+  // 诊断要同时指得到位置与两个数,否则人会去改工具声明(那份已经是对的)。
+  expect(violated.output, violated.output).toContain(AGENT_TEMPLATE_FILE);
+  expect(violated.output, violated.output).toContain("前 8 场");
+  expect(violated.output, violated.output).toContain("是 4");
+  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("工具清单门禁:抽不出探针场数常量时按失败处理(空转反例)", () => {
+  // 与上面「抽不出声明」同一个纪律:常量改写后抽不到数 = 判据失明,不能安静放行。
+  const violated = withPatchedText(
+    PROBE_LIMITS_FILE,
+    (source) =>
+      source.replace(
+        "export const PROBE_MATCH_LIMIT = 8 as const;",
+        "export const PROBE_MATCH_LIMIT = TRIAL_GRID_SEAT_COUNT * 2 as const;",
+      ),
+    () => script("check:prompt-tools"),
+  );
+  expect(violated.status, "抽不出场数时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("PROBE_MATCH_LIMIT");
   expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
