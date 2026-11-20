@@ -131,10 +131,10 @@ export type ArchiveShapeIssue = {
  *
  * ── 为什么这条判据住在装载期，不住在 JSON Schema ──
  *
- * `check` / `probe` 两档动作与 `toolCall` 在 v4 才存在。要用 schema 表达「v3 档不许有它们」得
- * 写 `if/then`，而读入端有两条（`apps/cli` 的 ajv 与 runner 的 `z.fromJSONSchema`），后者不支持
- * 条件 schema；并排两套进 `oneOf` 也不行（v4 的 `bash` 分支是 v3 的超集，两分支会同时命中）。
- * 所以形状层收并集，版本的排除写在这里一处。
+ * `check` / `probe` 两档动作、`toolCall` 信封与 `action.rejectReason` 在 v4 才存在。要用 schema 表达
+ * 「v3 档不许有它们」得写 `if/then`，而读入端有两条（`apps/cli` 的 ajv 与 runner 的
+ * `z.fromJSONSchema`），后者不支持条件 schema；并排两套进 `oneOf` 也不行（v4 的 `bash` 分支是
+ * v3 的超集，两分支会同时命中）。所以形状层收并集，版本的排除写在这里一处。
  *
  * 还有一条理由：`oneOf` 失败给不出**名字**，而这条验收要的正是点名——「v3 档塞了 `check`」
  * 必须读到 `check` 这两个字，否则修的人只能看到一句「形状不合法」。
@@ -164,6 +164,16 @@ export const archiveStepShapeIssuesOf = (
           kind: "archive-step-shape" as const,
           pointer: pointerOf("toolCall"),
           message: "v3 档案的步里带 toolCall：工具调用信封是 v4 的形状，拒读",
+        },
+      ];
+    // `rejectReason` 同理是 v4 的形状：v3 的拒绝是「薄壳退出码 64」，那一步的 `none` 里没有
+    // 任何一档的名字可指。漏了这一条，一份被改错的 v3 档会收下一个它自己解释不了的键。
+    if (onV3 && step.action.kind === "none" && step.action.rejectReason !== undefined)
+      return [
+        {
+          kind: "archive-step-shape" as const,
+          pointer: pointerOf("action/rejectReason"),
+          message: "v3 档案的步里带 action.rejectReason：拒绝档名是 v4 的形状，拒读",
         },
       ];
     return [];
