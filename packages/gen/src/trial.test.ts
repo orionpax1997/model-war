@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 import { afterAll, expect, it } from "vitest";
 
-import { prepareTrialPlan, runTrialScript } from "./trial.js";
+import { prepareTrialPlan, runTrialProbeScript, runTrialScript } from "./trial.js";
 import { gridPlanFixture } from "./trial-plan.fixture.js";
 
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-gen-trial-`);
@@ -161,4 +161,56 @@ it("--plan 模式失败：非 0 退出与坏 JSON 都大声失败，不交回半
   expect(() => prepareTrialPlan(failed.root, MODEL)).toThrow(/2/);
   const garbage = fakeRoot('process.stdout.write("not json");\nprocess.exitCode = 0;\n');
   expect(() => prepareTrialPlan(garbage.root, MODEL)).toThrow(/输出不完整/);
+});
+
+// ── 探针那条缝：同一个入口的 `--match-limit` 模式 ──────────────────────────────
+//
+// 三个断言合成一件事：探针**不是第三条执行路径**。它转发的是同一个入口、同一个产物位置参数，
+// 只多一个 `--match-limit`；而且它不带 `--observations` 与 `--expected-plan`（探针不写证据、
+// 也不拿计划身份当判据）。
+
+it("探针转发：同一个入口 + --match-limit，没有 --observations / --expected-plan", () => {
+  const marker = join(scratch, `argv-probe-${String(Date.now())}.json`);
+  const { root, artifact } = fakeRoot(
+    `require("node:fs").writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));\n` +
+      'process.stdout.write("probe：前 8 场跑完。最坏读数：事件 120/500（24%）。\\n");\n' +
+      "process.exitCode = 0;\n",
+  );
+  const result = runTrialProbeScript({
+    root,
+    model: MODEL,
+    artifactPath: artifact,
+    matchLimit: 8,
+  });
+  expect(result.passed).toBe(true);
+  expect(result.stdout).toContain("最坏读数");
+  const argv = JSON.parse(readFileSync(marker, "utf8")) as readonly string[];
+  expect(argv).toEqual([artifact, "--root", root, "--model", MODEL, "--match-limit", "8"]);
+  // 两个"不许有"的 flag 逐条钉住：少传一个是这条缝上最容易发生的漂移。
+  expect(argv).not.toContain("--observations");
+  expect(argv).not.toContain("--expected-plan");
+});
+
+it("探针越线（退出 1）逐字交回 stdout：那是回喂文本", () => {
+  const feedback = "probe：前 8 场跑完。**已经越线**……\n";
+  const { root, artifact } = fakeRoot(
+    `process.stdout.write(${JSON.stringify(feedback)});\nprocess.exitCode = 1;\n`,
+  );
+  const result = runTrialProbeScript({
+    root,
+    model: MODEL,
+    artifactPath: artifact,
+    matchLimit: 8,
+  });
+  expect(result.passed).toBe(false);
+  expect(result.stdout).toBe(feedback);
+});
+
+it("探针 infra（退出 2）大声失败，不回喂", () => {
+  const { root, artifact } = fakeRoot(
+    'process.stderr.write("探针执行失败：装载面坏了\n");\nprocess.exitCode = 2;\n',
+  );
+  expect(() =>
+    runTrialProbeScript({ root, model: MODEL, artifactPath: artifact, matchLimit: 8 }),
+  ).toThrow(/装载面坏了/u);
 });

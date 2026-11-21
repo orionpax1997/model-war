@@ -5,22 +5,25 @@
  * 写成可读的中文;读盘与退出码归入口。分层理由同 `gate/budget-gate.ts`:入口能用假世界喂,
  * 反例不必改真实文件。
  *
- * ── 七条判据,守的是七种不同的漂 ──
+ * ── 六条判据,守的是六种不同的漂 ──
  *
  * 1. **整棵树哈希 == 常量**:字节被改过(哪怕只改一个字节)就是另一份世界。
  * 2. **磁盘文件集 == 清单**:多一个(上一次组装的残骸、顺手放的调试文件)与少一个(漏拷)
  *    都红。「多一个」尤其重要——它不会被挂载,却看起来像是内容物的一部分。
- * 3. **`bin/` 里除薄壳之外都是静态 ELF**:不带 `PT_INTERP`。哪几个是这样,由清单减薄壳推出。判据自己解析 ELF,不靠 `ldd`(它执行目标
- *    文件)也不靠 `file`(输出随版本漂)。这条是「不从宿主借动态库」的可执行形式。
+ * 3. **`bin/` 里**每一个**都是静态 ELF**:不带 `PT_INTERP`。判据自己解析 ELF,不靠
+ *    `ldd`(它执行目标文件)也不靠 `file`(输出随版本漂)。这条是「不从宿主借动态库」的
+ *    可执行形式——它以前还兼任「谁不是二进制」的分类,而那份分类随着沙箱里那三个薄壳副本
+ *    一起消失了(票 03):现在 `bin/` 只有二进制,没有例外。
  * 4. **`contract/*` 与 `docs/rules-v2/*` 逐字节相同**:契约的真源只有一份。运行期不 bind
  *    宿主 checkout,所以副本一旦与真源分叉,模型读到的就是一份没人维护的契约。
- * 5. **薄壳与 `packages/gen/src/agent/shim/shim.sh` 逐字节相同**:同上一条,薄壳的源码真源
- *    在 gen,rootfs 里那三个名字是它的副本。
- * 6. **顶层只许 `bin/`、`contract/` 与来路说明书**:挂载面之外的任何东西都不该出现在产物
+ * 5. **顶层只许 `bin/`、`contract/` 与来路说明书**:挂载面之外的任何东西都不该出现在产物
  *    目录里(构建残骸、tarball、`*.o`)。这条是「产物目录本身」的判据,不是文件的判据。
- * 7. **`PROVENANCE.md` 的来路表 == 入库的静态二进制**:每份二进制都有一行(名字 + 它声称的
+ * 6. **`PROVENANCE.md` 的来路表 == 入库的静态二进制**:每份二进制都有一行(名字 + 它声称的
  *    sha256),那串 sha256 与盘上字节相符,且表里没有多出来的行。它是**来路说明书的唯一判据**
  *    ——这份文件不在挂载面上、也不算进树哈希,所以改它不会让任何别的判据红。
+ *
+ * 旧的第五条(「三个薄壳与源码真源逐字节相同」)已删除:真源与副本一起没了。删它**不是减少了
+ * 断言**——那一条断言的对象是「沙箱里有一份只会敲宿主的脚本」,而新世界里那句话本身是假的。
  *
  * ── 常量从 schema 的**源码文本**里取,不 import 真源包 ──
  * 本门禁挂在 `check:quick` 上,而快门禁必须零构建(`@model-war/schema` 的 `exports` 指向
@@ -29,35 +32,25 @@
  * **按失败处理**并说明原因,不静默放行——那正是「判据失明但门禁全绿」的形态。
  */
 
-/** schema 源码里被读的那四个常量名与那一处文件。 */
+/** schema 源码里被读的那三个常量名与那一处文件。 */
 export const SCHEMA_CONSTANTS_SOURCE = "packages/schema/src/sandbox-rootfs.ts";
 
-/** 从 schema 源码文本里抽出来的四个常量。 */
+/** 从 schema 源码文本里抽出来的三个常量。 */
 export type SandboxRootfsConstants = {
   readonly dir: string;
   readonly files: readonly string[];
   readonly treeHash: string;
-  /** 三个薄壳的名字(不带 `bin/` 前缀):`bin/*` 里除它们之外都必须是静态 ELF。 */
-  readonly shims: readonly string[];
 };
 
 /**
- * 清单里点名的薄壳路径(`bin/<名字>`),按字典序。
+ * 清单里点名、且必须是静态 ELF 的路径:清单里 `bin/` 开头的**全部**。
  *
  * 「谁是什么」不从这份文件另写一张表:`ROOTFS_STATIC_BINARIES` 曾经是本文件的第二份清单,
- * 上一轮给 `cp` 补内容物时两处都要改,漏一处没有任何判据会红。
+ * 上一轮给 `cp` 补内容物时两处都要改,漏一处没有任何判据会红。而「哪些不是二进制」这一半
+ * 也不再有:`bin/` 里的例外(三个薄壳副本)已随通道删除(票 03)。
  */
-export const shimPathsOf = (shims: readonly string[]): readonly string[] =>
-  shims.map((name) => `bin/${name}`).sort();
-
-/** 清单里点名、且必须是静态 ELF 的路径:`bin/*` 减掉薄壳。 */
-export const staticBinariesOf = (
-  files: readonly string[],
-  shims: readonly string[],
-): readonly string[] => {
-  const shimPaths = new Set(shimPathsOf(shims));
-  return files.filter((path) => path.startsWith("bin/") && !shimPaths.has(path)).sort();
-};
+export const staticBinariesOf = (files: readonly string[]): readonly string[] =>
+  files.filter((path) => path.startsWith("bin/")).sort();
 
 /**
  * 取一个 `export const NAME = <字面量>` 的正文;取不到返回 `undefined`。
@@ -90,7 +83,7 @@ const stringArrayConstant = (source: string, name: string): readonly string[] | 
   );
 };
 
-/** 抽四个常量。任一个抽不出来就返回理由,调用方按失败处理(不猜、不跳过)。 */
+/** 抽三个常量。任一个抽不出来就返回理由,调用方按失败处理(不猜、不跳过)。 */
 export const sandboxRootfsConstantsFrom = (
   source: string,
 ):
@@ -99,20 +92,12 @@ export const sandboxRootfsConstantsFrom = (
   const dir = stringConstant(source, "SANDBOX_ROOTFS_DIR");
   const files = stringArrayConstant(source, "SANDBOX_ROOTFS_FILES");
   const treeHash = stringConstant(source, "SANDBOX_ROOTFS_TREE_HASH");
-  const shims = stringArrayConstant(source, "SANDBOX_ROOTFS_SHIMS");
   const missing = [
     dir === undefined ? "SANDBOX_ROOTFS_DIR" : "",
     files === undefined || files.length === 0 ? "SANDBOX_ROOTFS_FILES" : "",
     treeHash === undefined ? "SANDBOX_ROOTFS_TREE_HASH" : "",
-    shims === undefined || shims.length === 0 ? "SANDBOX_ROOTFS_SHIMS" : "",
   ].filter((name) => name !== "");
-  if (
-    missing.length > 0 ||
-    dir === undefined ||
-    files === undefined ||
-    treeHash === undefined ||
-    shims === undefined
-  ) {
+  if (missing.length > 0 || dir === undefined || files === undefined || treeHash === undefined) {
     return {
       ok: false,
       reason:
@@ -120,7 +105,7 @@ export const sandboxRootfsConstantsFrom = (
         "本门禁零构建、只能读源码文本(不 import 真源包)。改过常量的写法就同步改本门禁的取法。",
     };
   }
-  return { ok: true, constants: { dir, files, treeHash, shims } };
+  return { ok: true, constants: { dir, files, treeHash } };
 };
 
 /** 一条违规:先指位置,再说它为什么是问题、处方是什么。 */
@@ -177,7 +162,7 @@ export const staticBinaryFinding = (
     return {
       where: path,
       detail:
-        "解析不出 ELF 头/程序头:它不是 ELF,或被截断了。rootfs 里除薄壳之外的每一份都必须是静态 ELF。",
+        "解析不出 ELF 头/程序头:它不是 ELF,或被截断了。rootfs 的 `bin/` 里每一份都必须是静态 ELF。",
     };
   }
   return verdict.static
@@ -190,7 +175,7 @@ export const staticBinaryFinding = (
       };
 };
 
-/** 判据 4 / 5:副本与真源逐字节比较。 */
+/** 判据 4:副本与真源逐字节比较。 */
 export const byteCopyFinding = (
   copyPath: string,
   sourcePath: string,
@@ -207,7 +192,7 @@ export const byteCopyFinding = (
           "`pnpm run sandbox:rootfs:build`。",
       };
 
-/** 判据 6:顶层条目只许挂载面那两个目录与来路说明书。 */
+/** 判据 5:顶层条目只许挂载面那两个目录与来路说明书。 */
 export const topLevelFindings = (
   entries: readonly string[],
   allowed: readonly string[],
@@ -246,7 +231,7 @@ export const provenanceRows = (markdown: string): readonly ProvenanceRow[] =>
 export type ProvenanceBinary = { readonly path: string; readonly sha256: string };
 
 /**
- * 判据 7:来路表与入库的静态二进制一一对应,且它声称的 sha256 就是盘上那串。
+ * 判据 6:来路表与入库的静态二进制一一对应,且它声称的 sha256 就是盘上那串。
  *
  * 三个方向都判:① 每份二进制都有来路;② 来路里那串 hex 与字节相符(生成物被手改过、或换了字节
  * 没重跑脚本,都在这里红);③ 表里没有多出来的行(删掉一个二进制而忘记重跑,会留下一行
@@ -286,8 +271,8 @@ export const provenanceFindings = (
       findings.push({
         where: row.name,
         detail:
-          `\`PROVENANCE.md\` 记了一份不在必查清单里的二进制(\`${row.name}\`)。它可能是薄壳、` +
-          "契约文件,或者已经被删掉的那一份——三种都会让「这份字节是谁」这句话指向错的东西。",
+          `\`PROVENANCE.md\` 记了一份不在必查清单里的二进制(\`${row.name}\`)。它可能是契约文件,` +
+          "或者已经被删掉的那一份——两种都会让「这份字节是谁」这句话指向错的东西。",
       });
     }
   }
@@ -295,7 +280,7 @@ export const provenanceFindings = (
   return findings;
 };
 
-/** 判据 5 的另一半:薄壳与二进制必须可执行,否则挂进去也跑不起来。 */
+/** 判据 4 的另一半:`bin/*` 必须可执行,否则挂进去也跑不起来。 */
 export const executableFinding = (path: string, executable: boolean): RootfsFinding | undefined =>
   executable
     ? undefined

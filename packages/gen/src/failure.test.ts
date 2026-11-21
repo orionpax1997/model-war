@@ -30,7 +30,7 @@ import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./mod
 import { withHostBash } from "./agent/sandbox.fixture.js";
 import { buildFailureRecord } from "./failure.js";
 import { runGeneration } from "./run.js";
-import { fail, replies, stubClient } from "./stub-client.js";
+import { fail, stubClient, toolCall } from "./stub-client.js";
 import type { AgentPrompt } from "./agent-prompt.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -38,7 +38,8 @@ const scratch = mkdtempSync(join(tmpdir(), "modelwar-failure-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 const PROMPT: AgentPrompt = { user: "任务:写 script.ts", system: "协议:每一步一个动作块" };
-const ACTION = "```bash\nls /contract\n```";
+/** 一条合法动作:一次 `bash` 工具调用。 */
+const ACTION = toolCall("bash", '{"command":"ls /contract"}');
 
 /** 把仓库的安装面(编译与校验的依赖)接进临时根(`--root` 在真实使用里就是安装根)。 */
 const installRuntime = (root: string): void => {
@@ -99,7 +100,7 @@ const withPlainSandbox = async <T>(run: () => Promise<T>): Promise<T> =>
 
 it("用尽步数:写失败记录(过程记录 + 逐步日志 + 诊断 + 分类),不建存档目录", async () => {
   const root = writeRoot(configOf(entry("alpha")));
-  const stub = stubClient(replies([ACTION, ACTION, ACTION]));
+  const stub = stubClient([ACTION, ACTION, ACTION]);
   const code = await withPlainSandbox(() =>
     runGeneration({
       root,
@@ -206,9 +207,7 @@ it("一批两模型一败一成:失败记录与成功三件套并存,退出码�
       root,
       configPath: "models.yaml",
       createClient: (config) =>
-        config.slug === "alpha"
-          ? stubClient(replies([ACTION]))
-          : stubClient([fail(new Error("boom"))]),
+        config.slug === "alpha" ? stubClient([ACTION]) : stubClient([fail(new Error("boom"))]),
       agentPrompt: PROMPT,
       maxSteps: 2,
     }),
@@ -229,8 +228,7 @@ it("`--model` 只跑一个:未选中的模型既不冻结也不写失败记录",
       root,
       configPath: "models.yaml",
       modelFilter: "alpha",
-      createClient: (config) =>
-        config.slug === "alpha" ? stubClient(replies([ACTION])) : betaStub,
+      createClient: (config) => (config.slug === "alpha" ? stubClient([ACTION]) : betaStub),
       agentPrompt: PROMPT,
       maxSteps: 1,
     }),
@@ -256,7 +254,7 @@ it("多模型串行:一个模型的全部步结束之后才开另一个", async 
   const root = writeRoot(configOf(entry("alpha"), entry("beta")));
   const order: string[] = [];
   const tracing = (slug: string): ModelClient => {
-    const inner = stubClient(replies([ACTION, ACTION]));
+    const inner = stubClient([ACTION, ACTION]);
     return {
       send: async (
         messages: readonly ChatMessage[],

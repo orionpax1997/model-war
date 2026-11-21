@@ -22,7 +22,7 @@ import { loadModelsConfig, type ModelConfig } from "./config.js";
 import { writeFailureRecord } from "./failure.js";
 import { SANDBOX_ROOTFS_DIR, type TrialPlan } from "@model-war/schema";
 import type { AgentPrompt } from "./agent-prompt.js";
-import type { TrialProbe } from "./trial.js";
+import type { TrialProbe, TrialProbeScript } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
 import type { ModelClient } from "./model-client.js";
 import type { RetrySleep } from "./retry.js";
@@ -84,6 +84,11 @@ export type GenerationRequest = {
    */
   readonly trial?: TrialProbe;
   /**
+   * 探针的执行缝(被 `probe` 服务调,跑完整计划的前 N 场)。缺席即真子进程
+   * (`runTrialProbeScript`,同一个试跑入口的 `--match-limit` 模式)。测试注入桩。
+   */
+  readonly probeScript?: TrialProbeScript;
+  /**
    * 评测网格计划的搬运缝(一次会话一张)。缺席即 spawn 试跑入口的 `--plan` 模式现场搬。
    *
    * 注入它的地方只有测试:搬计划要读盘算摘要(规则集/地图/四份陪练字节),而单测的临时根里
@@ -118,6 +123,8 @@ export type GenerationOptions = {
   readonly stepWallClockMs?: number;
   /** 评测探针、计划搬运与成绩接缝(生产路径全部走真实现)。 */
   readonly trial?: TrialProbe;
+  /** 探针(`probe` 工具)的执行缝;缺省真子进程。 */
+  readonly probeScript?: TrialProbeScript;
   readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
   readonly evaluateScoring?: EvaluateScoring;
   /**
@@ -220,6 +227,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
       : { totalWallClockMs: options.totalWallClockMs }),
     ...(options.stepWallClockMs === undefined ? {} : { stepWallClockMs: options.stepWallClockMs }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
+    ...(options.probeScript === undefined ? {} : { probeScript: options.probeScript }),
     ...(options.trialPlan === undefined ? {} : { trialPlan: options.trialPlan }),
     ...(options.evaluateScoring === undefined ? {} : { evaluateScoring: options.evaluateScoring }),
   };

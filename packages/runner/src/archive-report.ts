@@ -22,7 +22,6 @@ import {
   ACTION_EFFECT_NAMES,
   ARCHIVE_OPTIMIZATION_CANDIDATE_AGENT_JSON_SCHEMA,
   ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA,
-  ARCHIVE_SCHEMA_VERSION,
   ARCHIVE_SELECTION_JSON_SCHEMA,
   OPTIMIZATION_AGENT_VERSION,
   OPTIMIZATION_CANDIDATE_LIMIT,
@@ -57,6 +56,7 @@ import {
 
 import {
   archiveShapeVersionOf,
+  isAgentShape,
   isLegacyOptimization,
   isLegacySelection,
   optimizationMetaOf,
@@ -1292,8 +1292,8 @@ const failureCandidatesOf = (record: unknown): ArchiveOptimizationCandidate[] =>
   if (typeof record !== "object" || record === null) return [];
   const raw = (record as { candidates?: unknown }).candidates;
   if (!Array.isArray(raw)) return [];
-  if (archiveShapeVersionOf(record) === ARCHIVE_SCHEMA_VERSION)
-    return agentFailureCandidatesOf(raw);
+  // agent 形状的失败档用 v3 候选序读法（`step` 而不是 `stage`）——v3 与 v4 在候选序上是同一版。
+  if (isAgentShape(archiveShapeVersionOf(record))) return agentFailureCandidatesOf(raw);
   if (raw.length > (objectOf(record).classification === "selection" ? 3 : 2)) return [];
   const seen = new Set<string>();
   const out: ArchiveOptimizationCandidate[] = [];
@@ -1567,13 +1567,14 @@ const readRecord = (
       } catch {
         throw new Error("日志行 JSON 不合法");
       }
-      if (shape === ARCHIVE_SCHEMA_VERSION) {
-        // 旧档的行里有这两个键，那时代它们就是结果侧证据；v3 不许再带——复写让同一个事实有了
-        // 两个家，而后者迟早是陈的（ADR-0031「一个事实一个家」）。显式拒读，不静默忽略。
+      if (isAgentShape(shape)) {
+        // 旧档的行里有这两个键，那时代它们就是结果侧证据；agent 形状不许再带——复写让同一个事实
+        // 有了两个家，而后者迟早是陈的（ADR-0031「一个事实一个家」）。显式拒读，不静默忽略。
+        // 文案不写版本号：v3 与 v4 共用这条判据，写死一个会把另一版的拒读理由说错。
         if (Object.hasOwn(log, "errorCodes"))
-          throw new Error("v3 日志行不带结果侧 errorCodes 字段");
+          throw new Error("agent 形状的日志行不带结果侧 errorCodes 字段");
         if (log.kind !== undefined && log.kind !== "converged" && log.kind !== "transport")
-          throw new Error("v3 日志行的 kind 只能是行类型标记");
+          throw new Error("agent 形状日志行的 kind 只能是行类型标记");
       }
       const transport =
         kind === "failure" &&
@@ -1626,8 +1627,8 @@ const readRecord = (
           [
             "日志行不是 JSON 字符串",
             "日志行 JSON 不合法",
-            "v3 日志行不带结果侧 errorCodes 字段",
-            "v3 日志行的 kind 只能是行类型标记",
+            "agent 形状的日志行不带结果侧 errorCodes 字段",
+            "agent 形状日志行的 kind 只能是行类型标记",
             "未收敛日志只能是传输失败末行",
             "轮号缺失、越界或重复",
           ],
@@ -1638,8 +1639,8 @@ const readRecord = (
     }
   });
   rounds.sort((a, b) => a.round - b.round);
-  /** agent 形态（v3）：步列、终止原因与受污染分层都按它分派。 */
-  const agentShape = shape === ARCHIVE_SCHEMA_VERSION;
+  /** agent 形态（v3 / v4）：步列、终止原因与受污染分层都按它分派。两版在这些读法上同形。 */
+  const agentShape = isAgentShape(shape);
   const failureDescriptors = kind === "failure" ? failureCandidatesOf(record) : [];
   const failedSelection =
     kind === "failure" ? selectionFailureOf(record, failureDescriptors, protocolRounds) : null;
@@ -2374,14 +2375,23 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
                   (entry) =>
                     entry.step > previous.protocolRound && entry.step < commit.protocolRound,
                 );
-          // 动作标签降级为注：不是 `evaluate` 时注出这一步还跑了别的命令，是时注为空。
+          // 动作标签降级为注：是 `evaluate`（提交）时注为空，否则注出「这一步的动作不是提交」。
+          //
+          // 旧文案是「这一步**还**跑了别的命令」——那个「还」说的是同一块里并存两件事（`check`
+          // 与 `evaluate` 写在一起）。新世界里一次调用就是一步，并行性根本不存在，所以那句话
+          // 现在是无意义的：动作标签不是 `evaluate` 就只是「这一格不是提交」，没有第二个动作
+          // 可「还」。
+          //
+          // 不说「不产出候选」：这一行本身就是一条候选（它来自描述符），那么写会有两句真话
+          // 互相打脸。v4 里这一注只在档案自相矛盾时（有候选而动作标签不是 `evaluate`）才渲染；
+          // v3 真档里它渲染说明那时 `check` 与 `evaluate` 写在同一块——正是这条注要说清的事。
           const stepEntry = steps.entries.find((entry) => entry.step === commit.protocolRound);
           const actionNote =
             stepEntry === undefined
               ? "；这一步不在过程记录里（动作未知）"
               : stepEntry.action === "evaluate"
                 ? ""
-                : `；这一步还跑了别的命令（动作=${stepEntry.action ?? "null"}）`;
+                : `；这一步的动作是 ${stepEntry.action ?? "null"}，不是提交`;
           out.push(
             `- 第 ${commit.protocolRound} 步：scriptSha256=${commit.scriptSha256}${actionNote}` +
               (previous === undefined
@@ -2389,6 +2399,32 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
                 : `；与上一次提交（第 ${previous.protocolRound} 步）${previous.scriptSha256 === commit.scriptSha256 ? "**字节相同**" : "字节不同"}；之间经过 ${between.length} 步（${between.length === 0 ? "无" : between.map((entry) => `${entry.step}:${entry.action ?? "null"}`).join(" / ")}）`),
           );
         }
+      }
+      /**
+       * 工具调用：**逐字字节**与**解析值**并排（v4 才有这一格）。
+       *
+       * `argumentsJson` 必须**原样**出现：这条证据的全部意义是「发回历史的 `arguments` 与
+       * 这里逐字相同」（ADR-0031）。所以报告只搬 `steps[i].toolCall.argumentsJson`，**不按
+       * `action.command` 重编码**——两者可以不同形（转义写法、多余空格），而重编码等于
+       * 悄悄换掉发回去的东西。
+       *
+       * `command` 是另一个家：`action.command` 的解析值（写侧算好、原样落档）。它在这里是为了
+       * 回答「`raw` 是空串的那一步到底干了什么」——逐字字节读不出人话，而解析值又不能拿来
+       * 充当「发回去的那串」；两个都给，读者才看得出它们在哪里分岔。
+       *
+       * 只有 `bash` 那一档有 `command`（其余四个工具不收参数），所以那一格缺席时不渲染半边。
+       * v3 档没有 `toolCall`（那时还没有工具调用信封），整节不渲染。
+       */
+      const calls = steps.entries.filter((step) => step.toolCall !== null);
+      if (calls.length > 0) {
+        out.push(
+          "",
+          "工具调用（`argumentsJson` 是逐字字节，发回历史的 `arguments` 与这里相同；`command` 是 `action.command` 的解析值，只有 `bash` 那一档有）：",
+        );
+        for (const step of calls)
+          out.push(
+            `- 第 ${step.step} 步：name=${escape(step.toolCall!.name)}${step.command === null ? "" : `；command=${escape(step.command)}`}；argumentsJson=${escape(step.toolCall!.argumentsJson)}`,
+          );
       }
       const results = steps.entries.filter((step) => step.result !== null);
       // `result` 缺席（这一步没有结果）**不渲染**；`errorCodes: []` 渲染成空（跑过了、没错误）。

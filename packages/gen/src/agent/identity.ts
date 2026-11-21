@@ -4,8 +4,9 @@
  * ── 为什么哈希的是清单,不是源码 ──
  *
  * 源码哈希会因为一次重构就变,那是噪音;清单只在其行为真的改了时变,而那正是「换 harness」
- * 的定义。所以清单里写的是模型面对的世界:动作语法、可见二进制、挂载、网络、配额、服务形状、
- * **工具收不收参数**、观测出口、deadline、截断上限与比例、上下文守卫、工具链、收工命令的语义。
+ * 的定义。所以清单里写的是模型面对的世界:动作语法、**工具面**(声明集合、谁收参数、并行调用
+ * 被拒、探针回什么读数)、可见二进制、挂载、网络、配额、服务形状、观测出口、deadline、截断
+ * 上限与比例、上下文守卫、工具链、收工命令的语义。
  *
  * ── 清单**不含**两样东西 ──
  *
@@ -21,34 +22,57 @@
  * ── 数字不在本文件里再抄一遍 ──
  *
  * 截断上限取自 `truncate.ts`、步数与墙钟取自 `limits.ts`、配额取自真源包的
- * `EVALUATE_CALL_LIMIT`、单步墙钟与通道 fd 取自执行器、挂载与网络**直接取 bwrap 的
- * 参数表**。所以本文件没有第二份取值:改真源,清单跟着变,digest 跟着断代。
+ * `EVALUATE_CALL_LIMIT` / `PROBE_CALL_LIMIT`、探针的三个数取自 `probe-limits.ts`、单步墙钟取自
+ * 执行器、工具名与参数面取自工具声明(`tools.ts`)、挂载与网络**直接取 bwrap 的参数表**。
+ * 所以本文件没有第二份取值:改真源,清单跟着变,digest 跟着断代。
  */
 
 import { createHash } from "node:crypto";
 
-import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
+import {
+  EVALUATE_CALL_LIMIT,
+  PROBE_CALL_LIMIT,
+  PROBE_MATCH_LIMIT,
+  PROBE_NEAR_LIMIT_RATIO,
+  SANDBOX_ROOTFS_FILES,
+} from "@model-war/schema";
 
-import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE, ACTION_REJECT_REASONS } from "./action.js";
+import { ACTION_REJECT_REASONS, type ActionRejectReason } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
-import { PROTOCOL_EXIT_CODE } from "./host/dispatcher.js";
 import { bwrapArgv } from "./sandbox/argv.js";
-import { CHANNEL_FD, DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
+import { DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
+import { HOST_SERVICE_TOOLS, TOOL_NAMES, acceptsArgumentsOf } from "./tools.js";
 import {
   OBSERVATION_LIMITS,
   RAW_PATHOLOGICAL_LIMIT_BYTES,
   truncateObservation,
 } from "./truncate.js";
 
-/** 人维护的叙事版本。换 harness 时人改它,digest 由门禁算。 */
-export const HARNESS_VERSION = "bash-mini/0.1";
+/**
+ * 人维护的叙事版本。换 harness 时人改它,digest 由门禁算。
+ *
+ * ── 为什么从 `bash-mini/0.1` 换成 `tool-call/1.0` ──
+ *
+ * 旧代号里的 `bash-mini` 到后期只剩「一步一个 shell」这一层意思(`mini` 指抄 mini-swe-agent 的
+ * 三条铁律),但读者会把它读成「协议还是 bash 那套文本协议」——而协议已经换成原生的工具调用
+ * (ADR-0032 修订)。代号是给人看的那一半身份,它撒谎与清单撒谎同性质。
+ *
+ * 读侧**不按它分派**:`harnessVersion` 只是记录,所以换代号不会让任何旧档读不出来;断代的是
+ * digest。
+ */
+export const HARNESS_VERSION = "tool-call/1.0";
 
 /**
- * 受限工具的三个名字。它们必须是 rootfs 里真实存在的薄壳(单测比对清单)。
+ * 宿主受理的工具名:**从工具声明派生**(`tools.ts` 的 `HOST_SERVICE_TOOLS` = 五个声明减 `bash`)。
  *
- * 收工工具叫 `finish`:`done` 是 bash 保留字,裸写一行就是语法错误,薄壳不可达(ADR-0032 修订)。
+ * 本文件以前在这里手写一份 `["check","evaluate","finish"]`,与 `tool-channel.ts` 的那一份同名
+ * 双份;两份各说一遍「必须是沙箱里真实存在的薄壳」。薄壳已删(票 03),清单与声明现在是同一个
+ * 集合的两个投影,所以只留声明那一份。
+ *
+ * 新世界里宿主受理的是**四个**名字(`check` / `probe` / `evaluate` / `finish`),它们都不在沙箱
+ * 的 `bin/` 里——「敲不到」升级成「没有那个路径」(ADR-0029 修订②)。
  */
-export const HOST_SERVICE_TOOLS = ["check", "evaluate", "finish"] as const;
+export { HOST_SERVICE_TOOLS };
 
 /**
  * 观测告警里必须出现的**可执行方向**。
@@ -67,29 +91,35 @@ export const OBSERVATION_ADVICE_HINTS = [
 
 /** 清单本身。键名就是「模型面对的世界」的栏目,不按档案的形状排。 */
 export type HarnessManifest = {
+  /**
+   * 动作语法:这一步**恰好一次工具调用**。
+   *
+   * ── 旧协议的痕迹一个都不要留 ──
+   *
+   * 清单的作用是「模型当时面对的世界」,所以描述旧协议的那几格(`fenceTag`、`rejectExitCode`、
+   * 以及 `finish.stopsRemainingCommands`)全部删了:围栏标记不存在了、拒绝的载体是一次工具结果
+   * 而不是 shell 退出码、一次调用就是一个动作所以没有「之后的行」。留着任何一格就是清单在说谎。
+   */
   readonly actionSyntax: {
-    readonly fenceTag: string;
-    readonly blocks: "exactly-one";
-    readonly multiLine: "one-bash-c";
-    readonly observationRole: "user";
-    readonly rejects: readonly string[];
-    readonly rejectExitCode: number;
+    /** 零次被执行、两次以上也被拒:一步就是一次调用(理由见 ADR-0032 修订)。 */
+    readonly blocks: "exactly-one-tool-call";
+    /** `bash` 的 `command` 是**一条命令串**:换行、`&&`、`for … do … done` 都交给同一个 shell。 */
+    readonly multiLine: "one-command-string";
+    /** 观测回给模型的角色。有 `tool_call_id` 可配对了,所以是 `tool`(ADR-0032 修订)。 */
+    readonly observationRole: "tool";
+    /** 被拒的形状族:真源在 `action.ts` 的 `ACTION_REJECT_REASONS`,清单不另抄一份。 */
+    readonly rejects: readonly ActionRejectReason[];
   };
   /**
-   * 收工工具这一格:它是沙箱里的一条真命令(`bin/finish` 薄壳),不是文本标记。
+   * 收工工具这一格:它是模型发起的一次**工具调用**,不是沙箱里的命令、也不是文本标记。
    *
-   * 键名叫 `finish`(与模型看到的那条命令同名),子键说的是**行为**:它经通道上报、由宿主在
-   * 本步结束后收工、照常占一步;而 `stopsRemainingCommands: false` 是这一版的行为放宽——
-   * 整块由 `bash` 解析,`finish` 之后写的行**仍会执行**。
-   *
-   * 档案侧的 `action.kind: "done"` / `termination: "done"` 是 v3 形状里的常量,不跟着改名:
-   * 改它等于升 `archiveSchemaVersion`,而旧档要照旧可读。
+   * 档案侧的 `action.kind: "done"` / `termination: "done"` 是 v4 形状里的常量,不跟着改名:
+   * 改它等于再升一次 `archiveSchemaVersion`,而旧档要照旧可读。
    */
   readonly finish: {
     readonly command: "finish";
-    readonly form: "rootfs-shim";
-    readonly signal: "host-channel";
-    readonly stopsRemainingCommands: false;
+    readonly form: "tool-call";
+    readonly signal: "tool-result";
     readonly endsSession: true;
     readonly countsAsStep: true;
   };
@@ -97,26 +127,60 @@ export type HarnessManifest = {
   /** bwrap 的参数表:挂载面、命名空间、环境都在里面(直接取自执行器,不抄一份)。 */
   readonly sandboxArgv: readonly string[];
   readonly network: "unshared" | "present";
-  readonly quotas: { readonly evaluate: number; readonly check: "counts-as-step" };
+  /**
+   * 配额。三格都是**计数发生在调用之前**的同一个判据(超限即拒、真执行函数零调用)。
+   *
+   * `probe` 与 `evaluate` 互不侵占:探针不产出候选、不占那三次里的任何一次。
+   */
+  readonly quotas: {
+    readonly evaluate: number;
+    readonly probe: number;
+    readonly check: "counts-as-step";
+  };
+  /**
+   * **工具面**:模型这一轮请求里真的看见的那五个声明。
+   *
+   * 它进清单的理由与别的格一样——它是模型面对的世界的一部分:工具名、谁收参数、并行调用被拒、
+   * 探针回什么形状的读数。这些都在 API 层写得下,比叙述文档里一段散文更硬。
+   *
+   * 三格各自回答一件事:
+   * - `tools` / `acceptsArguments`:声明了什么(`AGENT_TOOLS` 派生,不手写第二份);
+   * - `parallelCalls`:一步多次调用的**判据**是拒绝(不是排版偏好,见 ADR-0032 修订);
+   * - `probe`:探针的读数事实。它属于**工具面**而不是配额面:模型要知道的不是「能调几次」,
+   *   而是「它回的是最坏占用读数、不是二值判定」——后者把「探针绿 = 整张网格通过」变成了
+   *   一句假安心(漏检率 2/4,见 ADR-0030 残余风险)。
+   */
+  readonly toolSurface: {
+    readonly tools: readonly string[];
+    readonly acceptsArguments: Readonly<Record<string, boolean>>;
+    readonly parallelCalls: "rejected";
+    readonly probe: {
+      readonly matchLimit: number;
+      readonly nearLimitRatio: number;
+      readonly returns: "peak-usage";
+    };
+  };
   readonly services: {
+    /**
+     * 宿主侧工具:`bash` 之外的全部声明(由 `tools.ts` 的 `HOST_SERVICE_TOOLS` 派生)。
+     *
+     * 它们**不在沙箱里**:rootfs 的 `bin/` 里没有这四个名字,模型够得着的只有一次工具调用。
+     */
     readonly tools: readonly string[];
     readonly shape: "host-side-service";
-    readonly channelFd: number;
     /**
-     * 参数面:两个服务型工具(`check` / `evaluate`)**都不收参数**。
+     * 参数面:四个服务型工具(`check` / `probe` / `evaluate` / `finish`)**都不收参数**。
      *
      * 它们做什么由「当前的 `/workspace/script.ts`」唯一决定,命令行没有可填的东西。所以
      * `evaluate --help` 这类试探是一条**被拒**的请求:模型看到一句用法 + 非零退出码,评测不执行、
      * 配额也不消耗(判据在 `host/dispatcher.ts`,这里记录模型撞得到的那一面)。
      *
-     * 它进清单的理由与别的格一样:它不是「内部实现细节」,而是模型会试、试了会拿到不同结果的
-     * 一条行为面——以前那一次试探会真的跑掉 91 秒与一次额度。
+     * 旧清单里还有一格 `exitCode`:它记的是「被拒时会撞到 shell 退出码」。工具调用没有退出码
+     * 这一层(结果是一条 `isError: true` 的工具结果),那一格已删。
      */
     readonly args: {
       readonly accepted: false;
-      /** 被拒时模型看到的退出码(协议误用,与「工具不可用」同档)。 */
-      readonly exitCode: number;
-      /** 被拒的那一次不执行、不占 `evaluate` 配额。 */
+      /** 被拒的那一次不执行、不占 `evaluate` / `probe` 配额。 */
       readonly consumesQuota: false;
     };
   };
@@ -158,33 +222,42 @@ export const harnessManifest = (): HarnessManifest => {
   );
   return {
     actionSyntax: {
-      fenceTag: ACTION_FENCE_TAG,
-      blocks: "exactly-one",
-      multiLine: "one-bash-c",
-      observationRole: "user",
+      blocks: "exactly-one-tool-call",
+      multiLine: "one-command-string",
+      observationRole: "tool",
       rejects: ACTION_REJECT_REASONS,
-      rejectExitCode: ACTION_REJECT_EXIT_CODE,
     },
     finish: {
       command: "finish",
-      form: "rootfs-shim",
-      signal: "host-channel",
-      stopsRemainingCommands: false,
+      form: "tool-call",
+      signal: "tool-result",
       endsSession: true,
       countsAsStep: true,
     },
     visibleBinaries: SANDBOX_ROOTFS_FILES.filter((file) => file.startsWith("bin/")),
     sandboxArgv: argv,
     network: argv.includes("--unshare-net") ? "unshared" : "present",
-    // 配额取 **dispatcher 执行的那个**常量(`EVALUATE_CALL_LIMIT`),不是它的同值邻居:
-    // 清单要记录的是「模型撞得到的判据」。两者同源只在这一处(out of `tool-channel.ts`)。
-    quotas: { evaluate: EVALUATE_CALL_LIMIT, check: "counts-as-step" },
+    // 配额取 **dispatcher 执行的那个**常量(`EVALUATE_CALL_LIMIT` / `PROBE_CALL_LIMIT`),不是它的
+    // 同值邻居:清单要记录的是「模型撞得到的判据」。
+    quotas: { evaluate: EVALUATE_CALL_LIMIT, probe: PROBE_CALL_LIMIT, check: "counts-as-step" },
+    toolSurface: {
+      // 名字与「收不收参数」都从声明派生(`tools.ts`):这里写第二份就会与声明分叉。
+      tools: TOOL_NAMES,
+      acceptsArguments: Object.fromEntries(
+        TOOL_NAMES.map((name) => [name, acceptsArgumentsOf(name)]),
+      ),
+      parallelCalls: "rejected",
+      probe: {
+        matchLimit: PROBE_MATCH_LIMIT,
+        nearLimitRatio: PROBE_NEAR_LIMIT_RATIO,
+        returns: "peak-usage",
+      },
+    },
     services: {
+      // 名字取自工具声明(`tools.ts` 的 `HOST_SERVICE_TOOLS`),不是本文件的手写副本。
       tools: HOST_SERVICE_TOOLS,
       shape: "host-side-service",
-      channelFd: CHANNEL_FD,
-      // 退出码取自 dispatcher(执行那条判据的地方),清单不另写一个数字。
-      args: { accepted: false, exitCode: PROTOCOL_EXIT_CODE, consumesQuota: false },
+      args: { accepted: false, consumesQuota: false },
     },
     observation: {
       keys: ["stdout", "stderr"],
@@ -244,8 +317,16 @@ export const digestOf = (manifest: HarnessManifest): string =>
  *
  * 它是**入库常量**而不是运行时现算,与 `SANDBOX_ROOTFS_TREE_HASH` 同一条纪律:判据锚定确切
  * 取值,回填时必须有人有意改这一行,于是「上限变了但没人注意」在 diff 里看得见。
+ *
+ * ⚠️ 这一版是**协议断代那一版**:清单从「文本围栏块 + fd 3 薄壳通道」的形状换成「原生工具调用」
+ * 的形状——删了 `actionSyntax.fenceTag` / `rejectExitCode` 与 `finish.stopsRemainingCommands`,
+ * 删了 `services.channelFd` 与 `services.args.exitCode`,`observationRole` 从 `user` 改成 `tool`,
+ * `quotas` 多了 `probe`,并新增了整格 `toolSurface`。旧世界与新世界不共用一个身份:同一个称号下的
+ * 成绩跨越这个点不可比。
+ *
+ * 票 07 的五场真会话必须附上**这一个数**:工具面或提示词任何一处再动,它们就全部作废。
  */
-export const HARNESS_DIGEST = "9c3ba5e089f7577d7ab7b5869bc5383cac3729f411d8890000e90763f720b542";
+export const HARNESS_DIGEST = "e0ead2a99e9c7f0a09b43678fe6253f43756a3b8a7b4d9f399a5b2993ed459fe";
 
 /** 现算的身份:`harnessVersion` + `harnessDigest`,落进档案的就是这两个。 */
 export const harnessIdentity = (): { version: string; digest: string } => ({

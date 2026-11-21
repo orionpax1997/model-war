@@ -326,12 +326,23 @@ export const createHttpModelClient = (
       if (canonicalParams !== undefined && !isDeepStrictEqual(params, canonicalParams)) {
         throw new Error(`${config.slug}:请求参数与规范政策不一致，拒绝修改采样/推理/输出预算`);
       }
+      // ── 工具声明只在声明了工具能力的族上发 ──
+      //
+      // 这里抛而不是静默丢掉:静默丢掉会让「本族不支持工具调用」与「忘了传声明」在代码里长得
+      // 一样,而后者是一个应该当场响的接错。会话级的那道防线在 `pipeline.ts` 的起跑前拒跑
+      // (它比本层早得多),两层都要——本层挡的是「有人绕过 pipeline 直调适配器」。
+      if (sendOptions?.tools !== undefined && spec.tools === undefined) {
+        throw new Error(
+          `${config.slug}:端点族 ${config.endpointFamily} 未声明工具调用能力，拒绝带工具声明发请求`,
+        );
+      }
+      const request = sendOptions?.tools === undefined ? undefined : { tools: sendOptions.tools };
       const credential = readCredential(config);
       // 声明了流式能力的端点族一律带流式字段发;响应是不是真流式仍按 content-type 分派。
       const body = JSON.stringify(
         streaming === undefined
-          ? spec.buildBody(config, messages, params)
-          : streaming.buildBody(config, messages, params),
+          ? spec.buildBody(config, messages, params, request)
+          : streaming.buildBody(config, messages, params, request),
       );
 
       const idle = startIdleTimeout(timeoutMs);

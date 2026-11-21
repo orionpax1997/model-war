@@ -18,6 +18,14 @@ node apps/cli/dist/modelwar.mjs --help
 
 对局配置写在 `season.yaml`(模板 `season.example.yaml`)。生成管线要调模型时才读 `.env` 的 `COMMAND_CODE_API_KEY`(gitignored,值不进任何文档);其余开发与门禁都不需要它。
 
+`archive/`(冻结脚本存档)同样不入库,而真会话的 `evaluate` 与 `check:gen-grid` 都要读**四份钉死的陪练存档**(`packages/schema/src/trial-plan.ts` 的 `TRIAL_SPARRING_LADDER`)。干净克隆 / 新 worktree 上跑这两条之前先把存档拷进来:
+
+```
+cp -a <有存档的仓库>/archive/. ./archive/
+```
+
+缺档不会静默降级成代位:陪练摘要是钉死的,换一份就换一张网格,所以它指名一份硬失败(`docs/hld.md` §2.2.7 是这条归属的家)。
+
 ## 文档
 
 | 文档 | 拥有 |

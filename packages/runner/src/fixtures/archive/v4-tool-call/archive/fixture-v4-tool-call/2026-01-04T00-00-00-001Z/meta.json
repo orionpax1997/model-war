@@ -1,0 +1,184 @@
+{
+  "archiveSchemaVersion": 4,
+  "model": "fixture-v4-tool-call",
+  "modelVersion": "fixture/v4-model",
+  "channelId": "fixture-channel",
+  "generatedAt": "2026-01-04T00:00:00.000Z",
+  "protocolRounds": 7,
+  "prompts": [
+    "# contract\n\n- rules.md:机制\n- api.md:接口\n- examples/minimal.ts:骨架\n"
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "action": {
+        "kind": "bash",
+        "command": "cp /contract/examples/minimal.ts /workspace/script.ts < /dev/null"
+      },
+      "stdout": "(瘦身副本:整份 /contract 列表见真档)\n",
+      "stderr": "",
+      "exitCode": 0,
+      "raw": "",
+      "toolCall": {
+        "name": "bash",
+        "argumentsJson": "{\"command\":\"cp /contract/examples/minimal.ts /workspace/script.ts \\u003c /dev/null\"}"
+      },
+      "atMs": 0,
+      "harnessMs": 41
+    },
+    {
+      "step": 2,
+      "action": {
+        "kind": "check"
+      },
+      "stdout": "check:类型检查通过\n",
+      "stderr": "",
+      "exitCode": 0,
+      "raw": "",
+      "toolCall": {
+        "name": "check",
+        "argumentsJson": "{}"
+      },
+      "atMs": 12000,
+      "harnessMs": 512,
+      "result": {
+        "kind": "tsc",
+        "errorCodes": []
+      }
+    },
+    {
+      "step": 3,
+      "action": {
+        "kind": "probe"
+      },
+      "stdout": "probe:前 8 场,最坏占用 readings…(瘦身副本)\n",
+      "stderr": "",
+      "exitCode": 0,
+      "raw": "",
+      "toolCall": {
+        "name": "probe",
+        "argumentsJson": "{}"
+      },
+      "atMs": 24000,
+      "harnessMs": 18300
+    },
+    {
+      "step": 4,
+      "action": {
+        "kind": "evaluate"
+      },
+      "stdout": "evaluate:通过\n一、对差表…(瘦身副本)\n完整观测:/workspace/.observations/1.md\n",
+      "stderr": "",
+      "exitCode": 0,
+      "raw": "",
+      "toolCall": {
+        "name": "evaluate",
+        "argumentsJson": "{}"
+      },
+      "atMs": 96000,
+      "harnessMs": 104400
+    },
+    {
+      "step": 5,
+      "action": {
+        "kind": "bash",
+        "command": "cat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF"
+      },
+      "stdout": "",
+      "stderr": "",
+      "exitCode": 0,
+      "raw": "",
+      "toolCall": {
+        "name": "bash",
+        "argumentsJson": "{ \"command\" : \"cat > /workspace/script.ts <<'EOF'\\nfunction loop() {}\\nEOF\" }"
+      },
+      "atMs": 210000,
+      "harnessMs": 39
+    },
+    {
+      "step": 6,
+      "action": {
+        "kind": "evaluate"
+      },
+      "stdout": "evaluate:通过\n一、对差表…(瘦身副本)\n完整观测:/workspace/.observations/2.md\n",
+      "stderr": "",
+      "exitCode": 0,
+      "raw": "",
+      "toolCall": {
+        "name": "evaluate",
+        "argumentsJson": "{}"
+      },
+      "atMs": 330000,
+      "harnessMs": 101200
+    },
+    {
+      "step": 7,
+      "action": {
+        "kind": "done"
+      },
+      "stdout": "",
+      "stderr": "",
+      "exitCode": 0,
+      "raw": "",
+      "toolCall": {
+        "name": "finish",
+        "argumentsJson": "{}"
+      },
+      "atMs": 448000,
+      "harnessMs": 2
+    }
+  ],
+  "generationLog": [
+    "{\"round\":1,\"kind\":\"converged\",\"responseConverged\":true,\"model\":\"fixture/v4-model\",\"params\":{},\"usage\":{\"prompt_tokens\":1500,\"completion_tokens\":60,\"total_tokens\":1560},\"finishReason\":\"tool_calls\",\"attempts\":1}",
+    "{\"round\":2,\"kind\":\"converged\",\"responseConverged\":true,\"model\":\"fixture/v4-model\",\"params\":{},\"usage\":{\"prompt_tokens\":2000,\"completion_tokens\":60,\"total_tokens\":2060},\"finishReason\":\"tool_calls\",\"attempts\":1}",
+    "{\"round\":3,\"kind\":\"converged\",\"responseConverged\":true,\"model\":\"fixture/v4-model\",\"params\":{},\"usage\":{\"prompt_tokens\":2500,\"completion_tokens\":60,\"total_tokens\":2560},\"finishReason\":\"tool_calls\",\"attempts\":1}",
+    "{\"round\":4,\"kind\":\"converged\",\"responseConverged\":true,\"model\":\"fixture/v4-model\",\"params\":{},\"usage\":{\"prompt_tokens\":3000,\"completion_tokens\":60,\"total_tokens\":3060},\"finishReason\":\"tool_calls\",\"attempts\":1}",
+    "{\"round\":5,\"kind\":\"converged\",\"responseConverged\":true,\"model\":\"fixture/v4-model\",\"params\":{},\"usage\":{\"prompt_tokens\":3500,\"completion_tokens\":60,\"total_tokens\":3560},\"finishReason\":\"tool_calls\",\"attempts\":1}",
+    "{\"round\":6,\"kind\":\"converged\",\"responseConverged\":true,\"model\":\"fixture/v4-model\",\"params\":{},\"usage\":{\"prompt_tokens\":4000,\"completion_tokens\":60,\"total_tokens\":4060},\"finishReason\":\"tool_calls\",\"attempts\":1}",
+    "{\"round\":7,\"kind\":\"converged\",\"responseConverged\":true,\"model\":\"fixture/v4-model\",\"params\":{},\"usage\":{\"prompt_tokens\":4500,\"completion_tokens\":60,\"total_tokens\":4560},\"finishReason\":\"tool_calls\",\"attempts\":1}"
+  ],
+  "contextLength": 262144,
+  "harnessVersion": "bash-mini/0.1",
+  "harnessDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+  "termination": "done",
+  "atStep": 7,
+  "ruleset": "v2",
+  "validation": {
+    "passed": true,
+    "errors": []
+  },
+  "tscVersion": "7.0.2",
+  "scriptSha256": "7c2543feb8f72905ca63ce51da99152aed2ece14bad53db0476b04f63721be25",
+  "sandboxRuntimeHash": "011cdc90975d2eb555b1a788c4810cc7a7bbeb974e0a3dd41689c8d948b82f30",
+  "optimization": {
+    "version": 3,
+    "candidates": [
+      {
+        "step": 4,
+        "scriptFile": "observed-2026-01-04T00-00-00-001Z-round-4.jsonl.candidate.js",
+        "observationsFile": "observed-2026-01-04T00-00-00-001Z-round-4.jsonl",
+        "scriptSha256": "f7747648a56061a6b7a535a3e86fb4730e0ccd859b82b4667f3dafb3859b12b4",
+        "params": {},
+        "score": {
+          "totalPoints": 20,
+          "averagePoints": 0.625,
+          "countedMatches": 32
+        },
+        "matchCount": 32
+      },
+      {
+        "step": 6,
+        "scriptFile": "observed-2026-01-04T00-00-00-001Z-round-6.jsonl.candidate.js",
+        "observationsFile": "observed-2026-01-04T00-00-00-001Z-round-6.jsonl",
+        "scriptSha256": "7c2543feb8f72905ca63ce51da99152aed2ece14bad53db0476b04f63721be25",
+        "params": {},
+        "score": {
+          "totalPoints": 21,
+          "averagePoints": 0.65625,
+          "countedMatches": 32
+        },
+        "matchCount": 32
+      }
+    ]
+  }
+}

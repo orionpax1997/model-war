@@ -35,7 +35,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
-import { RULESET_VERSION, TRIAL_MATCHES_PER_CANDIDATE, type ArchiveMeta } from "@model-war/schema";
+import {
+  ARCHIVE_SCHEMA_VERSION,
+  RULESET_VERSION,
+  TRIAL_MATCHES_PER_CANDIDATE,
+  type ArchiveMeta,
+} from "@model-war/schema";
 import { readArchiveReports } from "@model-war/runner";
 import {
   HARNESS_DIGEST,
@@ -45,11 +50,17 @@ import {
   fail,
   generateOneModel,
   gridPlanFixture,
-  reply,
   stubClient,
+  toolCall,
   type ModelConfig,
 } from "@model-war/gen";
 import { withRealBash } from "@model-war/gen/testing";
+
+/** 一次 `bash` 工具调用:参数是原始 JSON 字符串,与渠道形状同构(桩不帮忙序列化)。 */
+const bashOf = (command: string) => toolCall("bash", JSON.stringify({ command }));
+
+/** 一次不收参数的工具调用(`check` / `probe` / `evaluate` / `finish`)。 */
+const toolOf = (name: string) => toolCall(name, "{}");
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-agent-session-"));
@@ -95,10 +106,10 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
   // 改写成宿主路径,`/contract` 在宿主上不存在——「沙箱里有没有 `cp`」是**内容物**的事实,
   // 只有真 bwrap 那条用例(以及 `check:sandbox-rootfs` 的文件集门禁)能判它。
   const model = stubClient([
-    reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
-    reply("```bash\ncheck\n```"),
-    reply("```bash\nevaluate\n```"),
-    reply("```bash\nfinish\n```"),
+    bashOf("cat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF"),
+    toolOf("check"),
+    toolOf("evaluate"),
+    toolOf("finish"),
   ]);
 
   const outcome = await withRealBash(workspaceDir, () =>
@@ -125,7 +136,7 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
   ) as ArchiveMeta;
 
   // ── 身份与形状 ──
-  expect(meta.archiveSchemaVersion).toBe(3);
+  expect(meta.archiveSchemaVersion).toBe(ARCHIVE_SCHEMA_VERSION);
   expect(meta.harnessVersion).toBe(HARNESS_VERSION);
   expect(meta.harnessDigest).toBe(HARNESS_DIGEST);
   expect(meta.contextLength).toBe(100_000);
@@ -136,7 +147,13 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
   expect(meta.steps).toHaveLength(4);
   expect(meta.protocolRounds).toBe(4);
   expect(meta.prompts).toHaveLength(1);
-  expect(meta.steps?.map((step) => step.action.kind)).toEqual(["bash", "bash", "evaluate", "done"]);
+  // `check` 现在是独立一档:新世界里没有一次 `bash -c` 跑过它。
+  expect(meta.steps?.map((step) => step.action.kind)).toEqual([
+    "bash",
+    "check",
+    "evaluate",
+    "done",
+  ]);
   // 假执行器改写的是路径前缀,不是服务:`check` 仍然真跑了 tsc。
   expect(meta.steps?.[0]?.exitCode).toBe(0);
   expect(meta.steps?.[1]?.stdout).toContain("类型检查通过");
@@ -196,7 +213,7 @@ it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产
   mkdirSync(workspaceDir, { recursive: true });
 
   // 只 done、不 evaluate:一个候选都没有(ADR-0030「失败 = 一个候选都没有」)。
-  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
+  const model = stubClient([bashOf("ls /contract"), toolOf("finish")]);
 
   const outcome = await withRealBash(workspaceDir, () =>
     generateOneModel(
@@ -245,10 +262,10 @@ it("429 两次:实测退避落进日志行,报告受污染读数读到同一个�
   const model = stubClient([
     fail(new TransportError("被限流", { retryable: true, status: 429 })),
     fail(new TransportError("被限流", { retryable: true, status: 429 })),
-    reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
-    reply("```bash\ncheck\n```"),
-    reply("```bash\nevaluate\n```"),
-    reply("```bash\nfinish\n```"),
+    bashOf("cat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF"),
+    toolOf("check"),
+    toolOf("evaluate"),
+    toolOf("finish"),
   ]);
 
   const outcome = await withRealBash(workspaceDir, () =>

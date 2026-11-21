@@ -830,9 +830,11 @@ it("候选序从候选描述符出：与 check 写在同一块、动作记成 ba
   expect(sequence).toHaveLength(2);
   expect(sequence[0]).toContain("第 2 步：scriptSha256=");
   expect(sequence[1]).toContain("第 3 步：scriptSha256=");
-  // 动作标签降级为**注**：是 `evaluate` 时注为空，不是时注出「这一步还跑了别的命令」。
-  expect(sequence[0]).not.toContain("还跑了别的命令");
-  expect(sequence[1]).toContain("这一步还跑了别的命令");
+  // 动作标签降级为**注**：是 `evaluate` 时注为空，否则注出「这一格不是提交」。
+  // 不说「还跑了别的命令」：那个「还」说的是同一块里并存两件事，而新世界一次调用就是一步；
+  // 也不说「不产出候选」：这一行本身就是一条候选（来自描述符），那么写两句真话互相打脸。
+  expect(sequence[0]).not.toContain("不是提交");
+  expect(sequence[1]).toContain("这一步的动作是 bash，不是提交");
   // 既有语义不动：两次之间隔了几步、字节是否相同仍由已有字段合成。
   expect(sequence[1]).toContain("之间经过 0 步（无）");
   expect(sequence[1]).toContain("字节不同");
@@ -1079,7 +1081,7 @@ it("步号不是 1..协议轮数 的连续序列：拒读（按号数的左连�
 
 // ── 日志行的证据分家（ADR-0031） ───────────────────────────────────────────────
 
-it("v3 日志行带结果侧 errorCodes：显式拒读那一行，不静默忽略", () => {
+it("agent 形状的日志行带结果侧 errorCodes：显式拒读那一行，不静默忽略", () => {
   const root = rootOf();
   writeV3(root, {
     slug: "steps-duplicated-evidence",
@@ -1101,13 +1103,15 @@ it("v3 日志行带结果侧 errorCodes：显式拒读那一行，不静默忽�
     ],
   });
   const [report] = readArchiveReports(root);
-  expect(report?.log.issues).toEqual([{ line: 1, reason: "v3 日志行不带结果侧 errorCodes 字段" }]);
+  expect(report?.log.issues).toEqual([
+    { line: 1, reason: "agent 形状的日志行不带结果侧 errorCodes 字段" },
+  ]);
   expect(report?.log.state).toBe("partial");
   // 那一行被剔掉之后，左连接把缺口显式数出来（不是「这一步没有失败原因」）。
   expect(report?.steps?.join.stepsWithoutRound).toEqual([1]);
 });
 
-it("v3 日志行的 kind 只能是行类型标记：写成结果侧驱动来源即拒读", () => {
+it("agent 形状日志行的 kind 只能是行类型标记：写成结果侧驱动来源即拒读", () => {
   const root = rootOf();
   writeV3(root, {
     slug: "steps-driver-kind",
@@ -1116,7 +1120,9 @@ it("v3 日志行的 kind 只能是行类型标记：写成结果侧驱动来源�
     logs: [{ round: 1, kind: "tsc", responseConverged: true, sendMs: 10 }],
   });
   const [report] = readArchiveReports(root);
-  expect(report?.log.issues).toEqual([{ line: 1, reason: "v3 日志行的 kind 只能是行类型标记" }]);
+  expect(report?.log.issues).toEqual([
+    { line: 1, reason: "agent 形状日志行的 kind 只能是行类型标记" },
+  ]);
 });
 
 // ── 受污染分层（ADR-0036） ────────────────────────────────────────────────────

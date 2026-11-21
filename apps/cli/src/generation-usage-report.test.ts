@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,6 +149,17 @@ const fixtures = [
   },
 ];
 
+/**
+ * 一条 chat-completions 的 `tool_calls` 响应消息(不收参数的工具):线协议全形状。
+ *
+ * 夹具走**真 HTTP 适配器**,所以这里的字节就是渠道形状:解析那一侧读
+ * `message.tool_calls[].function.{name,arguments}`,`arguments` 是**字符串**(不在这里解析)。
+ */
+const wireToolCall = (name: string) => ({
+  content: null,
+  tool_calls: [{ id: "call-1", type: "function", function: { name, arguments: "{}" } }],
+});
+
 const evidence = {
   official: { status: "documented" as const, source: "offline-fixture/official-contract" },
   channel: { status: "accepted" as const, source: "offline-fixture/channel-contract" },
@@ -192,11 +211,23 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
       choices: [
         {
           message: {
-            // 写脚本与 evaluate 必须**各自一块**:整块去空白恰为 `evaluate` 才算那次提交
-            // (ADR-0032 的动作边界),拼在一起的块只是 bash。
-            content: `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${script}EOF\n\`\`\``,
+            // 写脚本与 evaluate 必须是**两次工具调用**(一步恰好一次):`evaluate` 那一次才算提交;
+            // 把两件事塞进同一次 `bash` 的 `command` 里只是跑了一个 shell(ADR-0032 的动作边界)。
+            content: "",
+            tool_calls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: {
+                  name: "bash",
+                  arguments: JSON.stringify({
+                    command: `cat > /workspace/script.ts <<'EOF'\n${script}EOF`,
+                  }),
+                },
+              },
+            ],
           },
-          finish_reason: "stop",
+          finish_reason: "tool_calls",
         },
       ],
       usage: {
@@ -208,13 +239,13 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
       },
     }),
     JSON.stringify({
-      choices: [{ message: { content: "```bash\nevaluate\n```" }, finish_reason: "stop" }],
+      choices: [{ message: wireToolCall("evaluate"), finish_reason: "tool_calls" }],
       // 后续步骤不带 usage:这些用例的合计口径都对着**第一步**那一条响应。
       usage: null,
     }),
-    // 第三步收工:不 done 的话会话会一直跑后续 evaluate 直到步数耗尽(每次都是一次调用)。
+    // 第三步收工:不 `finish` 的话会话会一直跑后续 evaluate 直到步数耗尽(每次都是一次调用)。
     JSON.stringify({
-      choices: [{ message: { content: "```bash\nfinish\n```" }, finish_reason: "stop" }],
+      choices: [{ message: wireToolCall("finish"), finish_reason: "tool_calls" }],
       // 后续步骤不带 usage:这些用例的合计口径都对着**第一步**那一条响应。
       usage: null,
     }),
@@ -298,7 +329,7 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
   }
 });
 
-it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h 分档与命中率", async () => {
+it("messages 族：起跑前拒跑并点名「本族未声明工具能力」,一次模型调用都不发", async () => {
   const root = makeRoot();
   const config: ModelConfig = {
     slug: "alpha",
@@ -321,116 +352,50 @@ it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h
       transport: { authentication: "bearer" },
     },
   };
-  // 真实 Anthropic 响应形状：写入量拆 5m / 1h 两档，总量与分档同时出现。
-  const usage = {
-    input_tokens: 4,
-    output_tokens: 5,
-    cache_creation_input_tokens: 14024,
-    cache_read_input_tokens: 0,
-    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 14024 },
-    output_tokens_details: { thinking_tokens: 0 },
-  };
-  // 三步:写脚本 → evaluate → done(不 done 的话会话会跑到步数耗尽)。
-  const bodies = [
-    JSON.stringify({
-      content: [
-        {
-          type: "text",
-          text: `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${script}EOF\n\`\`\``,
-        },
-      ],
-      stop_reason: "end_turn",
-      usage: { ...usage, prompt: secret, provider_error: secret },
-    }),
-    JSON.stringify({
-      content: [{ type: "text", text: "```bash\nevaluate\n```" }],
-      stop_reason: "end_turn",
-      // 后续步骤不带 usage:合计口径只对着第一条响应。
-      usage: null,
-    }),
-    JSON.stringify({
-      content: [{ type: "text", text: "```bash\nfinish\n```" }],
-      stop_reason: "end_turn",
-      // 后续步骤不带 usage:合计口径只对着第一条响应。
-      usage: null,
-    }),
-  ];
-  let call = 0;
-  const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => {
-    const body = bodies[call] ?? bodies[bodies.length - 1]!;
-    call += 1;
-    return new Response(body, { headers: { "content-type": "application/json" } });
-  });
+  const fetch = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ content: [], stop_reason: "end_turn", usage: null }), {
+        headers: { "content-type": "application/json" },
+      }),
+  );
   vi.stubGlobal("fetch", fetch);
   vi.stubEnv("USAGE_REPORT_TEST_KEY", secret);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   try {
-    const outcome = await withRealBash(workspaceDir, () =>
-      generateOneModel(
-        {
-          root,
-          runId: "r1",
-          agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
-          createClient: createHttpModelClient,
-          workspaceDir,
-          // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
-          // 「会话已到点」,而那与被测的 usage 投影毫无关系。
-          now: () => new Date(),
-          trial: completeGridTrial(),
-          trialPlan: () => gridPlanFixture(),
-        },
-        config,
+    // ── 这条用例以「拒跑」为被测行为,不是以 usage 投影为被测行为 ──
+    //
+    // 该席位挂 `messages` 族,而那一族的 `tool_use` / `tool_result` 翻译还没写:协议事实
+    // 2026-11-21 已拿到(`probes/messages-tool-roundtrip/`),缺的是实现。所以 agent 会话在
+    // **起跑前**被拒(`assertToolSurface`),而不是花 20 分钟跑到 0 候选才发现。
+    //
+    // 订正:这里原先写「该席位带不带 `tools` 都是 403,零证据」——那两次 403 是链路故障,
+    // 复测三步全 200,详见 ADR-0032 的 2026-11-21 修订段。
+    //
+    // 它原先覆盖的三件事仍然各有自己的家,没有丢:
+    // - 缓存断点进请求体 → `packages/gen/src/http/endpoints.test.ts`(messages 族 buildBody);
+    // - 口径 `anthropic` 的投影 → `packages/gen/src/generation-policy.test.ts` 的 `projectUsage`;
+    // - 报告侧 `缓存写 1h` 的渲染 → `packages/runner/src/archive-report.test.ts`。
+    await expect(
+      withRealBash(workspaceDir, () =>
+        generateOneModel(
+          {
+            root,
+            runId: "r1",
+            agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
+            createClient: createHttpModelClient,
+            workspaceDir,
+            now: () => new Date(),
+            trial: completeGridTrial(),
+            trialPlan: () => gridPlanFixture(),
+          },
+          config,
+        ),
       ),
-    );
-    expect(outcome.kind).toBe("frozen");
-    const requestBody = fetch.mock.calls[0]?.[1]?.body;
-    if (typeof requestBody !== "string") throw new Error("请求体不是字符串");
-    const body = JSON.parse(requestBody) as {
-      messages: {
-        role: string;
-        content: { type: string; text: string; cache_control?: unknown }[];
-      }[];
-      system?: unknown;
-      stream?: unknown;
-    };
-    // 断点打在前缀末尾:首条 user 消息(此时是唯一一条 dialog 消息)的内容块挂缓存标记;
-    // system 协议提示被抽到顶层 `system` 字段(Anthropic 没有 system 角色)。
-    expect(body.stream).toBe(true);
-    expect(body.system).toBeDefined();
-    expect(body.messages).toHaveLength(1);
-    expect(body.messages[0]?.content).toHaveLength(1);
-    expect(body.messages[0]?.content[0]).toMatchObject({
-      type: "text",
-      cache_control: { type: "ephemeral", ttl: "1h" },
-    });
-    const meta: ArchiveMeta = JSON.parse(
-      readFileSync(join(root, "archive/alpha/r1/meta.json"), "utf8"),
-    );
-    const log = JSON.parse(meta.generationLog[0]!) as { usage: Record<string, unknown> };
-    // 服务端没回显口径，按端点族补 anthropic。
-    expect(log.usage).toMatchObject({ ...usage, usage_semantic: "anthropic" });
-    expect(JSON.stringify(meta.generationLog)).not.toContain(secret);
-    const [report] = readArchiveReports(root);
-    expect(report?.rounds[0]?.usage.cacheWrite).toMatchObject({ value: 14024 });
-    expect(report?.rounds[0]?.usage.cacheWrite1h).toMatchObject({
-      value: 14024,
-      source: "usage.cache_creation.ephemeral_1h_input_tokens",
-    });
-    expect(report?.rounds[0]?.cacheHitRate).toBe(0);
-    // 会话三步、只有第一步带 usage:命中率同理不给单步冒充全程的合计(ADR-0035 那条纪律)。
-    expect(report?.cacheHitRate).toMatchObject({ recordedRounds: 1, expectedRounds: 3 });
-    expect(report?.rounds[0]?.requestEvidence?.cache).toEqual({
-      mode: "ephemeral-1h",
-      official: "documented",
-      channel: "accepted",
-    });
-    const output: string[] = [];
-    await runArchiveReport(["--root", root], {
-      stdout: (text) => output.push(text),
-      stderr: () => {},
-    });
-    expect(output.join("")).toContain("缓存写 1h");
+    ).rejects.toThrow(/端点位 messages 未声明工具调用能力/);
+    // 拒跑在第一次模型调用之前:一分钱没花,也没有落任何档。
+    expect(fetch).not.toHaveBeenCalled();
+    expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

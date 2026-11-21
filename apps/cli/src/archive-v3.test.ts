@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   AGENT_ARCHIVE_REQUIRED_KEYS,
+  ARCHIVE_SCHEMA_VERSION,
   OPTIMIZATION_AGENT_VERSION,
   OPTIMIZATION_CANDIDATE_LIMIT,
   TRIAL_MATCHES_PER_CANDIDATE,
@@ -262,7 +263,7 @@ it("v3 成功档（3 候选）：键集、装载、报告读出，且报告不�
   );
   expect(loaded.ok).toBe(true);
   const read = optimizationMetaOf(stored) as ArchiveMeta;
-  expect(read.archiveSchemaVersion).toBe(3);
+  expect(read.archiveSchemaVersion).toBe(ARCHIVE_SCHEMA_VERSION);
   expect(read.protocolRounds).toBe(meta.steps?.length);
   expect(read.prompts).toHaveLength(1);
 
@@ -569,7 +570,7 @@ it("v3 的优化段版本与档案形状版本必须同进同出：互不一致�
   const undeclared = JSON.parse(JSON.stringify(stored)) as Record<string, JsonValue>;
   Reflect.deleteProperty(undeclared, "archiveSchemaVersion");
   expect(validateArchiveMeta(undeclared, provenance).ok).toBe(false);
-  expect(() => optimizationMetaOf(undeclared)).toThrow(/archiveSchemaVersion: 3/);
+  expect(() => optimizationMetaOf(undeclared)).toThrow(/archiveSchemaVersion/);
 });
 
 it("未知的档案形状版本拒读，不猜", () => {
@@ -584,7 +585,8 @@ it("未知的档案形状版本拒读，不猜", () => {
     string,
     unknown
   >;
-  const future = { ...JSON.parse(JSON.stringify(stored)), archiveSchemaVersion: 4 } as JsonValue;
+  // 还**没**认得的版本号:读侧认 3 与 4,其余拒读(不猜、不降级)。
+  const future = { ...JSON.parse(JSON.stringify(stored)), archiveSchemaVersion: 99 } as JsonValue;
   expect(
     validateArchiveMeta(future, provenanceOf(root, "v3unknown", "2026-01-02T00-00-00-006Z", meta))
       .ok,

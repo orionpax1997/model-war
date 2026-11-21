@@ -11,13 +11,12 @@
  *
  * ```
  * bin/{bash,cat,cp,grep,head,ls,sed,tail,wc}   九个静态 ELF,不从宿主借、不带动态库闭包
- * bin/{check,evaluate,finish}     `packages/gen/src/agent/shim/shim.sh` 的逐字节副本
  * contract/{README.md,rules.md,api.md,examples/minimal.ts}   `docs/rules-v2/` 的逐字节副本
  * PROVENANCE.md                   来路说明书(生成物,不在挂载面上)
  * ```
  *
  * ── 两半:能现算的,与只能对账的 ──
- * `contract/` 与三个薄壳是**纯派生**:源在仓库里,重跑一次逐字节相同。静态二进制不是——
+ * `contract/` 是**纯派生**:源在仓库里,重跑一次逐字节相同。静态二进制不是——
  * 它们要么来自发行版包(`bash-static` 的 deb),要么来自钉版 tarball 的 `gcc -static` 构建过程,
  * 重跑需要网络与工具链。所以这里对它们只做一件事:**核对 sha256 与钉死的表一致再拷进来**。
  * 来路写进 `PROVENANCE.md`,`SANDBOX_ROOTFS_TREE_HASH` 钉住最终字节;两者一起回答
@@ -38,12 +37,10 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path";
 
 import { CONTRACT_DIR, CONTRACT_FILES } from "../contract-package.ts";
-import { sandboxRootfsConstantsFrom, SCHEMA_CONSTANTS_SOURCE } from "./rootfs-drift.ts";
 import {
   ROOTFS_DIR,
   ROOTFS_MOUNTED_DIRS,
   ROOTFS_PROVENANCE_DOC,
-  SHIM_SOURCE,
   readRootfsEntries,
   rootfsFilePaths,
   treeDigest,
@@ -51,18 +48,6 @@ import {
 
 /** 本文件在 `<repo>/packages/tools/src/sandbox-rootfs/` 下,上溯四层是仓库根。 */
 const repoRoot = resolve(import.meta.dirname, "../../../..");
-
-/**
- * 薄壳名字的来源:`@model-war/schema` 的 `SANDBOX_ROOTFS_SHIMS`,经源码文本抽取(本脚本与门禁
- * 一样零构建)。抽不出来即抛——组装一个「不知道薄壳叫什么」的 rootfs 没有意义。
- */
-const shimNamesFromSchema = (): readonly string[] => {
-  const parsed = sandboxRootfsConstantsFrom(
-    readFileSync(join(repoRoot, SCHEMA_CONSTANTS_SOURCE), "utf8"),
-  );
-  if (!parsed.ok) throw new Error(parsed.reason);
-  return parsed.constants.shims;
-};
 
 /**
  * 静态二进制**钉死**的来源。`sha256` 是唯一判据:拷进产物前逐个核对,不一致就停。
@@ -209,8 +194,9 @@ const provenanceMarkdown = (): string => {
 
 ## 它是什么
 
-模型在沙箱里能看见的**全部**内容物:静态 \`bash\`、${coreutilsCount} 个静态 coreutils(${coreutils.join(" / ")})、
-三个受限工具的薄壳(\`check\` / \`evaluate\` / \`finish\`)与只读契约 \`/contract\` 四条。
+模型在沙箱里能看见的**全部**内容物:静态 \`bash\`、${coreutilsCount} 个静态 coreutils(${coreutils.join(" / ")})
+与只读契约 \`/contract\` 四条。\`check\` / \`evaluate\` / \`finish\` **不在这里**:它们是模型发起的
+工具调用,由宿主分派,沙箱里连这三个名字都没有
 沙箱的根是空的(\`bwrap --tmpfs /\`),**只** \`--ro-bind\` 进这里的 \`bin/\` 与 \`contract/\`:
 宿主根目录一个 inode 都不出现,所以「绝对路径能绕过 PATH 白名单」这个问题结构上不存在。
 依据见 \`docs/adr/0033-sandbox-executor.md\`。
@@ -261,7 +247,6 @@ ${archiveRows}
 
 - \`PROVENANCE.md\`(本文件)不在挂载面上,也不算进整棵树哈希:树哈希的口径是**模型可见世界的
   哈希**,改一句说明不该改变模型看见的字节。
-- 薄壳的源码真源在 \`packages/gen/src/agent/shim/shim.sh\`;这里的三个名字是它的逐字节副本。
 - 契约的真源是 \`docs/rules-v2/\`;这里的 \`contract/\` 是它的逐字节副本(运行期不 bind 宿主 checkout)。
 `;
 };
@@ -315,14 +300,7 @@ const main = (): number => {
     writeFileSync(join(rootfsDir, "bin", binary.path), binary.bytes, { mode: 0o755 });
   }
 
-  // ② 薄壳:同一份字节的几份副本,工具名取自 `$0`。名字从 schema 那份清单取——组装与门禁
-  // 读的是同一处,否则「组装多写一个、门禁认不出」正是这套判据最容易漏的形状。
-  const shim = readFileSync(join(repoRoot, SHIM_SOURCE));
-  for (const name of shimNamesFromSchema()) {
-    writeFileSync(join(rootfsDir, "bin", name), shim, { mode: 0o755 });
-  }
-
-  // ③ 契约:真源是 `docs/rules-v2/`,逐字节拷进来(运行期不 bind 宿主 checkout)。
+  // ② 契约:真源是 `docs/rules-v2/`,逐字节拷进来(运行期不 bind 宿主 checkout)。
   for (const file of CONTRACT_FILES) {
     const source = join(repoRoot, CONTRACT_DIR, file);
     const target = join(rootfsDir, "contract", file);
@@ -330,7 +308,7 @@ const main = (): number => {
     cpSync(source, target);
   }
 
-  // ④ 来路说明书(确定性生成)。
+  // ③ 来路说明书(确定性生成)。
   writeFileSync(join(rootfsDir, ROOTFS_PROVENANCE_DOC), provenanceMarkdown(), "utf8");
 
   const entries = readRootfsEntries(rootfsDir);

@@ -33,7 +33,7 @@ import { afterAll, expect, it } from "vitest";
 import type { ModelConfig } from "./config.js";
 import { generateAndFreeze, runGeneration } from "./run.js";
 import { preflightFailureMessage } from "./agent/sandbox/index.js";
-import { fail, reply, stubClient, type StubClient } from "./stub-client.js";
+import { fail, stubClient, toolCall, type StubClient } from "./stub-client.js";
 import type { AgentPrompt } from "./agent-prompt.js";
 import { withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
 import { completeGridTrial } from "./trial-grid.fixture.js";
@@ -86,9 +86,14 @@ const modelsYaml = (...entries: readonly string[]): string => ["models:", ...ent
  */
 const clientOf = (steps: Parameters<typeof stubClient>[0]): StubClient => stubClient(steps);
 
-/** 一条「写脚本」的动作:真 bwrap 里就是 heredoc,这里原样保留(替身改写 `/workspace` 前缀)。 */
-const WRITE_SCRIPT = (body: string): string =>
-  `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${body}EOF\n\`\`\``;
+/** 一条「写脚本」的命令串:真 bwrap 里就是 heredoc,这里原样保留(替身改写 `/workspace` 前缀)。 */
+const WRITE_SCRIPT = (body: string): string => `cat > /workspace/script.ts <<'EOF'\n${body}EOF`;
+
+/** 一次 `bash` 工具调用。 */
+const bashOf = (command: string) => toolCall("bash", JSON.stringify({ command }));
+
+/** 一次不收参数的工具调用。 */
+const toolOf = (name: string) => toolCall(name, "{}");
 
 const SCRIPT_BODY = "function loop() {}\n";
 
@@ -103,7 +108,7 @@ const withPlainSandbox = async <T>(body: () => Promise<T>): Promise<T> =>
 
 it("顺利路径:一次 evaluate 出成绩就冻结,退出码 0", { timeout: 30_000 }, async () => {
   const root = writeRoot(modelsYaml(entry("alpha")));
-  const client = clientOf([reply(WRITE_SCRIPT(SCRIPT_BODY)), reply("```bash\nevaluate\n```")]);
+  const client = clientOf([bashOf(WRITE_SCRIPT(SCRIPT_BODY)), toolOf("evaluate")]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   const code = await withRealBash(workspaceDir, () =>
@@ -168,7 +173,7 @@ it("沙箱起不来就整批失败:一个会话都不启动,报错带三种已�
 
 it("`--model` 只跑选中的那一个,其余模型不发请求", { timeout: 30_000 }, async () => {
   const root = writeRoot(modelsYaml(entry("alpha"), entry("beta")));
-  const alpha = clientOf([reply("```bash\nfinish\n```")]);
+  const alpha = clientOf([toolOf("finish")]);
   const beta = clientOf([]);
   await withPlainSandbox(() =>
     runGeneration({
@@ -225,7 +230,7 @@ it("一批两模型一败一成:退出码非零,但成功那个照旧冻结", { 
       configPath: "models.yaml",
       createClient: (config): StubClient =>
         config.slug === "alpha"
-          ? clientOf([reply(WRITE_SCRIPT(SCRIPT_BODY)), reply("```bash\nevaluate\n```")])
+          ? clientOf([bashOf(WRITE_SCRIPT(SCRIPT_BODY)), toolOf("evaluate")])
           : clientOf([fail(new Error("boom"))]),
       agentPrompt: PROMPT,
       workspaceDir,
@@ -271,7 +276,7 @@ it(
   async () => {
     const root = writeRoot(modelsYaml(entry("alpha")));
     writeFileSync(join(root, ".env"), "MODELWAR_RUN_ENV_PROBE=loaded\n");
-    const client = clientOf([reply("```bash\nfinish\n```")]);
+    const client = clientOf([toolOf("finish")]);
     await withPlainSandbox(() =>
       runGeneration({
         root,
@@ -311,7 +316,7 @@ it("模型之间串行:前一个的全部步结束后才开下一个", { timeout
       configPath: "models.yaml",
       createClient: (config: ModelConfig): StubClient => {
         order.push(`client:${config.slug}`);
-        return stubClient([reply("```bash\nfinish\n```")]);
+        return stubClient([toolOf("finish")]);
       },
       agentPrompt: PROMPT,
       maxSteps: 1,

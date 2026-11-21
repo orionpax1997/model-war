@@ -1,131 +1,151 @@
 /**
- * 动作块解析的单测:拒绝形状、与「整块一次 `bash -c`」的边界。
+ * 动作解析的单测:四个接受路径、四个拒绝路径,以及纠正消息的逐字自洽性。
  *
- * 断言的都是**回给模型的字面结论**(命令原文 / 纠正消息说了什么),不是内部步骤:解析器的
- * 全部作用就是把一段文本变成这两种结论之一,中间过程没有第二个观察点。
+ * 断言的都是**回给模型的字面结论**(工具名与参数原文 / 纠正消息说了什么),不是内部步骤:
+ * 解析器的全部作用就是把一串 `ToolCall` 变成这两种结论之一,中间过程没有第二个观察点。
  */
 
 import { expect, it } from "vitest";
-import { ACTION_REJECT_EXIT_CODE, fencedBlocks, isEvaluateAction, parseAction } from "./action.js";
 
-it("恰好一个 bash 块:整块原文交出去,多行也算一块", () => {
-  const parsed = parseAction(
-    "先看一眼契约。\n\n```bash\nls /contract\ncat /contract/README.md\n```\n",
-  );
+import { ACTION_REJECT_EXIT_CODE, ACTION_REJECT_REASONS, parseAction } from "./action.js";
+import type { ToolCall } from "./tools.js";
+
+const call = (name: string, args: unknown): ToolCall => ({
+  name,
+  argumentsJson: typeof args === "string" ? args : JSON.stringify(args),
+});
+
+/** 一条拒绝的解析结果,顺带钉住档名。 */
+const rejectOf = (
+  parsed: ReturnType<typeof parseAction>,
+  reason: (typeof ACTION_REJECT_REASONS)[number],
+): Extract<ReturnType<typeof parseAction>, { kind: "reject" }> => {
+  if (parsed.kind !== "reject") throw new Error("期望被拒");
+  expect(parsed.reason).toBe(reason);
+  return parsed;
+};
+
+/** 纠正消息里「反例那一栏」的全部列表项(含它们缩进的样本行)。 */
+const rejectLines = (correction: string): readonly string[] => {
+  const lines = correction.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("❌ 反例"));
+  return lines.slice(start + 1).filter((line) => line.startsWith("- "));
+};
+
+// ── 四个接受路径 ────────────────────────────────────────────────────────────
+
+it("bash:那条命令串原样交出去(含换行),`argumentsJson` 也原样保留", () => {
+  const argumentsJson = '{"command":"ls /contract\\ncat /contract/README.md"}';
+  const parsed = parseAction([{ name: "bash", argumentsJson }]);
   expect(parsed).toEqual({
     kind: "ok",
+    tool: "bash",
+    argumentsJson,
     command: "ls /contract\ncat /contract/README.md",
   });
 });
 
-it("零个块:不执行、只回纠正消息,并说清「恰好一个 bash 块」", () => {
-  const parsed = parseAction("我想先想想。");
-  expect(parsed.kind).toBe("reject");
-  if (parsed.kind !== "reject") return;
-  expect(parsed.reason).toBe("no-block");
-  expect(parsed.correction).toContain("没有 ```bash 代码块");
-  expect(parsed.correction).toContain("**恰好一个** `bash` 代码块");
+it("check / probe / evaluate / finish:不收参数,空对象与空串两种形状都过", () => {
+  for (const name of ["check", "probe", "evaluate", "finish"] as const) {
+    expect(parseAction([call(name, {})])).toMatchObject({ kind: "ok", tool: name });
+    // 空串是常见形状(不少渠道对不收参数的工具给的就是空串),它不是「坏 JSON」。
+    expect(parseAction([{ name, argumentsJson: "" }])).toMatchObject({ kind: "ok", tool: name });
+    expect(parseAction([{ name, argumentsJson: "  " }])).toMatchObject({ kind: "ok", tool: name });
+    // 这四个工具**没有** `command` 这一格:它只对 `bash` 有意义。
+    const parsed = parseAction([call(name, {})]);
+    expect(parsed.kind === "ok" && "command" in parsed).toBe(false);
+  }
+});
+
+// ── 四个拒绝路径 ────────────────────────────────────────────────────────────
+
+it("零次调用:只说了话,纠正消息说清「一次都没有」", () => {
+  const parsed = rejectOf(parseAction([]), "no-tool-call");
+  expect(parsed.correction).toContain("没有发起任何工具调用");
+  expect(parsed.correction).toContain("**恰好一次**工具调用");
   expect(parsed.correction).toContain("计入步数");
 });
 
+it("多于一次调用:一次都不执行,纠正消息说清发起了几次", () => {
+  const parsed = rejectOf(
+    parseAction([call("bash", { command: "ls" }), call("bash", { command: "cat a" })]),
+    "multiple-tool-calls",
+  );
+  expect(parsed.correction).toContain("发起了 2 次工具调用");
+  // 处方要落在「怎么一次跑完」上,否则模型下一步只能再猜一次。
+  expect(parsed.correction).toContain("同一条");
+});
+
+it("工具名不认识:点名那个名字,并列出声明的五个", () => {
+  const parsed = rejectOf(parseAction([call("shell", { command: "ls" })]), "unknown-tool");
+  expect(parsed.correction).toContain("`shell`");
+  expect(parsed.correction).toContain("bash / check / probe / evaluate / finish");
+});
+
+it("参数坏了:坏 JSON / 形状不符 / 多余键都归同一档,纠正消息带那串字节的开头", () => {
+  for (const bad of [
+    { name: "bash", argumentsJson: '{"command": }' },
+    { name: "bash", argumentsJson: '{"command": ""}' },
+    { name: "bash", argumentsJson: '{"command": "ls", "extra": 1}' },
+    { name: "bash", argumentsJson: '{"cmd": "ls"}' },
+    { name: "bash", argumentsJson: "[]" },
+    { name: "check", argumentsJson: '{"command": "ls"}' },
+    { name: "evaluate", argumentsJson: "{oops" },
+  ] as const) {
+    const parsed = rejectOf(parseAction([bad]), "malformed-arguments");
+    expect(parsed.correction).toContain("arguments 不能用");
+  }
+  // 点名被拒的是哪个工具的那一串:不同工具的处方不同(一个要 `{command}`,一个不许带参数)。
+  expect(
+    rejectOf(parseAction([{ name: "check", argumentsJson: '{"x":1}' }]), "malformed-arguments")
+      .correction,
+  ).toContain("`check` 时给的 arguments");
+  expect(
+    rejectOf(parseAction([{ name: "bash", argumentsJson: "{oops" }]), "malformed-arguments")
+      .correction,
+  ).toContain("{oops");
+});
+
+// ── 纠正消息的逐字自洽 ───────────────────────────────────────────────────────
+
 it("纠正消息带逐字正例与逐字反例,并标出这一次踩到的是哪一种", () => {
-  const parsed = parseAction("我想先想想。");
-  if (parsed.kind !== "reject") throw new Error("期望被拒");
-  // 正例是逐字的、最小可执行的:模型抄一行就能过。
-  expect(parsed.correction).toContain("```bash\nls /workspace\n```");
+  const parsed = rejectOf(parseAction([]), "no-tool-call");
+  // 正例是逐字的、可直接照抄的:四个工具各一条。
+  expect(parsed.correction).toContain(`bash {"command": "ls /workspace"}`);
+  expect(parsed.correction).toContain("check {}");
+  expect(parsed.correction).toContain("evaluate {}");
+  expect(parsed.correction).toContain("finish {}");
   // 每条反例逐字在场——这是「拒过什么」的可读证据,不只是「格式不对」。
-  expect(parsed.correction).toContain("<function=bash>");
-  expect(parsed.correction).toContain("<parameter=command>ls /workspace</parameter=command>");
-  expect(parsed.correction).toContain("```ts");
-  expect(parsed.correction).toContain("const x = 1;");
-  // 被点名的是零块那条,其余几条不带标记。
-  expect(parsed.correction).toContain("那个块本身不存在」。 ◀");
+  expect(parsed.correction).toContain("我想先把 script.ts 读完");
+  expect(parsed.correction).toContain('shell {"command": "ls /workspace"}');
+  expect(parsed.correction).toContain('bash {"command": }');
+  // 被点名的是零次那条,其余几条不带标记。
   expect(parsed.correction.match(/^- .*◀$/gmu)).toHaveLength(1);
   // 句子里的条数由数组长度生成:数一数消息真列了几条,那句话必须说同一个数。
   // 写死一个数字时,加第五种会让这句话变成谎话,而没有任何断言会红——这一条就是那条断言。
-  const listed = (parsed.correction.match(/^- /gmu) ?? []).length;
+  const listed = rejectLines(parsed.correction).length;
+  expect(listed).toBe(ACTION_REJECT_REASONS.length);
   expect(parsed.correction).toContain(`${String(listed)} 种都会被拒`);
 });
 
-it("XML 工具调用单独一档:被拒的是 `<function=bash>` 那一处,不是泛泛的「格式不对」", () => {
-  // deepseek-v4.1-flash / mimo-v2.6-flash 在 2026-11-19 两次都是这个形状,三次都不改。
-  const parsed = parseAction(
-    [
-      "跑一下。",
-      "<tool_call>",
-      "<function=bash>",
-      "<parameter=command>ls /workspace</parameter=command>",
-      "</function>",
-      "</tool_call>",
-    ].join("\n"),
-  );
-  expect(parsed.kind).toBe("reject");
-  if (parsed.kind !== "reject") return;
-  expect(parsed.reason).toBe("xml-tool-call");
-  expect(parsed.correction).toContain("XML 工具调用形状");
-  expect(parsed.correction).toContain("被拒的是 `<function=bash>` 这一处");
-  // 它不收：拒绝就一条命令都不执行，没有第二条语法。
-  expect(parsed.correction).toContain("没有任何命令被执行");
+it("四档各有各的逐字反例:◀ 只会标在这一次踩到的那种上", () => {
+  const cases = [
+    [parseAction([]), "no-tool-call"],
+    [parseAction([call("bash", { command: "ls" }), call("check", {})]), "multiple-tool-calls"],
+    [parseAction([call("nope", {})]), "unknown-tool"],
+    [parseAction([{ name: "bash", argumentsJson: "{" }]), "malformed-arguments"],
+  ] as const;
+  for (const [parsed, reason] of cases) {
+    const rejectedOne = rejectOf(parsed, reason);
+    // 恰好一条被标;标的那一条在反例表里排第 (档名在枚举里的下标 + 1) 位。
+    const marked = rejectLines(rejectedOne.correction).filter((line) => line.endsWith("◀"));
+    expect(marked).toHaveLength(1);
+    expect(rejectLines(rejectedOne.correction).indexOf(marked[0]!)).toBe(
+      ACTION_REJECT_REASONS.indexOf(reason),
+    );
+  }
 });
 
-it("多个块:一个都不执行,纠正消息点名「有几个块」", () => {
-  const parsed = parseAction("```bash\nls\n```\n\n```bash\ncat a\n```\n");
-  expect(parsed.kind).toBe("reject");
-  if (parsed.kind !== "reject") return;
-  expect(parsed.reason).toBe("multiple-blocks");
-  expect(parsed.correction).toContain("有 2 个代码块");
-  // 纠正消息要给出「怎么一次跑完」的处方,否则模型下一步只能再猜一次。
-  expect(parsed.correction).toContain("写进同一个块");
-});
-
-it("非 bash 标记(解释用的 ts 块):不执行,纠正消息点名标记是什么", () => {
-  const parsed = parseAction("```ts\nconst x = 1;\n```\n");
-  expect(parsed.kind).toBe("reject");
-  if (parsed.kind !== "reject") return;
-  expect(parsed.reason).toBe("non-bash");
-  expect(parsed.correction).toContain("它的标记是 ```ts,不是 ```bash");
-});
-
-it("块内的 done 原样留在命令里,解析层不切块也不报行号", () => {
-  // 收工是薄壳上报给宿主的一个请求;本层既不认行也不切块——整块原样交出去。本层曾经另报
-  // 一份「行号」,而那份行号一路传到执行器却从没被读过——同一件事的两份判据,删掉的是多余的那一份。
-  const parsed = parseAction("```bash\nevaluate\ndone\necho 之后的行照跑\n```\n");
-  expect(parsed).toEqual({ kind: "ok", command: "evaluate\ndone\necho 之后的行照跑" });
-});
-
-it("围栏必须独占一行:行内反引号不算动作块", () => {
-  expect(fencedBlocks("这是行内的 ```bash 标记,不是块")).toEqual([]);
-  // 关围栏只认光杆:块内的 ```ts 是正文。
-  expect(fencedBlocks("```bash\necho ```ts\n```")).toEqual([{ tag: "bash", body: "echo ```ts" }]);
-});
-
-it("没写收尾围栏的块跑到文本结尾:意图是清楚的,不为一个缺行浪费一步", () => {
-  expect(parseAction("```bash\nls\n")?.kind).toBe("ok");
-  expect(parseAction("```bash\nls\n")).toEqual({ kind: "ok", command: "ls\n" });
-});
-
-it("块为空也算一个块:交给 shell 去空转,不在解析层猜意图", () => {
-  expect(parseAction("```bash\n```")).toEqual({ kind: "ok", command: "" });
-});
-
-it("`evaluate` 动作只认整块:拼了别的东西就是 bash", () => {
-  expect(isEvaluateAction("\nevaluate\n")).toBe(true);
-  expect(isEvaluateAction("evaluate && done")).toBe(false);
-  expect(isEvaluateAction("evaluate; echo hi")).toBe(false);
-});
-
-it("「没有动作可执行」的退出码与薄壳的 2 分得开", () => {
-  // 薄壳(票 04)用 2 说「工具不可用」;解析被拒是「你没写出可执行的动作」,借 EX_USAGE。
+it("「没有动作可执行」的退出码仍是 64", () => {
   expect(ACTION_REJECT_EXIT_CODE).toBe(64);
-});
-
-it("写坏的 XML 工具调用(带 id、闭合标签对不上)仍归 xml-tool-call 一档", () => {
-  // `archive/hy4-flash/failed-2026-11-19T05-24-41-903Z` 第 3 步的原文形状:
-  // 标签名后面跟 `:id`,中间夹 `</content></invoke>`。它是同一个不服从的写法,不是「只说了话」。
-  const raw =
-    "<tool_calls:6124c78e><tool_call:6124c78e>bash>\nfinish\n</bash>\n</content></invoke>";
-  const parsed = parseAction(raw);
-  expect(parsed.kind).toBe("reject");
-  if (parsed.kind !== "reject") return;
-  expect(parsed.reason).toBe("xml-tool-call");
 });

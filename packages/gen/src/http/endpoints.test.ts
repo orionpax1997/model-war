@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import type { ModelConfig } from "../config.js";
 import { policyFixture } from "../generation-policy.fixture.js";
 import type { ChatMessage } from "../model-client.js";
+import { AGENT_TOOLS } from "../agent/tools.js";
 import { endpointSpec } from "./endpoints.js";
 
 const config = (family: ModelConfig["endpointFamily"]): ModelConfig => ({
@@ -33,11 +34,13 @@ it("四条端点族的路径各自钉死", () => {
   );
 });
 
-it("chat-completions 请求体:model + messages(system 留在 messages 里)+ params 透传", () => {
+it("chat-completions 请求体:无工具声明时仍只有 model + messages + params 三个键(逐字)", () => {
   const messages: ChatMessage[] = [
     { role: "system", content: "s" },
     { role: "user", content: "u" },
   ];
+  // 「不带工具声明的请求字节与今天完全一致」是票 01 的硬约束:一次性形态那条路一个字不动。
+  // 所以这里驳的不仅是「多不多 tools」,而是整份请求体的键集合。
   expect(
     endpointSpec("chat-completions").buildBody(config("chat-completions"), messages, {
       temperature: 0.2,
@@ -50,6 +53,47 @@ it("chat-completions 请求体:model + messages(system 留在 messages 里)+ par
     ],
     temperature: 0.2,
   });
+  // 声明的缺省也是「没有」:空数组不等于「带上一个空 tools」。
+  expect(
+    endpointSpec("chat-completions").buildBody(
+      config("chat-completions"),
+      messages,
+      {},
+      {
+        tools: [],
+      },
+    ),
+  ).toEqual({ model: "vendor/model-x", messages });
+});
+
+it("chat-completions 请求体:有工具声明时多 tools 与 tool_choice,且 params 压不过声明", () => {
+  const messages: ChatMessage[] = [{ role: "user", content: "u" }];
+  const body = endpointSpec("chat-completions").buildBody(
+    config("chat-completions"),
+    messages,
+    // 生成策略的产出面完全可能恰好带同名键(这里是故意的反例):它**压不动**协议。
+    { temperature: 0.2, tools: [], tool_choice: "none" },
+    { tools: AGENT_TOOLS },
+  );
+  expect(body.tool_choice).toBe("auto");
+  const tools = body.tools as readonly { type: string; function: Record<string, unknown> }[];
+  expect(tools).toHaveLength(5);
+  expect(tools.map((tool) => tool.function.name)).toEqual([
+    "bash",
+    "check",
+    "probe",
+    "evaluate",
+    "finish",
+  ]);
+  for (const tool of tools) expect(tool.type).toBe("function");
+  // 声明逐字进请求体的 `function`(名字 / 描述 / 参数 Schema 都不重写)。
+  expect(tools[0]?.function).toEqual({
+    name: AGENT_TOOLS[0].name,
+    description: AGENT_TOOLS[0].description,
+    parameters: AGENT_TOOLS[0].parameters,
+  });
+  expect(body.temperature).toBe(0.2);
+  expect(body.model).toBe("vendor/model-x");
 });
 
 it("chat-completions 响应:取 choices[0].message.content / finish_reason / usage", () => {
@@ -76,6 +120,195 @@ it("chat-completions 缺停止字段时保持未知，不伪造 stop", () => {
     usage: undefined,
   });
 });
+
+/**
+ * 一次**真**工具调用响应的形状(`xiaomi/mimo-v2.6-flash` 与 `tencent/hy4-flash` 的实测读音,
+ * 只留断言要用的键)。
+ *
+ * ── 这条夹具是 inkling 那场的死因 ──
+ *
+ * `archive/inkling-2-small/failed-2026-11-19T10-54-29-233Z.json` 里 `steps[0..2].raw === ""`、
+ * `finishReason: "tool_calls"`、`completion_tokens: 55`、`termination: "action-parse"`、0 候选。
+ * 模型**不是没说话**,它说的话全在 `tool_calls` 里,而旧解析器只读 `content`——于是「55 个 token
+ * 的产物」在档案里是一条 0 字节的步。改完之后它必须是活的:`text: ""` 但 `toolCalls` 在场。
+ *
+ * 两个键同时可给:实测 `hy4-flash` 在 `finish_reason: "tool_calls"` 时 `content` 是一段短文本
+ * (78 字符),`mimo-v2.6-flash` 那边是 `null`。两种形状都要能读。
+ */
+const TOOL_CALL_RESPONSE = {
+  choices: [
+    {
+      finish_reason: "tool_calls",
+      index: 0,
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1b5d910870c9444ca6fea2d4",
+            type: "function",
+            function: {
+              name: "bash",
+              arguments: '{"command": "ls -la /contract; echo ---; wc -l /contract/*.md"}',
+            },
+          },
+        ],
+      },
+    },
+  ],
+  usage: { prompt_tokens: 1360, completion_tokens: 55, total_tokens: 1415 },
+};
+
+it("chat-completions 响应:`content: null` + `finish_reason: tool_calls` → text 空串 + toolCalls 在场", () => {
+  const response = endpointSpec("chat-completions").parseResponse(TOOL_CALL_RESPONSE);
+  expect(response).toEqual({
+    text: "",
+    toolCalls: [
+      {
+        name: "bash",
+        argumentsJson: '{"command": "ls -la /contract; echo ---; wc -l /contract/*.md"}',
+      },
+    ],
+    finishReason: "tool_calls",
+    usage: { prompt_tokens: 1360, completion_tokens: 55, total_tokens: 1415 },
+    stopDetails: { reason: "tool_calls" },
+  });
+});
+
+it("chat-completions 响应:同时说话与调用时两个键各盖一件事,`arguments` 逐字不重编码", () => {
+  // 渠道给的原始字节里带它自己的空格与转义写法;`JSON.parse` 再 `JSON.stringify` 会改掉它,
+  // 而下一轮发回历史用的就是这串字节(ADR-0031「与发回去的字节同源」)。
+  const argumentsJson = '{ "command" : "printf \\u003cb\\u003e" }';
+  const response = endpointSpec("chat-completions").parseResponse({
+    ...TOOL_CALL_RESPONSE,
+    choices: [
+      {
+        finish_reason: "tool_calls",
+        message: {
+          content: "我先看一下契约。",
+          tool_calls: [
+            {
+              id: "chatcmpl-tool-97e8f97317c35d2e",
+              function: { name: "bash", arguments: argumentsJson },
+            },
+            // 缺 `function.name` 的那一格丢掉:说不出调了什么,不是一个可判定的动作。
+            { id: "x", function: { arguments: "{}" } },
+          ],
+        },
+      },
+    ],
+  });
+  expect(response.text).toBe("我先看一下契约。");
+  expect(response.toolCalls).toEqual([{ name: "bash", argumentsJson }]);
+});
+
+it("chat-completions 响应:零次调用时不挂 `toolCalls` 空壳", () => {
+  const response = endpointSpec("chat-completions").parseResponse({
+    choices: [{ message: { content: "只说不动" }, finish_reason: "stop" }],
+  });
+  expect("toolCalls" in response).toBe(false);
+  // 显式空数组则归一成缺席:两种写法是同一个事实,不该在读侧长得不一样。
+  expect(
+    "toolCalls" in
+      endpointSpec("chat-completions").parseResponse({
+        choices: [{ message: { content: "", tool_calls: [] } }],
+      }),
+  ).toBe(false);
+});
+
+it("chat-completions 请求消息:assistant 的 `tool_calls` 与 tool 角色的 `tool_call_id` 按角色分支写", () => {
+  const messages: ChatMessage[] = [
+    { role: "user", content: "读契约" },
+    {
+      role: "assistant",
+      content: "",
+      // 配对基准 id:两处(assistant 的 `tool_calls[i].id` 与 tool 的 `tool_call_id`)都由它派生。
+      toolCallId: "call-1",
+      toolCalls: [{ name: "bash", argumentsJson: '{"command": "cat /contract/README.md"}' }],
+    },
+    { role: "tool", toolCallId: "call-1", content: "exit code: 0" },
+  ];
+  const body = endpointSpec("chat-completions").buildBody(
+    config("chat-completions"),
+    messages,
+    {},
+    { tools: AGENT_TOOLS },
+  );
+  expect(body.messages).toEqual([
+    { role: "user", content: "读契约" },
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          // `id` 是**必填**:缺它渠道回 400 `messages.N.tool_calls.0.id expected string`
+          // (2026-11-20 真请求探针)。值是我们自己确定性派生的,不是渠道给的。
+          id: "call-1",
+          type: "function",
+          function: { name: "bash", arguments: '{"command": "cat /contract/README.md"}' },
+        },
+      ],
+    },
+    { role: "tool", content: "exit code: 0", tool_call_id: "call-1" },
+  ]);
+});
+
+it("chat-completions 请求消息:同一轮多条调用各有 id,首条就是配对基准", () => {
+  // 一步只执行一次调用(票 02 的判据),但历史里可能出现一轮多条(那一步被拒、照样回喂)。
+  // 每条都必须有 `id`——两条共用一个 id 会让工具消息的归属不可读。
+  const body = endpointSpec("chat-completions").buildBody(
+    config("chat-completions"),
+    [
+      {
+        role: "assistant",
+        content: "",
+        toolCallId: "call-7",
+        toolCalls: [
+          { name: "bash", argumentsJson: "{}" },
+          { name: "bash", argumentsJson: "{}" },
+        ],
+      },
+    ],
+    {},
+  );
+  const calls = (body.messages as { tool_calls: { id: string }[] }[])[0]?.tool_calls;
+  expect(calls?.map((call) => call.id)).toEqual(["call-7", "call-7-1"]);
+});
+
+it("chat-completions 请求消息:缺 `toolCallId` 时也写 id(漏掉这个键就是上游 400)", () => {
+  const body = endpointSpec("chat-completions").buildBody(
+    config("chat-completions"),
+    [{ role: "assistant", content: "", toolCalls: [{ name: "bash", argumentsJson: "{}" }] }],
+    {},
+  );
+  const calls = (body.messages as { tool_calls: { id?: string }[] }[])[0]?.tool_calls;
+  expect(calls?.[0]?.id).toBe("call-0");
+});
+
+it("messages / responses / generate-content 族不声明工具能力:用它们的席位在会话起跑前拒跑", () => {
+  // 可选 = 不支持。`messages` 族的协议事实已经拿到(`probes/messages-tool-roundtrip/`),
+  // 但翻译还没写;`responses` / `generate-content` 连协议事实都还在别处。声明了才是
+  // 「这条翻译被真实会话验证过」。
+  expect(endpointSpec("chat-completions").tools).toEqual({ shape: "function-json-schema" });
+  expect(endpointSpec("messages").tools).toBeUndefined();
+  expect(endpointSpec("responses").tools).toBeUndefined();
+  expect(endpointSpec("generate-content").tools).toBeUndefined();
+});
+
+it.each(["messages", "responses", "generate-content"] as const)(
+  "%s 族遇到 `tool` 角色观测消息时当场抬错,不发一个上游认不出的 body",
+  (family) => {
+    // 这道防线是「上层忘了起跑前拒跑」的最后一层:一个能发出去但意思错了的 body,在报告里
+    // 与「模型写错了」同形。三条族各自的形状不同,但同一条判据。
+    expect(() =>
+      endpointSpec(family).buildBody(
+        config(family),
+        [{ role: "tool", toolCallId: "call-1", content: "x" }],
+        {},
+      ),
+    ).toThrow(/不支持工具调用/);
+  },
+);
 
 it("messages 请求体:system 抽到顶层,不进 messages;max_tokens 缺省由工程常量兜底", () => {
   const messages: ChatMessage[] = [
@@ -345,6 +578,116 @@ it("chat-completions 流累积器:只拼 delta.content,忽略 reasoning_content"
     finishReason: "stop",
     usage: undefined,
   });
+});
+
+it("chat-completions 流累积器:`delta.tool_calls` 按 index 拼分片,结果与非流式逐字相等", () => {
+  // 一次真工具调用切成 3 帧:首帧只带 `name`(`arguments` 是空串),中帧把 `arguments` 分两片。
+  // 这是上游的**真形状**——SSE 是一串增量,不是一整份 JSON。
+  const argumentsJson = '{"command": "ls -la /contract; echo ---; wc -l /contract/*.md"}';
+  const accumulator = requireStreaming("chat-completions").createAccumulator();
+  accumulator.push({
+    choices: [
+      {
+        index: 0,
+        delta: {
+          role: "assistant",
+          tool_calls: [
+            {
+              index: 0,
+              id: "call_1b5d910870c9444ca6fea2d4",
+              type: "function",
+              function: { name: "bash", arguments: "" },
+            },
+          ],
+        },
+        finish_reason: null,
+      },
+    ],
+  });
+  accumulator.push({
+    choices: [
+      {
+        index: 0,
+        delta: { tool_calls: [{ index: 0, function: { arguments: argumentsJson.slice(0, 20) } }] },
+        finish_reason: null,
+      },
+    ],
+  });
+  accumulator.push({
+    choices: [
+      {
+        index: 0,
+        delta: { tool_calls: [{ index: 0, function: { arguments: argumentsJson.slice(20) } }] },
+        finish_reason: null,
+      },
+    ],
+  });
+  accumulator.push({
+    choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+    usage: { prompt_tokens: 1360, completion_tokens: 55 },
+  });
+
+  const streamed = accumulator.result();
+  // 两边比的是**整份统一形状**:走不走流式不能得到两个 `argumentsJson`——那串字节要原样
+  // 发回下一轮,而「发回去的 == 落盘的」不允许两个读法各造一份。
+  expect(streamed).toEqual(
+    endpointSpec("chat-completions").parseResponse({
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1b5d910870c9444ca6fea2d4",
+                type: "function",
+                function: { name: "bash", arguments: argumentsJson },
+              },
+            ],
+          },
+        },
+      ],
+      usage: { prompt_tokens: 1360, completion_tokens: 55 },
+    }),
+  );
+  expect(streamed.toolCalls).toEqual([{ name: "bash", argumentsJson }]);
+  expect(streamed.text).toBe("");
+});
+
+it("chat-completions 流累积器:多个调用按 index 归位,不因交错抵达而串成一串", () => {
+  // 实测 `mimo-v2.6-flash` 一次回两条调用。分片交错时若按「推一个到末尾」聚合,
+  // 第二个调用的参数会被接到第一个后面,而那是一个**看起来像模型写坏了 JSON** 的假象。
+  const accumulator = requireStreaming("chat-completions").createAccumulator();
+  accumulator.push({
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            { index: 0, function: { name: "bash", arguments: '{"command": "' } },
+            { index: 1, function: { name: "check", arguments: "{" } },
+          ],
+        },
+      },
+    ],
+  });
+  accumulator.push({
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            { index: 1, function: { arguments: "}" } },
+            { index: 0, function: { arguments: 'ls"}' } },
+          ],
+        },
+      },
+    ],
+  });
+  expect(accumulator.result().toolCalls).toEqual([
+    { name: "bash", argumentsJson: '{"command": "ls"}' },
+    { name: "check", argumentsJson: "{}" },
+  ]);
 });
 
 it("chat-completions 流累积器:usage 取最后一个非空帧,`usage:null` 中途帧不清掉它", () => {

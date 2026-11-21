@@ -17,8 +17,7 @@
  * 截断一律归一成 `"length"`(OpenAI 本就是 `"length"`,Anthropic 的 `"max_tokens"` 由 08 映射)。
  */
 
-/** 一条消息的角色。三个取值与四家端点族的共同子集一致(真实适配器只做方言翻译,不扩取值域)。 */
-export type ChatRole = "system" | "user" | "assistant";
+import type { ToolCall, ToolDeclaration } from "./agent/tools.js";
 
 /**
  * 这一族怎么把推理带回去(ADR-0032「reasoning 按端点族分家」)。
@@ -56,6 +55,18 @@ export type ReasoningEcho = {
   readonly dropped: number;
 };
 
+/**
+ * 一条消息的角色。真实适配器只做方言翻译,不扩取值域。
+ *
+ * ── 为什么 `tool` 也在里面 ──
+ *
+ * 它是观测消息的信封:协议从「吐围栏块」改成「吐工具调用」之后,`user` 那一档是错的——上一轮
+ * assistant 只说了一次调用、没说人话,后面跟一条 `user` 会让历史读起来像自言自语。四族里只有
+ * `chat-completions` 声明了工具能力(见 `EndpointSpec.tools`),别的族遇到 `tool` 角色一律在
+ * **发请求之前**拒跑,而不是发一个上游认不出的 body。
+ */
+export type ChatRole = "system" | "user" | "assistant" | "tool";
+
 export type ChatMessage = {
   readonly role: ChatRole;
   readonly content: string;
@@ -65,6 +76,24 @@ export type ChatMessage = {
    * 可选键,**不写空壳**:没有可回传的东西时这一格缺席(历史里的消息因此仍是 `{role, content}`)。
    */
   readonly reasoning?: ReasoningEcho;
+  /**
+   * assistant 那一轮实际发起的工具调用,**原样**回传(含 `argumentsJson` 的逐字字节)。
+   *
+   * 它是「模型看到的字节 = 落盘的字节」在工具调用轮次里的载体:`content` 那边常常是空串
+   * (`finish_reason: "tool_calls"` 时渠道不回正文),真正的产物在这一格。
+   */
+  readonly toolCalls?: readonly ToolCall[];
+  /**
+   * **配对基准 id**:assistant 的 `tool_calls[i].id` 与 `tool` 消息的 `tool_call_id` 由它派生。
+   *
+   * 值是历史构造处确定性派生的 `call-<步号>`,不复用渠道 id(渠道 id 每次不同,是进档案与 digest
+   * 路径的无意义字节;而 id 的唯一用途是让 assistant 与 `tool` 消息在自己的历史里配对)。
+   *
+   * 两处都要它而不是只在 `tool` 那一条:渠道把 `tool_calls[0].id` 判为**必填**
+   * (缺它 `400 messages.N.tool_calls.0.id expected string`),而配对关系本身服务端不校验。
+   * 所以两个 id 必须由同一处给出,否则就是两个会分叉的事实。
+   */
+  readonly toolCallId?: string;
 };
 
 /**
@@ -78,6 +107,14 @@ export type ModelParams = Readonly<Record<string, unknown>>;
 
 export type ModelResponse = {
   readonly text: string;
+  /**
+   * 这一轮发起的工具调用(可能一格都没有)。
+   *
+   * 与 `text` **并列**,不改名、不合并:模型可能同时说话与调用(实测 `hy4-flash` 在
+   * `finish_reason: "tool_calls"` 时 `content` 是一段短文本),也可能只调用(`mimo-v2.6-flash`
+   * 那边 `content: null`)。两个键各自承载一种产物,读侧按需取。
+   */
+  readonly toolCalls?: readonly ToolCall[];
   /** 输出预算截断归一成 "length"，缺停止字段为 "unknown"；其他状态不冒充截断。 */
   readonly finishReason: string;
   readonly usage: unknown;
@@ -87,7 +124,20 @@ export type ModelResponse = {
   readonly reasoning?: ReasoningEcho;
 };
 
-/** 一次 `send` 的控制面。目前只有「中止」,而它不是可选项:见 `SendOptions.signal`。 */
+/**
+ * 一次 `send` 的**逐请求面**:两台东西——终止控制,与会话的工具声明。
+ *
+ * ── 工具声明为什么从这条缝进来(而不是 `params` 或一个新的位置参数) ──
+ *
+ * 不放 `params`:那个类型是**生成策略的产出面**(`generationParams()` 的每一个键都是「怎么采样」),
+ * 让工具声明从那里进来,生成策略就能意外改掉协议——于是「换 harness」与「调一个参数」在代码里
+ * 长得一模一样(票 01 的 `EndpointRequest` 头注写着同一件事)。
+ *
+ * 不新增第四个位置参数:`send(messages, params, options?, tools?)` 会让「没有控制面」的那一档
+ * 必须写 `send(m, p, undefined, tools)` 这种占位。占位参数正是协议改动最容易被当成排版的地方
+ * ——它看不见、但每个实现与每个测试都得跟着数逗号。`options` 已经是「这一次请求的附加面」,
+ * 工具声明就属于那个面。
+ */
 export type SendOptions = {
   /**
    * 会话总墙钟到点(ADR-0029/0035):**进行中的调用必须真的被打断**。
@@ -102,6 +152,13 @@ export type SendOptions = {
    * 实现方应当把它接到底层请求(HTTP 适配器直接并进 `fetch` 的 signal),而不是只在入口查一次。
    */
   readonly signal?: AbortSignal;
+  /**
+   * 本会话的工具声明(见 `agent/tools.ts` 的 `AGENT_TOOLS`)。缺席 = 不带 `tools` 发请求。
+   *
+   * 只有声明了工具能力的端点族(`EndpointSpec.tools`)接受它;别族传它是一次**接线错误**,
+   * 由适配器与 `pipeline.ts` 的起跑前拒跑两道防线报出来。
+   */
+  readonly tools?: readonly ToolDeclaration[];
 };
 
 /** 一次生成调用的端口。实现 = HTTP 适配器(`packages/gen/src/http/client.ts`)或可编程桩(测试与本地演练)。 */
