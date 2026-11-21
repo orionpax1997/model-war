@@ -79,8 +79,17 @@ export type ReasoningCapability = {
  * 「翻译没写」与「没有证据」是两件事,别再写成一个。
  */
 export type ToolCapability = {
-  /** 这一族把工具声明写成什么形状。今天是 chat 族那一种(JSON Schema + `tool_calls`)。 */
-  readonly shape: "function-json-schema";
+  /**
+   * 这一族把工具声明写成什么形状,以及结果回来是什么形状。两件事是同一个人的同一套约定,
+   * 所以合成一格:
+   *
+   * - `function-json-schema`(chat-completions):声明 `{type:"function", function:{name,
+   *   description, parameters}}`,结果在 `tool_calls[].function.arguments`(**原文字符串**),
+   *   观测用 `role:"tool"` + `tool_call_id`;
+   * - `anthropic-input-schema`(messages):声明 `{name, description, input_schema}`,结果在
+   *   `content[]` 的 `tool_use` 块里且 `input` 是**对象**,观测用 `role:"user"` + `tool_result` 块。
+   */
+  readonly shape: "function-json-schema" | "anthropic-input-schema";
 };
 
 /**
@@ -436,6 +445,9 @@ const MESSAGES_STOP_REASONS: Record<string, string> = {
   max_tokens: "length",
   end_turn: "stop",
   stop_sequence: "stop",
+  // `tool_use` 是「它要调工具」,不是「它说完了」;归一成 chat 族那个词,跨族读侧不必认两个。
+  // 原值仍落在 `stopDetails.reason` 里,要看渠道原话的地方读那一格。
+  tool_use: "tool_calls",
 };
 
 /**
@@ -450,53 +462,194 @@ const cacheControlOf = (config: ModelConfig): Record<string, unknown> | undefine
   return cache.mode === "ephemeral-1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
 };
 
+/** `messages` 族的工具声明线上形状:`[{name, description, input_schema}]`。 */
+const messagesToolsField = (tools: readonly ToolDeclaration[]): readonly unknown[] =>
+  tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    // 原样搬 `parameters`,不重建:重建会丢掉 `additionalProperties`,而 `NO_PARAMETERS`
+    // 正是靠这一位表达「这个工具不收参数」(见 `tools.ts` 的 `NO_PARAMETERS`)。
+    input_schema: tool.parameters,
+  }));
+
 /**
- * messages 族的一条对话消息。
+ * `argumentsJson` → 本族的 `input` 对象。
  *
- * 三种形状，由「带不带推理」与「是不是断点位置」两个事实决定，而这两个都是**这条消息自己的**
- * 属性，所以形状判断就住在这里，不往上层扩散:
- * - 都不带 → `{role, content}` 字符串（普通消息都是这一种）;
- * - 带签名块 → content 变成块数组，签名块在前、正文块在后;
- * - 断点位置 → content 是块数组，`cache_control` 挂在正文块上（标记只属于前缀末尾）。
+ * ── 本族没有「原文」这个位置 ──
+ *
+ * chat 族的 `arguments` 就是原文字符串,发回去的字节与落档的字节同源(ADR-0032)。本族的 `input`
+ * 是**对象**,翻译必须解析,于是逐字性在这一族上没有落点——解析成功的那份对象才是本族能保住的东西。
+ *
+ * ── 所以兜底必须是确定的,不许抛 ──
+ *
+ * `argumentsJson` 可以被模型写坏(`malformed-arguments` 拒绝档的前提),而坏参数照样进历史
+ * (`loop.ts` 把被拒那一步的 `toolCalls` 原样搬进 `turnHistory`)。在这里抛,等于一条坏参数
+ * 炸掉整场会话,而它本来只该损失一步。兜底成 `{}`:那一步已经被拒绝档挡下、没有执行,`input`
+ * 是什么都不影响真实发生的事,只影响模型下一轮读到的历史长什么样。
+ *
+ * 解析出来不是键值对(`[]` / `"x"` / `null` / 数字)也兜成 `{}`:本族要求 `input` 是对象,
+ * 把数组塞进去是 400,而 400 在报告里与「模型写错了」同形。
  */
-const messagesWireMessage = (
-  message: ChatMessage,
-  cacheControl: Record<string, unknown> | undefined,
-): Record<string, unknown> => {
-  const echo = message.reasoning;
-  if ((echo === undefined || echo.blocks.length === 0) && cacheControl === undefined) {
-    return toWireMessage(message);
+const toolInputOf = (call: ToolCall): Record<string, unknown> => {
+  try {
+    const parsed: unknown = JSON.parse(call.argumentsJson);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
-  const blocks = writeMessagesReasoning(echo, message.content, MESSAGES_REASONING.carry);
-  if (cacheControl !== undefined) {
-    const last = blocks[blocks.length - 1];
-    if (isRecord(last)) {
-      blocks[blocks.length - 1] = { ...last, cache_control: cacheControl };
-    }
-  }
-  return { role: message.role, content: blocks };
 };
 
-const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
+/** 一次 assistant 轮次要发出去的 `tool_use` id:`call-<步>`、`call-<步>-1`…(与 chat 族同一套)。 */
+const toolUseIdsOf = (message: ChatMessage): readonly string[] =>
+  (message.toolCalls ?? []).map((_, index) => toolCallIdAt(message.toolCallId ?? "call-0", index));
+
+/**
+ * 并行调用被拒时,那些**没有结果的调用**用什么回。
+ *
+ * 一句事实,不是处方:分布上它确实没被执行(一步只执行一条,其余归 `multiple-tool-calls`),
+ * 而纠正说明在真正那一条 `tool_result` 里(它就是这一步的观测文本)。
+ */
+const UNEXECUTED_CALL_RESULT = "这一步没有为本次调用执行任何动作:一步只执行一条调用,其余归拒绝档。";
+
+/**
+ * 一条 assistant 消息的 content 块:推理块 → 正文块(空串不发) → 每个 `toolCalls[i]` 一块
+ * `tool_use`。
+ *
+ * 三样全空时返回空数组,调用方据此**整条不发**——Anthropic 不接受空的 `content` 数组。
+ */
+const messagesAssistantBlocks = (message: ChatMessage): unknown[] => {
+  const blocks = writeMessagesReasoning(
+    message.reasoning,
+    message.content,
+    MESSAGES_REASONING.carry,
+  );
+  const ids = toolUseIdsOf(message);
+  (message.toolCalls ?? []).forEach((call, index) => {
+    blocks.push({ type: "tool_use", id: ids[index], name: call.name, input: toolInputOf(call) });
+  });
+  return blocks;
+};
+
+/**
+ * 一条观测消息的 content 块。
+ *
+ * ── 为什么是「按 id 补齐」而不是「一对一翻译」──
+ *
+ * `multiple-tool-calls` 那一档里,模型一步发了 N 条调用、我们一条都不执行,而历史里仍然只有
+ * **一条**观测(`history.ts` 每条 turn 固定两条消息,与 `toolCalls` 有几条无关)。chat 族对此
+ * 无所谓(实测配对关系服务端不校验),而本族要求每个 `tool_use` 都有一条对应的 `tool_result`。
+ * 所以这里按 `tool_use` 的 id 铺满:对上的那条放真观测,其余补一句事实 + `is_error`。
+ *
+ * 这也是本族唯一发 `is_error` 的地方,而它是**翻译层自己知道的事实**(这一步没执行),不是从
+ * 历史里读出来的——历史里根本没有 `isError` 这个信号(它在 `loop.ts` 的 `observationOf` 处断掉)。
+ *
+ * 返回空数组 = 这条 assistant 一条调用都没有,观测要当**普通 user 文本**发(见调用处)。
+ */
+const messagesObservationBlocks = (
+  toolUseIds: readonly string[],
+  observation: ChatMessage,
+): unknown[] => {
+  if (toolUseIds.length === 0) return [];
+  const matched =
+    observation.toolCallId !== undefined && toolUseIds.includes(observation.toolCallId);
+  return toolUseIds.map((id, index) => {
+    if (id === observation.toolCallId) {
+      return { type: "tool_result", tool_use_id: id, content: observation.content };
+    }
+    // 观测的 id 一条都对不上(理论上不该发生):把观测正文放在第一条,别把它丢掉。
+    if (!matched && index === 0) {
+      return {
+        type: "tool_result",
+        tool_use_id: id,
+        content: observation.content,
+        is_error: true,
+      };
+    }
+    return {
+      type: "tool_result",
+      tool_use_id: id,
+      content: UNEXECUTED_CALL_RESULT,
+      is_error: true,
+    };
+  });
+};
+
+/** 同一个角色的连续消息合并成一条:`messages` 族要求 user / assistant 交替。 */
+const appendWireMessage = (
+  out: Record<string, unknown>[],
+  role: string,
+  content: unknown,
+): void => {
+  const last = out[out.length - 1];
+  if (last !== undefined && last.role === role) {
+    const blocksOf = (value: unknown): unknown[] =>
+      typeof value === "string" ? [{ type: "text", text: value }] : asArray(value).slice();
+    last.content = [...blocksOf(last.content), ...blocksOf(content)];
+    return;
+  }
+  out.push({ role, content });
+};
+
+/**
+ * 把整条历史翻成 `messages` 族的线下消息。
+ *
+ * ── 为什么是「整条历史一次过」,不是「一条消息一个函数」──
+ *
+ * 观测该翻成 `tool_result` 还是普通文本,取决于**前一条 assistant 有没有 `tool_use`**:
+ * `no-tool-call` 那一档模型一步零调用,观测仍带着 `call-<步>` 这个 id(历史构造是固定的),
+ * 此时若照 id 翻成 `tool_result`,就是一个没有 `tool_use` 可配对的孤儿块。这个判据要往前看一格,
+ * 所以形状判断从「单条消息」提升到「成对的一条 assistant + 一条观测」。
+ */
+const messagesDialogue = (dialog: readonly ChatMessage[]): Record<string, unknown>[] => {
+  const out: Record<string, unknown>[] = [];
+  let index = 0;
+  while (index < dialog.length) {
+    const message = dialog[index];
+    if (message === undefined) break;
+    if (message.role === "assistant") {
+      const blocks = messagesAssistantBlocks(message);
+      // 普通一条话(无推理、无调用)保持 `{role, content}` 字符串载荷:转成块数组只是多一层
+      // 包裹,而「中间消息保持字符串」是这族的既有形状(缓存断点那条用例钉着它)。
+      const plain =
+        (message.reasoning === undefined || message.reasoning.blocks.length === 0) &&
+        (message.toolCalls === undefined || message.toolCalls.length === 0);
+      if (plain) {
+        // 空串也不发:一条什么都没说的 assistant 消息没有内容可送(空 `content` 被拒)。
+        if (message.content !== "") appendWireMessage(out, "assistant", message.content);
+      } else if (blocks.length > 0) {
+        appendWireMessage(out, "assistant", blocks);
+      }
+      const observation = dialog[index + 1];
+      if (observation !== undefined && observation.role === "tool") {
+        const results = messagesObservationBlocks(toolUseIdsOf(message), observation);
+        // 零条调用时观测不是工具结果,是「下一步该做什么」的普通文本(并且要并进上一条 user)。
+        appendWireMessage(out, "user", results.length === 0 ? observation.content : results);
+        index += 2;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    if (message.role === "tool") {
+      // 没有配对的 assistant:历史构造坏了(它永远成对 push)。当场抬错,而不是发一个
+      // 上游认不出的孤儿 `tool_result` —— 那个 400 在报告里与「模型写错了」同形。
+      throw new Error(
+        'messages 族:收到没有配对 assistant 的 role:"tool" 观测消息,' +
+          "这是 agent 会话的接线错误(历史构造应成对产出),不是模型写错了。",
+      );
+    }
+    appendWireMessage(out, message.role, message.content);
+    index += 1;
+  }
+  return out;
+};
+
+const messagesBody: EndpointSpec["buildBody"] = (config, messages, params, request) => {
   const cacheControl = cacheControlOf(config);
   // Anthropic 没有 `role: "system"` 的消息:system 提示抽到顶层 `system` 字段,不进 `messages`。
   const systemParts: string[] = [];
   const dialog: ChatMessage[] = [];
   for (const message of messages) {
-    // ── `tool` 角色在这里是**拒跑**，不是翻译 ──
-    //
-    // 本族的工具形状是 `tool_use` / `tool_result` **块**，不是 `{role:"tool"}`，而这套翻译
-    // **还没写**（协议事实已有：`probes/messages-tool-roundtrip/`；见 `ToolCapability` 与
-    // ADR-0032 的 2026-11-21 修订段）。所以本族暂不声明工具能力，agent 会话用它的席位在
-    // **起跑前**就被拒（`pipeline.ts`）。
-    // 这条抛错是**最后一道防线**:它把「上层忘了拒跑」变成一条本地红，而不是一个上游 400——
-    // 而 400 在报告里与「模型写错了」同形，归因就错了。
-    if (message.role === "tool") {
-      throw new Error(
-        'messages 族不支持工具调用:收到 role:"tool" 的观测消息,而本族的工具形状是 tool_result 块且未被验证。' +
-          "这是 agent 会话的接线错误(应在起跑前拒跑),不是模型写错了。",
-      );
-    }
     if (message.role === "system") {
       systemParts.push(message.content);
     } else {
@@ -504,17 +657,35 @@ const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
     }
   }
 
+  const wire = messagesDialogue(dialog);
+  // 断点打在前缀末尾:中间消息保持字符串载荷,只有最后一条消息的最后一个块挂标记。
+  // 工具调用轮次里那条块就是 `tool_result`(字符串 content 挂不了 `cache_control`)。
+  const last = wire[wire.length - 1];
+  if (cacheControl !== undefined && last !== undefined) {
+    const blocks =
+      typeof last.content === "string"
+        ? [{ type: "text", text: last.content }]
+        : asArray(last.content).slice();
+    const tail = blocks[blocks.length - 1];
+    if (isRecord(tail)) {
+      blocks[blocks.length - 1] = { ...tail, cache_control: cacheControl };
+    }
+    last.content = blocks;
+  }
+
   const body: Record<string, unknown> = {
     model: config.modelId,
     max_tokens: typeof params.max_tokens === "number" ? params.max_tokens : DEFAULT_MAX_TOKENS,
     ...params,
-    // 断点打在前缀末尾：中间消息保持字符串载荷，只有最后一条消息的正文块挂标记。
-    messages: dialog.map((message, index) =>
-      messagesWireMessage(
-        message,
-        cacheControl !== undefined && index === dialog.length - 1 ? cacheControl : undefined,
-      ),
-    ),
+    messages: wire,
+    // 工具字段排在 `...params` 之后:与 chat 族同一条「协议压得过生成策略」的纪律。
+    ...(request?.tools === undefined || request.tools.length === 0
+      ? {}
+      : {
+          tools: messagesToolsField(request.tools),
+          // 本族的 `tool_choice` 是**对象**,不是 chat 族那个字符串。
+          tool_choice: { type: "auto" },
+        }),
   };
   if (systemParts.length > 0) {
     const system = systemParts.join("\n\n");
@@ -550,16 +721,42 @@ const createMessagesAccumulator = (): StreamAccumulator => {
   let usage: unknown;
   let stopped = false;
   const reasoning = messagesReasoningStream(MESSAGES_REASONING.carry);
+  // 在途工具调用:键是渠道给的 `index`。`content_block_start` 那帧的 `input` 通常是 `{}`,
+  // 真参数在后继 `input_json_delta` 的 `partial_json` 片段里,所以这里拼的是**原文**,
+  // 等 `content_block_stop` 才用它当 `argumentsJson`(与非流式那条 `JSON.stringify(input)`
+  // 不同:能给原文时给原文,本族迟早要解析,留原文至少不丢字节形状)。
+  const calls = new Map<number, { id: string; name: string; partialJson: string }>();
   return {
     push: (frame) => {
       const root = asRecord(frame);
       const type = stringField(root, "type");
+      const blockIndex = typeof root.index === "number" ? root.index : undefined;
       if (type === "content_block_start") {
-        reasoning.pushStart(asRecord(root.content_block));
+        const block = asRecord(root.content_block);
+        if (stringField(block, "type") === "tool_use") {
+          calls.set(blockIndex ?? 0, {
+            id: stringField(block, "id") ?? "",
+            name: stringField(block, "name") ?? "",
+            // 起始块的 `input` 一般是空对象;不为空时它就是全部参数(没有 delta 帧的情形)。
+            partialJson:
+              block.input === undefined || Object.keys(asRecord(block.input)).length === 0
+                ? ""
+                : JSON.stringify(block.input),
+          });
+        } else {
+          reasoning.pushStart(block);
+        }
       } else if (type === "content_block_delta") {
         const delta = asRecord(root.delta);
-        if (stringField(delta, "type") === "text_delta") {
+        const deltaType = stringField(delta, "type");
+        if (deltaType === "text_delta") {
           text += stringField(delta, "text") ?? "";
+        } else if (deltaType === "input_json_delta") {
+          // 必须先按 `delta.type` 分派再落袋:这条以前被「非 text_delta 一律当推理」吞掉。
+          const current = calls.get(blockIndex ?? 0);
+          if (current !== undefined) {
+            current.partialJson += stringField(delta, "partial_json") ?? "";
+          }
         } else {
           // `thinking_delta` / `signature_delta`:进不透明字段,不进正文。
           reasoning.pushDelta(delta);
@@ -583,6 +780,12 @@ const createMessagesAccumulator = (): StreamAccumulator => {
     },
     result: () => {
       const echo = reasoning.result();
+      // 按 `index` 升序:Map 的插入序在「多个块交错返回」时不可靠,而档案里的顺序得与模型
+      // 发起的顺序一致。与非流式同一条纪律:缺 `name` 的块丢掉(「说不出调了什么」不是动作)。
+      const toolCalls: ToolCall[] = [...calls.entries()]
+        .sort(([left], [right]) => left - right)
+        .filter(([, call]) => call.name !== "")
+        .map(([, call]) => ({ name: call.name, argumentsJson: call.partialJson }));
       return {
         text,
         finishReason:
@@ -590,6 +793,7 @@ const createMessagesAccumulator = (): StreamAccumulator => {
         usage,
         stopDetails: rawStop === undefined ? {} : { reason: rawStop },
         ...(echo === undefined ? {} : { reasoning: echo }),
+        ...(toolCalls.length === 0 ? {} : { toolCalls }),
       };
     },
     done: () => stopped,
@@ -600,9 +804,21 @@ const parseMessages: EndpointSpec["parseResponse"] = (json) => {
   const root = asRecord(json);
   const content = asArray(root.content);
   let text = "";
+  const toolCalls: ToolCall[] = [];
   for (const block of content) {
-    if (isRecord(block) && block.type === "text") {
+    if (!isRecord(block)) continue;
+    if (block.type === "text") {
       text += stringField(block, "text") ?? "";
+      continue;
+    }
+    if (block.type === "tool_use") {
+      const name = stringField(block, "name");
+      // 缺 `name` 的块丢掉:与 chat 族 `toolCallsOf` 同一条纪律(凑空名字只会把上游的呲
+      // 变成下游的 `unknown-tool`)。
+      if (name === undefined) continue;
+      // 本族的 `input` 是对象,没有原文字节可取——`JSON.stringify` 是这里唯一能做的事,
+      // 因此本族的逐字性只能保住「解析成功的那份对象」(ADR-0032 的 2026-11-21 修订段)。
+      toolCalls.push({ name, argumentsJson: JSON.stringify(block.input ?? {}) });
     }
   }
   const rawStop = stringField(root, "stop_reason");
@@ -615,6 +831,7 @@ const parseMessages: EndpointSpec["parseResponse"] = (json) => {
     usage: root.usage,
     stopDetails: rawStop === undefined ? {} : { reason: rawStop },
     ...(echo === undefined ? {} : { reasoning: echo }),
+    ...(toolCalls.length === 0 ? {} : { toolCalls }),
   };
 };
 
@@ -861,9 +1078,10 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         buildBody: messagesBody,
         parseResponse: parseMessages,
         reasoning: MESSAGES_REASONING,
-        // **暂不声明工具能力**:本族的 `tool_use` / `tool_result` 翻译还没写。协议事实已经
-        // 拿到(2026-11-21 三步探针,`probes/messages-tool-roundtrip/`:声明被接受、`tool_use`
-        // 返回、配对被接受),所以缺的是实现,不是证据——两者别混。
+        // 工具翻译已接上(协议事实见 `probes/messages-tool-roundtrip/`)。形状与 chat 族不是
+        // 一份翻译:声明是 `{name, description, input_schema}`,结果在 `content[]` 的
+        // `tool_use` 块里,观测是 `role:"user"` + `tool_result` 块。
+        tools: { shape: "anthropic-input-schema" },
         streaming: {
           buildBody: messagesStreamBody,
           createAccumulator: createMessagesAccumulator,
