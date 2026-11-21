@@ -725,7 +725,10 @@ const createMessagesAccumulator = (): StreamAccumulator => {
   // 真参数在后继 `input_json_delta` 的 `partial_json` 片段里,所以这里拼的是**原文**,
   // 等 `content_block_stop` 才用它当 `argumentsJson`(与非流式那条 `JSON.stringify(input)`
   // 不同:能给原文时给原文,本族迟早要解析,留原文至少不丢字节形状)。
-  const calls = new Map<number, { id: string; name: string; partialJson: string }>();
+  const calls = new Map<
+    number,
+    { id: string; name: string; startInput: Record<string, unknown>; partialJson: string }
+  >();
   return {
     push: (frame) => {
       const root = asRecord(frame);
@@ -737,11 +740,8 @@ const createMessagesAccumulator = (): StreamAccumulator => {
           calls.set(blockIndex ?? 0, {
             id: stringField(block, "id") ?? "",
             name: stringField(block, "name") ?? "",
-            // 起始块的 `input` 一般是空对象;不为空时它就是全部参数(没有 delta 帧的情形)。
-            partialJson:
-              block.input === undefined || Object.keys(asRecord(block.input)).length === 0
-                ? ""
-                : JSON.stringify(block.input),
+            startInput: asRecord(block.input),
+            partialJson: "",
           });
         } else {
           reasoning.pushStart(block);
@@ -785,7 +785,14 @@ const createMessagesAccumulator = (): StreamAccumulator => {
       const toolCalls: ToolCall[] = [...calls.entries()]
         .sort(([left], [right]) => left - right)
         .filter(([, call]) => call.name !== "")
-        .map(([, call]) => ({ name: call.name, argumentsJson: call.partialJson }));
+        .map(([, call]) => ({
+          name: call.name,
+          // 没有 `input_json_delta` 就是「参数全在起始块里」(不收参数的工具就是这样):此时
+          // 用起始块那份对象,别交一个空字符串——那是 `JSON.parse` 会炸的东西,而档案里这一格
+          // 的名字叫「原始 JSON 字符串」。有 delta 时 delta 才是真参数。
+          argumentsJson:
+            call.partialJson === "" ? JSON.stringify(call.startInput) : call.partialJson,
+        }));
       return {
         text,
         finishReason:

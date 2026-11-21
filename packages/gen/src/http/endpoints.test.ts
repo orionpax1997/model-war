@@ -1183,6 +1183,18 @@ it("messages 流:按 index 拼 `input_json_delta`,在 `stop_reason: tool_use` �
   for (const frame of frames) accumulator.push(frame);
   const result = accumulator.result();
   expect(result.toolCalls).toEqual([{ name: "bash", argumentsJson: '{"command":"ls"}' }]);
+  // 不收参数的工具没有 `input_json_delta` 帧:参数全在起始块的 `input: {}` 里,所以交 `"{}"`
+  // 而不是空字符串——后者不是合法 JSON,而档案里这一格叫「原始 JSON 字符串」。
+  const bare = endpointSpec("messages").streaming?.createAccumulator();
+  if (bare === undefined) throw new Error("messages 族应声明流式");
+  bare.push({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "tool_use", id: "toolu_03", name: "check", input: {} },
+  });
+  bare.push({ type: "content_block_stop", index: 0 });
+  bare.push({ type: "message_delta", delta: { stop_reason: "tool_use" } });
+  expect(bare.result().toolCalls).toEqual([{ name: "check", argumentsJson: "{}" }]);
   expect(result.finishReason).toBe("tool_calls");
   expect(result.stopDetails).toEqual({ reason: "tool_use" });
   expect(accumulator.done?.()).toBe(true);
