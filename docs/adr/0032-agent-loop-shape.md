@@ -296,6 +296,63 @@ $ echo $?
    以及紧随其后的第三条 `{"skipped":"no tool_use in step 1"}`——第二步跑不起来，因为没有 `tool_use` 可回送。
 
    **不带 `tools` 也 403**：该席位在本账号档位下整体被渠道拒。所以「声明形状会不会 400」「`tool_result` 能否配对」**零证据**。按 fail-closed，这一族**不声明** `tools`，用它的席位在会话起跑前拒跑并点名——不是「没试过」，是「试了，席位被拒，所以没有证据，不写未验证的翻译」。`responses` / `generate-content` 两族同一条规矩（本季名册不用）。
+
+> **本条的前提已于 2026-11-21 被推翻：上面的 403 是链路故障，不是档位事实，三步探针当天全部 200。** 见文末「修订（2026-11-21）：`messages` 族的 403 不复现」一节。本节以下原文保留，它记的是当天真实的读数与当时的判断。
 2. **`arguments` 是模型写的 JSON 字符串，可以被写坏。** 归 `malformed-arguments` 拒绝档：不执行任何工具、计一步、回纠正消息。解析放在动作层而不是传输层，是因为它是一条模型能自我修正的格式失败——放进传输层就变成了端点错误。
 3. **并行调用被拒，但渠道可能自己并行。** 判据在动作层（一次以上一律拒绝），而请求体里**不发** `parallel_tool_calls: false`（那是 OpenAI 专有键，别的渠道收到不认识的键可能直接 400）。于是存在一个渠道侧的可能：它一次给我们多条 `tool_calls`——那正好落进 `multiple-tool-calls` 的拒绝档，代价是浪费一步，不是静默执行一条。
 4. **`raw` 在工具调用轮次里常态为空，逐字字节搬到了 `toolCall.argumentsJson`。** 初版「`raw` 不截断」（残余风险 2）那条的关切没有消失，只是换了字段：真正的正文在 `argumentsJson` 里，而它同样不截断、原样落档。读侧必须知道「两个字段各管一件事」，否则会从 `raw == ""` 误判成「模型什么都没说」——`inkling` 那场就是这个误判的真实样本。
+
+## 修订（2026-11-21）：`messages` 族的 403 不复现
+
+上一节 ⑤.1 的判据建在一次读数上：`claude-haiku-5-5` 在 `/messages` 上带不带 `tools` 都是 403，于是「该席位整体被渠道拒」→「配对零证据」→「不写翻译」。**那两次 403 确实发生过**（原文逐字留在上一节），但**它不是一个稳定的席位事实**。同一 key、同一端点、同一请求体形状在同一天内的复测就不再复现。
+
+### ① 复测读数与它推翻了什么
+
+三步各一次真请求，`probes/messages-tool-roundtrip/`（脚本入 git，凭证从 `.env` 读）：
+
+| | 请求 | 状态 | `stop_reason` | `content` 块 |
+|---|---|---|---|---|
+| ① | 不带 `tools` | 200 | `end_turn` | `text` |
+| ② | 带 `tools` | 200 | `tool_use` | `tool_use` |
+| ③ | 回显 assistant 的 `content` + 发一条 `tool_result` | 200 | `end_turn` | `thinking`, `text` |
+
+② 的 `content` 原文：
+
+```json
+[{"type":"tool_use","id":"toolu_018uPE8eFnpritXWKqgCGX7W","name":"bash","input":{"command":"ls -la /"},"caller":{"type":"direct"}}]
+```
+
+于是上一节那两句结论各自换一个状态：
+
+- 「声明形状会不会 400」——**不会**。`{name, description, input_schema}` 被接受，`stop_reason` 是 `tool_use`。
+- 「`tool_result` 能否配对」——**能**。③ 把 assistant 的 `content` 原样回显、再发 `tool_result` 块，200 且模型继续说话。
+
+### ② 403 为什么不是档位：一条同时段的对照
+
+同一个 key、同一天，`claude-haiku-4-5-20251001` 在 `/messages` 上返的是另一句话：
+
+```
+MODEL_NOT_IN_PLAN: Claude Haiku 4.5 available in Pro and above plans or extra on demand usage
+```
+
+档位不足会**点名档位**。而 `claude-haiku-5-5` 那两次是 `permission_error` + `The provider refused this request. The refused request wasn't charged.`——「没计费」这句与「模型不在套餐里」是两种不同的拒绝。据操作者说明，那两次是代理/链路故障。本册只能记到这个程度：**403 是真的，把它解释成「席位被渠道整体拒」是错的**；后者才是上一节那句「不是没试过」的真正问题——它把一个会波动的链路现象写成了稳定的席位属性。
+
+另有一条渠道自述的旁证，说明「必须走 `/messages`」不是配置错误：
+
+```
+POST /provider/v1/chat/completions → 400
+{"error":{"message":"Model \"claude-haiku-5-5\" must be called via /provider/v1/messages
+  (Anthropic Messages shape).","code":"unsupported_model"}}
+```
+
+### ③ 判据换成什么，什么没变
+
+判据从「零证据，不写翻译」换成「**证据在，翻译待实现**」。这只动了「凭什么可以写」，没动「写完要验」：
+
+- fail-closed 那半条**不放松**。翻译写完之后，用它的席位仍然要先拿到一份真会话档案才作数；本节给的是**协议事实**，不是翻译正确性的证明。
+- `responses` / `generate-content` 两族**仍是零证据**，仍不声明 `tools`，仍按 `assertToolSurface` 在起跑前拒跑。上一节那句「同一条规矩」对这两族继续成立。
+- 拒跑文案里「原因是本族的工具翻译零证据」这句对 `messages` 已不成立，改成「本族的工具翻译未被验证」——对「已实现但还没跑过真会话」与「响应族那样根本没写」两种状态都成立。
+
+### ④ 这条族本来会踩的坑（实现前先记下）
+
+`input` 是**对象**，不是 chat 族那种 `arguments` 原文字符串。ADR-0031 的「模型看到的字节 = 落盘的字节」在 `messages` 族上**没有落点**：`TaggedToolCall` 存的是原文，本族要求的是对象，翻译时必须 `JSON.parse`。这不是实现疏漏，是协议形态决定的——本族的逐字性只能保住「解析成功的那份对象」，保不住原文字节。而 `argumentsJson` 是**可以被模型写坏的**（`malformed-arguments` 拒绝档的前提），于是 `JSON.parse` 必须有一个确定兜底，否则一条坏参数会把整个历史构造炸掉。
