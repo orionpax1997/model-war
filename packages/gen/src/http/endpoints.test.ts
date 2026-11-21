@@ -285,21 +285,20 @@ it("chat-completions 请求消息:缺 `toolCallId` 时也写 id(漏掉这个键�
   expect(calls?.[0]?.id).toBe("call-0");
 });
 
-it("messages / responses / generate-content 族不声明工具能力:用它们的席位在会话起跑前拒跑", () => {
-  // 可选 = 不支持。`messages` 族的协议事实已经拿到(`probes/messages-tool-roundtrip/`),
-  // 但翻译还没写;`responses` / `generate-content` 连协议事实都还在别处。声明了才是
-  // 「这条翻译被真实会话验证过」。
+it("两族声明了工具能力且形状不同;responses / generate-content 仍未声明", () => {
+  // 形状是「这一族怎么把工具翻译」的名字,不是端点名:两族的 wire 形状不同,所以值不同。
   expect(endpointSpec("chat-completions").tools).toEqual({ shape: "function-json-schema" });
-  expect(endpointSpec("messages").tools).toBeUndefined();
+  expect(endpointSpec("messages").tools).toEqual({ shape: "anthropic-input-schema" });
+  // `responses` / `generate-content` 连协议事实都还没有,仍不声明(席位在起跑前拒跑)。
   expect(endpointSpec("responses").tools).toBeUndefined();
   expect(endpointSpec("generate-content").tools).toBeUndefined();
 });
 
-it.each(["messages", "responses", "generate-content"] as const)(
+it.each(["responses", "generate-content"] as const)(
   "%s 族遇到 `tool` 角色观测消息时当场抬错,不发一个上游认不出的 body",
   (family) => {
     // 这道防线是「上层忘了起跑前拒跑」的最后一层:一个能发出去但意思错了的 body,在报告里
-    // 与「模型写错了」同形。三条族各自的形状不同,但同一条判据。
+    // 与「模型写错了」同形。
     expect(() =>
       endpointSpec(family).buildBody(
         config(family),
@@ -309,6 +308,18 @@ it.each(["messages", "responses", "generate-content"] as const)(
     ).toThrow(/不支持工具调用/);
   },
 );
+
+it("messages 族:没有配对 assistant 的 `tool` 观测消息仍当场抬错(历史构造应成对)", () => {
+  // 翻译之后 `tool` 不再一律抛错(零调用的那一步,观测是普通 user 文本),但「孤儿 tool 消息」
+  // 仍是接线错误:发出去就是一个没有 `tool_use` 可配对的 `tool_result`,上游 400。
+  expect(() =>
+    endpointSpec("messages").buildBody(
+      config("messages"),
+      [{ role: "tool", toolCallId: "call-1", content: "x" }],
+      {},
+    ),
+  ).toThrow(/没有配对 assistant/);
+});
 
 it("messages 请求体:system 抽到顶层,不进 messages;max_tokens 缺省由工程常量兜底", () => {
   const messages: ChatMessage[] = [
@@ -938,4 +949,241 @@ it.each([
     stopDetails,
     usage: undefined,
   });
+});
+
+// ── messages 族的工具翻译(Anthropic 形状)────────────────────────────────────
+//
+// 判据全部来自 `probes/messages-tool-roundtrip/` 的三步真请求:声明是
+// `{name, description, input_schema}`,结果在 `content[]` 的 `tool_use` 块里且 `input` 是**对象**,
+// 观测是 `role:"user"` + `tool_result` 块。
+
+it("messages 请求体:工具声明是 `{name, description, input_schema}`,schema 原样搬", () => {
+  const body = endpointSpec("messages").buildBody(
+    config("messages"),
+    [{ role: "user", content: "u" }],
+    {},
+    { tools: AGENT_TOOLS },
+  );
+  const tools = body.tools as { name: string; description: string; input_schema: unknown }[];
+  expect(tools.map((tool) => tool.name)).toEqual(AGENT_TOOLS.map((tool) => tool.name));
+  // 原样搬:没有 `{type:"function", function:{…}}` 那层包裹,也没有重建 schema。
+  const bash = tools.find((tool) => tool.name === "bash");
+  expect(bash?.input_schema).toEqual(AGENT_TOOLS.find((tool) => tool.name === "bash")?.parameters);
+  // 不收参数的工具靠 `additionalProperties:false` 表达,重建 schema 会把它丢掉。
+  const check = tools.find((tool) => tool.name === "check");
+  expect(check?.input_schema).toMatchObject({ additionalProperties: false });
+  // `tool_choice` 在本族是对象,不是 chat 族那个字符串。
+  expect(body.tool_choice).toEqual({ type: "auto" });
+});
+
+it("messages 请求体:没有工具声明时不写 tools / tool_choice", () => {
+  const body = endpointSpec("messages").buildBody(
+    config("messages"),
+    [{ role: "user", content: "u" }],
+    {},
+  );
+  expect("tools" in body).toBe(false);
+  expect("tool_choice" in body).toBe(false);
+});
+
+it("messages 请求消息:assistant 的 `toolCalls` 变成 `tool_use` 块,`input` 是对象", () => {
+  const body = endpointSpec("messages").buildBody(
+    config("messages"),
+    [
+      { role: "user", content: "读契约" },
+      {
+        role: "assistant",
+        content: "",
+        toolCallId: "call-1",
+        toolCalls: [{ name: "bash", argumentsJson: '{"command":"cat /contract/README.md"}' }],
+      },
+      { role: "tool", toolCallId: "call-1", content: "exit code: 0" },
+    ],
+    {},
+  );
+  expect(body.messages).toEqual([
+    { role: "user", content: "读契约" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "bash",
+          // 对象,不是字符串——本族与 chat 族最实质的差别。
+          input: { command: "cat /contract/README.md" },
+        },
+      ],
+    },
+    // 观测包成 user 消息里的 `tool_result` 块,且该块在数组最前面。
+    {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "call-1", content: "exit code: 0" }],
+    },
+  ]);
+});
+
+it("messages 请求消息:空正文不发 text 块;三样全空时整条 assistant 不发", () => {
+  const body = endpointSpec("messages").buildBody(
+    config("messages"),
+    [
+      { role: "user", content: "u" },
+      // 只调工具不说话:正文空,不该出现空的 text 块。
+      {
+        role: "assistant",
+        content: "",
+        toolCallId: "call-2",
+        toolCalls: [{ name: "check", argumentsJson: "{}" }],
+      },
+      { role: "tool", toolCallId: "call-2", content: "ok" },
+      // 什么都没说、也没调用:空 `content` 数组会被拒,整条不发。
+      { role: "assistant", content: "", toolCallId: "call-3" },
+    ],
+    {},
+  );
+  const wire = body.messages as { role: string; content: unknown }[];
+  expect(wire[1]).toEqual({
+    role: "assistant",
+    content: [{ type: "tool_use", id: "call-2", name: "check", input: {} }],
+  });
+  // 末条空 assistant 没有落地(`call-3` 的观测也不存在,所以就是三条)。
+  expect(wire).toHaveLength(3);
+});
+
+it("messages 请求消息:坏 `argumentsJson` 兜底成 `{}`,不抛", () => {
+  // `malformed-arguments` 拒绝档之后原始 `toolCalls` 仍进历史,所以坏 JSON 到得了这一层。
+  for (const argumentsJson of ["{", "[]", "null", '"x"', "3"]) {
+    const body = endpointSpec("messages").buildBody(
+      config("messages"),
+      [
+        {
+          role: "assistant",
+          content: "",
+          toolCallId: "call-4",
+          toolCalls: [{ name: "bash", argumentsJson }],
+        },
+      ],
+      {},
+    );
+    const wire = body.messages as { content: { input?: unknown }[] }[];
+    expect(wire[0]?.content[0]?.input).toEqual({});
+  }
+});
+
+it("messages 请求消息:被拒的多调用步按 id 补齐 `tool_result`,会话不会因此 400", () => {
+  // `multiple-tool-calls` 那一档:模型一步发两条,一条都不执行,而历史里只有一条观测
+  // (id 是首条的 `call-7`)。本族要求每个 `tool_use` 都有结果,所以第二条补一句事实 + `is_error`。
+  const body = endpointSpec("messages").buildBody(
+    config("messages"),
+    [
+      {
+        role: "assistant",
+        content: "",
+        toolCallId: "call-7",
+        toolCalls: [
+          { name: "bash", argumentsJson: '{"command":"ls"}' },
+          { name: "check", argumentsJson: "{}" },
+        ],
+      },
+      { role: "tool", toolCallId: "call-7", content: "这一步没有可用动作:一次只接受一条调用" },
+    ],
+    {},
+  );
+  const wire = body.messages as {
+    role: string;
+    content: { id?: string; tool_use_id?: string }[];
+  }[];
+  // assistant 那轮的 `tool_use` 块 id 与 `tool_result` 的 `tool_use_id` 逐字相等。
+  expect(wire[0]?.content.map((block) => block.id)).toEqual(["call-7", "call-7-1"]);
+  expect(wire[1]?.role).toBe("user");
+  expect(wire[1]?.content).toEqual([
+    {
+      type: "tool_result",
+      tool_use_id: "call-7",
+      content: "这一步没有可用动作:一次只接受一条调用",
+    },
+    {
+      type: "tool_result",
+      tool_use_id: "call-7-1",
+      content: "这一步没有为本次调用执行任何动作:一步只执行一条调用,其余归拒绝档。",
+      is_error: true,
+    },
+  ]);
+});
+
+it("messages 请求消息:零调用的那一步,观测是普通 user 文本而不是孤儿 `tool_result`", () => {
+  // `no-tool-call` 那一档:模型一步零调用,而历史构造仍给观测派一个 `call-<步>` 的 id。
+  // 照 id 翻成 `tool_result` 就是一个没有 `tool_use` 可配对的块 → 400。
+  const body = endpointSpec("messages").buildBody(
+    config("messages"),
+    [
+      { role: "user", content: "开始" },
+      { role: "assistant", content: "我先看一下契约", toolCallId: "call-8" },
+      { role: "tool", toolCallId: "call-8", content: "这一步没有可用动作:请调用工具" },
+      { role: "user", content: "继续" },
+    ],
+    {},
+  );
+  expect(body.messages).toEqual([
+    { role: "user", content: "开始" },
+    { role: "assistant", content: "我先看一下契约" },
+    // 文本观测与后面那条 user 合并成一条:本族要求 user / assistant 交替。
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "这一步没有可用动作:请调用工具" },
+        { type: "text", text: "继续" },
+      ],
+    },
+  ]);
+});
+
+it("messages 响应:读 `tool_use` 块成 `toolCalls`,`stop_reason` 归一成 tool_calls", () => {
+  const response = endpointSpec("messages").parseResponse({
+    content: [
+      { type: "text", text: "我来查一下" },
+      { type: "tool_use", id: "toolu_01", name: "bash", input: { command: "ls -la /" } },
+    ],
+    stop_reason: "tool_use",
+    usage: { input_tokens: 401, output_tokens: 50 },
+  });
+  expect(response.text).toBe("我来查一下");
+  // 本族没有原文字节可取,`argumentsJson` 只能是 `input` 的重新编码。
+  expect(response.toolCalls).toEqual([{ name: "bash", argumentsJson: '{"command":"ls -la /"}' }]);
+  // 与 chat 族同一个词:跨族读侧不必认两个。
+  expect(response.finishReason).toBe("tool_calls");
+  // 渠道原话仍可读。
+  expect(response.stopDetails).toEqual({ reason: "tool_use" });
+});
+
+it("messages 流:按 index 拼 `input_json_delta`,在 `stop_reason: tool_use` 收官", () => {
+  const accumulator = endpointSpec("messages").streaming?.createAccumulator();
+  if (accumulator === undefined) throw new Error("messages 族应声明流式");
+  const frames = [
+    {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "toolu_02", name: "bash", input: {} },
+    },
+    // 参数分片回来,`index` 才是键——本帧位次不是。
+    {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: '{"command":' },
+    },
+    {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: '"ls"}' },
+    },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 9 } },
+    { type: "message_stop" },
+  ];
+  for (const frame of frames) accumulator.push(frame);
+  const result = accumulator.result();
+  expect(result.toolCalls).toEqual([{ name: "bash", argumentsJson: '{"command":"ls"}' }]);
+  expect(result.finishReason).toBe("tool_calls");
+  expect(result.stopDetails).toEqual({ reason: "tool_use" });
+  expect(accumulator.done?.()).toBe(true);
 });

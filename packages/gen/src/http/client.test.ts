@@ -597,8 +597,8 @@ it("options.tools:请求体带上 `tools` 与 `tool_choice: auto`,响应把 `too
 it("options.tools 传给未声明工具能力的端点族:当场拒发(不发一个上游认不出的请求)", async () => {
   const ep = await endpoint((_captured, res) => json(res, 200, {}));
   // 这道防线挡的是「绕过 pipeline 直调适配器」:静默丢掉声明会让「本族不支持」与
-  // 「忘了传」在代码里长得一模一样。
-  for (const family of ["messages", "responses", "generate-content"] as const) {
+  // 「忘了传」在代码里长得一模一样。`messages` 族已声明工具能力(票 09),不在这一档。
+  for (const family of ["responses", "generate-content"] as const) {
     const client = createHttpModelClient(config(family, ep.baseUrl));
     await expect(client.send([user("hi")], {}, { tools: AGENT_TOOLS })).rejects.toThrow(
       /未声明工具调用能力/,
