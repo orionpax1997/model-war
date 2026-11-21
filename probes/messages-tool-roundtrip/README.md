@@ -38,7 +38,7 @@ node probes/messages-tool-roundtrip/probe.mjs --json /tmp/messages-tool-roundtri
 ```
 
 - 键是 `id` / `name` / `input` 三个,没有 chat 族那种 `{type:"function", function:{…}}` 包裹。
-- **`input` 是对象,不是 JSON 字符串。** chat 族的 `arguments` 是原文字符串,本仓 `TaggedToolCall`
+- **`input` 是对象,不是 JSON 字符串。** chat 族的 `arguments` 是原文字符串,本仓 `ToolCall.argumentsJson`
   刻意存原文以保住逐字性(ADR-0031);本族没有那个位置,`argumentsJson` 到这里必须先 `JSON.parse`。
   这是「模型看到的字节 = 落盘的字节」在 `messages` 族上**不成立**的地方,不是实现疏漏。
 - `caller` 是网关额外给的,不在本仓的类型里,不必回传。

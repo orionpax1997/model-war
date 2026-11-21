@@ -62,6 +62,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { HARNESS_VERSION } from "@model-war/gen";
 import {
   ARCHIVE_SCHEMA_VERSION,
   RULESET_VERSION,
@@ -410,7 +411,9 @@ it.skipIf(!archivePresent)(
       expect(meta.atStep).toBe(3);
       // 身份从第一份 agent 档起就写(ADR-0034)。
       expect(meta.harnessDigest).toMatch(/^[0-9a-f]{64}$/);
-      expect(meta.harnessVersion).toBe("bash-mini/0.1");
+      // 用真源常量,不抄字面量:票 06 把代号换成 `tool-call/1.0` 时这条断言留在了旧世界,
+      // 而它只在 sandbox 项目里跑,`verify:fast` 覆盖不到——抄字面量就会这样静默过期。
+      expect(meta.harnessVersion).toBe(HARNESS_VERSION);
       expect(meta.contextLength).toBe(100_000);
 
       // evaluate 那一步的 stdout 只给聚合对差表与一行路径(ADR-0030「观测外置」)。
