@@ -329,26 +329,30 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
   }
 });
 
-it("messages 族：起跑前拒跑并点名「本族未声明工具能力」,一次模型调用都不发", async () => {
+it("未声明工具能力的族：起跑前拒跑并点名「本族未声明工具能力」,一次模型调用都不发", async () => {
   const root = makeRoot();
   const config: ModelConfig = {
     slug: "alpha",
-    endpointFamily: "messages",
+    // 用 `responses` 当样本:它是今天唯一还没拿到协议事实的族(`messages` 已随票 09 声明)。
+    endpointFamily: "responses",
     modelId: "fixture/model",
     baseUrl: "https://offline.invalid/v1",
     credentialEnvVar: "USAGE_REPORT_TEST_KEY",
     channelId: "usage-report-test-channel",
     contextLength: 100000,
+    // ── 政策要跟着族走 ──
+    //
+    // `cache.mode: ephemeral-1h` 与 `output.field: max_tokens` 只有 messages 族合法。把它
+    // 原样搬到 `responses` 会让「政策无效」先于「未声明工具能力」抛出,用例就测错了东西。
     generationPolicy: {
-      endpoint: { family: "messages", ...evidence },
+      endpoint: { family: "responses", ...evidence },
       reasoning: {
         intent: "high",
-        control: "unverified",
+        control: "responses-effort",
         ...evidence,
-        channel: { status: "unverified", source: "offline-fixture/unverified-channel" },
       },
-      output: { field: "max_tokens", maxTokens: 16384, includesReasoning: "yes", ...evidence },
-      cache: { mode: "ephemeral-1h", ...evidence },
+      // 不写 `maxTokens`:这一族要的是 `max_output_tokens`,而本用例不关心预算。
+      output: { field: "server-default", includesReasoning: "unknown", ...evidence },
       transport: { authentication: "bearer" },
     },
   };
@@ -365,9 +369,8 @@ it("messages 族：起跑前拒跑并点名「本族未声明工具能力」,一
   try {
     // ── 这条用例以「拒跑」为被测行为,不是以 usage 投影为被测行为 ──
     //
-    // 该席位挂 `messages` 族,而那一族的 `tool_use` / `tool_result` 翻译还没写:协议事实
-    // 2026-11-21 已拿到(`probes/messages-tool-roundtrip/`),缺的是实现。所以 agent 会话在
-    // **起跑前**被拒(`assertToolSurface`),而不是花 20 分钟跑到 0 候选才发现。
+    // 该席位挂的族没有声明工具能力(翻译没写,或写了但没被真实会话验证过)。所以 agent
+    // 会话在**起跑前**被拒(`assertToolSurface`),而不是花 20 分钟跑到 0 候选才发现。
     //
     // 订正:这里原先写「该席位带不带 `tools` 都是 403,零证据」——那两次 403 是链路故障,
     // 复测三步全 200,详见 ADR-0032 的 2026-11-21 修订段。
@@ -392,7 +395,7 @@ it("messages 族：起跑前拒跑并点名「本族未声明工具能力」,一
           config,
         ),
       ),
-    ).rejects.toThrow(/端点位 messages 未声明工具调用能力/);
+    ).rejects.toThrow(/端点位 responses 未声明工具调用能力/);
     // 拒跑在第一次模型调用之前:一分钱没花,也没有落任何档。
     expect(fetch).not.toHaveBeenCalled();
     expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);

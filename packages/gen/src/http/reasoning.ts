@@ -179,7 +179,12 @@ export const readMessagesReasoning = (
   return payloadOf(blocks, dropped);
 };
 
-/** messages 族一条 assistant 消息的内容块:签名块在前、正文块在后(与端点产出的顺序一致)。 */
+/**
+ * messages 族一条 assistant 消息的内容块:签名块在前、正文块在后(与端点产出的顺序一致)。
+ *
+ * **正文是空串时不发 text 块**。工具调用那一轮的 `content` 通常是 `""`(模型只调工具不说话),
+ * 而 Anthropic 不接受空的 text 块;整条消息三样都没有时由调用方整条不发(空 `content` 数组同样被拒)。
+ */
 export const writeMessagesReasoning = (
   echo: ReasoningEcho | undefined,
   text: string,
@@ -188,7 +193,10 @@ export const writeMessagesReasoning = (
   if (echo !== undefined) {
     assertCarry(declared, echo, "messages");
   }
-  return [...(echo === undefined ? [] : echo.blocks), { type: "text", text }];
+  return [
+    ...(echo === undefined ? [] : echo.blocks),
+    ...(text === "" ? [] : [{ type: "text", text }]),
+  ];
 };
 
 /** messages 流的逐帧累积器:thinking 起始块 + `thinking_delta` + `signature_delta`。 */
