@@ -68,13 +68,15 @@ export type ReasoningCapability = {
  * 与 `streaming?: StreamingEndpoint` 同一条先例:四族的工具形状并不相同(OpenAI 是
  * `{type:"function", function:{name, description, parameters}}` + `tool_calls`,Anthropic 是
  * `{name, description, input_schema}` + `tool_use` / `tool_result` 块),而只有 `chat-completions`
- * 的工具读法被**真实响应**验证过。给没被验证过的族写一版翻译,只会造出「看起来支持」的假象
+ * 的工具读法被**真实会话**验证过。给没被验证过的族写一版翻译,只会造出「看起来支持」的假象
  * (ADR-0032 已经否过一次这个形状)。所以缺省即「本族不支持工具调用」,用它的席位在**会话
  * 起跑之前**拒跑(`pipeline.ts` 的 `assertToolSurface`),而不是发一个上游认不出的请求。
  *
- * `messages` 族为什么不声明:2026-11-20 真请求探针里,`claude-haiku-5-5` 在 `/messages` 上
- * **带不带 `tools` 都是 HTTP 403 permission_error**(席位整体被渠道拒,与请求体无关),于是
- * 「`tool_result` 能否配对」**零证据**。零证据不写翻译,这是本仓的既有规矩。
+ * `messages` 族的现状:协议事实已有(2026-11-21 三步探针,`probes/messages-tool-roundtrip/`:
+ * 声明形状被接受、返回 `tool_use`、`tool_result` 配对也被接受),但**翻译还没写**,所以这里
+ * 仍然不声明。原先写在这里的理由是「带不带 `tools` 都是 403,所以零证据」——那两次 403 是
+ * 链路故障而非档位事实,复测不再现,订正与原文都记在 ADR-0032 的 2026-11-21 修订段。
+ * 「翻译没写」与「没有证据」是两件事,别再写成一个。
  */
 export type ToolCapability = {
   /** 这一族把工具声明写成什么形状。今天是 chat 族那一种(JSON Schema + `tool_calls`)。 */
@@ -115,7 +117,7 @@ export type EndpointSpec = {
    * 工具调用能力声明(见 `ToolCapability`)。**可选 = 本族不支持**。
    *
    * 可选而不是必填:与 `reasoning` 相反的那一侧——那里的「忘了声明」是一个接错,这里的
-   * 「不声明」是一个**正当答案**(这一族零证据)。
+   * 「不声明」是一个**正当答案**(这一族没有翻译,或那份翻译没被真实会话验证过)。
    */
   readonly tools?: ToolCapability;
   /**
@@ -483,9 +485,10 @@ const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
   for (const message of messages) {
     // ── `tool` 角色在这里是**拒跑**，不是翻译 ──
     //
-    // 本族的工具形状是 `tool_use` / `tool_result` **块**，不是 `{role:"tool"}`，而它今天
-    // **零证据**（`claude-haiku-5-5` 在 `/messages` 上带不带 `tools` 都是 403，见 `ToolCapability`）。
-    // 所以本族不声明工具能力，agent 会话用它的席位在**起跑前**就被拒（`pipeline.ts`）。
+    // 本族的工具形状是 `tool_use` / `tool_result` **块**，不是 `{role:"tool"}`，而这套翻译
+    // **还没写**（协议事实已有：`probes/messages-tool-roundtrip/`；见 `ToolCapability` 与
+    // ADR-0032 的 2026-11-21 修订段）。所以本族暂不声明工具能力，agent 会话用它的席位在
+    // **起跑前**就被拒（`pipeline.ts`）。
     // 这条抛错是**最后一道防线**:它把「上层忘了拒跑」变成一条本地红，而不是一个上游 400——
     // 而 400 在报告里与「模型写错了」同形，归因就错了。
     if (message.role === "tool") {
@@ -858,9 +861,9 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         buildBody: messagesBody,
         parseResponse: parseMessages,
         reasoning: MESSAGES_REASONING,
-        // **不声明工具能力**:`claude-haiku-5-5` 在本账号档位下整套 `/messages` 被渠道拒
-        // (带不带 `tools` 都是 403),「`tool_use` / `tool_result` 能不能配对」零证据。
-        // 零证据不写翻译——否则只会造出「看起来支持」的假象。
+        // **暂不声明工具能力**:本族的 `tool_use` / `tool_result` 翻译还没写。协议事实已经
+        // 拿到(2026-11-21 三步探针,`probes/messages-tool-roundtrip/`:声明被接受、`tool_use`
+        // 返回、配对被接受),所以缺的是实现,不是证据——两者别混。
         streaming: {
           buildBody: messagesStreamBody,
           createAccumulator: createMessagesAccumulator,

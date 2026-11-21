@@ -286,8 +286,9 @@ it("chat-completions 请求消息:缺 `toolCallId` 时也写 id(漏掉这个键�
 });
 
 it("messages / responses / generate-content 族不声明工具能力:用它们的席位在会话起跑前拒跑", () => {
-  // 可选 = 不支持。`messages` 族零证据(整套 `/messages` 在探针里都是 403),
-  // `responses` / `generate-content` 本季名册不用。声明了才是「这条翻译被验证过」。
+  // 可选 = 不支持。`messages` 族的协议事实已经拿到(`probes/messages-tool-roundtrip/`),
+  // 但翻译还没写;`responses` / `generate-content` 连协议事实都还在别处。声明了才是
+  // 「这条翻译被真实会话验证过」。
   expect(endpointSpec("chat-completions").tools).toEqual({ shape: "function-json-schema" });
   expect(endpointSpec("messages").tools).toBeUndefined();
   expect(endpointSpec("responses").tools).toBeUndefined();
