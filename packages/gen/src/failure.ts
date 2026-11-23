@@ -36,43 +36,76 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  ARCHIVE_SCHEMA_VERSION,
   FAILURE_RECORD_PREFIX,
   RULESET_VERSION,
   type FailureIdentity,
   type FailureRecord,
 } from "@model-war/schema";
 
+import { archiveRoundFieldsOf, type AgentArchiveInput } from "./archive.js";
 import type { ModelFailure } from "./pipeline.js";
 
-/** 组装失败记录所需的一切(不带 `root`:组装与落盘是两件事,便于纯函数直测形状)。 */
+/**
+ * 组装失败记录所需的一切(不带 `root`:组装与落盘是两件事,便于纯函数直测形状)。
+ *
+ * `agent` 与 `meta.json` 的 `AgentArchiveInput` 是**同一份类型**（与成功档同键集合的前提）；
+ * 缺它 = one-shot 形态的历史记录，代价不变。
+ */
 export type BuildFailureRecordInput = FailureIdentity & {
   /** 渠道身份(含档位);与 `meta.json` 同一格,失败记录同样不能缺这一维。 */
   readonly channelId: string;
   readonly failure: ModelFailure;
+  readonly agent?: AgentArchiveInput;
 };
 
 /**
- * 组装一条失败记录(纯函数,不落盘)。`ruleset` 从本仓常量填,`protocolRounds` 由
- * `prompts.length` 推得——不给调用方一个填错的口子(与 `buildArchiveMeta` 同款理由)。
+ * 组装一条失败记录(纯函数,不落盘)。`ruleset` 从本仓常量填,`protocolRounds` 与 `prompts`
+ * 由**与成功档相同的公式**推得——不给调用方一个填错的口子(与 `buildArchiveMeta` 同款理由)。
+ *
+ * agent（v3）形态下 `failure.prompts` 不参与：轮数与起始 prompt 由 `steps` 与首条消息推导，
+ * 于是「零步会话 = 过程记录为空、起始 prompt 为空、协议轮数为零」这条就自动成立。调用方若仍
+ * 填了 `failure.prompts`，就当作两份会漂的奇据拒掉，而不是默默选一份。
  */
-export const buildFailureRecord = (input: BuildFailureRecordInput): FailureRecord => ({
-  model: input.model,
-  modelVersion: input.modelVersion,
-  channelId: input.channelId,
-  generatedAt: input.generatedAt,
-  runId: input.runId,
-  ruleset: RULESET_VERSION,
-  classification: input.failure.classification,
-  protocolRounds: input.failure.prompts.length,
-  prompts: input.failure.prompts,
-  generationLog: input.failure.generationLog,
-  diagnostics: input.failure.diagnostics,
-  message: input.failure.message,
-  ...(input.failure.selectionFailure === undefined
-    ? {}
-    : { selectionFailure: input.failure.selectionFailure }),
-  ...(input.failure.candidates !== undefined ? { candidates: input.failure.candidates } : {}),
-});
+export const buildFailureRecord = (input: BuildFailureRecordInput): FailureRecord => {
+  const agent = input.agent;
+  if (agent !== undefined && input.failure.prompts.length > 0)
+    throw new Error("agent 形态的 prompts 由过程记录与首条消息推导，调用方不得同时填 prompts");
+  const rounds =
+    agent === undefined
+      ? { protocolRounds: input.failure.prompts.length, prompts: input.failure.prompts }
+      : archiveRoundFieldsOf(agent);
+  return {
+    // 形状版本写在第一个键上（与 `meta.json` 同序）：读档按它分派。
+    ...(agent === undefined ? {} : { archiveSchemaVersion: ARCHIVE_SCHEMA_VERSION }),
+    model: input.model,
+    modelVersion: input.modelVersion,
+    channelId: input.channelId,
+    generatedAt: input.generatedAt,
+    runId: input.runId,
+    ruleset: RULESET_VERSION,
+    classification: input.failure.classification,
+    protocolRounds: rounds.protocolRounds,
+    prompts: rounds.prompts,
+    ...(agent === undefined ? {} : { steps: agent.steps }),
+    generationLog: input.failure.generationLog,
+    ...(agent === undefined
+      ? {}
+      : {
+          contextLength: agent.contextLength,
+          harnessVersion: agent.harnessVersion,
+          harnessDigest: agent.harnessDigest,
+          termination: agent.termination,
+          atStep: agent.atStep,
+        }),
+    diagnostics: input.failure.diagnostics,
+    message: input.failure.message,
+    ...(input.failure.selectionFailure === undefined
+      ? {}
+      : { selectionFailure: input.failure.selectionFailure }),
+    ...(input.failure.candidates !== undefined ? { candidates: input.failure.candidates } : {}),
+  };
+};
 
 /** `archive/<modelSlug>/failed-<runId>.json` 的绝对路径。 */
 export const failureRecordPath = (root: string, slug: string, runId: string): string =>
@@ -82,11 +115,12 @@ export type WriteFailureRecordResult =
   | { readonly ok: true; readonly path: string }
   | { readonly ok: false; readonly reason: string };
 
-/** 写盘入参:身份字段见 `FailureIdentity`,另加渠道身份、写盘根与失败结论。 */
+/** 写盘入参:身份字段见 `FailureIdentity`,另加渠道身份、写盘根、失败结论与可选的 agent 字段。 */
 export type WriteFailureRecordInput = FailureIdentity & {
   readonly channelId: string;
   readonly root: string;
   readonly failure: ModelFailure;
+  readonly agent?: AgentArchiveInput;
 };
 
 /**
@@ -109,6 +143,7 @@ export const writeFailureRecord = (options: WriteFailureRecordInput): WriteFailu
       generatedAt: options.generatedAt,
       runId: options.runId,
       failure: options.failure,
+      ...(options.agent === undefined ? {} : { agent: options.agent }),
     });
     mkdirSync(join(options.root, "archive", options.model), { recursive: true });
     writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", flag: "wx" });

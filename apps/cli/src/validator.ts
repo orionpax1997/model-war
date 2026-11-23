@@ -25,7 +25,11 @@
 // 取具名导出而不是默认导出:ajv 是 CJS 包且 `module.exports` 就是 Ajv 类本身,
 // 而它的 .d.ts 用 ESM 语法写成,于是 `import Ajv from "ajv"` 拿到的类型是整个命名空间
 // (不可构造)。具名导入两侧一致。
-import { validateArchiveCandidateRelations } from "@model-war/runner";
+import {
+  archiveShapeIssuesOf,
+  validateArchiveCandidateRelations,
+  type ArchiveShapeIssue,
+} from "@model-war/runner";
 import { Ajv } from "ajv";
 import type { ErrorObject, SchemaObject } from "ajv";
 import {
@@ -106,6 +110,24 @@ export const ARCHIVE_FILES_INCOMPLETE_KEYWORD = "archive-files-incomplete";
 
 /** 协议迭代轮数与逐轮 prompt 的条数不相等(`protocolRounds` 与 `prompts` 双存的自洽)。 */
 export const ARCHIVE_PROTOCOL_ROUNDS_KEYWORD = "archive-protocol-rounds-mismatch";
+
+/**
+ * 档案形状版本不认识,或带 agent 字段却缺 `archiveSchemaVersion: 3`。
+ *
+ * 它与「多了几个键」分开报,是因为修法不同:后者是 `additionalProperties`,前者是**没声明版本**——
+ * 让人去删字段会删掉真正的事实。
+ */
+export const ARCHIVE_SCHEMA_VERSION_KEYWORD = "archive-schema-version";
+
+/** v3 档案缺 agent 必写字段(`steps` / `contextLength` / `harnessVersion` / `harnessDigest` / `termination` / `atStep`)。 */
+export const ARCHIVE_AGENT_FIELDS_KEYWORD = "archive-agent-fields";
+
+/** 形状判据的类别 → 诊断关键字。类别由 runner 给(判据在那儿),关键字是**本包**的词汇。 */
+const SHAPE_KEYWORD_OF: Readonly<Record<ArchiveShapeIssue["kind"], string>> = {
+  "archive-schema-version": ARCHIVE_SCHEMA_VERSION_KEYWORD,
+  "archive-agent-fields": ARCHIVE_AGENT_FIELDS_KEYWORD,
+  "archive-protocol-rounds": ARCHIVE_PROTOCOL_ROUNDS_KEYWORD,
+};
 
 /** 拒绝时的那一半结果。几类数据的形状相同,所以共用这一个类型而不是各写一遍。 */
 export type ValidationRejection = {
@@ -256,6 +278,8 @@ const MODEL_PHRASE: Readonly<Record<string, string>> = {
   [SHA256_MISMATCH_KEYWORD]: "记录的哈希与实测不符",
   [ARCHIVE_FILES_INCOMPLETE_KEYWORD]: "存档缺档(三件套不全或某个座位没有存档)",
   [ARCHIVE_PROTOCOL_ROUNDS_KEYWORD]: "协议迭代轮数与逐轮 prompt 的条数不一致",
+  [ARCHIVE_SCHEMA_VERSION_KEYWORD]: "档案形状版本不认识或与 agent 字段不匹配",
+  [ARCHIVE_AGENT_FIELDS_KEYWORD]: "v3 档案缺少 agent 必写字段",
 };
 
 const phraseOf = (keyword: string): string => MODEL_PHRASE[keyword] ?? `不满足 ${keyword} 约束`;
@@ -519,22 +543,27 @@ const archiveMetaDiagnostics = (
     });
   }
 
-  if (meta.prompts.length !== meta.protocolRounds) {
+  // 形状版本、agent 必写字段与协议轮数公式**只判一份**（`archiveShapeIssuesOf`，在 runner 那一侧）：
+  // 同一件事在这里渲染成诊断、在赛季/报告那一侧抛成拒读，措辞也好、判据也好都只有一处写法。
+  const shapeIssues = archiveShapeIssuesOf(meta);
+  for (const issue of shapeIssues) {
     diagnostics.push({
-      pointer: "/prompts",
-      keyword: ARCHIVE_PROTOCOL_ROUNDS_KEYWORD,
-      message: `协议迭代轮数写了 ${meta.protocolRounds},而逐轮 prompt 有 ${meta.prompts.length} 条`,
+      pointer: issue.pointer,
+      keyword: SHAPE_KEYWORD_OF[issue.kind],
+      message: issue.message,
     });
   }
-
-  try {
-    validateArchiveCandidateRelations(meta);
-  } catch (cause) {
-    diagnostics.push({
-      pointer: meta.selection === undefined ? "/optimization/candidates" : "/selection",
-      keyword: "optimization-candidate-relations",
-      message: cause instanceof Error ? cause.message : String(cause),
-    });
+  // 形状版本本身不认识时，候选关系无从判定（按哪一版的规则都不知道），所以不再叠一条关系诊断。
+  if (!shapeIssues.some((issue) => issue.kind === "archive-schema-version")) {
+    try {
+      validateArchiveCandidateRelations(meta);
+    } catch (cause) {
+      diagnostics.push({
+        pointer: meta.selection === undefined ? "/optimization/candidates" : "/selection",
+        keyword: "optimization-candidate-relations",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
   }
   if (meta.selection !== undefined && provenance.measuredScriptSha256 === null) {
     diagnostics.push({

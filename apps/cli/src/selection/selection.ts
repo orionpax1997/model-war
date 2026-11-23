@@ -12,6 +12,7 @@ import {
 } from "@model-war/runner";
 import {
   RULESET_VERSION,
+  SELECTION_AGENT_VERSION,
   TRIAL_BENCHMARK_IDS,
   TRIAL_MAP_NAME,
   type ArchiveSelection,
@@ -89,6 +90,19 @@ export const readSelectionCandidateFiles = (value: unknown): readonly SelectionC
 /** v1 的执行（十二场）与 `--validate` 读同一份候选清单。 */
 export const readSelectionArtifacts = readSelectionCandidateFiles;
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/**
+ * 这一条路径只生产 / 复算 **one-shot 的选拔**（v1，12 场）。
+ *
+ * v3 的选拔（分步形态，胜者指向候选序里的某一位）只做读形状：它的生产侧复算归 A2，
+ * 所以这里见到 v3 记录就拒，而不是把它硬塞进 `stage` 那套身份里。
+ */
+const legacySelectionOf = (value: unknown): Exclude<ArchiveSelection, { version: 3 }> => {
+  const selection = validateSelection(value);
+  if (selection.version === SELECTION_AGENT_VERSION)
+    throw new Error("v3 选拔的生产侧不在这一条路径上（ADR-0031：A1 可缺席，选拔归 A2）");
+  return selection;
+};
+
 const identity = ({
   stage,
   protocolRound,
@@ -109,7 +123,7 @@ export const validatePreparedSelection = (options: {
   const artifacts = readSelectionArtifacts(options.candidates);
   const actualPlan = planForSelection(loadTrial(options.root, artifacts[0]!.scriptPath));
   if (!same(actualPlan, options.expectedPlan)) throw new Error("选拔环境与预定输入不一致");
-  const selection = validateSelection(options.selection);
+  const selection = legacySelectionOf(options.selection);
   if (selection.reason === "earlier-stage") throw new Error("新选拔结果不能使用历史决胜规则");
   if (
     selection.plan.planSha256 !== actualPlan.planSha256 ||

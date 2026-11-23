@@ -20,15 +20,22 @@ import {
   ACTION_API_NAMES,
   ACTION_ERROR_CODES,
   ACTION_EFFECT_NAMES,
+  ARCHIVE_OPTIMIZATION_CANDIDATE_AGENT_JSON_SCHEMA,
   ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA,
+  ARCHIVE_SCHEMA_VERSION,
   ARCHIVE_SELECTION_JSON_SCHEMA,
+  OPTIMIZATION_AGENT_VERSION,
+  OPTIMIZATION_CANDIDATE_LIMIT,
   OPTIMIZATION_GRID_VERSION,
   OPTIMIZATION_STAGES,
-  SELECTION_GRID_VERSION,
+  SELECTION_AGENT_VERSION,
   SELECTION_VERSION,
   TRIAL_PLAN_JSON_SHAPE,
   type ArchiveOptimization,
+  type ArchiveOptimizationCandidateAgent,
   type ArchiveSelection,
+  type SelectionAgentCandidate,
+  type SelectionAgentIdentity,
   type SelectionCandidate,
   type SelectionPlan,
   type SelectionCandidateIdentity,
@@ -45,13 +52,14 @@ import {
   type TrialObservationLine,
 } from "@model-war/schema";
 
-import { optimizationMetaOf } from "./archive-optimization.js";
+import { archiveShapeVersionOf, optimizationMetaOf } from "./archive-optimization.js";
 import { buildSelectionPlan } from "./selection.js";
 import { checkTrialPlan } from "./trial-plan.js";
 import {
   objectOf,
   numberOf,
   paramsOf,
+  type ReportObservationInput,
   requestEvidenceOf,
   stopEvidenceOf,
   failureClassificationOf,
@@ -62,13 +70,13 @@ import {
 } from "./archive-report-evidence.js";
 
 /**
- * 选拔候选的分数投影：v1 把总分 / 均分 / 分母摊在候选自己身上，v2 把它们收进 `score`
- * （生成阶段那张网格的分数）。**两版的分数口径不同**（v1 = 选拔自有的 12 场单图；
- * v2 = 生成阶段 32 场网格的复算读数），所以它只是一处「选拔读数」，不进三类分数分列，
+ * 选拔候选的分数投影：v1 把总分 / 均分 / 分母摊在候选自己身上，v2 / v3 把它们收进 `score`
+ * （生成阶段那张网格的分数）。**三版的分数口径不同**（v1 = 选拔自有的 12 场单图；
+ * v2 / v3 = 生成阶段 32 场网格的读数），所以它只是一处「选拔读数」，不进三类分数分列，
  * 分列见 `ReportCandidateScores`。
  */
 const selectionCandidateScoreOf = (
-  candidate: SelectionCandidate | SelectionGridCandidate,
+  candidate: SelectionCandidate | SelectionGridCandidate | SelectionAgentCandidate,
 ): TrialGridScore =>
   "score" in candidate
     ? candidate.score
@@ -77,6 +85,38 @@ const selectionCandidateScoreOf = (
         averagePoints: candidate.averagePoints,
         countedMatches: candidate.countedMatches,
       };
+
+/**
+ * v3 的候选 → 报告内部使用的同形候选：**位置读成 `stage`、步号读成 `protocolRound`**。
+ *
+ * 这是位次映射，不是把「阶段」这个概念偷回来：ADR-0031 定的是「候选的数组下标就是第几次
+ * `evaluate`」，而报告这一侧需要的恰好是「第几个候选」。把 `stage` 这个**报告字段名**的收口
+ * （换成步级列）留在度量票（07），本票只保证「候选按位置可读」。
+ *
+ * `position` 只能取 0..2（候选上限就是配额 3），所以这里的断言不可能被绕过。
+ */
+const projectAgentCandidate = (
+  candidate: ArchiveOptimizationCandidateAgent,
+  position: number,
+): ArchiveOptimizationCandidate => ({
+  stage: position as 0 | 1 | 2,
+  protocolRound: candidate.step,
+  scriptFile: candidate.scriptFile,
+  observationsFile: candidate.observationsFile,
+  scriptSha256: candidate.scriptSha256,
+  ...(candidate.params === undefined ? {} : { params: candidate.params }),
+  score: candidate.score,
+  matchCount: candidate.matchCount,
+});
+
+/** 优化段 → 报告内部同形候选（v1 / v2 原样；v3 按位置投影）。 */
+const reportCandidatesOf = (
+  optimization: ArchiveOptimization | undefined,
+): readonly ArchiveOptimizationCandidate[] => {
+  if (optimization === undefined) return [];
+  if (optimization.version !== OPTIMIZATION_AGENT_VERSION) return optimization.candidates;
+  return optimization.candidates.map(projectAgentCandidate);
+};
 
 /** 不适用（非零、非空）：某类分数不属本档口径时用它。 */
 const NOT_APPLICABLE_SCORE: ReportScoreReading = {
@@ -146,15 +186,16 @@ const candidateScoresOf = (
   selection: ArchiveSelection | undefined,
 ): readonly ReportCandidateScores[] => {
   if (optimization === undefined) return [];
-  const grid = optimization.version === OPTIMIZATION_GRID_VERSION;
-  return optimization.candidates.map((candidate, index) => {
+  // v2 / v3 都有网格分数（v3 的候选把分数直接写在身上）；v1 历史档没有。
+  const grid = optimization.version !== 1;
+  return reportCandidatesOf(optimization).map((candidate, index) => {
     const generation = grid ? gridScoreOf(candidate.score) : NOT_APPLICABLE_SCORE;
     const selectionReading =
       selection === undefined
         ? NOT_APPLICABLE_SCORE
-        : selection.version === SELECTION_GRID_VERSION
-          ? gridScoreOf(selection.candidates[index]?.score)
-          : legacyScoreReadingOf(selection.candidates[index]);
+        : selection.version === SELECTION_VERSION
+          ? legacyScoreReadingOf(selection.candidates[index])
+          : gridScoreOf(selection.candidates[index]?.score);
     return {
       stage: candidate.stage,
       protocolRound: candidate.protocolRound,
@@ -431,10 +472,14 @@ export type ArchiveReport = {
   readonly frozenCandidate: ReportCandidate | null;
   readonly selection: {
     /**
-     * 选拔记录版本：1 = 历史档（12 场 / 三基准 / 单图），2 = 评测网格（32 场 / 四陪练 / 两图）。
+     * 选拔记录版本：1 = 历史档（12 场 / 三基准 / 单图），2 = 评测网格（32 场 / 四陪练 / 两图），
+     * 3 = 分步形态（同一张网格，但胜者指向**候选序里的某一位**而不是某个阶段）。
      * 计划口径按 `plan.kind` 分流，且**不互相冒充**（见 `ReportGridPlan` / `ReportLegacySelectionPlan`）。
+     *
+     * 下面那些 `stage` / `protocolRound` 字段在 v3 档里读作「候选序位置」与「步号」——字段名
+     * 的收口（换成步级列）归度量票 07。
      */
-    readonly version: 1 | 2;
+    readonly version: 1 | 2 | 3;
     readonly stage: number;
     readonly protocolRound: number;
     readonly scriptSha256: string;
@@ -446,13 +491,22 @@ export type ArchiveReport = {
     readonly planSha256: string;
     readonly distinctScripts: number;
     readonly reusedFromStage: number | null;
-    /** 每个候选的选拔读数（身份 + 分数）；三类分数的分列视图是 `scores`，两处同源。 */
-    readonly candidates: readonly (SelectionCandidateIdentity & {
+    /**
+     * 每个候选的选拔读数（身份 + 分数）；三类分数的分列视图是 `scores`，两处同源。
+     *
+     * `stage` 在这一层是**位置**（不是 `0|1|2` 的阶段号）：v3 的候选没有 `stage` 字段，
+     * 报告按候选序下标填它。`protocolRound` 同理在 v3 里读作步号。
+     */
+    readonly candidates: readonly {
+      readonly stage: number;
+      readonly protocolRound: number;
+      readonly scriptSha256: string;
+      readonly sourceSha256: string;
       readonly averagePoints: number;
       readonly totalPoints: number;
       readonly countedMatches: number;
       readonly reusedFromStage: number | null;
-    })[];
+    }[];
     readonly executedMatches: number;
     readonly reusedMatches: number;
     readonly rulesetSha256: string;
@@ -741,13 +795,44 @@ const issueReasonOf = (cause: unknown, allowed: readonly string[], fallback: str
  */
 type ObservationCaliber =
   | { readonly kind: "legacy" }
-  | { readonly kind: "grid"; readonly plan: TrialPlan };
+  | { readonly kind: "grid"; readonly plan: TrialPlan }
+  /**
+   * `self` = **没有计划可核**（v3 的优化段不装计划，选拔段又缺席时就是这样）：每行按它自己
+   * 给出的种子 / 座位 / 四座身份做行内自洽校验。它不是「独立核对」，所以不能与 `grid` 混用
+   * 一个名字——那会让人以为这份档案的逐场身份被交叉验证过。
+   */
+  | { readonly kind: "self" };
 
-/** 按下标取这一场的期待身份；`undefined` = 这个下标不属这一档的计划。 */
+/**
+ * `self` 口径的期待身份：**由这一行自己给出**（种子与座位取行动事实，四座身份取终局四方）。
+ *
+ * 它只证明行内自洽，不证明「这一场就是计划里那一场」——后者要计划，而 v3 的优化段不装计划。
+ * 取不到完整身份时返回 `undefined`，交给调用方按「无法核对」记 issue，而不是猜一个。
+ */
+const selfExpectationOf = (row: ReportObservationInput): ObservationMatch | undefined => {
+  const facts = row.actionFacts;
+  const summary = objectOf(row.terminalSummary);
+  const players = Array.isArray(summary["players"]) ? summary["players"] : [];
+  const seats = players.flatMap((player) => {
+    const id = objectOf(player)["player"];
+    return typeof id === "string" ? [id] : [];
+  });
+  const seed = facts?.seed ?? numberOf(summary["seed"]);
+  if (seed === null || seats.length !== 4) return undefined;
+  return {
+    seed,
+    candidateSeat: facts?.seat ?? TRIAL_CANDIDATE_SEAT,
+    seats: [seats[0]!, seats[1]!, seats[2]!, seats[3]!],
+  };
+};
+
+/** 按下标取这一场的期待身份；`undefined` = 这个下标不属这一档的计划（或口径要求行内自查）。 */
 const expectedMatchOf = (
   caliber: ObservationCaliber,
   matchIndex: number,
+  row: ReportObservationInput,
 ): ObservationMatch | undefined => {
+  if (caliber.kind === "self") return selfExpectationOf(row);
   if (caliber.kind === "legacy") {
     const seed = TRIAL_SEEDS[matchIndex];
     return seed === undefined
@@ -818,8 +903,13 @@ const observationsOf = (
         typeof candidate.noScoreSource !== "boolean"
       )
         throw new Error("观测行形状不合法");
-      const expected = expectedMatchOf(options.caliber, matchIndex);
-      if (expected === undefined) throw new Error("观测对局下标不属于试跑计划");
+      const expected = expectedMatchOf(options.caliber, matchIndex, candidate);
+      if (expected === undefined)
+        throw new Error(
+          options.caliber.kind === "self"
+            ? "观测行缺少可核对的种子、座位或四座身份"
+            : "观测对局下标不属于试跑计划",
+        );
       const facts = candidate.actionFacts;
       if (
         facts !== undefined &&
@@ -860,6 +950,7 @@ const observationsOf = (
             "观测行 JSON 不合法",
             "观测行形状不合法",
             "观测对局下标不属于试跑计划",
+            "观测行缺少可核对的种子、座位或四座身份",
             "行动事实完整性、错误计数或 seed 归属不合法",
             "行动事实与 meta 编译 JS hash 不一致",
             "对局下标重复",
@@ -914,21 +1005,56 @@ const candidateObservationsOf = (
 };
 
 /**
- * 失败记录自带的已有候选描述（统一优化中途失败时 pipeline 写入；旧记录缺席）。
+ * 失败记录自带的已有候选描述（优化中途失败时 pipeline 写入；旧记录缺席）。
  * 防御式读栏：任一项不合形状即整体视为缺席，走旧逐轮列表，不抛（失败记录本身必须可读）。
  * basename 与 hash 模式同 `archive-meta.ts` 的候选约束，形状真源仍在 schema。
+ *
+ * **条数上限按版本分派**：one-shot 失败档的候选只能是「已入档的有效阶段」（非选拔失败最多
+ * 2 个、选拔失败 3 个），agent 失败档的候选则是 1..3 次 `evaluate` 的自然结果（三次是配额，
+ * 不是下限）。拿一个数字代表两种档案，正是 ADR-0031 点名的那条散落判据。
  */
 const failureCandidateSchema = z.fromJSONSchema(
   JSON.parse(
     JSON.stringify(ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA),
   ) as z.core.JSONSchema.JSONSchema,
 );
+const failureAgentCandidateSchema = z.fromJSONSchema(
+  JSON.parse(
+    JSON.stringify(ARCHIVE_OPTIMIZATION_CANDIDATE_AGENT_JSON_SCHEMA),
+  ) as z.core.JSONSchema.JSONSchema,
+);
+
+/** v3 失败档的候选：无 `stage`，步号递增，按位置投影成报告内部同形候选。 */
+const agentFailureCandidatesOf = (raw: readonly unknown[]): ArchiveOptimizationCandidate[] => {
+  if (raw.length < 1 || raw.length > OPTIMIZATION_CANDIDATE_LIMIT) return [];
+  const seen = new Set<string>();
+  const out: ArchiveOptimizationCandidate[] = [];
+  for (const item of raw) {
+    const parsed = failureAgentCandidateSchema.safeParse(item);
+    if (!parsed.success) return [];
+    const candidate = parsed.data as ArchiveOptimizationCandidateAgent;
+    if (
+      candidate.step <= (out[out.length - 1]?.protocolRound ?? 0) ||
+      seen.has(candidate.scriptFile) ||
+      seen.has(candidate.observationsFile) ||
+      candidate.scriptFile !== `${candidate.observationsFile}.candidate.js` ||
+      !candidate.observationsFile.endsWith(`-round-${String(candidate.step)}.jsonl`)
+    )
+      return [];
+    seen.add(candidate.scriptFile);
+    seen.add(candidate.observationsFile);
+    out.push(projectAgentCandidate(candidate, out.length));
+  }
+  return out;
+};
 
 const failureCandidatesOf = (record: unknown): ArchiveOptimizationCandidate[] => {
   if (typeof record !== "object" || record === null) return [];
   const raw = (record as { candidates?: unknown }).candidates;
-  if (!Array.isArray(raw) || raw.length > (objectOf(record).classification === "selection" ? 3 : 2))
-    return [];
+  if (!Array.isArray(raw)) return [];
+  if (archiveShapeVersionOf(record) === ARCHIVE_SCHEMA_VERSION)
+    return agentFailureCandidatesOf(raw);
+  if (raw.length > (objectOf(record).classification === "selection" ? 3 : 2)) return [];
   const seen = new Set<string>();
   const out: ArchiveOptimizationCandidate[] = [];
   for (const [index, item] of raw.entries()) {
@@ -1124,6 +1250,34 @@ const candidateReportOf = (
   };
 };
 
+/**
+ * 选拔候选的身份字段在 v3 换了名（`stage` / `protocolRound` → `step`，`reusedFromStage` →
+ * `reusedFromStep`）。报告这一侧把位置一律读成**候选序下标**、把步号读成 `protocolRound`，
+ * 于是三种版本的候选走同一张表——`stage` 这个**报告字段名**的收口（换成步级列）归度量票 07。
+ */
+const selectionStepOf = (
+  candidate: SelectionCandidate | SelectionGridCandidate | SelectionAgentCandidate,
+): number => ("step" in candidate ? candidate.step : candidate.protocolRound);
+
+const selectionReusedFromOf = (
+  candidate: SelectionCandidate | SelectionGridCandidate | SelectionAgentCandidate,
+): number | null =>
+  ("step" in candidate ? candidate.reusedFromStep : candidate.reusedFromStage) ?? null;
+
+const selectionIdentityStepOf = (
+  identity: SelectionCandidateIdentity | SelectionAgentIdentity,
+): number => ("step" in identity ? identity.step : identity.protocolRound);
+
+/** 选拔胜者在候选序里的位置；v1/v2 的 `stage` 本来就是位置，v3 用步号反查（找不到即拒，不猜）。 */
+const selectedPositionOf = (selection: ArchiveSelection): number => {
+  if (selection.version !== SELECTION_AGENT_VERSION) return selection.selected.stage;
+  const position = selection.candidates.findIndex(
+    (candidate) => candidate.step === selection.selected.step,
+  );
+  if (position < 0) throw new Error("选拔胜者不在候选序里");
+  return position;
+};
+
 const sameObservationFile = (root: string, a: string, b: string): boolean => {
   try {
     return readFileSync(join(root, a)).equals(readFileSync(join(root, b)));
@@ -1226,39 +1380,61 @@ const readRecord = (
     }
   });
   rounds.sort((a, b) => a.round - b.round);
+  // 形状版本在这里就定下来：不认识的版本与「带 agent 字段却缺 3」都在这里拒读（不猜）。
+  const agentShape = archiveShapeVersionOf(record) === ARCHIVE_SCHEMA_VERSION;
   const failureDescriptors = kind === "failure" ? failureCandidatesOf(record) : [];
   const failedSelection =
     kind === "failure" ? selectionFailureOf(record, failureDescriptors, protocolRounds) : null;
+  const optimization = optimizationMeta?.optimization;
+  const selection = optimizationMeta?.selection;
+  const descriptors = reportCandidatesOf(optimization);
   /**
    * 观测行的期待口径：v2 网格档逐场由计划给（种子 / 候选座位 / 四座身份），v1 历史档查旧表。
    * 失败档没有 `optimization`，但 v2 的选拔失败旁证里带的是同一张计划。
+   *
+   * v3 的优化段里**没有计划**（ADR-0031 定的形状），所以只有选拔段存在时才有网格计划可核；
+   * 连它也没有时口径是 `self`：每行按自己的种子 / 座位 / 四座身份做**行内自洽**校验，不冒充
+   * 独立核对。这条缺口的收口（计划要不要进档案）归度量票与网格票，不在这里发明。
    */
   const caliber: ObservationCaliber =
-    optimizationMeta?.optimization?.version === OPTIMIZATION_GRID_VERSION
-      ? { kind: "grid", plan: optimizationMeta.optimization.plan }
-      : failedSelection !== null && !("seeds" in failedSelection.plan)
-        ? { kind: "grid", plan: failedSelection.plan }
-        : { kind: "legacy" };
-  const optimizationCandidates =
-    optimizationMeta?.optimization?.candidates.map((descriptor) =>
-      candidateReportOf(
-        root,
-        `archive/${slug}`,
-        descriptor,
-        optimizationMeta.scriptSha256,
-        runId,
-        caliber,
-        optimizationMeta.selection?.selected.stage ?? 2,
-        optimizationMeta.selection?.candidates[descriptor.stage]?.sourceSha256,
-      ),
-    ) ?? [];
+    optimization?.version === OPTIMIZATION_GRID_VERSION
+      ? { kind: "grid", plan: optimization.plan }
+      : selection?.version === SELECTION_AGENT_VERSION
+        ? { kind: "grid", plan: selection.plan }
+        : failedSelection !== null && !("seeds" in failedSelection.plan)
+          ? { kind: "grid", plan: failedSelection.plan }
+          : agentShape
+            ? { kind: "self" }
+            : { kind: "legacy" };
+  /**
+   * 冻结候选的**位置**：v3 = 选拔胜者所在的位置、选拔缺席时 = 候选序末位（ADR-0031）；
+   * one-shot 档保持原判据（选拔胜者的 `stage`、缺席时第三阶段 2），旧档照旧。
+   */
+  const frozenPosition =
+    selection === undefined
+      ? agentShape
+        ? descriptors.length - 1
+        : 2
+      : selectedPositionOf(selection);
+  const optimizationCandidates = descriptors.map((descriptor) =>
+    candidateReportOf(
+      root,
+      `archive/${slug}`,
+      descriptor,
+      optimizationMeta?.scriptSha256 ?? "",
+      runId,
+      caliber,
+      frozenPosition,
+      selection?.candidates[descriptor.stage]?.sourceSha256,
+    ),
+  );
   if (
     kind === "success" &&
     optimizationMeta?.selection !== undefined &&
     optimizationCandidates.some((candidate) => candidate.scriptState !== "verified")
   )
     throw new Error("选拔档冻结或候选 TS/JS 身份无法核实");
-  // 失败档可有三个有效阶段，但没有冻结脚本；不读取不存在的冻结目录。
+  // 失败档的候选没有冻结脚本；不读取不存在的冻结目录。
   const failureDescribed =
     kind === "failure"
       ? failureDescriptors.map((descriptor) =>
@@ -1274,7 +1450,10 @@ const readRecord = (
           ),
         )
       : [];
-  const optimizedFinal = optimizationCandidates[2];
+  /** 末位候选：v3 是候选序末位；one-shot 档仍是第三阶段（旧判据不改）。 */
+  const finalCandidateOf = (candidates: readonly ReportCandidate[]): ReportCandidate | null =>
+    agentShape ? (candidates[candidates.length - 1] ?? null) : (candidates[2] ?? null);
+  const optimizedFinal = finalCandidateOf(optimizationCandidates);
   const observations =
     optimizedFinal?.observations ??
     observationsOf(root, `archive/${slug}/${OBSERVATIONS_FILE_PREFIX}${runId}.jsonl`, {
@@ -1296,7 +1475,7 @@ const readRecord = (
     (candidate) => candidate.protocolRound === protocolRounds,
   );
   const finalCandidate =
-    optimizedFinal === undefined
+    optimizedFinal === null
       ? kind === "success" &&
         observations.state === "recorded" &&
         lastCandidate?.state === "recorded" &&
@@ -1304,9 +1483,7 @@ const readRecord = (
       : optimizedFinal.scriptState === "verified" && observations.state === "recorded";
   const convergedRounds = rounds.filter((round) => round.responseConverged);
   const allAttempts = rounds.flatMap((round) => round.attempts);
-  const selection = optimizationMeta?.selection;
-  const optimization = optimizationMeta?.optimization;
-  // v1 历史档没有计划字段：不适用（`null`），不迁移、不回填。
+  // v1 历史档与 v3（优化段里没有计划）都不适用：`null`，不迁移、不回填。
   const plan =
     optimization?.version === OPTIMIZATION_GRID_VERSION
       ? gridPlanReportOf(optimization.plan, `${source}#optimization.plan`)
@@ -1361,12 +1538,19 @@ const readRecord = (
             attempt.outcome === "transport-error" ||
             Object.values(attempt.usage).every((reading) => reading.value === null),
         ).length,
-        maximumConvergedResponses:
-          optimizationMeta?.optimization !== undefined || stages > 0
+        // v3 的响应预算由步数上限决定，而上限是**身份项**（`harnessDigest` 的清单里），
+        // 不在档案里可读——所以这一档对 v3 写「不适用」，不拿 one-shot 的 3×5 冒充。
+        // 步级预算列归度量票（07）。
+        maximumConvergedResponses: agentShape
+          ? null
+          : optimizationMeta?.optimization !== undefined || stages > 0
             ? OPTIMIZATION_STAGES.length * 5
             : null,
-        maximumResponsesPerStage:
-          optimizationMeta?.optimization !== undefined || stages > 0 ? 5 : null,
+        maximumResponsesPerStage: agentShape
+          ? null
+          : optimizationMeta?.optimization !== undefined || stages > 0
+            ? 5
+            : null,
       },
       local: {
         optimizationObservedMatches:
@@ -1377,19 +1561,21 @@ const readRecord = (
                 (sum, candidate) => sum + candidate.observations.observedMatches!,
                 0,
               ),
+        // 上限 = 候选数 × 每候选场数；候选数按**版本**分派（v3 = 真实候选数，one-shot = 三阶段）。
         selectionMaximumMatches:
           selection === undefined && failedSelection === null
             ? null
-            : OPTIMIZATION_STAGES.length * (selection ?? failedSelection)!.plan.matchesPerCandidate,
+            : (agentShape ? (selection?.candidates.length ?? stages) : OPTIMIZATION_STAGES.length) *
+              (selection ?? failedSelection)!.plan.matchesPerCandidate,
         selectionExecutedMatches:
           selection === undefined
             ? null
-            : selection.candidates.filter((candidate) => candidate.reusedFromStage === undefined)
+            : selection.candidates.filter((candidate) => selectionReusedFromOf(candidate) === null)
                 .length * selection.plan.matchesPerCandidate,
         selectionReusedMatches:
           selection === undefined
             ? null
-            : selection.candidates.filter((candidate) => candidate.reusedFromStage !== undefined)
+            : selection.candidates.filter((candidate) => selectionReusedFromOf(candidate) !== null)
                 .length * selection.plan.matchesPerCandidate,
       },
     },
@@ -1397,62 +1583,60 @@ const readRecord = (
     intermediateCandidates:
       optimizationMeta !== undefined
         ? optimizationCandidates.slice(1, -1)
-        : failureDescribed.filter((candidate) => candidate.stage === 1),
-    finalCandidate: optimizationCandidates[2] ?? failureDescribed[2] ?? null,
-    frozenCandidate:
-      optimizationCandidates[optimizationMeta?.selection?.selected.stage ?? 2] ?? null,
+        : // one-shot 失败档的中间候选仍是第二阶段（旧判据不改）；v3 失败档按位置取中间。
+          agentShape
+          ? failureDescribed.slice(1, -1)
+          : failureDescribed.filter((candidate) => candidate.stage === 1),
+    finalCandidate: finalCandidateOf(optimizationCandidates) ?? finalCandidateOf(failureDescribed),
+    frozenCandidate: optimizationCandidates[frozenPosition] ?? null,
     selection:
-      optimizationMeta?.selection === undefined
+      selection === undefined
         ? null
         : {
-            version: optimizationMeta.selection.version,
-            stage: optimizationMeta.selection.selected.stage,
-            protocolRound: optimizationMeta.selection.selected.protocolRound,
-            scriptSha256: optimizationMeta.selection.selected.scriptSha256,
-            sourceSha256: optimizationMeta.selection.selected.sourceSha256,
+            version: selection.version,
+            // 位置与步号：v1/v2 读 `selected.stage` / `protocolRound`，v3 读候选序位置 / `step`。
+            stage: selectedPositionOf(selection),
+            protocolRound: selectionIdentityStepOf(selection.selected),
+            scriptSha256: selection.selected.scriptSha256,
+            sourceSha256: selection.selected.sourceSha256,
             averagePoints: selectionCandidateScoreOf(
-              optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!,
+              selection.candidates[selectedPositionOf(selection)]!,
             ).averagePoints,
-            countedMatches: optimizationMeta.selection.plan.matchesPerCandidate,
-            reason: optimizationMeta.selection.reason,
-            planSha256: optimizationMeta.selection.plan.planSha256,
+            countedMatches: selection.plan.matchesPerCandidate,
+            reason: selection.reason,
+            planSha256: selection.plan.planSha256,
             distinctScripts: new Set(
-              optimizationMeta.selection.candidates.map((candidate) => candidate.scriptSha256),
+              selection.candidates.map((candidate) => candidate.scriptSha256),
             ).size,
-            reusedFromStage:
-              optimizationMeta.selection.candidates[optimizationMeta.selection.selected.stage]!
-                .reusedFromStage ?? null,
-            candidates: optimizationMeta.selection.candidates.map((candidate) => {
+            reusedFromStage: selectionReusedFromOf(
+              selection.candidates[selectedPositionOf(selection)]!,
+            ),
+            candidates: selection.candidates.map((candidate, position) => {
               const score = selectionCandidateScoreOf(candidate);
               return {
-                stage: candidate.stage,
-                protocolRound: candidate.protocolRound,
+                stage: position,
+                protocolRound: selectionStepOf(candidate),
                 scriptSha256: candidate.scriptSha256,
                 sourceSha256: candidate.sourceSha256,
                 averagePoints: score.averagePoints,
                 totalPoints: score.totalPoints,
                 countedMatches: score.countedMatches,
-                reusedFromStage: candidate.reusedFromStage ?? null,
+                reusedFromStage: selectionReusedFromOf(candidate),
               };
             }),
             executedMatches:
-              optimizationMeta.selection.candidates.filter(
-                (candidate) => candidate.reusedFromStage === undefined,
-              ).length * optimizationMeta.selection.plan.matchesPerCandidate,
+              selection.candidates.filter((candidate) => selectionReusedFromOf(candidate) === null)
+                .length * selection.plan.matchesPerCandidate,
             reusedMatches:
-              optimizationMeta.selection.candidates.filter(
-                (candidate) => candidate.reusedFromStage !== undefined,
-              ).length * optimizationMeta.selection.plan.matchesPerCandidate,
-            rulesetSha256: optimizationMeta.selection.plan.rulesetSha256,
-            sandboxRuntimeHash: optimizationMeta.selection.plan.sandboxRuntimeHash,
-            // 选拔计划本身（不搬 32 场明文）：v2 = 生成阶段那张网格，v1 = 12 场单图。
+              selection.candidates.filter((candidate) => selectionReusedFromOf(candidate) !== null)
+                .length * selection.plan.matchesPerCandidate,
+            rulesetSha256: selection.plan.rulesetSha256,
+            sandboxRuntimeHash: selection.plan.sandboxRuntimeHash,
+            // 选拔计划本身（不搬 32 场明文）：v2 / v3 = 生成阶段那张网格，v1 = 12 场单图。
             plan:
-              optimizationMeta.selection.version === SELECTION_GRID_VERSION
-                ? gridPlanReportOf(optimizationMeta.selection.plan, `${source}#selection.plan`)
-                : legacySelectionPlanReportOf(
-                    optimizationMeta.selection.plan,
-                    `${source}#selection.plan`,
-                  ),
+              selection.version === SELECTION_VERSION
+                ? legacySelectionPlanReportOf(selection.plan, `${source}#selection.plan`)
+                : gridPlanReportOf(selection.plan, `${source}#selection.plan`),
           },
     protocolRounds,
     rounds,
@@ -1789,14 +1973,17 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     }
     out.push("", "### 计划、陪练与三类分数", "");
     if (report.plan === null)
-      out.push("- 生成阶段计划：不适用（版本 1 历史档没有计划字段，不迁移、不回填）");
+      out.push(
+        "- 生成阶段计划：不适用（版本 1 历史档没有计划字段，不迁移、不回填）" +
+          "；v3 分步档的优化段也不装计划——网格计划不进档案，不追填",
+      );
     else out.push(...renderGridPlan(report.plan));
     out.push(
       "- 同字节直读：看下表「复用来源」列——标出阶段号的是编译产物与那一阶段字节相同、复用它的网格结果",
       "- 不适用 = 该口径不属本档（v1 历史档没有网格分数；无选拔段时没有复算读数；赛季分数恒不适用）",
     );
     if (report.scores.length === 0)
-      out.push("- 候选分数：不适用（本档没有优化旁证，无三阶段候选可出分数）");
+      out.push("- 候选分数：不适用（本档没有优化旁证，没有候选可出分数）");
     else
       out.push(
         "",
@@ -1827,7 +2014,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
             ]),
         `- 独立 seeds=${renderSeeds(plan.seeds)}；不同 JS=${selection.distinctScripts}；已执行 ${selection.executedMatches} 场；复用 ${selection.reusedMatches} 场`,
         `- 环境：rulesetSha256=${selection.rulesetSha256}；runtime=${selection.sandboxRuntimeHash}`,
-        `- 实际冻结 stage=${report.frozenCandidate?.stage ?? "null"}；冻结字节校验=${report.frozenCandidate?.scriptState ?? "null"}；最后生成阶段仍是 stage2`,
+        `- 实际冻结候选位置=${report.frozenCandidate?.stage ?? "null"}；冻结字节校验=${report.frozenCandidate?.scriptState ?? "null"}；末位候选位置=${report.finalCandidate?.stage ?? "null"}`,
       );
     }
     if (report.failure?.classification === "selection")
@@ -1864,12 +2051,30 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     }
     for (const issue of report.log.issues)
       out.push(`- 日志第 ${issue.line} 行：${escape(issue.reason)}`);
+    /**
+     * 候选分节：**同一份候选只列一次**。
+     *
+     * v3 的候选可能是 1 个，那时「初次」与「最终」是同一份（末位即最终候选），逐节列会把同
+     * 一份字节写两遍——读起来像两次评测。所以按候选身份（source + hash）合并标签：重复的那几
+     * 份只出一节，标题写全它担任的角色。
+     */
+    const candidateSections: { labels: string[]; candidate: ReportCandidate }[] = [];
     for (const [label, candidate] of [
       ["初次候选", report.initialCandidate],
       ...report.intermediateCandidates.map((candidate) => ["中间候选", candidate] as const),
       ["最终候选", report.finalCandidate],
     ] as const) {
       if (candidate === null) continue;
+      const listed = candidateSections.find(
+        (section) =>
+          section.candidate.scriptSource === candidate.scriptSource &&
+          section.candidate.scriptSha256 === candidate.scriptSha256,
+      );
+      if (listed === undefined) candidateSections.push({ labels: [label], candidate });
+      else if (!listed.labels.includes(label)) listed.labels.push(label);
+    }
+    for (const { labels, candidate } of candidateSections) {
+      const label = labels.join("兼");
       out.push(
         "",
         `### ${label}（协议轮 ${candidate.protocolRound}）`,

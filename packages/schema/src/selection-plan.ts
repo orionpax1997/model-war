@@ -9,6 +9,9 @@
  *   `validateSelection`）原样保留。
  * - **v2**（`SELECTION_GRID_VERSION`）：计划就是生成阶段那张评测网格（`TrialPlan`，32 场），
  *   证据是让候选跑满那张网格得到的**逐场观测行**与它唯一的分数（网格平均名次积分）。
+ * - **v3**（`SELECTION_AGENT_VERSION`）：分步形态，只做**读形状**（A1 可以整段缺席，缺席时
+ *   胜者 = 末位候选）。形状与 v2 同一套语义，只把 `stage` / `protocolRound` 换成 `step`：
+ *   胜者指向候选序里的某一位，而不是某个阶段。见文件末尾。
  *
  * ── v2 为什么不再有「选拔自己的计划常量」 ──
  *
@@ -148,8 +151,8 @@ export type ArchiveGridSelection = {
   readonly reason: Exclude<SelectionReason, "earlier-stage">;
 };
 
-/** 存档里的选拔段：两版并行，按 `version` 分派（历史档不迁移）。 */
-export type ArchiveSelection = ArchiveSelectionV1 | ArchiveGridSelection;
+/** 存档里的选拔段：三版并行，按 `version` 分派（历史档不迁移）。 */
+export type ArchiveSelection = ArchiveSelectionV1 | ArchiveGridSelection | ArchiveAgentSelection;
 
 const SHA256 = { type: "string", pattern: "^[0-9a-f]{64}$" } as const;
 const IDENTITY = {
@@ -335,6 +338,91 @@ export const ARCHIVE_GRID_SELECTION_JSON_SCHEMA = {
       properties: IDENTITY,
     },
     // v2 的形状里没有 `earlier-stage`：新生产结果不得使用历史决胜规则。
+    reason: { enum: SELECTION_NEW_REASONS },
+  },
+} as const;
+
+/**
+ * v3 选拔：**胜者指向候选序里的某一位**，而不是某个阶段（ADR-0031）。
+ *
+ * 它只是**读形状**：A1 可以整段缺席（缺席时胜者 = 末位候选），生产侧的复算与选拔不在 A1
+ * 的范围里。形状按 v2 的同一套语义裁出来——计划仍是生成阶段那张评测网格（`TrialPlan`，
+ * `planSha256` 相等），候选仍是「身份 + 生成阶段那份分数 + 逐场证据」，唯一的变化是
+ * `stage` / `protocolRound` 换成 `step`（那次 `evaluate` 的步号），`reusedFromStage`
+ * 换成 `reusedFromStep`：阶段这个概念连同它的字段一起消失。
+ *
+ * 为什么 v3 的档案不写「选拔计划的第二个家」：计划就是生成阶段那张网格，两处各存一份
+ * 只会有两份会漂的字节；所以这里嵌的是同一个 `TRIAL_PLAN_JSON_SHAPE`。
+ */
+export const SELECTION_AGENT_VERSION = 3 as const;
+
+/** v3 的身份：哪一步、编译产物与原始 TS 各自的摘要（不因重复 JS 合并身份）。 */
+export type SelectionAgentIdentity = {
+  readonly step: number;
+  readonly scriptSha256: string;
+  readonly sourceSha256: string;
+};
+
+export type SelectionAgentCandidate = SelectionAgentIdentity & {
+  readonly score: TrialGridScore;
+  readonly matches: readonly SelectionGridMatch[];
+  /** 编译产物与更早候选字节相同时，复算复用的是哪一步（数组下标）；缺席 = 自己跑了网格。 */
+  readonly reusedFromStep?: number;
+};
+
+export type ArchiveAgentSelection = {
+  readonly version: typeof SELECTION_AGENT_VERSION;
+  readonly plan: TrialPlan;
+  readonly candidates: readonly SelectionAgentCandidate[];
+  readonly selected: SelectionAgentIdentity;
+  readonly reason: Exclude<SelectionReason, "earlier-stage">;
+};
+
+const AGENT_IDENTITY = {
+  step: { type: "integer", minimum: 1 },
+  scriptSha256: SHA256,
+  sourceSha256: SHA256,
+} as const;
+const AGENT_IDENTITY_KEYS = ["step", "scriptSha256", "sourceSha256"] as const;
+
+const AGENT_CANDIDATE_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [...AGENT_IDENTITY_KEYS, "score", "matches"],
+  properties: {
+    ...AGENT_IDENTITY,
+    score: TRIAL_GRID_SCORE_JSON_SCHEMA,
+    matches: {
+      type: "array",
+      minItems: TRIAL_MATCHES_PER_CANDIDATE,
+      maxItems: TRIAL_MATCHES_PER_CANDIDATE,
+      items: GRID_MATCH_JSON_SCHEMA,
+    },
+    // 复用来源是**候选序里的下标**（不是步号那种外部标识）：它必须指向更早的那一位。
+    reusedFromStep: { type: "integer", minimum: 0, maximum: 2 },
+  },
+} as const;
+
+/** v3 选拔记录的单份 JSON 形状（条数 1..3：三次评测是配额，不是下限）。 */
+export const ARCHIVE_AGENT_SELECTION_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["version", "plan", "candidates", "selected", "reason"],
+  properties: {
+    version: { type: "integer", const: SELECTION_AGENT_VERSION },
+    plan: TRIAL_PLAN_JSON_SHAPE,
+    candidates: {
+      type: "array",
+      minItems: 1,
+      maxItems: 3,
+      items: AGENT_CANDIDATE_JSON_SCHEMA,
+    },
+    selected: {
+      type: "object",
+      additionalProperties: false,
+      required: AGENT_IDENTITY_KEYS,
+      properties: AGENT_IDENTITY,
+    },
     reason: { enum: SELECTION_NEW_REASONS },
   },
 } as const;
