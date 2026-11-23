@@ -4,7 +4,7 @@
  * ── 为什么这不是「又一个协议测试」 ──
  * 沙箱里的薄壳没有 `jq`,它按**分隔串**切字段。所以「协议改了键序」「转义表多了一个」「载荷里
  * 出现了裸引号」这三件事都不会在 TypeScript 那侧暴露——它们只在真 `bash` 里炸。这个文件因此
- * 不 mock 任何一侧:一边是 `shim.sh` 的字节(拷成 `check` / `evaluate` 再执行),另一边是
+ * 不 mock 任何一侧:一边是 `shim.sh` 的字节(拷成 `check` / `evaluate` / `finish` 再执行),另一边是
  * `@model-war/schema` 的 `serializeToolResponse`。
  *
  * 不需要 bwrap:fd 3 是一条 `socketpair`(Node 对 `stdio[2+] = "pipe"` 的实现),宿主这一端在
@@ -116,7 +116,7 @@ const runShim = async (options: {
 
 describe("请求:一行 JSON,工具名取自 $0", () => {
   it("三个名字各自报自己的名字,并且只写一行", async () => {
-    for (const tool of ["check", "evaluate", "done"]) {
+    for (const tool of ["check", "evaluate", "finish"]) {
       const run = await runShim({
         tool,
         respond: () => serializeToolResponse({ exitCode: 0, stdout: "", stderr: "" }),

@@ -5,7 +5,7 @@
  *
  * 源码哈希会因为一次重构就变,那是噪音;清单只在其行为真的改了时变,而那正是「换 harness」
  * 的定义。所以清单里写的是模型面对的世界:动作语法、可见二进制、挂载、网络、配额、服务形状、
- * **工具收不收参数**、观测出口、deadline、截断上限与比例、上下文守卫、工具链、`done` 的语义。
+ * **工具收不收参数**、观测出口、deadline、截断上限与比例、上下文守卫、工具链、收工命令的语义。
  *
  * ── 清单**不含**两样东西 ──
  *
@@ -29,9 +29,8 @@ import { createHash } from "node:crypto";
 
 import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
-import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE } from "./action.js";
+import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE, ACTION_REJECT_REASONS } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
-import { DONE_SENTINEL } from "./host/done.js";
 import { PROTOCOL_EXIT_CODE } from "./host/dispatcher.js";
 import { bwrapArgv } from "./sandbox/argv.js";
 import { CHANNEL_FD, DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
@@ -44,8 +43,12 @@ import {
 /** 人维护的叙事版本。换 harness 时人改它,digest 由门禁算。 */
 export const HARNESS_VERSION = "bash-mini/0.1";
 
-/** 受限工具的三个名字。它们必须是 rootfs 里真实存在的薄壳(单测比对清单)。 */
-export const HOST_SERVICE_TOOLS = ["check", "evaluate", "done"] as const;
+/**
+ * 受限工具的三个名字。它们必须是 rootfs 里真实存在的薄壳(单测比对清单)。
+ *
+ * 收工工具叫 `finish`:`done` 是 bash 保留字,裸写一行就是语法错误,薄壳不可达(ADR-0032 修订)。
+ */
+export const HOST_SERVICE_TOOLS = ["check", "evaluate", "finish"] as const;
 
 /**
  * 观测告警里必须出现的**可执行方向**。
@@ -72,12 +75,23 @@ export type HarnessManifest = {
     readonly rejects: readonly string[];
     readonly rejectExitCode: number;
   };
-  readonly done: {
-    readonly sentinel: string;
-    readonly scope: "block-line";
-    readonly stopsRemainingCommands: boolean;
-    readonly endsSession: boolean;
-    readonly countsAsStep: boolean;
+  /**
+   * 收工工具这一格:它是沙箱里的一条真命令(`bin/finish` 薄壳),不是文本标记。
+   *
+   * 键名叫 `finish`(与模型看到的那条命令同名),子键说的是**行为**:它经通道上报、由宿主在
+   * 本步结束后收工、照常占一步;而 `stopsRemainingCommands: false` 是这一版的行为放宽——
+   * 整块由 `bash` 解析,`finish` 之后写的行**仍会执行**。
+   *
+   * 档案侧的 `action.kind: "done"` / `termination: "done"` 是 v3 形状里的常量,不跟着改名:
+   * 改它等于升 `archiveSchemaVersion`,而旧档要照旧可读。
+   */
+  readonly finish: {
+    readonly command: "finish";
+    readonly form: "rootfs-shim";
+    readonly signal: "host-channel";
+    readonly stopsRemainingCommands: false;
+    readonly endsSession: true;
+    readonly countsAsStep: true;
   };
   readonly visibleBinaries: readonly string[];
   /** bwrap 的参数表:挂载面、命名空间、环境都在里面(直接取自执行器,不抄一份)。 */
@@ -148,13 +162,14 @@ export const harnessManifest = (): HarnessManifest => {
       blocks: "exactly-one",
       multiLine: "one-bash-c",
       observationRole: "user",
-      rejects: ["no-block", "multiple-blocks", "non-bash"],
+      rejects: ACTION_REJECT_REASONS,
       rejectExitCode: ACTION_REJECT_EXIT_CODE,
     },
-    done: {
-      sentinel: DONE_SENTINEL,
-      scope: "block-line",
-      stopsRemainingCommands: true,
+    finish: {
+      command: "finish",
+      form: "rootfs-shim",
+      signal: "host-channel",
+      stopsRemainingCommands: false,
       endsSession: true,
       countsAsStep: true,
     },
@@ -230,7 +245,7 @@ export const digestOf = (manifest: HarnessManifest): string =>
  * 它是**入库常量**而不是运行时现算,与 `SANDBOX_ROOTFS_TREE_HASH` 同一条纪律:判据锚定确切
  * 取值,回填时必须有人有意改这一行,于是「上限变了但没人注意」在 diff 里看得见。
  */
-export const HARNESS_DIGEST = "551f471faa9c5d803b616274ded6a9ad69e2d3865c303fc44ef7d8a17a3d3efc";
+export const HARNESS_DIGEST = "9c3ba5e089f7577d7ab7b5869bc5383cac3729f411d8890000e90763f720b542";
 
 /** 现算的身份:`harnessVersion` + `harnessDigest`,落进档案的就是这两个。 */
 export const harnessIdentity = (): { version: string; digest: string } => ({

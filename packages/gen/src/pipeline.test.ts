@@ -37,6 +37,7 @@ import {
 } from "@model-war/schema";
 
 import { fail, reply, replies, stubClient } from "./stub-client.js";
+import { TransportError } from "./transport-error.js";
 import { generateOneModel } from "./pipeline.js";
 import { runGeneration, type GenerationRequest } from "./run.js";
 import type { ModelConfig } from "./config.js";
@@ -195,7 +196,7 @@ it("模型原文落 steps[i].raw,且与发回去的字节同源", async () => {
   const stub = stubClient([
     reply(write),
     reply("```bash\nevaluate\n```"),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
   const recording = {
     calls: stub.calls,
@@ -229,7 +230,7 @@ it("模型原文落 steps[i].raw,且与发回去的字节同源", async () => {
 
 it("零候选即失败档:done 收工但从未 evaluate,档的形状与成功档同键集合", async () => {
   const root = mkRoot();
-  const model = stubClient([reply(ACTION), reply("```bash\ndone\n```")]);
+  const model = stubClient([reply(ACTION), reply("```bash\nfinish\n```")]);
   const outcome = await withHostBash(
     () => stepOk(),
     () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
@@ -261,6 +262,8 @@ it("步数耗尽:max-steps,步号等于上限,协议轮数等于步数", async (
   expect(outcome.agent.atStep).toBe(2);
   expect(outcome.agent.steps).toHaveLength(2);
   expect(model.calls).toHaveLength(2);
+  // 步数用完是**预算**耗尽,不是模型违反契约:读的人不必靠 `termination` 反推。
+  expect(outcome.failure.classification).toBe("budget");
 });
 
 it("动作解析失败三次即停:每一步都是非零退出码,一条命令都没跑", async () => {
@@ -280,6 +283,8 @@ it("动作解析失败三次即停:每一步都是非零退出码,一条命令�
   expect(outcome.agent.termination).toBe("action-parse");
   expect(outcome.agent.atStep).toBe(3);
   expect(commands).toHaveLength(0);
+  // 协议不服从是模型违反契约那一格,不因新增 `budget` 档而改写。
+  expect(outcome.failure.classification).toBe("contract");
   for (const step of outcome.agent.steps) {
     expect(step.action).toEqual({ kind: "none" });
     expect(step.exitCode).toBe(ACTION_REJECT_EXIT_CODE);
@@ -306,6 +311,41 @@ it("传输耗尽:那次调用不进 steps、不进协议轮数,生成日志留�
     (line) => (JSON.parse(line) as { kind: string }).kind,
   );
   expect(kinds).toEqual(["converged", "transport"]);
+});
+
+it("退避记账取实测:等待实现没真等就写 0,不按请求时长记", async () => {
+  // ADR-0036 的两段判据要有数据,而「等了多少」只能是实测:请求值(`backoffSleep` 的入参)是
+  // `retryTransport` 算出来的打算,`setTimeout` 只会更晚。这里把两者人为拉开——请求 1s + 2s,
+  // 而钟一步没走——于是「估」与「测」在这条断言上会给出不同答案。
+  const root = mkRoot();
+  const model = stubClient([
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    fail(new TransportError("被限流", { retryable: true, status: 429 })),
+    reply(ACTION),
+    reply("```bash\nfinish\n```"),
+  ]);
+  const outcome = await withHostBash(
+    () => stepOk(),
+    () =>
+      generateOneModel(
+        requestWith(root, {
+          createClient: () => model,
+          maxSteps: 2,
+          // 不真等:退避序列本身由 `retry.test.ts` 判,这里判的是记账。
+          sleep: async () => {},
+        }),
+        configOf(),
+      ),
+  );
+
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  const [first] = outcome.failure.generationLog.map(
+    (line) => JSON.parse(line) as { attemptEvidence: unknown[]; backoffMs: number },
+  );
+  // 两次 429 都落进同一行的尝试证据:请求值合计 ≥ 3000 ms。
+  expect(first?.attemptEvidence).toHaveLength(3);
+  expect(first?.backoffMs).toBe(0);
 });
 
 it("传输耗尽在第一步:零步会话的 prompts 为空、steps 为空", async () => {
@@ -361,7 +401,7 @@ it("截断重试的证据按步聚合:该步日志行装两条 attempts,两枪�
     reply(writeScript(SCRIPT)),
     reply("```bash\nls /contract", { finishReason: "length" }),
     reply("```bash\nevaluate\n```"),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
@@ -467,6 +507,8 @@ it("总墙钟耗尽:已跑完的步留着,不判失败(终止与落档正交)", 
   expect(outcome.agent.termination).toBe("wall-clock");
   // 走完的那几步仍在过程记录里。
   expect(outcome.agent.steps.length).toBeGreaterThan(0);
+  // 墙钟用完与步数用完同一格:会话预算耗尽。
+  expect(outcome.failure.classification).toBe("budget");
 });
 
 it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 wall-clock", async () => {
@@ -511,6 +553,8 @@ it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 
   // 半截响应不进过程记录、不进协议轮数(ADR-0031):它没有被执行的任何动作。
   expect(outcome.agent.steps).toEqual([]);
   expect(outcome.agent.atStep).toBe(0);
+  // 调用进行中被打断也只是「预算用完」,不是传输运气不好。
+  expect(outcome.failure.classification).toBe("budget");
   // 但**日志行仍在**:那一行的形状是传输末行(`responseConverged: false`),不是「静默丢掉」。
   const lines = outcome.failure.generationLog.map(
     (line) => JSON.parse(line) as Record<string, unknown>,
@@ -524,7 +568,7 @@ it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 
 
 it("配额拒绝模型看得见:第 4 次 evaluate 被 dispatcher 拒掉,stderr 进观测", async () => {
   const root = mkRoot();
-  const model = stubClient(replies([ACTION, ACTION, ACTION, ACTION, "```bash\ndone\n```"]));
+  const model = stubClient(replies([ACTION, ACTION, ACTION, ACTION, "```bash\nfinish\n```"]));
   const seen: string[] = [];
   const outcome = await withHostBash(
     () => {
@@ -664,38 +708,41 @@ it("没有引用的候选条目不写(候选序只装真评出成绩的)", async
   expect(outcome.agent.termination).toBe("max-steps");
 });
 
-it("一条 `done` 在块中:`done` 之前的命令照跑,action 记 done", async () => {
+it("宿主不切块:`for … do … done` 的整块原文原样交给执行器,退出码是它自己的", async () => {
+  // 旧实现把收尾的 `done` 当哨兵,交给执行器的是半截块(真实世界里 `bash -c` 当场报语法错误)。
+  // 这一条钉的是生产接缝:`loop → executor → sandbox.run` 的命令字节等于模型写的那一块。
   const root = mkRoot();
-  const model = stubClient([reply("```bash\nls /contract\ndone\necho 不该跑\n```")]);
+  const block = ["for f in a b; do", '  echo "$f"', "done", "printf 'tail'"].join("\n");
+  const model = stubClient([reply(`\`\`\`bash\n${block}\n\`\`\``)]);
   const commands: string[] = [];
   const outcome = await withHostBash(
     (command) => {
       commands.push(command);
-      // 这一块真跑了一个命令:它自己的退出码要原样落进过程记录(不是被 done 改成 0)。
-      return stepOk({ done: true, exitCode: 3 });
+      // 这一块真跑了命令:它自己的退出码要原样落进过程记录(不是被收工改成 0)。
+      return stepOk({ exitCode: 3 });
     },
-    () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
+    () =>
+      generateOneModel(requestWith(root, { createClient: () => model, maxSteps: 1 }), configOf()),
   );
 
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") return;
-  expect(outcome.agent.termination).toBe("done");
-  // 块被切开:执行的是 done 之前那半段。
-  expect(commands[0]).toBe("ls /contract");
-  expect(outcome.agent.steps[0]?.action).toEqual({ kind: "done" });
-  // 有前置命令就是一次真的执行:退出码是命令自己的那个。
+  expect(commands[0]).toBe(block);
+  expect(outcome.agent.steps[0]?.action).toEqual({ kind: "bash", command: block });
   expect(outcome.agent.steps[0]?.exitCode).toBe(3);
+  // 收工没有被触发(整块里根本没有收工命令):会话跑满一步上限。
+  expect(outcome.agent.termination).toBe("max-steps");
 });
 
-it("`done` 独占一块:不起 shell,退出码记 0(不是「起了一次空 bash」)", async () => {
-  // 切完 body 为空就不该起进程:那一步什么都没执行,过程记录里那格就该是 0。
-  // 反面证据由替身给:它一律报 7——真的把空命令交给它跑,这个 0 就变不成。
+it("`finish` 独占一块:它是一条真命令,必须跑到薄壳才会上报收工", async () => {
+  // 旧实现里「整块只有哨兵」走的是「切完 body 为空 → 不起 shell」的短路;收工改成命令之后,
+  // 那条短路不再是收工路径:请求本身由执行器给出(这里由通道替身应答),动作记 done。
   const root = mkRoot();
-  const model = stubClient([reply("```bash\ndone\n```")]);
-  let ran = 0;
+  const model = stubClient([reply("```bash\nfinish\n```")]);
+  const commands: string[] = [];
   const outcome = await withHostBash(
-    () => {
-      ran += 1;
+    (command) => {
+      commands.push(command);
       return stepOk({ exitCode: 7, stdout: "不该跑到\n" });
     },
     () =>
@@ -704,8 +751,9 @@ it("`done` 独占一块:不起 shell,退出码记 0(不是「起了一次空 bas
 
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") return;
-  expect(ran).toBe(0);
   expect(outcome.agent.steps[0]?.action).toEqual({ kind: "done" });
+  // 薄壳这一条不是「其他命令」:它走通道,所以 `handler` 一次都没被调到。
+  expect(commands).toEqual([]);
   expect(outcome.agent.steps[0]?.exitCode).toBe(0);
   expect(outcome.agent.steps[0]?.stdout).toBe("");
 });
@@ -775,7 +823,7 @@ const candidatesOf = (meta: ArchiveMeta) =>
 const sessionOf = (scripts: readonly string[]): readonly string[] =>
   scripts
     .flatMap((script) => [writeScript(script), "```bash\nevaluate\n```"])
-    .concat(["```bash\ndone\n```"]);
+    .concat(["```bash\nfinish\n```"]);
 
 it("freeze 失败也清干净:`archive/<slug>/` 里只剩那一份 failed-<runId>.json", async () => {
   const root = mkRoot();
@@ -954,7 +1002,7 @@ it("快照字节 == 评估时的工作区字节:评完之后改文件不影响�
     reply(writeScript(second)),
     reply("```bash\nevaluate\n```"),
     reply(writeScript("var broken = ;\n")),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
@@ -1022,7 +1070,7 @@ it("计划与现场事实不符即 infra:会话大声失败,不把环境故障�
   const model = stubClient([
     reply(writeScript(SCRIPT)),
     reply("```bash\nevaluate\n```"),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
@@ -1049,7 +1097,7 @@ it("计划与现场事实不符即 infra:会话大声失败,不把环境故障�
 
 it("一次 evaluate 都不做的会话不搬计划:网格不是入场费", async () => {
   const root = mkRoot();
-  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\ndone\n```")]);
+  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
   let planned = 0;
   const outcome = await withHostBash(
     () => stepOk(),

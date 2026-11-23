@@ -71,13 +71,15 @@ const requestOf = (
   ...input,
 });
 
-it("`done` 停:动作照跑、步照记,终止原因是 done", async () => {
-  const model = stubClient([reply(ACTION), reply("```bash\ndone\n```")]);
+it("`finish` 收工:动作照跑、步照记,终止原因是 done", async () => {
+  const model = stubClient([reply(ACTION), reply("```bash\nfinish\n```")]);
   const executor = fakeExecutor([OK, { ...OK, done: true }]);
   const result = await runAgentSession(requestOf({ model, executor: executor.executor }));
 
   expect(result.termination).toBe("done");
   expect(result.atStep).toBe(2);
+  // 收工那一步的 `action.kind` 仍是档案形状里的 `"done"`:那是 v3 档案的常量,
+  // 与模型敲的那条命令叫什么名字无关(改它等于升 archiveSchemaVersion)。
   expect(result.steps.map((step) => step.action)).toEqual([
     { kind: "bash", command: "ls /contract" },
     { kind: "done" },
@@ -314,7 +316,7 @@ it("第二次仍截断:转格式反馈,不执行也不退避,步照记", async (
 });
 
 it("历史形状:system + 首条 user + 每步一对,原文不改写", async () => {
-  const model = stubClient([reply(ACTION), reply(ACTION), reply("```bash\ndone\n```")]);
+  const model = stubClient([reply(ACTION), reply(ACTION), reply("```bash\nfinish\n```")]);
   const executor = fakeExecutor([
     { stdout: "README\n", stderr: "", exitCode: 0 },
     { stdout: "", stderr: "error TS2322\n", exitCode: 1 },
@@ -344,7 +346,7 @@ it("历史形状:system + 首条 user + 每步一对,原文不改写", async () 
 });
 
 it("steps 条数 = 协议轮数 = 响应条数,且首条 prompt 只存一份", async () => {
-  const model = stubClient([reply(ACTION), reply(ACTION), reply("```bash\ndone\n```")]);
+  const model = stubClient([reply(ACTION), reply(ACTION), reply("```bash\nfinish\n```")]);
   const executor = fakeExecutor([OK, OK, { ...OK, done: true }]);
   const result = await runAgentSession(requestOf({ model, executor: executor.executor }));
 
@@ -375,7 +377,7 @@ it("观测截断在生成侧:落盘的字节就是模型看到的字节", async 
 
 it("配额拒绝是模型可见的:宿主伪造的那条 stderr 原样进观测", async () => {
   const refusal = "evaluate: 配额已用尽(3/3),这一次没有执行。";
-  const model = stubClient([reply("```bash\nevaluate\n```"), reply("```bash\ndone\n```")]);
+  const model = stubClient([reply("```bash\nevaluate\n```"), reply("```bash\nfinish\n```")]);
   const executor = fakeExecutor([
     { stdout: "", stderr: refusal, exitCode: 1 },
     { ...OK, done: true },
@@ -400,12 +402,26 @@ it("一次真评出成绩的 evaluate 把提交身份记下来,步号即候选�
   expect(result.submissions).toEqual([{ step: 1, call: 1, ...SUBMISSION }]);
 });
 
-it("执行请求只有两格:第几步、整块原文(切分归执行器,不在请求里夹带行号)", async () => {
-  const model = stubClient([reply("```bash\nevaluate\ndone\necho 不该跑\n```")]);
+it("执行请求只有两格:第几步、整块原文(宿主不切块,也不在请求里夹带行号)", async () => {
+  // 模型写循环时,收尾的 `done` 是 bash 的语法,不是宿主的标记:整块原样下去,一个字节都不改。
+  const model = stubClient([
+    reply("```bash\nfor f in a b; do\n  echo $f\ndone\nfinish\necho 之后照跑\n```"),
+  ]);
   const executor = fakeExecutor([{ ...OK, done: true }]);
   await runAgentSession(requestOf({ model, executor: executor.executor }));
 
-  expect(executor.requests[0]).toEqual({ step: 1, command: "evaluate\ndone\necho 不该跑" });
+  expect(executor.requests[0]).toEqual({
+    step: 1,
+    command: "for f in a b; do\n  echo $f\ndone\nfinish\necho 之后照跑",
+  });
+  // 收工判据来自执行器回包(宿主在块里收到 `finish` 请求),不看命令文本长什么样。
+  const result = await runAgentSession(
+    requestOf({
+      model: stubClient([reply("```bash\nls /contract\n```")]),
+      executor: fakeExecutor([{ ...OK, done: true }]).executor,
+    }),
+  );
+  expect(result.termination).toBe("done");
 });
 
 it("结果侧证据原样落步,没有结果时不写空壳", async () => {
@@ -423,7 +439,7 @@ it("原文与发回去的字节同源:病态保护生效时两处仍是同一份
   const calls: (readonly ChatMessage[])[] = [];
   const responses: ModelResponse[] = [
     { text: huge, finishReason: "stop", usage: {} },
-    { text: "```bash\ndone\n```", finishReason: "stop", usage: {} },
+    { text: "```bash\nfinish\n```", finishReason: "stop", usage: {} },
   ];
   const model = {
     send: async (messages: readonly ChatMessage[]): Promise<ModelResponse> => {
@@ -453,7 +469,7 @@ it("推理随消息带走但不落过程记录", async () => {
   const calls: (readonly ChatMessage[])[] = [];
   const responses: ModelResponse[] = [
     { text: ACTION, finishReason: "stop", usage: {}, reasoning },
-    { text: "```bash\ndone\n```", finishReason: "stop", usage: {} },
+    { text: "```bash\nfinish\n```", finishReason: "stop", usage: {} },
   ];
   const model = {
     send: async (messages: readonly ChatMessage[]): Promise<ModelResponse> => {

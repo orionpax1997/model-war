@@ -26,8 +26,8 @@
  *
  * | 判据 | 家 |
  * |---|---|
- * | 动作语法、`done` 语义、截断、守卫、步数、历史 | `agent/{action,truncate,limits,loop,history}.ts` |
- * | 配额、会话墙钟、`check` / `evaluate` 服务、块切分 | `agent/host/`(票 04) |
+ * | 动作语法、收工命令的语义、截断、守卫、步数、历史 | `agent/{action,truncate,limits,loop,history}.ts` |
+ * | 配额、会话墙钟、`check` / `evaluate` 服务、收工请求 | `agent/host/`(票 04) |
  * | 沙箱隔离与单步墙钟 | `agent/sandbox/`(票 03) |
  * | 档案形状与轮数公式 | `archive.ts` + `packages/schema`(票 01) |
  *
@@ -53,6 +53,7 @@ import {
   type ArchiveStep,
   type ArchiveTermination,
   type ArchiveValidation,
+  type FailureClassification,
   type FailureRecord,
   type TrialGridScore,
   type TrialPlan,
@@ -84,7 +85,6 @@ import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, WallClockExhausted } from "
 import { createBudgetClock } from "./agent/budget-clock.js";
 import { runAgentSession, type AgentLoopResult } from "./agent/loop.js";
 import { sandbox } from "./agent/sandbox/index.js";
-import { splitDoneBlock } from "./agent/host/done.js";
 import { createCheckService } from "./agent/host/check-service.js";
 import {
   candidateObservationsFile,
@@ -136,6 +136,17 @@ export type GenerationLogEntry = {
   readonly attemptEvidence?: readonly AttemptEvidence[];
   /** 模型段墙钟(含退避)。只作记录,deadline 按不含退避的口径判(ADR-0036)。 */
   readonly sendMs: number;
+  /**
+   * 这一步的退避等待**实测**累计毫秒(整数)。
+   *
+   * 为什么是实测:ADR-0036 的受污染判据第一段是「累计退避 > 60 s」,而“等了多久”只能测——
+   * `retryTransport` 给出的是一次等待的**请求值**,`setTimeout` 只会更晚。所以这一格是进出各读
+   * 一次钟的差,不是入参 `ms` 的和。
+   *
+   * 缺数据口径(与报告侧同一条):没有退避的步写 `0`(真的等了 0);旧档没有这一格,读侧读成
+   * `null`(不知道)。两者不许混。
+   */
+  readonly backoffMs?: number;
 };
 
 /** 传输末行:形状上的差别只有 `kind` 与缺少用量/停止原因。 */
@@ -149,13 +160,33 @@ export type GenerationTransportLogEntry = GenerationLogEntry & { readonly kind: 
  * 把「agent 形态又填了 prompts」当成两份会漂的奇据拒掉——所以这里只放空数组。
  */
 export type ModelFailure = {
-  readonly classification: "tsc" | "contract" | "transport" | "selection";
+  readonly classification: FailureClassification;
   readonly prompts: readonly string[];
   readonly generationLog: readonly string[];
   readonly diagnostics: readonly string[];
   readonly message: string;
   readonly candidates?: readonly ArchiveOptimizationCandidateAgent[];
   readonly selectionFailure?: FailureRecord["selectionFailure"];
+};
+
+/**
+ * 终止原因 → 失败分类。
+ *
+ * 按**终止原因**分派,不看错误消息文本:终止原因是 loop 已经判定的结论,而同一个字面量在不同
+ * 消息里含义不同。`max-steps` / `wall-clock` 是会话预算耗尽——它们不是「模型违反契约」,读报告的
+ * 人不必再靠 `termination` 反推。`done` 仍落在 `contract`:它表示模型自己收工,而零候选是这一场
+ * 没交出成绩,与预算无关。
+ *
+ * 写成 `Record<ArchiveTermination, …>` 而不是带 `default` 的 `switch`:新增一个终止原因时这里
+ * 编译不过,而不是悄悄折进 `contract`。
+ */
+const FAILURE_CLASSIFICATION_OF_TERMINATION: Record<ArchiveTermination, FailureClassification> = {
+  done: "contract",
+  "max-steps": "budget",
+  "wall-clock": "budget",
+  context: "contract",
+  "action-parse": "contract",
+  transport: "transport",
 };
 
 /**
@@ -346,9 +377,9 @@ const observeServices = (options: {
 /**
  * 把执行器接到沙箱上。
  *
- * 一次调用 = 一次 `sandbox.run`,块在**宿主侧**先按 `done` 切开(ADR-0032「切掉后半段,整块一次
- * `bash -c`」):切开而不是跑两段,是为了让 shell 状态(`cd`、`set -e`、heredoc)在 `done` 那一行
- * 前后保持连续。
+ * 一次调用 = 一次 `sandbox.run`,**整块原样**交给一次 `bash -c`:宿主不再切块。收工是模型在块里
+ * 调用 `finish`(rootfs 里那条薄壳),它经通道报给宿主,宿主据此在本步结束后收工(ADR-0032 修订)。
+ * 手工切块曾经存在,但它与 `for … done` 的收尾撞车——那是「为了一条更弱的保证牺牲整场会话」。
  *
  * 通道端(`requestHandler`)是票 04 的 dispatcher:它是配额的唯一判据源,超限时回一份伪造
  * stderr 且**真执行函数一次都不调**。
@@ -364,13 +395,13 @@ const createExecutor =
   }): AgentExecutor =>
   async (request: AgentExecRequest): Promise<AgentExecResult> => {
     options.facts.reset();
-    const split = splitDoneBlock(request.command);
-    // `done` 是块内第一行时 body 是空串:不跑空 shell(它的副作用只有一次 `bash` 启动)。
+    // 空块(模型只写了围栏行)不跑空 shell:那不是命令,起一次 `bash` 只为退出 0 没有意义。
+    // 收工不再走这条短路——`finish` 是一条真命令,它必须真的跑到薄壳才会上报。
     const executed =
-      split.body.trim() === ""
+      request.command.trim() === ""
         ? { stdout: "", stderr: "", exitCode: 0, timedOut: false }
         : await sandbox.run({
-            command: split.body,
+            command: request.command,
             workspaceDir: options.workspaceDir,
             // 这一步的应答端:步号绑在这里,不经过会话级槽位。
             requestHandler: options.tools.requestHandlerFor(request.step),
@@ -390,7 +421,8 @@ const createExecutor =
       stderr: executed.stderr,
       exitCode: executed.exitCode,
       timedOut: executed.timedOut,
-      ...(split.ended ? { done: true } : {}),
+      // 收工判据是「这一步收到过 `finish` 请求」,不是命令字节里的某一行的形状。
+      ...(options.tools.finishRequested() ? { done: true } : {}),
       ...(facts.result === undefined ? {} : { result: facts.result }),
       ...(facts.submission === undefined
         ? {}
@@ -447,7 +479,22 @@ const sendWithTransportRetry = async (options: {
     : { ok: false, message: attempt.failure.message, diagnostics: attempt.failure.diagnostics };
 };
 
+/**
+ * 一次 `send` 的发送侧记账:尝试证据 + 这一次 `send` 里退避**实测**等了多少毫秒。
+ *
+ * 退避为什么搭在这里:退避发生在重试层(`retryTransport`)里,它不知道「步」;而一次 `send`
+ * 可能退避多次。所以「当下等的是哪一次 send」由 `inFlightSend` 在 send 起止处指出,等完累加到
+ * 那一桶上——步的边界是日志行,照旧按 `turn.attempts` 切。
+ */
+type SendRecord = { readonly evidence: AttemptEvidence[]; backoffMs: number };
+
 const logLine = (entry: GenerationLogEntry): string => JSON.stringify(entry);
+
+/** 缺省的真等待。测试按 `GenerationRequest.sleep` 注入虚拟时钟那一版(理由见那里)。 */
+const realSleep: RetrySleep = (ms) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 const nonEmptyLines = (text: string): readonly string[] =>
   text
@@ -601,33 +648,45 @@ export const generateOneModel = async (
   });
   budget.start();
 
-  /** 退避等待:不进 active 墙钟(ADR-0036);预算已到点时干脆不再等。 */
+  /**
+   * 退避等待:不进 active 墙钟(ADR-0036);预算已到点时干脆不再等。
+   *
+   * **等多久是测出来的**:入参 `ms` 是 `retryTransport` 算出的**请求值**(退避序列本身由
+   * `retry.test.ts` 判),而 `setTimeout` 只会晚不会早——所以进出各读一次注入的钟,差多少记多少。
+   * 记到当前在途的那一次 `send` 上:退避发生在重试层里,它不知道「步」,而桶知道。
+   */
   const backoffSleep: RetrySleep = async (ms) => {
     if (budget.expired()) return;
+    const record = inFlightSend;
+    const waitedFrom = request.now().getTime();
     budget.pause();
     try {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-      });
+      await (request.sleep ?? realSleep)(ms);
     } finally {
       budget.resume();
+      // 时钟被往回拨时不记负数:“等了多久”不能是负的,而注入的钟在测试里是可控的。
+      if (record !== undefined)
+        record.backoffMs += Math.max(0, request.now().getTime() - waitedFrom);
     }
   };
   /**
-   * 每次 loop 侧 `send` 的一桶尝试证据,按发生序。
+   * 每次 loop 侧 `send` 的一桶尝试证据 + 这一次 send 里退避实测等了多少,按发生序。
    *
    * 一桶 = 一次 `model.send`(里面可能有若干传输重试),而**一步**可能有两次 `send`
    * (截断重试,ADR-0035)。所以桶与日志行不是一一对应:切行时必须按 `turn.attempts` 数,
    * 不能拿 turn 的下标去取——那样截断那一步的日志会拿到上一步的证据,而第二枪直接丢掉。
    */
-  const sendEvidence: AttemptEvidence[][] = [];
+  const sends: SendRecord[] = [];
+  /** 当前在途的那一次 `send`(退避等待累加到它身上)。会话内 send 串行,一个就够。 */
+  let inFlightSend: SendRecord | undefined;
 
   try {
     const loop = await runAgentSession({
       model: {
         send: async (messages: readonly ChatMessage[], sendParams: ModelParams) => {
-          const evidence: AttemptEvidence[] = [];
-          sendEvidence.push(evidence);
+          const record: SendRecord = { evidence: [], backoffMs: 0 };
+          sends.push(record);
+          inFlightSend = record;
           // 这一次调用挂到会话预算上:到点时 `onExpire` 打断的就是它。
           const controller = new AbortController();
           inFlight = controller;
@@ -636,7 +695,7 @@ export const generateOneModel = async (
               client,
               messages,
               params: sendParams,
-              evidence,
+              evidence: record.evidence,
               caliber,
               signal: controller.signal,
               sleep: backoffSleep,
@@ -650,6 +709,7 @@ export const generateOneModel = async (
             }
             return outcome.response;
           } finally {
+            inFlightSend = undefined;
             inFlight = undefined;
           }
         },
@@ -669,15 +729,18 @@ export const generateOneModel = async (
     // 生成日志:**一个日志行 = 一步 = 一组 attempts**(ADR-0032)。
     //
     // 轮号 = 步号;`attempts` 是截断重试的枪数(不占步)。所以这一行要装上**这一步全部**的
-    // 发送侧证据:按 `turn.attempts` 从发生序里切一段。逐 turn 下标取(`sendEvidence[index]`)
+    // 发送侧证据:按 `turn.attempts` 从发生序里切一段。逐 turn 下标取(`sends[index]`)
     // 在截断重试时是错的——那一步有两次 send,于是下一行会拿到上一行的证据、第二枪丢掉。
     // 编号在**步内**连续(1..n):读侧(`attemptsOf`)按下标校验 `attempt === index + 1`。
+    //
+    // 退避时长同理按那段切:截断重试那一步有两次 send,两边的退避都进同一行(它是这一步的账)。
     let cursor = 0;
     for (const turn of loop.turns) {
-      const evidence = sendEvidence
-        .slice(cursor, cursor + turn.attempts)
-        .flat()
+      const records = sends.slice(cursor, cursor + turn.attempts);
+      const evidence = records
+        .flatMap((record) => record.evidence)
         .map((item, index) => ({ ...item, attempt: index + 1 }));
+      const backoffMs = records.reduce((sum, record) => sum + record.backoffMs, 0);
       cursor += turn.attempts;
       generationLog.push(
         logLine(
@@ -690,6 +753,7 @@ export const generateOneModel = async (
                 params,
                 requestEvidence: generationRequestEvidence(config),
                 attemptEvidence: evidence,
+                backoffMs,
                 sendMs: 0,
               }
             : {
@@ -703,6 +767,7 @@ export const generateOneModel = async (
                 attempts: turn.attempts,
                 requestEvidence: generationRequestEvidence(config),
                 attemptEvidence: evidence,
+                backoffMs,
                 sendMs: turn.sendMs,
               },
         ),
@@ -766,7 +831,7 @@ export const generateOneModel = async (
         runId,
         agent: agentFields,
         failure: {
-          classification: loop.termination === "transport" ? "transport" : "contract",
+          classification: FAILURE_CLASSIFICATION_OF_TERMINATION[loop.termination],
           prompts: [],
           generationLog,
           diagnostics: diagnosticLines(loop),
@@ -796,6 +861,8 @@ export const generateOneModel = async (
         runId,
         agent: agentFields,
         failure: {
+          // 会话已经走完并交出了候选;冻不住是落档环节的契约问题,与预算无关——预算耗尽已在
+          // `FAILURE_CLASSIFICATION_OF_TERMINATION` 那一处归成 `budget`。
           classification: "contract",
           prompts: [],
           generationLog,
@@ -828,6 +895,7 @@ export const generateOneModel = async (
         runId,
         agent: agentFields,
         failure: {
+          // 同冻结失败:候选已评估完,写不进 `archive/` 是落档环节的问题,不是预算耗尽。
           classification: "contract",
           prompts: [],
           generationLog,

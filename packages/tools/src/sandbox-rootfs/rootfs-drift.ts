@@ -5,7 +5,7 @@
  * 写成可读的中文;读盘与退出码归入口。分层理由同 `gate/budget-gate.ts`:入口能用假世界喂,
  * 反例不必改真实文件。
  *
- * ── 六条判据,守的是六种不同的漂 ──
+ * ── 七条判据,守的是七种不同的漂 ──
  *
  * 1. **整棵树哈希 == 常量**:字节被改过(哪怕只改一个字节)就是另一份世界。
  * 2. **磁盘文件集 == 清单**:多一个(上一次组装的残骸、顺手放的调试文件)与少一个(漏拷)
@@ -18,6 +18,9 @@
  *    在 gen,rootfs 里那三个名字是它的副本。
  * 6. **顶层只许 `bin/`、`contract/` 与来路说明书**:挂载面之外的任何东西都不该出现在产物
  *    目录里(构建残骸、tarball、`*.o`)。这条是「产物目录本身」的判据,不是文件的判据。
+ * 7. **`PROVENANCE.md` 的来路表 == 入库的静态二进制**:每份二进制都有一行(名字 + 它声称的
+ *    sha256),那串 sha256 与盘上字节相符,且表里没有多出来的行。它是**来路说明书的唯一判据**
+ *    ——这份文件不在挂载面上、也不算进树哈希,所以改它不会让任何别的判据红。
  *
  * ── 常量从 schema 的**源码文本**里取,不 import 真源包 ──
  * 本门禁挂在 `check:quick` 上,而快门禁必须零构建(`@model-war/schema` 的 `exports` 指向
@@ -173,7 +176,8 @@ export const staticBinaryFinding = (
   if (verdict === undefined) {
     return {
       where: path,
-      detail: "解析不出 ELF 头/程序头:它不是 ELF,或被截断了。rootfs 里的五个必须是静态 ELF。",
+      detail:
+        "解析不出 ELF 头/程序头:它不是 ELF,或被截断了。rootfs 里除薄壳之外的每一份都必须是静态 ELF。",
     };
   }
   return verdict.static
@@ -217,6 +221,79 @@ export const topLevelFindings = (
         "产物目录顶层只许 bin/、contract/ 与来路说明书。构建残骸(tarball、deb、*.o、build 目录)" +
         "一律不入库——入库的是内容物,不是它的来路。",
     }));
+
+/**
+ * `PROVENANCE.md` 里那张来路表的一行:产物名(带 `bin/` 前缀)+ 它声称的字节 sha256。
+ *
+ * 表的形态由 `build-rootfs.ts` 逐字生成(`| \`bin/x\` | 版本 | \`sha256\` |`),这里只认形态,
+ * 不认版本列:版本会随换版本变,而 sha256 是唯一判据。
+ */
+export type ProvenanceRow = { readonly name: string; readonly sha256: string };
+
+/** 表行。版本列里出现 `|` 会让形态变形,那种情况按「抽不出」处理(见 `provenanceFindings`)。 */
+const PROVENANCE_ROW = /^\|\s*`?(bin\/[A-Za-z0-9_.-]+)`?\s*\|[^|]*\|\s*`?([0-9a-f]{64})`?\s*\|$/u;
+
+/** 从 `PROVENANCE.md` 的正文里抽出来路表。抽不出任何一行时返回空数组(调用方按失败报)。 */
+export const provenanceRows = (markdown: string): readonly ProvenanceRow[] =>
+  markdown.split("\n").flatMap((line) => {
+    const match = PROVENANCE_ROW.exec(line.trim());
+    const name = match?.[1];
+    const sha256 = match?.[2];
+    return name === undefined || sha256 === undefined ? [] : [{ name, sha256 }];
+  });
+
+/** 盘上的一份静态二进制:路径(`bin/<名字>`)+ 字节的 sha256。 */
+export type ProvenanceBinary = { readonly path: string; readonly sha256: string };
+
+/**
+ * 判据 7:来路表与入库的静态二进制一一对应,且它声称的 sha256 就是盘上那串。
+ *
+ * 三个方向都判:① 每份二进制都有来路;② 来路里那串 hex 与字节相符(生成物被手改过、或换了字节
+ * 没重跑脚本,都在这里红);③ 表里没有多出来的行(删掉一个二进制而忘记重跑,会留下一行
+ * 指向不存在的文件的来路——那是最容易读成「它还在」的形态)。
+ */
+export const provenanceFindings = (
+  rows: readonly ProvenanceRow[],
+  binaries: readonly ProvenanceBinary[],
+): readonly RootfsFinding[] => {
+  const findings: RootfsFinding[] = [];
+  const byName = new Map(rows.map((row) => [row.name, row.sha256]));
+  const documented = new Set(binaries.map((binary) => binary.path));
+
+  for (const binary of binaries) {
+    const claimed = byName.get(binary.path);
+    if (claimed === undefined) {
+      findings.push({
+        where: "PROVENANCE.md",
+        detail:
+          `来路表里没有 \`${binary.path}\` 这一行。它是入库的静态二进制,而它的来源、版本与构建` +
+          "命令只在这张表里——缺一行,下一个人就无法复核这份字节是怎么来的。",
+      });
+      continue;
+    }
+    if (claimed !== binary.sha256) {
+      findings.push({
+        where: binary.path,
+        detail:
+          `\`PROVENANCE.md\` 说这份的 sha256 是 ${claimed},盘上的字节是 ${binary.sha256}。` +
+          "这份说明是生成物:改 `STATIC_BINARY_PINS`、重跑 `pnpm run sandbox:rootfs:build`。",
+      });
+    }
+  }
+
+  for (const row of rows) {
+    if (!documented.has(row.name)) {
+      findings.push({
+        where: row.name,
+        detail:
+          `\`PROVENANCE.md\` 记了一份不在必查清单里的二进制(\`${row.name}\`)。它可能是薄壳、` +
+          "契约文件,或者已经被删掉的那一份——三种都会让「这份字节是谁」这句话指向错的东西。",
+      });
+    }
+  }
+
+  return findings;
+};
 
 /** 判据 5 的另一半:薄壳与二进制必须可执行,否则挂进去也跑不起来。 */
 export const executableFinding = (path: string, executable: boolean): RootfsFinding | undefined =>

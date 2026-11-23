@@ -1,5 +1,5 @@
 /**
- * 动作块解析的单测:三种拒绝、`done` 哨兵的暴露、以及「整块一次 `bash -c`」的边界。
+ * 动作块解析的单测:拒绝形状、与「整块一次 `bash -c`」的边界。
  *
  * 断言的都是**回给模型的字面结论**(命令原文 / 纠正消息说了什么),不是内部步骤:解析器的
  * 全部作用就是把一段文本变成这两种结论之一,中间过程没有第二个观察点。
@@ -28,6 +28,46 @@ it("零个块:不执行、只回纠正消息,并说清「恰好一个 bash 块�
   expect(parsed.correction).toContain("计入步数");
 });
 
+it("纠正消息带逐字正例与逐字反例,并标出这一次踩到的是哪一种", () => {
+  const parsed = parseAction("我想先想想。");
+  if (parsed.kind !== "reject") throw new Error("期望被拒");
+  // 正例是逐字的、最小可执行的:模型抄一行就能过。
+  expect(parsed.correction).toContain("```bash\nls /workspace\n```");
+  // 每条反例逐字在场——这是「拒过什么」的可读证据,不只是「格式不对」。
+  expect(parsed.correction).toContain("<function=bash>");
+  expect(parsed.correction).toContain("<parameter=command>ls /workspace</parameter=command>");
+  expect(parsed.correction).toContain("```ts");
+  expect(parsed.correction).toContain("const x = 1;");
+  // 被点名的是零块那条,其余几条不带标记。
+  expect(parsed.correction).toContain("那个块本身不存在」。 ◀");
+  expect(parsed.correction.match(/^- .*◀$/gmu)).toHaveLength(1);
+  // 句子里的条数由数组长度生成:数一数消息真列了几条,那句话必须说同一个数。
+  // 写死一个数字时,加第五种会让这句话变成谎话,而没有任何断言会红——这一条就是那条断言。
+  const listed = (parsed.correction.match(/^- /gmu) ?? []).length;
+  expect(parsed.correction).toContain(`${String(listed)} 种都会被拒`);
+});
+
+it("XML 工具调用单独一档:被拒的是 `<function=bash>` 那一处,不是泛泛的「格式不对」", () => {
+  // deepseek-v4.1-flash / mimo-v2.6-flash 在 2026-11-19 两次都是这个形状,三次都不改。
+  const parsed = parseAction(
+    [
+      "跑一下。",
+      "<tool_call>",
+      "<function=bash>",
+      "<parameter=command>ls /workspace</parameter=command>",
+      "</function>",
+      "</tool_call>",
+    ].join("\n"),
+  );
+  expect(parsed.kind).toBe("reject");
+  if (parsed.kind !== "reject") return;
+  expect(parsed.reason).toBe("xml-tool-call");
+  expect(parsed.correction).toContain("XML 工具调用形状");
+  expect(parsed.correction).toContain("被拒的是 `<function=bash>` 这一处");
+  // 它不收：拒绝就一条命令都不执行，没有第二条语法。
+  expect(parsed.correction).toContain("没有任何命令被执行");
+});
+
 it("多个块:一个都不执行,纠正消息点名「有几个块」", () => {
   const parsed = parseAction("```bash\nls\n```\n\n```bash\ncat a\n```\n");
   expect(parsed.kind).toBe("reject");
@@ -46,11 +86,11 @@ it("非 bash 标记(解释用的 ts 块):不执行,纠正消息点名标记是�
   expect(parsed.correction).toContain("它的标记是 ```ts,不是 ```bash");
 });
 
-it("块内的 done 原样留在命令里,解析层不做切分也不报行号", () => {
-  // 切分与停块归宿主侧(`host/done.ts` 的 `splitDoneBlock`)。本层曾经另报一份「行号」,
-  // 而那份行号一路传到执行器却从没被读过——同一件事的两份判据,删掉的是多余的那一份。
-  const parsed = parseAction("```bash\nevaluate\ndone\necho 不该跑到\n```\n");
-  expect(parsed).toEqual({ kind: "ok", command: "evaluate\ndone\necho 不该跑到" });
+it("块内的 done 原样留在命令里,解析层不切块也不报行号", () => {
+  // 收工是薄壳上报给宿主的一个请求;本层既不认行也不切块——整块原样交出去。本层曾经另报
+  // 一份「行号」,而那份行号一路传到执行器却从没被读过——同一件事的两份判据,删掉的是多余的那一份。
+  const parsed = parseAction("```bash\nevaluate\ndone\necho 之后的行照跑\n```\n");
+  expect(parsed).toEqual({ kind: "ok", command: "evaluate\ndone\necho 之后的行照跑" });
 });
 
 it("围栏必须独占一行:行内反引号不算动作块", () => {
@@ -77,4 +117,15 @@ it("`evaluate` 动作只认整块:拼了别的东西就是 bash", () => {
 it("「没有动作可执行」的退出码与薄壳的 2 分得开", () => {
   // 薄壳(票 04)用 2 说「工具不可用」;解析被拒是「你没写出可执行的动作」,借 EX_USAGE。
   expect(ACTION_REJECT_EXIT_CODE).toBe(64);
+});
+
+it("写坏的 XML 工具调用(带 id、闭合标签对不上)仍归 xml-tool-call 一档", () => {
+  // `archive/hy4-flash/failed-2026-11-19T05-24-41-903Z` 第 3 步的原文形状:
+  // 标签名后面跟 `:id`,中间夹 `</content></invoke>`。它是同一个不服从的写法,不是「只说了话」。
+  const raw =
+    "<tool_calls:6124c78e><tool_call:6124c78e>bash>\nfinish\n</bash>\n</content></invoke>";
+  const parsed = parseAction(raw);
+  expect(parsed.kind).toBe("reject");
+  if (parsed.kind !== "reject") return;
+  expect(parsed.reason).toBe("xml-tool-call");
 });

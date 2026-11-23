@@ -20,9 +20,13 @@
  * 失败记录**不走** `apps/cli` 的 ajv 装载校验(`archive-meta.ts` / `match-input.ts` 那条缝),
  * 读它的一方只做防御式读栏。给它配一份半截 schema——放行额外属性的空 schema,或一份没有读入端
  * 调用点的 schema——正是 `pending.ts` 头注所禁的「半截校验」:比不写更坏,因为它会让人以为
- * 「失败记录已校验」。故本模块只交类型与文件名前缀常量。
+ * 「失败记录已校验」。故本模块只交类型、文件名前缀常量与那份分类列表(见下一条界线)。
  *
- * ── 本模块含运行时代码:只有末尾那一个前缀常量 ────────────────────────────────
+ * ── 本模块含运行时代码:一个文件名前缀常量与一份分类列表 ──────────────────────────
+ *
+ * 其余导出一律是类型。`FAILURE_CLASSIFICATIONS` 是这条界线上的第二个例外:读侧
+ * (`packages/runner/src/archive-report-evidence.ts`)要在**运行期**拿一份白名单验证外部字节,
+ * 而 runner 不得 import gen(hld §3.2)。分类的家在这里,于是白名单只能从同一份字面量派生。
  */
 
 import type { SelectionCandidateIdentity, SelectionPlan } from "./selection-plan.js";
@@ -37,8 +41,29 @@ import type {
 /** 失败记录文件名的前缀:`failed-<runId>.json` 与存档目录 `<runId>/` 在同一父目录下并列。 */
 export const FAILURE_RECORD_PREFIX = "failed-";
 
-/** 失败分类:`tsc`(编译没过)/ `contract`(静态校验没过)/ `transport`(传输重试耗尽)/ `selection`(三阶段后的选拔未完成)。 */
-export type FailureClassification = "tsc" | "contract" | "transport" | "selection";
+/**
+ * 失败分类的**运行期**列表(类型从它派生,不另写一份)。
+ *
+ * 两侧都读它:写入侧(`packages/gen/src/pipeline.ts`)按 `termination` 分派时用类型
+ * `FailureClassification`,读侧(`packages/runner`)用它验证外部字节里的分类文本。
+ * 加一档只改这里——之前读侧自带一份同值数组,两处得同时改,而漏一处没有任何判据会红。
+ *
+ * - `tsc`:编译没过。
+ * - `contract`:静态校验没过,或会话以其它非预算原因收尾(协议不服从、上下文守卫等)。
+ * - `budget`:**会话预算耗尽**(步数或墙钟用完)。它不是「模型违反契约」,只是这一场没跑完。
+ * - `transport`:传输重试耗尽。
+ * - `selection`:三阶段后的选拔未完成。
+ */
+export const FAILURE_CLASSIFICATIONS = [
+  "tsc",
+  "contract",
+  "budget",
+  "transport",
+  "selection",
+] as const;
+
+/** 失败分类。由上面的列表派生:类型与白名单不可能不同步。 */
+export type FailureClassification = (typeof FAILURE_CLASSIFICATIONS)[number];
 
 /**
  * 失败记录的**身份字段**(哪个模型 / 哪一版 / 哪一跑 / 何时,渠道身份见 `FailureRecord.channelId`):生成侧 `buildFailureRecord` 与
@@ -76,7 +101,7 @@ export type FailureRecord = FailureIdentity & {
   readonly channelId?: string;
   /** 生成时所用的规则集版本(本仓常量)。 */
   readonly ruleset: string;
-  /** 失败分类:`tsc` / `contract` / `transport`。 */
+  /** 失败分类:`tsc` / `contract` / `budget` / `transport` / `selection`;`budget` 是会话预算耗尽,不是模型违反契约。 */
   readonly classification: FailureClassification;
   /** 已收敛的协议轮数,恒等于 `prompts.length`(镜像 `meta.json` 的轮数不变量)。 */
   readonly protocolRounds: number /** 逐轮**完整发出**的 prompt 链(键与含义同 `ModelFailure.prompts`)。 */;

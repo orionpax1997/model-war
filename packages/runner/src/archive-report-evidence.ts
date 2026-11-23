@@ -3,6 +3,7 @@ import {
   ACTION_API_NAMES,
   ACTION_EFFECT_NAMES,
   ACTION_ERROR_CODES,
+  FAILURE_CLASSIFICATIONS,
   USAGE_ENUM_FIELDS,
   TRIAL_TERMINAL_SUMMARY_JSON_SCHEMA,
   type TrialActionFacts,
@@ -434,8 +435,14 @@ export const observationEvidenceOf = (
   };
 };
 
+/**
+ * 失败档的分类文本:白名单来自 `@model-war/schema` 的 `FAILURE_CLASSIFICATIONS`,
+ * 与 `FailureClassification` 类型同一份字面量(类型由那个数组派生)——这里不再手写第二份
+ * 枚举,加一档只需改那一个数组。
+ * schema 不是 gen:读侧从真源包取形状是真源关系,不违反 hld §3.2 的「runner 不得 import gen」。
+ */
 export const failureClassificationOf = (value: unknown) =>
-  enumOf(value, ["tsc", "contract", "transport", "selection"]) ?? "unknown";
+  enumOf(value, FAILURE_CLASSIFICATIONS) ?? "unknown";
 
 /**
  * 一次传输尝试的细分（ADR-0036 的 `AttemptEvidence.failureKind`）：429 / 服务端 / 网络 / 超时。

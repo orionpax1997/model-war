@@ -245,7 +245,7 @@ describe("会话墙钟", () => {
     const { tools, check, evaluate } = session({ deadlineAtMs: 1_000, now: () => 1_000 });
     expect(tools.expired()).toBe(true);
     expect(tools.remainingMs()).toBe(0);
-    for (const tool of ["check", "evaluate", "done"]) {
+    for (const tool of ["check", "evaluate", "finish"]) {
       const response = parse(await ask(tools, `{"tool":"${tool}","args":[]}`));
       expect(response.exitCode).toBe(REFUSAL_EXIT_CODE);
       expect(response.stderr).toContain("会话墙钟");
@@ -302,14 +302,14 @@ describe("信任方向:沙箱侧伪造不出响应", () => {
   });
 });
 
-describe("done 与异常", () => {
-  it("`done` 是合法请求,什么也不执行,并让会话记下它被喊过", async () => {
+describe("finish 与异常", () => {
+  it("`finish` 是合法请求,什么也不执行,并让会话记下它被报过", async () => {
     const { tools, check, evaluate } = session();
-    expect(tools.doneRequested()).toBe(false);
-    const response = parse(await ask(tools, '{"tool":"done","args":[]}'));
+    expect(tools.finishRequested()).toBe(false);
+    const response = parse(await ask(tools, '{"tool":"finish","args":[]}'));
     expect(response.exitCode).toBe(0);
     expect(response.stdout).toBe("");
-    expect(tools.doneRequested()).toBe(true);
+    expect(tools.finishRequested()).toBe(true);
     expect(check.calls).toBe(0);
     expect(evaluate.calls).toBe(0);
   });
