@@ -28,11 +28,11 @@
  *
  * ── 传输层错误的边界 ──
  *
- * 一次 `send` 由 `retry.ts` 的 `retryTransport` 包住:429 / 5xx / 网络失败 / 超时(可重试的
- * `TransportError`)与截断(`finishReason === "length"`)退避重发**同一轮**,不追加 messages、
- * 不占用 `protocolRounds`。规范配置在轮日志的 attemptEvidence 保留各次尝试；旧配置日志
- * 语义不变。重试耗尽或遇到不可重试的错误(400 / 缺凭证)→ 轮循环
- * 停在该轮,返回 `transport` 分类的 `failed`(写盘归 `packages/gen/src/failure.ts`)。
+ * 一次 `send` 由 `retry.ts` 的 `retryTransport` 包住:429 / 网络失败 / 空闲超时(可重试的
+ * `TransportError`)与截断(`finishReason === "length"`)按各自预算重发**同一轮**,不追加 messages、
+ * 不占用 `protocolRounds`;5xx 与其余 4xx 立即收口(ADR-0036)。规范配置在轮日志的 attemptEvidence
+ * 保留各次尝试及其 `failureKind`;旧配置日志语义不变。重试到上限或遇到不可重试的错误(5xx / 400 /
+ * 缺凭证)→ 轮循环停在该轮,返回 `transport` 分类的 `failed`(写盘归 `packages/gen/src/failure.ts`)。
  *
  * ── `kind` 与 `errorCodes` 的取值 ──
  *
@@ -94,6 +94,7 @@ import { generationParams, generationRequestEvidence } from "./generation-policy
 import {
   projectUsage,
   responseAttemptEvidence,
+  transportFailureAttemptEvidence,
   usageCaliberOf,
   type AttemptEvidence,
 } from "./generation-evidence.js";
@@ -321,7 +322,7 @@ const sendOneRound = async (options: {
         attemptEvidence.push(responseAttemptEvidence(number, response, usageCaliber));
         return response;
       } catch (cause) {
-        attemptEvidence.push({ attempt: number, outcome: "transport-error" });
+        attemptEvidence.push(transportFailureAttemptEvidence(number, cause));
         throw cause;
       }
     },

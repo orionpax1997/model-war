@@ -2,6 +2,11 @@ import { USAGE_NUMERIC_FIELDS, USAGE_ENUM_FIELDS } from "@model-war/schema";
 import type { EndpointFamily } from "./config.js";
 import type { ModelResponse } from "./model-client.js";
 import { isRecord } from "./record.js";
+import {
+  TransportError,
+  transportFailureKindOf,
+  type TransportFailureKind,
+} from "./transport-error.js";
 
 /** 用量口径：报告靠它选「哪个字段算输入 / 缓存」那一套读法。 */
 export type UsageCaliber = "openai" | "anthropic";
@@ -88,10 +93,30 @@ export const projectUsage = (
 export type AttemptEvidence = {
   readonly attempt: number;
   readonly outcome: "response" | "transport-error";
+  /**
+   * 传输失败的细分(ADR-0036);只有 `outcome === "transport-error"` 的尝试带它。
+   *
+   * 为什么不用原始状态码:读侧要的是「这是限流还是服务端坏了」,不是「哪个号段」。而它必须落盘
+   * ——否则「重试救回来了」在数据里不存在,而「限流压力」恰恰主要由它体现。
+   */
+  readonly failureKind?: TransportFailureKind;
   readonly finishReason?: string;
   readonly stopDetails?: ModelResponse["stopDetails"];
   readonly usage?: Readonly<Record<string, unknown>>;
 };
+
+/** 一条「这次尝试撞了传输失败」的证据。细分由 `TransportError` 自己报,读侧不解析文案。 */
+export const transportFailureAttemptEvidence = (
+  attempt: number,
+  cause: unknown,
+): AttemptEvidence =>
+  cause instanceof TransportError
+    ? {
+        attempt,
+        outcome: "transport-error",
+        failureKind: transportFailureKindOf(cause),
+      }
+    : { attempt, outcome: "transport-error" };
 
 export const responseAttemptEvidence = (
   attempt: number,

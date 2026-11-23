@@ -111,3 +111,6 @@ agent 形态下这个单位**改名不消失**。一个会话最多 120 步、�
 - **`docs/hld.md` §11 的门禁放宽到允许悬空落点**：本册「断言不提前写」的约束随之失去理由，需要重新论证。
 - **`CONTEXT.md` 里「步」的词条演化出「调用」这层含义**：本册把步钉在「一个动作加一个观测」上的前提失效，左连接与步数上限都要跟着改。
 
+## 指针
+
+本册「重试等待由步级 `sendMs` 覆盖」这句只描述采集口径，不描述 deadline 口径——后者由 [ADR-0036](./0036-transport-failure-not-recoverable.md) 裁成「deadline 按不含退避的 `activeWallClockMs` 判，退避另记 `backoffMs`」。本册要求的 `contextLength` 进 `meta` 与 0036 的终止原因字段共用一次形状版本升级。
