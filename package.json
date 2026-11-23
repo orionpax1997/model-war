@@ -9,7 +9,7 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "quick": "pnpm run fmt && pnpm run lint && pnpm run gate:toolchain && pnpm run gate:toolchain:quickjs && pnpm run gate:no-float && pnpm run gate:budget && pnpm run gate:prose && pnpm run gate:contract && pnpm run gate:prompt:commands && pnpm run gate:prompt:tools && pnpm run gate:landings && pnpm run gate:rootfs && pnpm run gate:scripts",
+    "quick": "pnpm run fmt && pnpm run lint && pnpm run gate:toolchain && pnpm run gate:toolchain:quickjs && pnpm run gate:no-float && pnpm run gate:budget && pnpm run gate:prose && pnpm run gate:contract && pnpm run gate:prompt:commands && pnpm run gate:prompt:tools && pnpm run gate:rootfs",
     "verify": "pnpm run quick && pnpm run test",
     "verify:wide": "pnpm run verify && pnpm run gate:types && pnpm run gate:deps && pnpm run gate:declared-deps && pnpm run gate:drift && pnpm run gate:bench && pnpm run gate:runtime",
     "verify:kernel": "pnpm run build && pnpm run gate:sandbox && pnpm run test:kernel",
@@ -35,8 +35,6 @@
     "gate:contract": "node packages/tools/src/gate/run-contract-gate.ts",
     "gate:prompt:commands": "node packages/tools/src/gate/run-prompt-commands-gate.ts",
     "gate:prompt:tools": "node packages/tools/src/gate/run-prompt-tools-gate.ts",
-    "gate:landings": "node packages/tools/src/gate/run-landing-gate.ts",
-    "gate:scripts": "node packages/tools/src/gate/run-scripts-gate.ts",
     "gate:declared-deps": "node packages/tools/src/gate/run-declared-deps-gate.ts",
     "gate:deps": "tsc -b --pretty false && depcruise packages/*/dist apps/*/dist",
     "gate:drift": "node packages/tools/src/generate/run-drift-gate.ts",

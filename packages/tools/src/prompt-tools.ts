@@ -123,7 +123,7 @@ export const declaredToolNamesFrom = (source: string): DeclaredTools => {
  * 为什么要求逐条登记:一个反引号单词出现在 `system` 里,读者(模型)会把它当**协议里的名字**
  * 读——它要么是一个工具,要么是一件被指名道姓的东西。没有第三条路,所以清单必须是**闭合**的:
  * 新写一个反引号单词而不登记,门禁红一次,由人决定它是工具(去声明里加)还是别的东西(登记理由)。
- * 这与 `gate/landing-gate.ts` 的 `SCRIPT_TOKEN_EXEMPTIONS` 同一条纪律:**豁免要能一句话说清**
+ * 纪律:**豁免要能一句话说清**
  * 「这一类不是工具名」,而不是按文件或按位置豁免。
  */
 export type NonToolToken = {
