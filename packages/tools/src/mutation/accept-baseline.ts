@@ -7,12 +7,12 @@
  *          [--report=<path>] [--baseline=<path>]
  *
  * `--report` / `--baseline` 存在的理由只有一个:门禁自测要能把它指到临时路径上
- * (与 `check:selfproof --probe` 同一个形状)。人正跑时不带它们,读报告、写入库基线,
+ * (与 `gate:selfproof --probe` 同一个形状)。人正跑时不带它们,读报告、写入库基线,
  * 两条路径都来自分片清单(`shards.ts`)。
  *
  * ── 为什么它必须是一条独立命令,而不是某个入口的一步 ────────────────────────
  * ADR-0026 的三条 Consequences 落在同一条轴上:基线入版本库、抬升只能显式为之、
- * 抬升的命令不得出现在任何流水线 / 默认链 / 常跑入口。第三条与「`check:selfproof --probe`
+ * 抬升的命令不得出现在任何流水线 / 默认链 / 常跑入口。第三条与「`gate:selfproof --probe`
  * 只准用于反例」是同一个形状:**能改判据的开关,不能出现在判据自己的正常路径上**。
  * 棘轮的判据是「这一片不许比入库基线低」,而抬基线正好能把它变绿——于是这一步必须是
  * 人显式做的一步,且不可能顺手发生在任何自动路径上。门禁自测守着两件事:
@@ -231,7 +231,7 @@ const main = (): number => {
   out(`已写入 ${display(baselinePath)}。`);
   out(
     `历史:${history.length} 条(基线文件里的 \`history\`,随仓库走;ADR-0027)。` +
-      `趋势读它:pnpm run mutation:history。`,
+      `趋势读它:pnpm run observe:history。`,
   );
   out(
     "这是显式动作:它不在任何流水线、默认链或常跑入口上,agent 不得运行它" +

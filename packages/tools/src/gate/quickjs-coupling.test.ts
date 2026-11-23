@@ -21,7 +21,7 @@ it("quickjs-wasi 版本耦合:根钉版与冻结常量错位即有 findings（�
   expect(checks).toContain("根依赖与冻结常量一致");
   // 报错信息必须告诉人该跑什么、该写回哪一节——否则这条断言红起来只是个谜。
   const detail = found.find((finding) => finding.check === "根依赖与冻结常量一致")?.detail ?? "";
-  expect(detail).toContain("pnpm run probes:sandbox");
+  expect(detail).toContain("pnpm run observe:probes");
   expect(detail).toContain("docs/hld.md §5.0");
 });
 

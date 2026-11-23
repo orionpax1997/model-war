@@ -7,7 +7,7 @@
  * 3. `result` 是稳定的小集合(tsc 的 `TSxxxx` / 契约的规则标签),不是原文。
  *
  * 编译与静态校验都是注入的:这里要断的是本服务的行为,不是 tsc 会不会报错。真 tsc 那一次在
- * `check:sandbox` 的真 bwrap 路径上跑(薄壳 → fd → 真 tsc)。
+ * `verify:kernel` 的真 bwrap 路径上跑(薄壳 → fd → 真 tsc)。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

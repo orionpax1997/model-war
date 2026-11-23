@@ -17,7 +17,7 @@
  *
  * 真 `bwrap` 要非特权 user namespace,而常跑链(unit)不装它——那不是被测行为,是环境账。
  * 假执行器把这一层换掉,于是「动作 → 观测 → 候选 → 档案」这条链在常跑链上仍然全真,只有
- * 隔离本身是假的。真隔离由命名脚本 `check:sandbox` 那一侧验(`apps/cli/src/
+ * 隔离本身是假的。真隔离由命名脚本 `verify:kernel` 那一侧验(`apps/cli/src/
  * agent-real-session.test.ts`)。
  *
  * ── 两个出口 ──

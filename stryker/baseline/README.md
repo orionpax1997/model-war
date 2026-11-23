@@ -43,7 +43,7 @@
 超时噪声 / 静态变异体口径失效),对应的下一步完全不同——补测试、收窄范围、修测量,
 三件事互相替代不了。
 
-    pnpm run mutation:diagnose
+    pnpm run observe:mutation
 
 它读 `reports/mutation/*.json`(要有跑过变异才有的报告),把每一片拆成八桶,
 落两份**同源**报告,并逐片给出「下一步做什么」:
@@ -64,7 +64,7 @@
 每个分片的基线文件里有一个 `history` 数组,按时间升序记着每次抬升的数字。
 它**住在基线里**(ADR-0027):产物会过期(夜间 artifact 只留 14 天),基线不会。
 
-    pnpm run mutation:history
+    pnpm run observe:history
 
 读它,出一份逐片的趋势报告(`reports/mutation/history.md`)。趋势只做**片内**比较:
 分片的 mutate 范围与统计口径各不相同,跨分片排名、汇总成总分一律不做。
@@ -76,12 +76,12 @@
 
 跑完一次**真实的全范围**变异之后,用显式命令把这一片的数字记下来:
 
-    pnpm run mutation:baseline:raise -- --shard=<分片名>
+    pnpm run mutate:baseline -- --shard=<分片名>
 
 - 它必须带 `--shard=<name>`:不存在「无参数全量重写」(分片名拼错直接非零退出,一个字节都不写)。
 - 它只写被点名的那一片,且不会碰别的分片的基线。
 - 它**不在**任何流水线、任何默认链、任何常跑入口上(门禁自测断言这一条)。
-- **agent 不得运行它**(`AGENTS.md`《门禁纪律》)。这与「`check:selfproof --probe` 只准用于反例」
+- **agent 不得运行它**(`AGENTS.md`《门禁纪律》)。这与「`gate:selfproof --probe` 只准用于反例」
   是同一个形状:**能改判据的开关,不能出现在判据自己的正常路径上**。
 
 命令只写 `shard` / `detected` / `valid` / `score` / `coverageBased` / `source` 六个字段;

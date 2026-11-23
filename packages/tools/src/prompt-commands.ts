@@ -1,6 +1,6 @@
 /**
  * 首条消息里的**沙箱二进制清单**与 rootfs 里真实存在的东西是不是同一批(根脚本
- * `check:prompt-commands`)。
+ * `gate:prompt:commands`)。
  *
  * ── 它守的是什么 ──
  *
@@ -18,13 +18,13 @@
  *
  * 首条消息是两节(「静态二进制」⇄「宿主工具」),但两节的**真源不同**:二进制那一节的真源是
  * `SANDBOX_ROOTFS_FILES`,宿主工具那一节的真源是 `AGENT_TOOLS` 声明。一个判据只对住一个真源,
- * 于是两节各自一条门禁:本节判二进制(`check:prompt-commands`),宿主工具归
- * `prompt-tools.ts`(`check:prompt-tools`)。本文件仍负责**解析**两节(分组靠标题认,不解析就
+ * 于是两节各自一条门禁:本节判二进制(`gate:prompt:commands`),宿主工具归
+ * `prompt-tools.ts`(`gate:prompt:tools`)。本文件仍负责**解析**两节(分组靠标题认,不解析就
  * 没法知道二进制那一节在哪里结束),但只对二进制那一节下判决。
  *
  * ── 为什么判的是模板文本,不是渲染结果 ──
  *
- * 挂在 `check:quick` 上的门禁必须零构建(hld §2.2.8、ADR-0003):渲染器住在 `@model-war/gen`,
+ * 挂在 `quick` 上的门禁必须零构建(hld §2.2.8、ADR-0003):渲染器住在 `@model-war/gen`,
  * import 它就让快门禁依赖一次 `tsc -b`。而模板里的清单是**剧本文本**——渲染只替换
  * `{{contractIndex}}` / `{{contractDigest}}` 两处,不碰这份清单。所以判模板等于判模型看到的那段
  * 文本,不需要跑渲染器。常量侧同样读源码文本(`rootfs-drift.ts` 的取法),理由相同。
@@ -66,9 +66,9 @@ export const BINARY_GROUP_HEADING = "### 静态二进制:通用命令";
 /**
  * 宿主工具那一组的标题行。同上,逐字。
  *
- * 判决归 `check:prompt-tools`(`prompt-tools.ts`),但**字面量住在这里**:分组解析在本文件,
- * 两条标题必须是同一处常量。它同时是三处读它的人的同一份真源——`check:prompt-commands`
- * (解析分组)、`check:prompt-tools`(判这一节的内容)、`prompt-commands.test.ts`(纯函数层)。
+ * 判决归 `gate:prompt:tools`(`prompt-tools.ts`),但**字面量住在这里**:分组解析在本文件,
+ * 两条标题必须是同一处常量。它同时是三处读它的人的同一份真源——`gate:prompt:commands`
+ * (解析分组)、`gate:prompt:tools`(判这一节的内容)、`prompt-commands.test.ts`(纯函数层)。
  */
 export const HOST_TOOL_GROUP_HEADING = "### 宿主工具:调用它们,不在沙箱里";
 
@@ -94,7 +94,7 @@ export const derivedBinaries = (files: readonly string[]): readonly string[] =>
 /**
  * 清单里的一行:`- \`名字\` — 用途`。`index` 是它在模板里的行号(1 起),报错时指得到。
  *
- * `group` 是**解析结果**不是判决:`hostTools` 那一组的判决归 `check:prompt-tools`,本文件
+ * `group` 是**解析结果**不是判决:`hostTools` 那一组的判决归 `gate:prompt:tools`,本文件
  * 用它只是为了知道「二进制那一节到这里结束了」。
  */
 export type ListedCommand = {
@@ -113,8 +113,8 @@ const HEADING = /^#{2,6}\s/u;
  * 早先的判据是「标题里含『静态』/『薄壳』」,那是一条按词猜组的规则:模板把标题改成
  * 「本地命令」或「宿主工具」,清单就被静默归错组(甚至整组不算),而门禁会把它报成
  * 「沙箱里有而清单没写」——诊断指错了地方。所以判据换成常量与模板共享的两条字面量:
- * 模板写什么,这里就认什么;模板换了词,对应那条门禁当场红(`check:prompt-commands` 判
- * 二进制那条标题,`check:prompt-tools` 判宿主工具那条)。
+ * 模板写什么,这里就认什么;模板换了词,对应那条门禁当场红(`gate:prompt:commands` 判
+ * 二进制那条标题,`gate:prompt:tools` 判宿主工具那条)。
  */
 const groupOfHeading = (line: string): "binaries" | "hostTools" | undefined => {
   const heading = line.trim();
@@ -224,7 +224,7 @@ export const commandListFindings = (
         detail:
           `命令清单点名了 \`${item.name}\`,而 rootfs 常量里没有它。模型照这条敲会拿到 ` +
           "`command not found`——要么把它加进 `SANDBOX_ROOTFS_FILES` 并重跑 " +
-          "`sandbox:rootfs:build`,要么把这行删掉。",
+          "`build:rootfs`,要么把这行删掉。",
       });
     }
   }

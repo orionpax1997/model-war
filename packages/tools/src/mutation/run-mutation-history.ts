@@ -64,7 +64,7 @@ const render = (
   lines.push("");
   lines.push(`生成时刻:${generatedAt}`);
   lines.push("");
-  lines.push("复跑:`pnpm run mutation:history`(只读基线,不跑变异,不改基线)。");
+  lines.push("复跑:`pnpm run observe:history`(只读基线,不跑变异,不改基线)。");
   lines.push("");
 
   lines.push("## 摘要");

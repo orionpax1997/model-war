@@ -8,7 +8,7 @@
  *
  * `package.json` 的 12 条变异入口都是 `stryker run stryker/<config>.mjs && node … --shard=<name>`:
  * 变异跑完就地比,不另立一条「回头再比」的链——那正是观测项退化成装饰的路径。
- * `--report` / `--baseline` 存在的理由只有一个:门禁自测要能喂夹具(与 `check:selfproof --probe`
+ * `--report` / `--baseline` 存在的理由只有一个:门禁自测要能喂夹具(与 `gate:selfproof --probe`
  * 同一个形状)。正跑时不带它们,读的是分片清单里的默认路径。
  *
  * ── 三种判决与各自的退出码 ─────────────────────────────────────────────────

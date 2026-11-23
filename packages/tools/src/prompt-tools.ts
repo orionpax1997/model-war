@@ -1,6 +1,6 @@
 /**
  * 首条消息的「宿主工具」一节 + `system` 里点到的工具名,与**工具声明**是不是同一批
- * (根脚本 `check:prompt-tools`)。
+ * (根脚本 `gate:prompt:tools`)。
  *
  * ── 它守的是什么 ──
  *
@@ -25,7 +25,7 @@
  * ── 为什么本文件与 `prompt-commands.ts` 是两条门禁 ──
  *
  * 首条消息的两节各有**不同的真源**:二进制那一节的真源是 `SANDBOX_ROOTFS_FILES`(归
- * `check:prompt-commands`),宿主工具这一节的真源是 `AGENT_TOOLS` 声明(归本门禁)。一个判据对住
+ * `gate:prompt:commands`),宿主工具这一节的真源是 `AGENT_TOOLS` 声明(归本门禁)。一个判据对住
  * 一个真源,红的时候才指得准该改哪一边。
  *
  * 两节的分界线**不是硬编码的名单**,而是从两个真源推出来的:声明里与 `bin/` 里某个命令**同名**
@@ -35,7 +35,7 @@
  *
  * ── 零构建:读源码文本,不 import 真源包 ──
  *
- * 本门禁挂在 `check:quick` 上,而快门禁必须零构建(`@model-war/gen` 与 `@model-war/schema` 的
+ * 本门禁挂在 `quick` 上,而快门禁必须零构建(`@model-war/gen` 与 `@model-war/schema` 的
  * `exports` 都指向 `dist/`,import 就让这条链依赖一次 `tsc -b`,hld §2.2.8、ADR-0003)。
  * 所以工具名与探针场数都按**源码文本**取(`rootfs-drift.ts` 的 `literalBody` 那一套)。
  * 抽不出来时**按失败处理并说明原因**,不静默放行——那正是「判据失明但门禁全绿」的形态。
@@ -157,7 +157,7 @@ export const mentionedToolWords = (systemTemplate: string): readonly string[] =>
  * 「宿主工具」一节的判决:标题逐字在场 + 每项一句用途 + 组内唯一 + 集合相等(两个方向)。
  *
  * `sandboxCommands` 是 rootfs `bin/` 里的命令名(调用方从 `SANDBOX_ROOTFS_FILES` 推出)。
- * 它只用来**分界**:声明里与它同名的工具归二进制那一节(那一节由 `check:prompt-commands` 对住),
+ * 它只用来**分界**:声明里与它同名的工具归二进制那一节(那一节由 `gate:prompt:commands` 对住),
  * 其余在本节。
  *
  * 空集合不在这里判——它是入口的空转判据。

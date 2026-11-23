@@ -1,5 +1,5 @@
 /**
- * 沙箱 runtime bundle 的**构建面**(根脚本 `runtime:build` 与漂移门禁共用)。
+ * 沙箱 runtime bundle 的**构建面**(根脚本 `build:runtime` 与漂移门禁共用)。
  *
  * 用法:`node packages/tools/src/sandbox-runtime/build-runtime.ts`(直接把产物写回入库路径)。
  *
@@ -93,7 +93,7 @@ if (invokedDirectly) {
   }
   const size = await writeRuntimeArtifact(SANDBOX_RUNTIME_ARTIFACT_PATH);
   process.stdout.write(
-    `runtime:build 写入 ${SANDBOX_RUNTIME_ARTIFACT_PATH}(${String(size)} 字节;旧产物 ${before})。\n` +
-      "产物已改:请重算并手写 `@model-war/schema` 的 `SANDBOX_RUNTIME_HASH`,再跑 `pnpm run check:runtime`。\n",
+    `build:runtime 写入 ${SANDBOX_RUNTIME_ARTIFACT_PATH}(${String(size)} 字节;旧产物 ${before})。\n` +
+      "产物已改:请重算并手写 `@model-war/schema` 的 `SANDBOX_RUNTIME_HASH`,再跑 `pnpm run gate:runtime`。\n",
   );
 }

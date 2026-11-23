@@ -1,5 +1,5 @@
 /**
- * 门禁:入库沙箱 rootfs 的**现算 == 入库**(根脚本 `check:sandbox-rootfs`)。
+ * 门禁:入库沙箱 rootfs 的**现算 == 入库**(根脚本 `gate:rootfs`)。
  *
  * 用法:`node packages/tools/src/sandbox-rootfs/run-rootfs-drift-gate.ts`
  *
@@ -21,11 +21,11 @@
  * 旧的第五条(「三个薄壳副本与源码真源逐字节相同」)**已删除**:真源与副本一起消失(票 03,
  * 见 `docs/adr/0029-bash-mini-harness-identity.md`:模型没有那条路径)。
  *
- * ── 为什么在 `check:quick` 上(而 `check:sandbox` 不在) ──
+ * ── 为什么在 `quick` 上(而 `verify:kernel` 不在) ──
  * 这一条**零构建**:它读二进制但不编译任何东西,也不碰内核能力,所以放得进快门禁——PR 上就能
  * 拦住「顺手升级 bash」。常量从 `packages/schema/src/sandbox-rootfs.ts` 的**源码文本**里取
  * (不 import 真源包:它的 `exports` 指向 `dist/`,import 就让快门禁依赖一次 `tsc -b`)。
- * `check:sandbox` 要真跑 bwrap(装包、命名空间、无网络),那是环境能力,归 nightly 的硬腿与
+ * `verify:kernel` 要真跑 bwrap(装包、命名空间、无网络),那是环境能力,归 nightly 的硬腿与
  * 自己那条命名脚本;把它塞进 `check` 会让没有 bwrap 的机器上「全量门禁」变红,而那条红在说
  * 「这台机器没装 bubblewrap」,不是在说提交内容有问题。
  *
@@ -59,7 +59,7 @@ const main = (): number => {
     }
     process.stdout.write(
       `rootfs 漂移门禁:红(${String(check.findings.length)} 处)。产物是生成物,别手改:` +
-        "改真源 → `pnpm run sandbox:rootfs:build` → 把新哈希与清单手写回 schema。\n",
+        "改真源 → `pnpm run build:rootfs` → 把新哈希与清单手写回 schema。\n",
     );
     return 1;
   }

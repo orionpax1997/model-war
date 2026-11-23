@@ -72,14 +72,14 @@ export const manifest = (): Manifest =>
  * 理由与断言见 `gates.test.ts` 的 `契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`。
  */
 export const CONTENT_RECHECKS = [
-  "pnpm run check:drift",
-  "pnpm run check:bench",
-  "pnpm run check:runtime",
+  "pnpm run gate:drift",
+  "pnpm run gate:bench",
+  "pnpm run gate:runtime",
 ] as const;
 
 /** 全量门禁末尾那一组(取与复核清单等长的一段)。 */
 export const tailSteps = (): readonly string[] =>
-  (manifest().scripts["check"] ?? "")
+  (manifest().scripts["verify:wide"] ?? "")
     .split("&&")
     .map((step) => step.trim())
     .slice(-CONTENT_RECHECKS.length);

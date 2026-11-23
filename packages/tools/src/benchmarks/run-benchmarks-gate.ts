@@ -1,8 +1,8 @@
 /**
- * 门禁:基准脚本的**编译产物**是不是真的由 `tsconfig.scripts.json` 跑出来的(根脚本 `check:bench`)。
+ * 门禁:基准脚本的**编译产物**是不是真的由 `tsconfig.scripts.json` 跑出来的(根脚本 `gate:bench`)。
  *
  * 用法:`node packages/tools/src/benchmarks/run-benchmarks-gate.ts`
- * 挂在全量门禁 `check` 的末尾,与 `check:drift` 同一位置纪律(产物入库的那一侧都在末尾)。
+ * 挂在全量门禁 `check` 的末尾,与 `gate:drift` 同一位置纪律(产物入库的那一侧都在末尾)。
  *
  * ── 为什么产物要逐字节复现,而不是「看着像」 ─────────────────────────────────
  * 产物入库的理由是门禁的第一印象:clone 完直接能跑,不该每次先构建一遍。
@@ -100,7 +100,7 @@ for (const name of BENCHMARK_NAMES) {
       `✗ ${name}:入库的 ${PRODUCT_FILE} 与重新编译的结果不一致` +
         `(入库 ${bytes(committed)} 字节 / 重编译 ${bytes(compiled.products)} 字节,` +
         `首个差异在第 ${at} 字节)。入库的产物必须是用 tsconfig.scripts.json 跑出来的那份:` +
-        "改完源码跑 `pnpm run bench:build`。",
+        "改完源码跑 `pnpm run build:bench`。",
     );
     failed = true;
     continue;

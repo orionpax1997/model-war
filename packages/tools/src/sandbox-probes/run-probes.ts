@@ -1,8 +1,8 @@
 /**
- * 沙箱行为五条复验探针(根脚本 `pnpm run probes:sandbox`)。
+ * 沙箱行为五条复验探针(根脚本 `pnpm run observe:probes`)。
  *
- * 用法:`node packages/tools/src/sandbox-probes/run-probes.ts`(或 `pnpm run probes:sandbox`)。
- * **不进** `check:quick`,也**不进**默认 `test`:它真装 VM、真跑行为,不是每次编辑都该付的成本。
+ * 用法:`node packages/tools/src/sandbox-probes/run-probes.ts`(或 `pnpm run observe:probes`)。
+ * **不进** `quick`,也**不进**默认 `test`:它真装 VM、真跑行为,不是每次编辑都该付的成本。
  * 只在按当时版本组合复验 hld §5.0 那五条结论时跑;输出落盘到 `PROBE_OUTPUT_DIR`
  * (`reports/` 那一档观测产物,不入库;首次运行自建目录),退出码 0/1(与本仓库其余命名脚本同形)。
  *

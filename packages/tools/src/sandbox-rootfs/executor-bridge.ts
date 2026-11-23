@@ -8,7 +8,7 @@
  * JSON 请求、往 stdout 写一份 JSON 结果。
  *
  * ── 为什么适配脚本是一段字符串,而不是仓里另一个 .ts ──
- * 如果适配脚本落在 `packages/tools/src` 下并 `import "@model-war/gen"`,`check:declared-deps`
+ * 如果适配脚本落在 `packages/tools/src` 下并 `import "@model-war/gen"`,`gate:declared-deps`
  * 会(正确地)判它未声明依赖;而给 tools 加一条指向 gen 的依赖是把包图反过来。所以它是一段
  * **通用胶水**(跑一个动作、把结果写成 JSON),写在字符串里随子进程一起过去:断言全在门禁这边,
  * 执行器那边一行判据也没有。`import(<变量>)` 里没有说明符字面量,因此也不构成一条待声明的依赖。
@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 
-/** 执行器的编译形态入口(相对仓库根)。`check:sandbox` 的命名脚本先 `pnpm run build`。 */
+/** 执行器的编译形态入口(相对仓库根)。`verify:kernel` 的命名脚本先 `pnpm run build`。 */
 export const EXECUTOR_ENTRY = "packages/gen/dist/agent/sandbox/index.js";
 
 /**

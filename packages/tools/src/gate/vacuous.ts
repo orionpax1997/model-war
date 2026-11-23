@@ -68,7 +68,7 @@ export type VacuousExemption = {
  *   它的判决是「scc 装没装」,而 scc 缺失时写 `skipped` 标记正是它要的诚实结果。
  * - `run-quickjs-coupling-gate.ts` 比对的是两个版本号字符串(根依赖 ⇄ 冻结常量),
  *   判据没有「被检集合」这一维,凑一个计数口只会得到一行永远为 1 的死代码。
- * - `toolchain-coupling.ts` 是唯一不叫 `run-*-gate.ts` 的命名门禁入口(`pnpm run coupling`),
+ * - `toolchain-coupling.ts` 是唯一不叫 `run-*-gate.ts` 的命名门禁入口(`pnpm run gate:toolchain`),
  *   形状与上一条同族(两个版本号比对),所以同样没有可数为 0 的集合。
  */
 export const VACUOUS_EXEMPT_ENTRIES: readonly VacuousExemption[] = [

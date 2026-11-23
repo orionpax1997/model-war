@@ -14,7 +14,7 @@ import { defineConfig } from "vitest/config";
  * (SLOW_TEST 常量),只不过它多一层理由——它要 ~6 分钟,连默认 `test` 也不该带上它。
  * `agent-real-session.test.ts` 拿的是第三张:它真起 bwrap,而常跑链不装 bubblewrap——
  * 收进 `unit` 的后果是「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装
- * bubblewrap」,两种处方混成一条红。它的入口是命名脚本 `check:sandbox`,而同一套断言在
+ * bubblewrap」,两种处方混成一条红。它的入口是命名脚本 `verify:kernel`,而同一套断言在
  * unit 里有假执行器的那一份(`apps/cli/src/agent-session-archive.test.ts`)。
  *
  * 三个常量都是「这里与 unit 的 exclude 引用同一份」的形状:改成字面量就会各自漂。
@@ -44,7 +44,7 @@ const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
  * 常跑链的内核探针:把 `bwrap` 换成会拒绝的执行体(理由见该文件头注)。
  *
  * 只装给 `unit` 与 `property`:它们**不该**有任何用例执行真 preflight / 真 bwrap,而真 bwrap 的
- * 那几条住在 `sandbox` project(`check:sandbox`),那里必须是真二进制。两处写同一份路径(不抽
+ * 那几条住在 `sandbox` project(`verify:kernel`),那里必须是真二进制。两处写同一份路径(不抽
  * 常量):`packages/tools/src/vitest/kernel-guard.test.ts` 逐个 project 断言它,抽常量反而让那条
  * 断言要去读常量的值。
  */
@@ -52,8 +52,8 @@ const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
 export default defineConfig({
   test: {
     // 任何测试模块被加载**之前**先补一次 `tsc -b`(理由与代价见 vitest.global-setup.ts 的头注)。
-    // 这一条是 `test:props` 这类独立入口能自己站住的前提:工作区包的 exports 指向 dist/,
-    // 而门禁是按命名脚本手工触发的,不能假定「前面恰好跑过 check:types」。
+    // 这一条是 `test:property` 这类独立入口能自己站住的前提:工作区包的 exports 指向 dist/,
+    // 而门禁是按命名脚本手工触发的,不能假定「前面恰好跑过 gate:types」。
     globalSetup: ["./vitest.global-setup.ts"],
     // 两个 project 的 include 都限定在源码目录:`tsc -b` 会把测试一并编译进各包的 dist,
     // 编译产物绝不能被二次拾取(hld §2.2.4 的禁令同样适用于测试范围)。
@@ -107,8 +107,8 @@ export default defineConfig({
         // 与一条**CLI 冒烟**(spawn 打好的单文件产物 + 假端点 + 真网格)。
         //
         // 它们不进 `unit` 的理由是**环境**而不是耗时:要非特权 user namespace 与系统装的
-        // bubblewrap,而常跑链不装(与 `check:sandbox` 同一条理由:两种处方不该混成一条红)。
-        // 入口是命名脚本 `check:sandbox`;同一套断言在 unit 里由假执行器的那一份盯住
+        // bubblewrap,而常跑链不装(与 `verify:kernel` 同一条理由:两种处方不该混成一条红)。
+        // 入口是命名脚本 `verify:kernel`;同一套断言在 unit 里由假执行器的那一份盯住
         // (`apps/cli/src/agent-session-archive.test.ts` / `gen-archive.test.ts`),所以移走不等于
         // 丢掉覆盖——CLI 产物那一层的 argv 解析与退出码约定另有 `cli.test.ts` 与
         // `packages/gen/src/run.test.ts` 在常跑链上盯着。

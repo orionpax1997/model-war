@@ -1,6 +1,6 @@
 /**
  * 门禁:首条消息的「宿主工具」一节 + `system` 里点的名 == 工具声明,且 `probe` 那一项的场数
- * == `PROBE_MATCH_LIMIT`(根脚本 `check:prompt-tools`)。
+ * == `PROBE_MATCH_LIMIT`(根脚本 `gate:prompt:tools`)。
  *
  * 用法:`node packages/tools/src/gate/run-prompt-tools-gate.ts`
  *
@@ -17,16 +17,16 @@
  *   散文里写死"前 8 场"时改常量不会有任何东西变红。
  * - **分界**:`packages/schema/src/sandbox-rootfs.ts` 的 `SANDBOX_ROOTFS_FILES` 里 `bin/` 的名字,
  *   用来把声明里「与沙箱命令同名」的那个工具(`bash`)留给二进制那一节
- *   (`check:prompt-commands` 判它)。这条分界是**从两个真源推的**,不是手写名单。
+ *   (`gate:prompt:commands` 判它)。这条分界是**从两个真源推的**,不是手写名单。
  *
  * 判据本身在 `prompt-tools.ts`(纯函数,可用假世界喂)。这里只做读盘、空转检测与退出码。
  *
- * ── 为什么它在 `check:quick` 上 ──
+ * ── 为什么它在 `quick` 上 ──
  *
- * 与 `check:prompt-commands` 同一个理由:一个构建、一次网络、一个内核能力都不需要,读四份文本比
+ * 与 `gate:prompt:commands` 同一个理由:一个构建、一次网络、一个内核能力都不需要,读四份文本比
  * 三个集合加一个数。它守的是「加了一个工具而文案没跟上」「文案在教模型调一个不存在的工具」
  * 与「模型读到的场数与它能调的探针不一致」——前者让一整个工具白给,中间那个让模型每一步都拿
- * 一次 `unknown-tool` 拒绝,最后那个让模型误判自己的覆盖面。日常入口是 `verify:fast`,
+ * 一次 `unknown-tool` 拒绝,最后那个让模型误判自己的覆盖面。日常入口是 `verify`,
  * 抓不到等于没有。
  *
  * 退出码:0 = 四个真源互相说同一件事;1 = 任一处违规,或门禁自己失效(抽不出声明 / 抽不出

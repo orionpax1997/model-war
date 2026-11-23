@@ -35,7 +35,7 @@ const BENCHMARKS_DIR = "benchmarks";
 const read = (relative: string): string => readFileSync(`${repoRoot}${relative}`, "utf8");
 
 /**
- * 基准产物的字节数。**与 `check:selfproof` 用的是同一批文件**(`benchmarks/<cell>/script.js`),
+ * 基准产物的字节数。**与 `gate:selfproof` 用的是同一批文件**(`benchmarks/<cell>/script.js`),
  * 但这里现算而不抄常量:算出来的最大值是 `scriptSizeLimit` 的硬下界,抄一份就会与磁盘分叉。
  * 读目录而不另列名字清单:多列一份 `BENCHMARK_NAMES` 就是多一处会悄悄过期的真源。
  */

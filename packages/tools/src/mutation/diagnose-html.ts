@@ -257,7 +257,7 @@ const tldr = (diagnoses: readonly ShardDiagnosis[]): string => {
     "<p>它<b>不改基线</b>、<b>不是门禁</b>、不在任何流水线或常跑链上。</p>" +
       '<p class="dim">棘轮只回答「比上次低不低」;这份报告回答「为什么低」,' +
       "两者分开才有意义。抬基线仍然是所有者显式决定的事。</p>" +
-      '<p class="dim">复跑:<code>pnpm run mutation:diagnose</code></p>',
+      '<p class="dim">复跑:<code>pnpm run observe:mutation</code></p>',
     "gray",
   );
 

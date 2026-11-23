@@ -91,7 +91,7 @@ export const preflightFailureMessage = (reason: string): string =>
     "bwrap 从内核只拿到 EPERM 是上游明说的限制,不是 bug。已知成因三种,按你的机器挑:",
     ...PREFLIGHT_FAILURE_CAUSES.map((cause, index) => `${String(index + 1)}. ${cause}`),
     "",
-    "自检:`pnpm run check:sandbox`(真跑可用性 / 无网络 / 后台进程回收)。",
+    "自检:`pnpm run verify:kernel`(真跑可用性 / 无网络 / 后台进程回收)。",
     "CI 侧的安装走命名脚本 `pnpm run setup:sandbox`,不在 workflow 里写裸 apt-get。",
   ].join("\n");
 

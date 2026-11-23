@@ -1,6 +1,6 @@
 /**
  * 门禁:**跨进程一致性**——抽一份正式对局样本,在两个进程里重跑并逐 tick 比对状态 hash
- * (根脚本 `check:cross-process`)。
+ * (根脚本 `gate:cross-process`)。
  *
  * ```
  * node --disable-warning=ExperimentalWarning \
@@ -17,7 +17,7 @@
  * 用例走的同一条公开面——本文件只是把那条用例从测试里提出来,变成一道独立的命名门禁。
  *
  * ── 样本从哪来 ──────────────────────────────────────────────────────────────
- * 执行体是**入库的冻结基准脚本** `benchmarks/<cell>/script.js`(它自己被 `check:bench` 逐字节钉在
+ * 执行体是**入库的冻结基准脚本** `benchmarks/<cell>/script.js`(它自己被 `gate:bench` 逐字节钉在
  * `script.ts` 上),配固定种子、入库地图 `maps/open-clash.json` 与 `rulesets/v1.json`。门禁把四份
  * 存档三件套、input.json、地图、规则集、runtime bundle(`packages/engine/sandbox-runtime/
  * runtime.iife.js`,入库)与 `quickjs-wasi` 的 wasm(由 `pnpm install` 提供)现造进一个**临时
@@ -25,7 +25,7 @@
  * 系统临时目录,仓库树里不留任何东西(`runs/**` 本就入库在外)。
  *
  * **为什么不入库一份冻结 `input.json`**(曾经考虑过的另一条路):这份样本的可复现输入只有四样——冻结
- * 脚本、固定种子、入库地图、入库规则集——它们在库里各自已被逐字节钉住(`check:bench`、地图 lint、
+ * 脚本、固定种子、入库地图、入库规则集——它们在库里各自已被逐字节钉住(`gate:bench`、地图 lint、
  * `rulesets/v1.json` 是取值真源)。再入库一份由这四样派生的 `input.json`,只多一份会与那四样悄悄
  * 漂移的副本。基准脚本正是 hld §11 那条验收里的「正式对局样本」的执行体:它要用**完整注入面**,而注入面
  * 铺没铺全,恰好由这条跨进程复算连同证明。
@@ -39,7 +39,7 @@
  * ── 它属于哪一层 ────────────────────────────────────────────────────────────
  * 它 spawn 一次 `tsc -b` + esbuild 打一份 CLI 单文件 bundle(与 `cli.test.ts:52-58` 同形),再真跑
  * 一局真沙箱——**不是零构建**的 `gate/run-*-gate.ts` 那一族,故归**按需→夜间**层:不进
- * `check:quick` / `check` / `test` / `verify:fast`(hld §2.2.7)。它的位置纪律由
+ * `quick` / `check` / `test` / `verify`(hld §2.2.7)。它的位置纪律由
  * `packages/tools/src/gates.test.ts` 的 `跨进程一致性门禁按需跑…` 盯着。
  *
  * ── 与另两份文档的分工 ──────────────────────────────────────────────────────

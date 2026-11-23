@@ -1,5 +1,5 @@
 /**
- * 验收落点的存在性判据(`check:landings`)的**纯函数层**。
+ * 验收落点的存在性判据(`gate:landings`)的**纯函数层**。
  *
  * ── 它补的是哪一个洞 ──
  *
@@ -12,7 +12,7 @@
  *
  * | 类别 | 形态 | 判据 |
  * |---|---|---|
- * | 命名脚本 | `` `check:foo` ``(或任何一个确实是脚本名的裸词) | 在 `package.json` 的 `scripts` 键集合里 |
+ * | 命名脚本 | `` `gate:foo` ``(或任何一个确实是脚本名的裸词) | 在 `package.json` 的 `scripts` 键集合里 |
  * | 命令行子命令 | `` `modelwar foo` `` | `foo` 在 `apps/cli/src/commands.ts` 的 `COMMANDS[].name` 里 |
  * | 文件路径 | `packages/…/x.ts`、`benchmarks/…/script.js` | 文件存在 **且** `git ls-files -- <path>` 有输出 |
  * | 目录 | `benchmarks/`(尾斜杠) | 目录存在、非空 **且** `git ls-files -- <dir>` 有输出 |
@@ -67,9 +67,9 @@ const BACKTICKED = /`([^`\n]+)`/g;
 
 /**
  * 命名脚本形态:`a:b`、`a:b:c`。前缀小写字母开头(与仓库的全部命名脚本一致:
- * `check:*` / `mutate:*` / `verify:fast` / `test:*` / `coupling:quickjs` / `setup:hooks` / `probes:*`)。
+ * `gate:*` / `mutate:*` / `verify` / `quick` / `nightly` / `test:*` / `setup:hooks` / `observe:*`)。
  *
- * 形态本身就是「这必须是一个真脚本」的声明:写进文档的 `check:foo` 若不在清单里,读文档的人
+ * 形态本身就是「这必须是一个真脚本」的声明:写进文档的 `gate:foo` 若不在清单里,读文档的人
  * 会照着一条不存在的命令找结果。
  */
 const SCRIPT_SHAPE = /^[a-z][a-z0-9-]*(:[a-z0-9-]+)+$/;
@@ -147,7 +147,7 @@ export type LandingToken = {
  * 把反引号里的一个片段按**形态**归类;四类都认不出(或命中豁免)时返回 `undefined`。
  *
  * 顺序是有意的:CLI 与脚本先判(形态最具体),文件 / 目录最后判(要求已知前缀 + 形状)。
- * 命名脚本还有第二种认法:**裸词恰好是脚本名**(`coupling`、`scan`、`mutate`)。
+ * 命名脚本还有第二种认法:**裸词恰好是脚本名**(`gate:toolchain`、`observe:scan`、`mutate:engine:processor`)。
  * 这两种认法合起来才让「一个命名脚本 token」与「散文里提到的一个词」分得开。
  */
 export const classifyLandingToken = (

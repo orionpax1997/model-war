@@ -15,8 +15,8 @@
  *
  * 它要非特权 user namespace 与系统装的 `bubblewrap`,而常跑链(`pnpm run test`)不装。
  * 收进 `unit` 的后果是两种处方混成一条红:全量门禁红了到底是提交内容有问题,还是这台机器
- * 没装 bwrap(与 `check:sandbox` 那条隔离门禁同一条理由)。所以它归 vitest 的 `sandbox`
- * project,入口是命名脚本 `pnpm run check:sandbox`(先跑隔离那四件事,再跑这一条)。
+ * 没装 bwrap(与 `verify:kernel` 那条隔离门禁同一条理由)。所以它归 vitest 的 `sandbox`
+ * project,入口是命名脚本 `pnpm run verify:kernel`(先跑隔离那四件事,再跑这一条)。
  *
  * 同一套断言在 unit 里有一份**假执行器**版本(`apps/cli/src/agent-session-archive.test.ts`):
  * 沙箱只负责「命令跑在哪一层进程里」,而 `check` / `evaluate` 的答案、编译、校验、落档都不
@@ -134,7 +134,7 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
       workspaceDir,
       // 时钟取当下:会话墙钟 = 起点 + 1800s。
       now: () => new Date(),
-      // 试跑桩:这条用例验的是「真 bwrap + 真通道 + 真档案」,网格本身由 `check:gen-grid`
+      // 试跑桩:这条用例验的是「真 bwrap + 真通道 + 真档案」,网格本身由 `gate:gen-grid`
       // 那一侧用真子进程验。桩写的是**形状真实**的一整张网格(32 行观测 + 旁挂汇总),
       // 于是「有候选 → 成功档 → 报告读得出候选」这一整条链在真沙箱下走过一遍(票 05 残余风险 3:
       // `freezeFromCandidate` 在真 bwrap 下没走过)。

@@ -163,7 +163,7 @@ const fullText = (compiled: CompileResult, validated: ValidateResult | undefined
  *
  * **`root` 之外的一切都可注入**,单测因此不需要真 tsc(那是秒级的子进程)也不需要规则集文件:
  * 这条缝要断言的判据是「截断与落盘」、「错误码的抽取」与「拒绝语义」,不是「tsc 会不会报错」。
- * 真 tsc 的那一次在 `check:sandbox` 的真 bwrap 路径上跑。
+ * 真 tsc 的那一次在 `verify:kernel` 的真 bwrap 路径上跑。
  */
 export const createCheckService = (deps: CheckServiceDeps): CheckService => {
   const limit = deps.limit ?? CHECK_DIAGNOSTIC_LIMIT;

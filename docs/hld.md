@@ -67,12 +67,12 @@
 
 #### 2.2.3 代码质量:oxc 统一工具链
 
-格式化与静态检查统一用 [oxc](https://oxc.rs/):`oxfmt`(格式)、`oxlint`(lint)、`oxlint-tsgolint --type-aware`(类型感知 lint,已 stable,进 `check:types`)。
+格式化与静态检查统一用 [oxc](https://oxc.rs/):`oxfmt`(格式)、`oxlint`(lint)、`oxlint-tsgolint --type-aware`(类型感知 lint,已 stable,进 `gate:types`)。
 
 **三条必须记住的约束**:
 
 1. **类型感知 lint 需要已解析的类型信息**:CI 静态阶段顺序固定为 `tsc -b` → `oxlint --type-aware`。
-2. **`oxlint-tsgolint` 的版本号就是它所配套的 TypeScript 版本**(`7.0.<tsPatch><golintPatch>`)。**这条耦合没有任何工具会替你检查**,错位是静默的(类型感知 lint 不报错,只是不再基于正确的类型信息运行)。由仓库自己的断言脚本 `packages/tools/src/toolchain-coupling.ts` 承担,根脚本 `coupling`,在 `check:quick` 内。
+2. **`oxlint-tsgolint` 的版本号就是它所配套的 TypeScript 版本**(`7.0.<tsPatch><golintPatch>`)。**这条耦合没有任何工具会替你检查**,错位是静默的(类型感知 lint 不报错,只是不再基于正确的类型信息运行)。由仓库自己的断言脚本 `packages/tools/src/toolchain-coupling.ts` 承担,根脚本 `gate:toolchain`,在 `quick` 内。
 3. **确定性 lint 是自建的**(`packages/tools/src/rules/no-float.ts`,基于 `oxc-parser`):engine 包运行时源码禁浮点字面量。**刻意不建在 oxlint 的插件通道上**——那条通道上游标为 alpha,不在 semver 承诺内,而这是一票否决级的约束。
 4. **沙箱 API 白名单分两层,两侧都不交给 oxlint**:名字级别的禁令(`__*` 前缀、确定性污染源)由静态校验器承担;**「白名单反转」由编译器的名字解析承担**(脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types` 的环境里编译,「找不到这个名字」即反转)。
 
@@ -89,7 +89,7 @@
 - **`schema` 包 = 六类数据形状的 TS 类型与 JSON Schema**(规则集 / 地图 / 存档 meta / 对局输入 / 回放行 / 终局结果)+ 常量表 + 参数 key 清单;`rulesets/*.json` = 全部参数取值。每类形状的**家只有这一个**。
 - JSON Schema 以**导出的数据对象**形态存在(`.ts` 里 `export const X_JSON_SCHEMA`),不是独立 `.json` 文件。
 - **文档生成**:规则文档的**数值表**由 `rulesets/*.json` + `schema` 的键清单共同生成,在 `rules.md` 与 `api.md` 两份契约文档里各挂一份、逐字节相同(同一个生产函数);**API 表 / 常量表**由 `schema` 的注入面符号表生成。**散文部分人工编写**,两者是同一份文件里的两种所有权,所以生成物取**区块形态**(定界标记之间是生成物,标记之外不比)。
-- **漂移检查(`check:drift`)是三段判定**:① 内容一致性(按形态分「整文件逐字节比」与「区块形态抽段逐字节比」;**区块抽不出即报红**,不按「无事可做」跳过——否则「删掉标记让检查没东西可查」就是绕过路);② 对 `HEAD` 的差异检查,**限定在生成物路径上**(抓「生成了但没提交」);③ 按生成物路径的状态检查(`git ls-files`,抓「新增生成物没进版本库」)。
+- **漂移检查(`gate:drift`)是三段判定**:① 内容一致性(按形态分「整文件逐字节比」与「区块形态抽段逐字节比」;**区块抽不出即报红**,不按「无事可做」跳过——否则「删掉标记让检查没东西可查」就是绕过路);② 对 `HEAD` 的差异检查,**限定在生成物路径上**(抓「生成了但没提交」);③ 按生成物路径的状态检查(`git ls-files`,抓「新增生成物没进版本库」)。
 - **读入端校验的覆盖面**:规则集、地图、存档元数据、对局输入、回放行、终局结果六类形状都在真源包;ajv 实例只在 `apps/cli` 一处(真源包不得依赖交付运行时校验器)。回放行与终局结果的读入端调用点仍待接线,不要以为六类都已兑现。
 
 #### 2.2.6 gen 管线专属依赖(唯一允许联网的包)
@@ -106,19 +106,20 @@
 
 | 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、首条消息命令清单门禁(`check:prompt-commands`)、首条消息宿主工具清单门禁(`check:prompt-tools`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
-| 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
-| 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
-| 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
-| 按需 → 夜间 | `check:sandbox`、`check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑。`check:sandbox` 要内核能力(非特权 user namespace)与系统装的 `bubblewrap`,所以它自己一条腿:先跑隔离那四件事,再跑真 bwrap 下的一场真会话(vitest 的 `sandbox` project) |
-| 按需(本机,不进任何链) | `check:gen-grid` | **一次 `evaluate` 真跑满一张网格**:它的前提是四份钉死的陪练存档,而 `archive/` 不入库——干净克隆上跑不起来,所以它不进夜间矩阵(那会让「CI 红」与「这台机器没有本地档案」同形)。单测里的真网格判据由 `packages/gen/src/agent/host/evaluate-service.test.ts` 与 `pipeline.test.ts` 用形状真实的假试跑承担 |
-| 按需 → 夜间 | `mutate` / `mutate:<分片>` / `scan` | `mutate*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`scan` 仍**只观测、不设红线** |
-| 按需(不进任何链) | `lint:diagnose` | **测试纪律规则的诊断**:把 oxlint 那几条 vitest 规则报的命中拆成形态与风险(「整条用例的断言都在守卫里」= 可能零断言执行;「部分守卫」= 盲区;循环体 = 逐元素检查),落 `reports/lint/vitest-rules.md`。规则只报位置不报风险,位置与风险不是一回事——命中数本身说明不了有没有假绿来源,这份报告把它变成可复算的判定 |
-| 按需(不进任何链) | `test:report` | **测试观测**:慢测试长尾(用例级耗时 + p50/p90/p99)与不稳定用例。同一批测试跑**两遍**、比两次状态:两次状态不同才叫不稳定。**不用 vitest 的 `retry`**——retry 会把偶发红藏起来,而仓库对假绿敏感;这里照引擎故障轨的语义(先重跑一次、再记账),跑两遍、拿两次状态对比 |
-| 按需(不进任何链) | `mutation:history` | **变异分数的趋势**:逐片给基线随时间的序列与净变化。历史住在入库基线文件的 `history` 字段里(ADR-0027),不靠 CI 产物——产物 14 天就过期,基线随仓库走。趋势只做**片内**比较,不排名、不汇总总分 |
-| 按需(不进任何链) | `mutation:diagnose` | 变异分数的**可解释性诊断**:把「某片分数低」拆成真缺口 / 测不到 / 超时噪声 / 静态变异体口径存疑四类成因,落两份同源报告——`reports/mutation/diagnosis.md`(在终端里读)与 `reports/mutation/diagnosis.html`(给人看:自包含单文件,零外部依赖,每片一条堆叠条,结论卡把「现象」与「下一步动作」分开排版)。它是观测,只读报告不改判据;棘轮只回答「比上次低不低」,不回答「为什么低」,低分片的下一步(补测试 / 收窄范围 / 修测量)要靠它分辨 |
+| 编辑循环(每轮) | `quick` | 格式(`fmt`)、lint、工具版本耦合断言(`gate:toolchain` / `gate:toolchain:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`gate:contract`)、首条消息命令清单门禁(`gate:prompt:commands`)、首条消息宿主工具清单门禁(`gate:prompt:tools`)、验收落点门禁(`gate:landings`)、入库 rootfs 漂移门禁(`gate:rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `quick` |
+| 默认快速收口 | `verify` | `quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
+| 主流水线(PR 与合入) | `gate:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify`**(理由见下注) |
+| 提交前 / 合并前全量 | `verify:wide` | `verify` + 类型感知 lint(`gate:types`) + 依赖巡航(`gate:deps`) + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime)。**广度档**:一个人写完功能只跑 `verify`,这一档放在合并前 |
+| 按需 → 夜间 | `verify:kernel`、`gate:selfproof`、`gate:cross-process`、`gate:limits`、`gate:budget:recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `verify:wide`、也不进默认 `test`**,按需手工跑。`verify:kernel` 要内核能力(非特权 user namespace)与系统装的 `bubblewrap`,所以它自己一条腿:先跑隔离那四件事,再跑真 bwrap 下的一场真会话(vitest 的 `sandbox` project) |
+| 按需(本机,不进任何链) | `gate:gen-grid` | **一次 `evaluate` 真跑满一张网格**:它的前提是四份钉死的陪练存档,而 `archive/` 不入库——干净克隆上跑不起来,所以它不进夜间矩阵(那会让「CI 红」与「这台机器没有本地档案」同形)。单测里的真网格判据由 `packages/gen/src/agent/host/evaluate-service.test.ts` 与 `pipeline.test.ts` 用形状真实的假试跑承担 |
+| 夜间总聚合(本地复现) | `nightly` | 与 `nightly.yml` 的矩阵等价的一条命令:硬门禁按腿串起来,便于在本机复现夜间红。**CI 仍按矩阵逐腿跑**——腿要各自有名字与产物名,红在哪一腿是归因的一部分 |
+| 按需 → 夜间 | `mutate:<分片>` / `observe:scan` | `mutate:*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`observe:scan` 仍**只观测、不设红线** |
+| 按需(不进任何链) | `observe:lint` | **测试纪律规则的诊断**:把 oxlint 那几条 vitest 规则报的命中拆成形态与风险(「整条用例的断言都在守卫里」= 可能零断言执行;「部分守卫」= 盲区;循环体 = 逐元素检查),落 `reports/lint/vitest-rules.md`。规则只报位置不报风险,位置与风险不是一回事——命中数本身说明不了有没有假绿来源,这份报告把它变成可复算的判定 |
+| 按需(不进任何链) | `observe:test` | **测试观测**:慢测试长尾(用例级耗时 + p50/p90/p99)与不稳定用例。同一批测试跑**两遍**、比两次状态:两次状态不同才叫不稳定。**不用 vitest 的 `retry`**——retry 会把偶发红藏起来,而仓库对假绿敏感;这里照引擎故障轨的语义(先重跑一次、再记账),跑两遍、拿两次状态对比 |
+| 按需(不进任何链) | `observe:history` | **变异分数的趋势**:逐片给基线随时间的序列与净变化。历史住在入库基线文件的 `history` 字段里(ADR-0027),不靠 CI 产物——产物 14 天就过期,基线随仓库走。趋势只做**片内**比较,不排名、不汇总总分 |
+| 按需(不进任何链) | `observe:mutation` | 变异分数的**可解释性诊断**:把「某片分数低」拆成真缺口 / 测不到 / 超时噪声 / 静态变异体口径存疑四类成因,落两份同源报告——`reports/mutation/diagnosis.md`(在终端里读)与 `reports/mutation/diagnosis.html`(给人看:自包含单文件,零外部依赖,每片一条堆叠条,结论卡把「现象」与「下一步动作」分开排版)。它是观测,只读报告不改判据;棘轮只回答「比上次低不低」,不回答「为什么低」,低分片的下一步(补测试 / 收窄范围 / 修测量)要靠它分辨 |
 
-> **快反馈优先**:`lint:types` 进主流水线、不进 `verify:fast`——本地每轮都跑一遍全仓类型感知 lint,agent 就会「写完一起跑」,反馈回路断掉。门禁耗时是**基线不是承诺**,本机实测(`tsc -b` 增量 0.74s + `oxlint --type-aware` 3.03s)是这一归属判断的依据,但它不是承诺:干净克隆首次全量编译的耗时未测,把它写成硬约束,后来者会为了凑数字改门禁覆盖面,那比慢几秒坏得多。
+> **快反馈优先**:`gate:types` 进主流水线、不进 `verify`——本地每轮都跑一遍全仓类型感知 lint,agent 就会「写完一起跑」,反馈回路断掉。门禁耗时是**基线不是承诺**,本机实测(`tsc -b` 增量 0.74s + `oxlint --type-aware` 3.03s)是这一归属判断的依据,但它不是承诺:干净克隆首次全量编译的耗时未测,把它写成硬约束,后来者会为了凑数字改门禁覆盖面,那比慢几秒坏得多。
 
 #### 2.2.8 依赖策略
 
@@ -127,7 +128,7 @@
 | engine | 仅 `quickjs-wasi` + `node:crypto` | 除 stateHash 外**禁一切 `node:*`**,由 dependency-cruiser 强制;engine 不做磁盘 I/O(wasm 字节由上层读盘传入,回放写向注入的输出 sink) |
 | runner / apps/cli | 受控少量(ajv 校验器**只在 `apps/cli`**;CLI 参数解析用 `node:util` 的 `parseArgs`) | 只做调度与读文件,不参与结算 |
 | gen | 允许(HTTP 客户端) | 唯一联网包,永不进对局进程 |
-| tools | 第三方依赖面由 `check:declared-deps` 管;包图方向只由 tsc 兜 | 工具包以源码形态执行(靠 Node 的类型擦除),**快门禁必须零构建** |
+| tools | 第三方依赖面由 `gate:declared-deps` 管;包图方向只由 tsc 兜 | 工具包以源码形态执行(靠 Node 的类型擦除),**快门禁必须零构建** |
 
 #### 2.2.9 观测与调试
 
@@ -136,7 +137,7 @@
 #### 2.2.10 依赖治理(dependency-cruiser)
 
 - 根目录 `.dependency-cruiser.js` 把 §3.2 全部规则写成可执行断言,违规非零退出,挂在全量门禁上。
-- **三条实测出来的事实**:① 规则只作用于运行时代码,测试代码豁免;② 巡航入口是 `tsc -b` 的产物 `dist`,**不是 `src`**(TypeScript 7 不再暴露 JS 编程 API,巡航 `src` 会得到「0 modules, 0 dependencies cruised」并**退出 0**——一条永远全绿的假门禁),故依赖门禁必须排在 `tsc -b` 之后;③ `packages/tools` 有意落在巡航范围之外(它只产 `.d.ts`),缺掉的第三方依赖面由 `check:declared-deps` 兜住,包图方向只由 tsc 兜。
+- **三条实测出来的事实**:① 规则只作用于运行时代码,测试代码豁免;② 巡航入口是 `tsc -b` 的产物 `dist`,**不是 `src`**(TypeScript 7 不再暴露 JS 编程 API,巡航 `src` 会得到「0 modules, 0 dependencies cruised」并**退出 0**——一条永远全绿的假门禁),故依赖门禁必须排在 `tsc -b` 之后;③ `packages/tools` 有意落在巡航范围之外(它只产 `.d.ts`),缺掉的第三方依赖面由 `gate:declared-deps` 兜住,包图方向只由 tsc 兜。
 
 #### 2.2.11 明确不做
 
@@ -299,7 +300,7 @@ intent 由 processor 的统一校验裁决:属主正确、参数在界、目标�
 
 决策记录见 [ADR-0001](./adr/0001-sandbox-quickjs-wasi.md)。v0 采用 `quickjs-wasi`(MIT、零第三方依赖),版本**精确锁版**到根 `package.json`。
 
-**以下五条行为结论只对当前锁定版本成立,换版本即失效**。每条各有可执行探针(`pnpm run probes:sandbox`,真 VM、输出落 `reports/sandbox-probes/`、不入库);`check:quick` 里的版本耦合断言(`pnpm run coupling:quickjs`)在根 `package.json` 一改钉版就红,报错信息直接指向复验脚本与本节。
+**以下五条行为结论只对当前锁定版本成立,换版本即失效**。每条各有可执行探针(`pnpm run observe:probes`,真 VM、输出落 `reports/sandbox-probes/`、不入库);`quick` 里的版本耦合断言(`pnpm run gate:toolchain:quickjs`)在根 `package.json` 一改钉版就红,报错信息直接指向复验脚本与本节。
 
 | # | 行为 | 结论 |
 |---|---|---|
@@ -361,7 +362,7 @@ intent 由 processor 的统一校验裁决:属主正确、参数在界、目标�
 
 **中断粒度不可配置**:它是宿主对 wasm 侧回调周期的镜像,改 TS 常量只会让读数系统性偏小、不会让回调变密,没有任何门禁会发现,旧回放还会因此不可复算。
 
-**终值一旦落库就不可就地修改**。以下语义变更要求修改者显式运行 `pnpm run check:budget-recheck`,**由修改者判断触发,机器不按路径 diff 自动判定**:契约散文修订、快照结构变化、沙箱 runtime 或中断粒度变化。**只有判红才确认终值失效**:开新的重标节点,按上面的取值规则重采读数并重算预算键,再落库;不得直接改终值(见 [ADR-0009](./adr/0009-budget-final-values-are-revocable.md))。
+**终值一旦落库就不可就地修改**。以下语义变更要求修改者显式运行 `pnpm run gate:budget:recheck`,**由修改者判断触发,机器不按路径 diff 自动判定**:契约散文修订、快照结构变化、沙箱 runtime 或中断粒度变化。**只有判红才确认终值失效**:开新的重标节点,按上面的取值规则重采读数并重算预算键,再落库;不得直接改终值(见 [ADR-0009](./adr/0009-budget-final-values-are-revocable.md))。
 
 ## 6. 脚本契约与静态校验
 
@@ -515,7 +516,7 @@ archive/<modelSlug>/<runId>/
 
 单 tick 成本 = 四次快照构建 + 四次串行 VM 执行 + 结算;宿主↔VM 跳边界次数为 O(1)/tick,主要成本在快照拷贝与 VM 执行。若超标,优化优先级:**先测沙箱开销** → 再调对局子进程并发度。**任何优化不得改变结算结果**(stateHash 回归守护)。
 
-**单局平均墙钟上限 X 的取值规则**:同机、单进程、入库基准脚本、≥30 局,报 p50 / 均值 / 最坏三栏;**X = 均值的两倍,向上取整到 100 ms**。它是物理量轨的留宽口径,不是单 tick 上限(那是墙钟硬超时),也不含并发度与子进程启动开销。可执行复算:`check:limits`。
+**单局平均墙钟上限 X 的取值规则**:同机、单进程、入库基准脚本、≥30 局,报 p50 / 均值 / 最坏三栏;**X = 均值的两倍,向上取整到 100 ms**。它是物理量轨的留宽口径,不是单 tick 上限(那是墙钟硬超时),也不含并发度与子进程启动开销。可执行复算:`gate:limits`。
 
 ### 10.2 可维护性
 
@@ -534,23 +535,23 @@ archive/<modelSlug>/<runId>/
 | 重放确定性 | `packages/engine/src/determinism.test.ts`(十次重跑逐 tick `stateHash` 全等)+ `packages/replay/src/state-hash.prop.ts`(键序无关 / JSON 往返)+ `modelwar verify`(按 `input.json` 重算并逐 tick 比对) |
 | 四方对等 | `modelwar map-lint` + `apps/cli/src/map-lint/map-lint.test.ts`(四重旋转对称是静态判定 + 单测,不是属性测试) |
 | 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
-| 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `check:budget`(结构门禁)+ `check:budget-recheck`(探针复核) |
-| 生成期沙箱执行器 | `check:sandbox`(真跑七件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移 / coreutils 五条最小调用 / 沙箱里敲不到宿主工具名 / 宿主分派跑通一次 `check`;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
-| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里每一份都是静态 ELF / 契约逐字节 / `PROVENANCE.md` 的来路表与入库字节的 sha256 一一相符)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
-| 模型知道自己有什么命令 | `check:prompt-commands`(首条消息里「静态二进制」一节的命令清单与 `SANDBOX_ROOTFS_FILES` 推出的 `bin/` 集合**逐项相等**;缺项 `awk` / `sleep` 与替代写法在场)+ `check:prompt-tools`(首条消息里「宿主工具」一节点名的工具集合与 `AGENT_TOOLS` 声明的 `name` 集合**逐项相等**,`system` 里点的每个名字都有着落,`probe` 那一项写的前缀场数与 `PROBE_MATCH_LIMIT` 相等)+ `packages/tools/src/prompt-commands.test.ts` + `packages/tools/src/prompt-tools.test.ts`(两个方向 / 分节 / 每项一句用途 / 场数与常量)+ `check:sandbox`(真 bwrap 里 `sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各一条最小调用,断言输出字节) |
-| 宿主工具面 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 参数面 / 拒绝是 `isError` 而不是伪造退出码)+ `check:sandbox`(沙箱里敲不到这四个工具名;宿主分派真的跑通一次 `check`,真 tsc) |
+| 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `gate:budget`(结构门禁)+ `gate:budget:recheck`(探针复核) |
+| 生成期沙箱执行器 | `verify:kernel`(真跑七件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移 / coreutils 五条最小调用 / 沙箱里敲不到宿主工具名 / 宿主分派跑通一次 `check`;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
+| 沙箱内容物可钉 | `gate:rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里每一份都是静态 ELF / 契约逐字节 / `PROVENANCE.md` 的来路表与入库字节的 sha256 一一相符)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
+| 模型知道自己有什么命令 | `gate:prompt:commands`(首条消息里「静态二进制」一节的命令清单与 `SANDBOX_ROOTFS_FILES` 推出的 `bin/` 集合**逐项相等**;缺项 `awk` / `sleep` 与替代写法在场)+ `gate:prompt:tools`(首条消息里「宿主工具」一节点名的工具集合与 `AGENT_TOOLS` 声明的 `name` 集合**逐项相等**,`system` 里点的每个名字都有着落,`probe` 那一项写的前缀场数与 `PROBE_MATCH_LIMIT` 相等)+ `packages/tools/src/prompt-commands.test.ts` + `packages/tools/src/prompt-tools.test.ts`(两个方向 / 分节 / 每项一句用途 / 场数与常量)+ `verify:kernel`(真 bwrap 里 `sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各一条最小调用,断言输出字节) |
+| 宿主工具面 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 参数面 / 拒绝是 `isError` 而不是伪造退出码)+ `verify:kernel`(沙箱里敲不到这四个工具名;宿主分派真的跑通一次 `check`,真 tsc) |
 | 动作协议与收工命令 | `packages/gen/src/agent/action.test.ts`(四种被拒形状与逐字正/反例)+ `packages/gen/src/agent/host/dispatcher.test.ts`(`finish` 被受理才置位:被拒的那一次不是收工)+ `packages/gen/src/agent/loop.test.ts`(收工判据读宿主交回的 `done`,不读工具名)+ `packages/gen/src/agent/identity.test.ts`(`actionSyntax.rejects` 与 `finish` 那一格进 `harnessDigest`) |
-| 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
+| 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `gate:selfproof` |
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
 | 评测网格与选拔复算 | `packages/runner/src/trial-plan.test.ts`(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ `packages/runner/src/selection-grid.test.ts`(逐场复算比对)+ `packages/runner/src/archive-report-v2.test.ts`(生成阶段分数与赛季口径分离) |
-| 一次 `evaluate` 真跑满一张网格 | `packages/gen/src/agent/host/evaluate-service.test.ts`(提交身份 / 快照即提交 / 缺场不产候选 / 观测外置)+ `packages/gen/src/pipeline.test.ts`(候选 1..3、第 4 次被拒、胜者取末位、快照字节 == 评估时工作区字节)+ `check:gen-grid`(真子进程跑 32 场,判完整性 / 身份 / 观测外置 / 耗时量级;需要四份钉死的陪练存档,所以是独立腿而不是 `check:sandbox` 的一条) |
-| 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`（`stateHash` 断言）+ `check:no-float`（禁浮点门禁是其中一轨） |
+| 一次 `evaluate` 真跑满一张网格 | `packages/gen/src/agent/host/evaluate-service.test.ts`(提交身份 / 快照即提交 / 缺场不产候选 / 观测外置)+ `packages/gen/src/pipeline.test.ts`(候选 1..3、第 4 次被拒、胜者取末位、快照字节 == 评估时工作区字节)+ `gate:gen-grid`(真子进程跑 32 场,判完整性 / 身份 / 观测外置 / 耗时量级;需要四份钉死的陪练存档,所以是独立腿而不是 `verify:kernel` 的一条) |
+| 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`（`stateHash` 断言）+ `gate:no-float`（禁浮点门禁是其中一轨） |
 | 陪练身份与自指标记 | `packages/runner/src/archive-report-steps.test.ts`（v3 候选旁挂 `.grid.json` 的 `plan.scripts` 四份身份读出（`id` / `role` / `source` / `scriptSha256`）；`plan` 缺席或文件不在写「未记录」而不是异常；`incumbent:<本席位>` 且来源 runId 不是本档时标出「陪练 = 本席位上一场；本场与它不可直接比」，指向别席位时不标） |
 | 档案形状版本与旧档读兼容 | `apps/cli/src/archive-v3.test.ts`（v3 写 → 装载 → 报告往返；v1/v2 旧档 fixture 照旧读出）+ `packages/runner/src/fixtures/archive/README.md`（旧档副本的来源与改写清单） |
 | 传输韧性与限流处置 | `packages/gen/src/retry.test.ts`（三套预算互不侵占、`Retry-After` 作下限、抖动只向上、单次与累计封顶、5xx 一次即收口）+ `packages/gen/src/pipeline.test.ts`（重试不涨协议轮数、`attemptEvidence.failureKind` 留痕）+ `packages/gen/src/run.test.ts`（单模型失败不中止同批） |
 | 步级度量与受污染分层 | `packages/runner/src/archive-report-steps.test.ts`（步级 `stepMs` = `sendMs` + `harnessMs` 的 p50/p95/max 与会话中位数、每步 prompt 大小与 `input[i] − input[i−1]`（首步 null）、缓存命中率为回归哨兵的口径、`round == step` 左连接的不匹配计数、候选序以候选描述符为真源（动作标签只作注）、`--json` 的 `failureKind` 与受污染单列及阈值）+ `packages/runner/src/archive-report-v2.test.ts`（v2 网格档的报告口径不因步列改动漂移） |
 
-它自己有判据:`check:landings` 逐行验落点的存在性(命名脚本必在脚本清单里、`modelwar <子命令>` 必在 CLI 的 `COMMANDS` 里、文件与目录必须存在且被版本库跟踪、一行里一个都认不出即红),并顺带断言文档里以命名脚本形态出现的 token 都真的存在。判据只读这张表,**不把它变成生成物**——它的家就是这份文档。
+它自己有判据:`gate:landings` 逐行验落点的存在性(命名脚本必在脚本清单里、`modelwar <子命令>` 必在 CLI 的 `COMMANDS` 里、文件与目录必须存在且被版本库跟踪、一行里一个都认不出即红),并顺带断言文档里以命名脚本形态出现的 token 都真的存在。判据只读这张表,**不把它变成生成物**——它的家就是这份文档。
 
 ## 12. 开放项(工程侧)
 

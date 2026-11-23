@@ -6,7 +6,7 @@
  * 档案里记的那串身份,第三方复核时凭的是**版本库里那批确切字节**,不是「跑一次现算」。所以取值是
  * 常量,口径(范围 / 串接 / 算法)写死在 ADR-0037,由门禁证明「现算 == 入库」——
  * 算法在 `packages/tools/src/contract-tree.ts`(它要 `node:crypto`,而本包 hld §3.2 不许有依赖),
- * 判据挂在 `check:contract`(`check:quick` 上)。
+ * 判据挂在 `gate:contract`(`quick` 上)。
  *
  * ── 为什么它住真源包 ──
  *
@@ -16,8 +16,8 @@
  *
  * ── 怎么改 ──
  *
- * 改契约字节(含目录说明、含骨架)、改挂载清单 ⇒ 跑 `pnpm run check:contract`,它会红并把**现算值**
+ * 改契约字节(含目录说明、含骨架)、改挂载清单 ⇒ 跑 `pnpm run gate:contract`,它会红并把**现算值**
  * 打出来,把那个值写回下面这一行。手写而不是自动生成:它是入库事实,改它应该是一次有意的动作。
  */
 export const CONTRACT_TREE_HASH =
-  "5f546085b263f8acbd697c0de95c10a826f62a427ba30034f504409f657f3897";
+  "37290242a1df358e26068096c006e4d5e0fde578d5decebe45da80d1fc36a2a2";

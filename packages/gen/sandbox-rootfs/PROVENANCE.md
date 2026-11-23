@@ -1,6 +1,6 @@
 # 沙箱 rootfs 的来路
 
-这份文件是 `pnpm run sandbox:rootfs:build` 的产物,**不要手改**:它由
+这份文件是 `pnpm run build:rootfs` 的产物,**不要手改**:它由
 `packages/tools/src/sandbox-rootfs/build-rootfs.ts` 按下面那张表逐字生成。改表、重跑脚本、
 再按脚本打印的新值手写回 `@model-war/schema` 的 `SANDBOX_ROOTFS_TREE_HASH`。
 
@@ -17,7 +17,7 @@
 
 宿主借来的二进制让 `bash` 与 glibc 的版本随机器漂移,后果直接打在等价基线上:同一模型在两台
 机器上跑出不同成绩时,你先得排除「bash 版本不同」。内容物钉成确切字节之后,这条不确定性消失,
-`ldd` 闭包门禁也整条不需要。产物入库、以字节为准,配 `check:sandbox-rootfs` 的「现算 == 入库」
+`ldd` 闭包门禁也整条不需要。产物入库、以字节为准,配 `gate:rootfs` 的「现算 == 入库」
 漂移门禁——与 ADR-0007 对 runtime bundle 的处理同款。
 
 ## 9 个二进制
@@ -147,9 +147,9 @@ tar xf coreutils-9.12.tar.xz && cd coreutils-9.12 && ./configure --disable-nls -
 1. 按上面的命令行取到新的字节(deb 用 `apt-get download` 取钉死的包版本;tarball 先核对
    `SOURCE_ARCHIVE_PINS`,再 `configure` + `make` + `strip`)。
 2. 改这个文件里对应的 `STATIC_BINARY_PINS` 条目(版本、来源、命令、sha256)。
-3. `pnpm run sandbox:rootfs:build --static-bin-dir <dir>`,把脚本打印的文件清单与整棵树哈希
+3. `pnpm run build:rootfs --static-bin-dir <dir>`,把脚本打印的文件清单与整棵树哈希
    手写回 `@model-war/schema` 的 `SANDBOX_ROOTFS_FILES` / `SANDBOX_ROOTFS_TREE_HASH`。
-4. `pnpm run check:sandbox-rootfs`(零构建,读二进制但不需编译)`+ pnpm run check:sandbox`
+4. `pnpm run gate:rootfs`(零构建,读二进制但不需编译)`+ pnpm run verify:kernel`
    (真跑 bwrap:可用性、无网络、后台进程不回收即红)。
 
 **换二进制是一次断代。** `check` / `evaluate` 的行为会随 coreutils 与 bash 的版本变,所以它

@@ -290,7 +290,7 @@ it("`--version` 报的版本与 apps/cli/package.json 一致", () => {
 
 const sha256Hex = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
-// 真沙箱 runtime 的实测哈希 = 入库产物字节的 sha256(真源在 `@model-war/schema`,由 check:runtime 盯住)。
+// 真沙箱 runtime 的实测哈希 = 入库产物字节的 sha256(真源在 `@model-war/schema`,由 gate:runtime 盯住)。
 const sandboxRuntimeHash = SANDBOX_RUNTIME_HASH;
 
 /**

@@ -19,7 +19,7 @@
     "packages/tools/selfproof/stub/**",
     "packages/engine/sandbox-runtime/runtime.iife.js",
     // 入库沙箱 rootfs(ADR-0033):bin/ 下是静态 ELF 二进制,contract/ 是 `docs/rules-v2/` 的
-    // **逐字节副本**(被 `check:sandbox-rootfs` 钉住)。两者都不是本仓库的源码:格式化器或 linter
+    // **逐字节副本**(被 `gate:rootfs` 钉住)。两者都不是本仓库的源码:格式化器或 linter
     // 碰它们只会让「现算 == 入库」红在一个与被检对象无关的原因上。
     "packages/gen/sandbox-rootfs/**",
     // 存档字节 fixture（档案形状 v3 那一票）：它们是从真实 `archive/` 抽出来的**档案副本**，
@@ -67,7 +67,7 @@
     //   · 99 处守卫落点全部落在「部分守卫」形态(34 条用例是 partly-conditional),
     //     即「有就查」——条件为假时那件事压根没发生,不查是对的;
     //   · 循环体里的 547 处断言是逐元素检查(property test 对每个生成值断言),不算守卫。
-    // 复跑:`pnpm run lint:diagnose`(报告落 `reports/lint/vitest-rules.md`)。
+    // 复跑:`pnpm run observe:lint`(报告落 `reports/lint/vitest-rules.md`)。
     // 为什么仍不启用:它只报位置、不报形态,启用后每次都出 99 条命中,而这 99 条已被上面的
     // 判定证明不是缺陷——那是一条只会制造噪音、不会拦住任何东西的判据。
     "vitest/no-conditional-expect": "off",

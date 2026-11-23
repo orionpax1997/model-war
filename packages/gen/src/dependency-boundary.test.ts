@@ -8,7 +8,7 @@
  * 1. 包图那一半(本文件):`gen` 不得 import engine / runner / replay。engine 持有原始结果类型
  *    (`RunMatchParams` / `RunMatchResult`),runner 跑对局并把产物落 `runs/`,replay 读对局产物——
  *    gen 的试跑事实须经 CLI 与 schema 接缝接收，不能直接调用这些包。断言方式是机器门禁本身:spawn `depcruise`
- *    跑真实配置(`check:deps` 的同一条),退出码非零即为违规。规则名见 `.dependency-cruiser.js`。
+ *    跑真实配置(`gate:deps` 的同一条),退出码非零即为违规。规则名见 `.dependency-cruiser.js`。
  * 2. 源码符号那一半(`no-match-result-symbols.test.ts`):`gen` 运行时代码里不得出现对局结果符号。
  *    它不看构建产物,补上门禁看不见的那些字面量——`runs/` 这种字符串没有跨包边。
  *
@@ -39,7 +39,7 @@ const repoRoot = here("../../../");
 const genDist = here("../dist/");
 
 /**
- * 巡航入口与 `check:deps` 的命令行参数同一范围(`packages` 与 `apps` 下各包的 `dist` 目录),但这里由目录列举得出。
+ * 巡航入口与 `gate:deps` 的命令行参数同一范围(`packages` 与 `apps` 下各包的 `dist` 目录),但这里由目录列举得出。
  * 不把它抄成一份字面量清单:那种写法要求每加一个包就回来改一次,漏改时测试还是绿的——
  * 而它绿的恰好是「巡航到的图少了这个包」这件事,不是真绿。
  * 判据是同一个:包的 `dist` 里有 `.js`(只产 `.d.ts` 的 `tools` 因此自然不在图里)。
@@ -72,7 +72,7 @@ const runDepcruise = (): { status: number; output: string } => {
 // 与 engine 全图巡航及真实沙箱集成并行，局部时限保留完整依赖断言。
 it("gen 的运行时代码不 import engine / runner / replay", { timeout: 30_000 }, () => {
   // depcruise 巡航的是 tsc -b 的产物(本仓库没有它能用的 TS 编译器,见 .dependency-cruiser.js 顶部),
-  // 所以 dist 必须先在。`check:deps` 自带 tsc -b,vitest 的 globalSetup 也补一次;
+  // 所以 dist 必须先在。`gate:deps` 自带 tsc -b,vitest 的 globalSetup 也补一次;
   // 这里只在裸跑本文件时兜底,起法与 vitest.global-setup.ts 一致(process.execPath + tsc 入口)。
   if (!existsSync(genDist)) {
     const build = spawnSync(

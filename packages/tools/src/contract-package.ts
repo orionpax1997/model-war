@@ -26,7 +26,7 @@
  *
  * ── 零构建 ──
  *
- * 只 import node 内置模块。挂在 `check:quick` 上的门禁必须零构建(hld §2.2.8、ADR-0003),
+ * 只 import node 内置模块。挂在 `quick` 上的门禁必须零构建(hld §2.2.8、ADR-0003),
  * 而本模块要同时被那道门禁与 (将来的) 挂载器读取,所以它不碰 `@model-war/schema`。
  */
 

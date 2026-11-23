@@ -128,6 +128,6 @@ describe("不撒谎", () => {
 
   it("不出现抬基线的字样:它是观测,不是判据", () => {
     expect(html).not.toContain("accept-baseline");
-    expect(html).not.toContain("mutation:baseline:raise");
+    expect(html).not.toContain("mutate:baseline");
   });
 });

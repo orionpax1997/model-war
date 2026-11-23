@@ -20,7 +20,7 @@
  *
  * ── 零构建 ──
  *
- * 只 import node 内置模块与 `artifact.ts`(纯类型)。契约挂载门禁挂在 `check:quick` 上,而快门禁
+ * 只 import node 内置模块与 `artifact.ts`(纯类型)。契约挂载门禁挂在 `quick` 上,而快门禁
  * 必须零构建(hld §2.2.8、ADR-0003),所以本模块不得 import `@model-war/schema`——这也正是它
  * 不复用 `registry.ts` 的原因(那张表要一路 import 到真源包)。
  */

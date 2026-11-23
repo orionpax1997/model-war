@@ -26,7 +26,7 @@
  * |---|---|---|
  * | `string-embedded` | 该文件以**字符串源**形式被载入(编译期拼成字符串再 eval),从不进 ES 模块图 → 覆盖归因不了 | 移出 mutate 范围,或改成真 import |
  * | `spawn-only` | 该文件只被**spawn 子进程**的门禁自测观察(真实门禁跑它、断言它的退出码与输出),不在 Stryker 的 dry-run 集里 → 它的行为在沙箱里从没被跑到 | 移出 mutate 范围;它的有效性由门禁自测的反例保证 |
- * | `drift-only` | 该文件只被**漂移门禁**(`check:drift`)观察,没有单元测试 → 同上 | 移出 mutate 范围 |
+ * | `drift-only` | 该文件只被**漂移门禁**(`gate:drift`)观察,没有单元测试 → 同上 | 移出 mutate 范围 |
  *
  * 三类都不该记成「测试弱」。它们的量级见 `reports/mutation/diagnosis.md`。
  */
@@ -123,7 +123,7 @@ export const ATTRIBUTION_ENTRIES: readonly AttributionEntry[] = [
   {
     kind: "drift-only",
     pattern: "packages/tools/src/generate/**",
-    reason: "生成器:只被漂移门禁 `check:drift` 观察(改真源不重跑必须红),没有单元测试。",
+    reason: "生成器:只被漂移门禁 `gate:drift` 观察(改真源不重跑必须红),没有单元测试。",
   },
 ];
 

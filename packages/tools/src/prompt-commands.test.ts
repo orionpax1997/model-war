@@ -9,7 +9,7 @@
  *
  * ── 判据收窄之后本文件只测二进制那一半 ──
  *
- * 宿主工具那一节的判决归 `prompt-tools.test.ts`(`check:prompt-tools`)。本文件仍测**解析**
+ * 宿主工具那一节的判决归 `prompt-tools.test.ts`(`gate:prompt:tools`)。本文件仍测**解析**
  * (分组靠两条标题认),因为二进制那一节的边界就是靠它划出来的。
  *
  * ── 断言的形状 ──
@@ -73,7 +73,7 @@ it("解析:只收分组标题下面的清单项,行号指得到,用途原样留�
 });
 
 it("分组标题换词:红在标题上,而不是报一堆「沙箱里有而清单没写」", () => {
-  // 反例必须落在**二进制**那条标题上:宿主工具那条归 `check:prompt-tools`,
+  // 反例必须落在**二进制**那条标题上:宿主工具那条归 `gate:prompt:tools`,
   // 在这里改它只会让二进制那一节被整段抹掉,报的就不是标题那一条了。
   const renamed = TEMPLATE.replace(BINARY_GROUP_HEADING, "### 本地命令");
   const findings = commandListFindings(renamed, BINARIES);

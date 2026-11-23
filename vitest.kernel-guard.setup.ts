@@ -5,7 +5,7 @@
  *
  * 「常跑链上没有任何用例会执行真 preflight / 真 bwrap」——它不是一句纪律,而是一条**环境事实**:
  * `fast.yml` 不装 bubblewrap,本机装了。所以「本机能跑绿的线上会红」这件事只有在没装 bwrap 的
- * 机器上才显形,而那种红与「提交内容有问题」是同一条红(两种处方混成一种,`check:sandbox` 拆
+ * 机器上才显形,而那种红与「提交内容有问题」是同一条红(两种处方混成一种,`verify:kernel` 拆
  * 出去的理由正是这个)。反过来,本机装了 bwrap 时,一条忘了注入替身的用例会**安静地**跑真沙箱
  * ——它绿得刚好把问题盖住。
  *
@@ -45,7 +45,7 @@ export const KERNEL_GUARD_ENV = "MW_KERNEL_GUARD_DIR";
  * 拆成几段拼接就会让那条比对失效。
  */
 export const KERNEL_GUARD_MESSAGE =
-  "kernel-guard:常跑链(unit / property)上不许起真 bwrap——要跑沙箱的用例必须换上替身(packages/gen/src/agent/sandbox.fixture.ts 的 withHostBash / withRealBash),真隔离由 `pnpm run check:sandbox` 验。";
+  "kernel-guard:常跑链(unit / property)上不许起真 bwrap——要跑沙箱的用例必须换上替身(packages/gen/src/agent/sandbox.fixture.ts 的 withHostBash / withRealBash),真隔离由 `pnpm run verify:kernel` 验。";
 
 const guardDir = join(tmpdir(), "model-war-kernel-guard");
 const guardBinary = join(guardDir, "bwrap");

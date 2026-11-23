@@ -1,8 +1,8 @@
 /**
- * 门禁:沙箱 runtime bundle 的**入库产物**是不是真的由构建脚本产出的(根脚本 `check:runtime`)。
+ * 门禁:沙箱 runtime bundle 的**入库产物**是不是真的由构建脚本产出的(根脚本 `gate:runtime`)。
  *
  * 用法:`node packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts`
- * 挂在全量门禁 `check` 的末尾,与 `check:drift` / `check:bench` 同一位置纪律。
+ * 挂在全量门禁 `check` 的末尾,与 `gate:drift` / `gate:bench` 同一位置纪律。
  *
  * ── 为什么产物要逐字节复现,而不是「看着像」 ──
  * 产物入库的理由是回放 meta 那一栏 `sandboxRuntimeHash` 必须能被**第三方凭存档复算**,
@@ -10,8 +10,8 @@
  * 一件事:**拿入库的源码重跑同一条构建命令,必须得到逐字节相同的那份产物**;并且入库产物的
  * sha256 必须等于真源包里那份常量。判据锚定确切字节,依据见 ADR 0007。
  *
- * ── 为什么与 `check:drift` / `check:bench` 分作三条 ──
- * `check:drift` 管「名单类数据 → 生成物」那张登记表,`check:bench` 管 tsc 编译产物,
+ * ── 为什么与 `gate:drift` / `gate:bench` 分作三条 ──
+ * `gate:drift` 管「名单类数据 → 生成物」那张登记表,`gate:bench` 管 tsc 编译产物,
  * 本条管 esbuild 构建产物。三者产出方式不同,合表会让一道门禁同时判两套不变量、判定段也会分叉。
  *
  * ── 三段判定 ──
@@ -81,7 +81,7 @@ if (fresh !== committed) {
     `✗ runtime bundle:入库的 ${SANDBOX_RUNTIME_ARTIFACT_PATH} 与重新构建的结果不一致` +
       `(入库 ${String(bytes(committed))} 字节 / 重构建 ${String(bytes(fresh))} 字节,` +
       `首个差异在第 ${String(at)} 字节)。入库的产物必须是用 esbuild 构建出来的那份:` +
-      "改完源码跑 `pnpm run runtime:build`。",
+      "改完源码跑 `pnpm run build:runtime`。",
   );
   failed = true;
 }

@@ -7,12 +7,12 @@
  * 沙箱只负责「命令跑在哪一层进程里」,`check` / `evaluate` 的答案、编译、校验、落档都不经过它。
  * 所以这里把执行器换成宿主 `bash`(`@model-war/gen/testing` 的 `withRealBash`),通道、宿主服务与
  * 归档三侧全部是真实现。同一套断言在真 bwrap 下的那一份住
- * `apps/cli/src/agent-real-session.test.ts`,由命名脚本 `check:sandbox` 跑(那里有 bubblewrap);
+ * `apps/cli/src/agent-real-session.test.ts`,由命名脚本 `verify:kernel` 跑(那里有 bubblewrap);
  * 本文件跑在 `unit`(常跑链),不装 bubblewrap 也绿。
  *
  * 两个文件断言的是**同一件事**,不是两件事:一份证明「这条链在真隔离里也通」,一份证明「它在
  * 每轮编辑循环里也通」。少了前一份,沙箱与管线会各绿各的;少了这一份,闸门就只剩门禁那一侧,
- * 而门禁不在 `verify:fast` 上。
+ * 而门禁不在 `verify` 上。
  *
  * ── 判据是「装载器不红」 ──
  *
@@ -104,7 +104,7 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
   // 四步:写脚本 → 跑 check → evaluate → done。工具命令经通道打到宿主服务,其余在宿主 bash 里跑。
   // 第一步写脚本。这里用 heredoc 而不是首条消息的起手式(`cp`):假执行器只把 `/workspace`
   // 改写成宿主路径,`/contract` 在宿主上不存在——「沙箱里有没有 `cp`」是**内容物**的事实,
-  // 只有真 bwrap 那条用例(以及 `check:sandbox-rootfs` 的文件集门禁)能判它。
+  // 只有真 bwrap 那条用例(以及 `gate:rootfs` 的文件集门禁)能判它。
   const model = stubClient([
     bashOf("cat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF"),
     toolOf("check"),
@@ -122,7 +122,7 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
         workspaceDir,
         now: () => new Date(),
         // 试跑桩:形状真实的一整张网格(32 行观测 + 旁挂汇总)。真子进程那张网格由
-        // `check:gen-grid` 验,这里验的是「有候选 → 成功档 → 报告读得出」。
+        // `gate:gen-grid` 验,这里验的是「有候选 → 成功档 → 报告读得出」。
         trial: completeGridTrial(),
         trialPlan: () => gridPlanFixture(),
       },

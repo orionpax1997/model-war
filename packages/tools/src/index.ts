@@ -22,13 +22,13 @@
  *   它不联网——生成器放这里而不放生成管线包,理由是**依赖面**随后者扩张(hld §2.2.6),不是联网。
  * - `benchmarks/` 基准目录那一侧:编译(按根层那份 `tsconfig.scripts.json` 派生运行配置)、
  *   诊断分类与注入面空值桩。包内箭头是 `benchmarks/` → `@model-war/schema`(只取注入面那张目录),
- *   与 `generate/` 同一根;它的两个入口是 `bench:build`(写回产物)与 `check:bench`(门禁)。
+ *   与 `generate/` 同一根;它的两个入口是 `build:bench`(写回产物)与 `gate:bench`(门禁)。
  *
  * ── 本包**有意**在 dependency-cruiser 的巡航范围之外 ──
  * 不是疏漏,是取舍:depcruise 巡航 `dist`,而本包 `emitDeclarationOnly`、`dist` 里没有 `.js`;
  * 本仓库的 TypeScript 7 没有 JS 编程 API,depcruise 巡航 `src` 只会得到「0 modules」+ exit 0 的假绿。
  * 让本包产 JS 就要让快门禁付一次构建,而快门禁必须零构建(ADR-0003)。
- * 代价里能被补的那一半已经补上:`gate/run-declared-deps-gate.ts`(根脚本 `check:declared-deps`)
+ * 代价里能被补的那一半已经补上:`gate/run-declared-deps-gate.ts`(根脚本 `gate:declared-deps`)
  * 兜住**第三方依赖面**,「声明即依赖」在本包里从此有机器保证。另一半(包图方向)仍由 tsc 的 TS2307
  * 兜,「声明了但方向反了」仍靠规范。完整的缺口分析与实测记在 `.dependency-cruiser.js` 的头注里。
  *

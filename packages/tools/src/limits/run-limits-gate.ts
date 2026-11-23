@@ -1,5 +1,5 @@
 /**
- * 门禁:**对局墙钟 / 快照拷贝占比 / 单季回放体量**(根脚本 `check:limits`)。
+ * 门禁:**对局墙钟 / 快照拷贝占比 / 单季回放体量**(根脚本 `gate:limits`)。
  *
  * ```
  * node --disable-warning=ExperimentalWarning \
@@ -21,7 +21,7 @@
  *
  * 它要 spawn 一次 `tsc -b`(工作区包的 `exports` 指向 `dist/`),然后**在同一个进程里**用真引擎
  * 跑真沙箱对局:同一批入库基准脚本(`benchmarks/<cell>/script.js`)、固定种子、入库地图与规则集。
- * 因此它归**按需→夜间**层,**不进** `check:quick` / `check` / `test` / `verify:fast`(零构建的
+ * 因此它归**按需→夜间**层,**不进** `quick` / `check` / `test` / `verify`(零构建的
  * 性质不能破)。位置纪律由 `gates.test.ts` 的 `单局墙钟与快照回放门禁按需跑…` 盯着;正例与
  * 两侧反例在 `gates-slow.test.ts`。
  *
@@ -30,7 +30,7 @@
  * `packages/tools` 按架构只依赖真源包 `@model-war/schema`(hld §3.2:`tsc -b` 会拦住未声明的包)。
  * 而本门禁要的 `runMatch` / `buildSnapshot` / `createQuickJsRunner` 与沙箱常量分别在
  * `@model-war/engine` 的主入口、两个内部 dist 模块与 `@model-war/schema` 的 dist 里。解法与
- * `check:selfproof` 动态 `import` 桩同源:**用绝对路径动态 import `dist`**(`import(变量)` 不经
+ * `gate:selfproof` 动态 `import` 桩同源:**用绝对路径动态 import `dist`**(`import(变量)` 不经
  * tsc 解析,故不构成一条被声明的包边),不新开 import 面、不给 tools 加依赖。动态也顺带让
  * `tsc -b` 能排在装载之前——静态 import 会在模块装载期就去解析 `dist`,那是本门禁还没建好的东西。
  *

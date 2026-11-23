@@ -13,7 +13,7 @@
  * ── 两份模板与工具声明的关系 ──
  *
  * `system` **不复述工具的参数形状**:那件事的真源是请求里的 `tools`(工具声明,见
- * `agent/tools.ts`)。首条 `user` 的「宿主工具」一节点名哪几个工具,由 `check:prompt-tools` 与
+ * `agent/tools.ts`)。首条 `user` 的「宿主工具」一节点名哪几个工具,由 `gate:prompt:tools` 与
  * 声明对住——同一件事两个家就会漂,而漂的那一份模型照不到。
  *
  * ── 为什么内联的是整整一份 README,不是它的某一节 ──
@@ -26,7 +26,7 @@
  *
  * `contract: <版本号> tree=sha256:<hex>`。两个前缀回答两个不同的问题:版本号「哪一套取值」(它只锚
  * 规则集取值,ADR-0008),整树哈希「哪一份字节」。所以版本号取自 `RULESET_VERSION`(真源包常量,
- * 不新造第二个真源),哈希取自 `CONTRACT_TREE_HASH`(入库常量,由 `check:contract` 证明现算一致)。
+ * 不新造第二个真源),哈希取自 `CONTRACT_TREE_HASH`(入库常量,由 `gate:contract` 证明现算一致)。
  *
  * ── 渲染是纯函数,读盘另有其人 ──
  *
@@ -105,7 +105,7 @@ export const loadAgentSystemTemplate = (root: string): string =>
 /**
  * 读 `<root>/docs/rules-<版本>/README.md`——首条消息要全量内联的那一份。
  *
- * 它与契约正文同住一个目录(清单与非空判据归 `check:contract`),所以这里只拼路径、只读字节。
+ * 它与契约正文同住一个目录(清单与非空判据归 `gate:contract`),所以这里只拼路径、只读字节。
  */
 export const readContractIndex = (root: string): string =>
   readText(join(ruleDocsDir(root), CONTRACT_INDEX_NAME), "契约目录说明");

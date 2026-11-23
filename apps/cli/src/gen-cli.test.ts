@@ -10,7 +10,7 @@
  * 它是**真沙箱**的端到端冒烟:bwrap 真起、真网格 32 场真跑,那要非特权 user namespace 与系统装的
  * bubblewrap,而常跑链(`pnpm run test`)不装。收进 `unit` 的后果与 `agent-real-session.test.ts`
  * 完全相同:「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」,两种处方
- * 混成一条红。所以它和那条真会话一起归 `sandbox`(`pnpm run check:sandbox` 的 `--project sandbox`)。
+ * 混成一条红。所以它和那条真会话一起归 `sandbox`(`pnpm run verify:kernel` 的 `--project sandbox`)。
  *
  * 这条归属是**被内核探针抓出来的**(`vitest.kernel-guard.setup.ts` 落地后的第一例):在此之前它
  * 一直挂在 `unit` 上,而 `it.skipIf(!archivePresent)` 让它在「没有冻档的机器」上静默 skip——
@@ -25,7 +25,7 @@
  *   `agent-session-archive.test.ts` 用**同一份** `withRealBash` 替身验同一条链;
  * - HTTP 适配器真的打了那个端点、带上了 Bearer 鉴权:`packages/gen/src/http/client.test.ts`
  *   直接对着假端点验;
- * - 真网格 32 场跑满:`check:gen-grid`(它要冻档,所以自己是命名脚本)。
+ * - 真网格 32 场跑满:`gate:gen-grid`(它要冻档,所以自己是命名脚本)。
  * 本文件不可替代的那一样是「这四层同时在一条 CLI 进程里成立」——它仍然被验,只是在对的那条链上。
  *
  * ── 为什么不给子进程 CLI 注入假执行器 ──
@@ -412,7 +412,7 @@ it.skipIf(!archivePresent)(
       // 身份从第一份 agent 档起就写(ADR-0034)。
       expect(meta.harnessDigest).toMatch(/^[0-9a-f]{64}$/);
       // 用真源常量,不抄字面量:票 06 把代号换成 `tool-call/1.0` 时这条断言留在了旧世界,
-      // 而它只在 sandbox 项目里跑,`verify:fast` 覆盖不到——抄字面量就会这样静默过期。
+      // 而它只在 sandbox 项目里跑,`verify` 覆盖不到——抄字面量就会这样静默过期。
       expect(meta.harnessVersion).toBe(HARNESS_VERSION);
       expect(meta.contextLength).toBe(100_000);
 

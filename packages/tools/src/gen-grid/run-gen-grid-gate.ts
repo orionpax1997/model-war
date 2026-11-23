@@ -1,8 +1,8 @@
 /**
- * 门禁:**一次 `evaluate` 真跑满一张网格**(根脚本 `check:gen-grid`)。
+ * 门禁:**一次 `evaluate` 真跑满一张网格**(根脚本 `gate:gen-grid`)。
  *
  * ```
- * pnpm run check:gen-grid
+ * pnpm run gate:gen-grid
  * ```
  *
  * ── 它证明什么 ──
@@ -18,12 +18,12 @@
  * 4. **耗时在同一个量级**:与既有试跑一致(同一张计划、同一个入口),所以把实测耗时打出来
  *    供人对照——它不设绝对阈值(那是机器账,不是正确性账),只在超过硬上限时报红。
  *
- * ── 为什么不放进 `check:sandbox` ──
+ * ── 为什么不放进 `verify:kernel` ──
  *
- * `check:sandbox` 判的是**隔离**(可用性、无网络、进程回收、rootfs 漂移),它的前提是内核能力
+ * `verify:kernel` 判的是**隔离**(可用性、无网络、进程回收、rootfs 漂移),它的前提是内核能力
  * 与 `bubblewrap`。这一条判的是**网格**,不碰内核,却需要一份别的东西:四份钉死的陪练存档
  * (`archive/` 不入库)。把两件事混进一条腿,「沙箱坏了」与「这台机器没有陪练存档」会变成同一条红。
- * 代价是它得自己有一条命名脚本(与 `check:limits` / `check:selfproof` 同层:按需 + 夜间可挂)。
+ * 代价是它得自己有一条命名脚本(与 `gate:limits` / `gate:selfproof` 同层:按需 + 夜间可挂)。
  *
  * ── 为什么它不 skip ──
  *
@@ -54,7 +54,7 @@ import { vacuousReason } from "../gate/vacuous.ts";
 /** 本文件在 `<repo>/packages/tools/src/gen-grid/` 下,上溯四级是仓库根。 */
 const repoRoot = resolve(import.meta.dirname, "../../../..");
 
-/** 生成侧的编译形态入口(`check:gen-grid` 的命名脚本先 `pnpm run build`)。 */
+/** 生成侧的编译形态入口(`gate:gen-grid` 的命名脚本先 `pnpm run build`)。 */
 const GEN_ENTRY = "packages/gen/dist/index.js";
 
 /** 实测耗时的硬上限:超过它就不是「慢机器」而是「这条路径挂住了」。 */

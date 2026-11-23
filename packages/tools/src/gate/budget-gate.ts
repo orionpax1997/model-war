@@ -1,5 +1,5 @@
 /**
- * 预算键结构门禁(`check:budget`)的**纯函数层**。
+ * 预算键结构门禁(`gate:budget`)的**纯函数层**。
  *
  * ── 它断言什么,不断言什么 ──
  *
@@ -11,7 +11,7 @@
  *
  * ── 为什么零构建、为什么读源码文本 ──
  *
- * 快门禁必须**零构建**(hld §2.2.1 / §2.2.7):它挂在 `check:quick`,`check:quick` 里不能出现
+ * 快门禁必须**零构建**(hld §2.2.1 / §2.2.7):它挂在 `quick`,`quick` 里不能出现
  * 「需要一次 `tsc -b`」的依赖。所以本模块不 import 真源包(`@model-war/schema`),改用两条既有缝:
  *
  * - 「每个预算键的标定状态」从 `packages/schema/src/ruleset-keys.ts` 的**源码文本**里读(与
@@ -73,7 +73,7 @@ export type BudgetGateInput = {
   readonly honestAliveHeapPeakBytes: number;
   /**
    * 三份基准产物(`benchmarks/<cell>/script.js`)的最大字节数,由薄壳从磁盘现算。
-   * `scriptSizeLimit` 的硬下界依据——它也是 `check:selfproof` 在占位期当地板值的那个数。
+   * `scriptSizeLimit` 的硬下界依据——它也是 `gate:selfproof` 在占位期当地板值的那个数。
    */
   readonly maxBenchmarkArtifactBytes: number;
   /** 基准产物个数(防假绿的计数口:读到 0 个产物时下界断言失效,按失败处理)。 */
@@ -281,7 +281,7 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
   }
 
   // 结构断言 #3:体积上限 ≥ 基准产物最大值——它是唯一能封「直线代码不计量」盲区的键,
-  // 且 `check:selfproof` 在占位期拿这个最大值当地板值;终值低于它会红在一条**不在默认链上**的
+  // 且 `gate:selfproof` 在占位期拿这个最大值当地板值;终值低于它会红在一条**不在默认链上**的
   // 门禁里(只会在有人手跑时才发现),所以这条下界必须由本门禁带着。
   if (states.get("scriptSizeLimit") === "final") {
     const size = input.budgetValues.scriptSizeLimit;
@@ -290,7 +290,7 @@ export const checkBudget = (input: BudgetGateInput): BudgetGateReport => {
         check: "体积上限",
         detail:
           `scriptSizeLimit=${size} 小于基准产物最大值 ${input.maxBenchmarkArtifactBytes} 字节` +
-          "(低于它会把 `check:selfproof` 的静态校验弄红,而那条不在默认链上)",
+          "(低于它会把 `gate:selfproof` 的静态校验弄红,而那条不在默认链上)",
       });
     }
     const artifactsMissing = vacuousReason(input.benchmarkArtifacts, {
