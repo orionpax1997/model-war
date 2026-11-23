@@ -48,7 +48,6 @@ export {
   type ModelParams,
   type ModelResponse,
 } from "./model-client.js";
-export { assemblePrompt, loadBaseTemplate, renderBaseTemplate } from "./prompt.js";
 export {
   fail,
   reply,
@@ -60,6 +59,13 @@ export {
   type StubStep,
 } from "./stub-client.js";
 export { createHttpModelClient } from "./http/client.js";
+export {
+  HARNESS_DIGEST,
+  HARNESS_VERSION,
+  harnessIdentity,
+  harnessManifest,
+  type HarnessManifest,
+} from "./agent/identity.js";
 export {
   compileScript,
   deriveScriptTsconfig,
@@ -90,13 +96,15 @@ export {
 } from "./archive.js";
 export {
   generateOneModel,
+  type AgentArchiveFields,
+  type EvaluateScoring,
+  type EvaluateSubmission,
   type FailureClassification,
   type GenerationLogEntry,
   type GenerationTransportLogEntry,
   type ModelFailure,
   type ModelOutcome,
 } from "./pipeline.js";
-export { extractScriptSource } from "./extract.js";
 export {
   generateAndFreeze,
   runGeneration,
@@ -113,10 +121,3 @@ export {
 } from "./failure.js";
 // 失败记录的形状家已下沉到真源包(§2.2.5):对外名字一个不少,只换来源。
 export { FAILURE_RECORD_PREFIX, type FailureIdentity, type FailureRecord } from "@model-war/schema";
-
-export {
-  runSelection,
-  type SelectionProbe,
-  type SelectionProbeOutput,
-  type SelectionArtifact,
-} from "./selection.js";

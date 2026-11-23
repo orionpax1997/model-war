@@ -19,15 +19,13 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadModelsConfig, type ModelConfig } from "./config.js";
-import { readRuleDocs, type RuleDocs } from "./contract.js";
 import { writeFailureRecord } from "./failure.js";
-import type { TrialPlan } from "@model-war/schema";
-import type { SelectionProbe } from "./selection.js";
+import { SANDBOX_ROOTFS_DIR } from "@model-war/schema";
+import type { AgentPrompt } from "./agent-prompt.js";
 import type { TrialProbe } from "./trial.js";
 import { createHttpModelClient } from "./http/client.js";
 import type { ModelClient } from "./model-client.js";
-import { generateOneModel } from "./pipeline.js";
-import { loadBaseTemplate } from "./prompt.js";
+import { generateOneModel, type EvaluateScoring } from "./pipeline.js";
 
 /**
  * 单模型一次生成的全部共享输入(契约 §2)。由 `runGeneration` 组装一次、按模型复用;
@@ -36,47 +34,73 @@ import { loadBaseTemplate } from "./prompt.js";
 export type GenerationRequest = {
   readonly root: string;
   readonly runId: string;
-  readonly docs: RuleDocs;
-  readonly template: string;
+  /**
+   * 首条 `user` 与 `system` 的成品文本(`loadAgentPrompt(root, identity)` 的返回值)。
+   *
+   * 缺席时 `generateOneModel` 现读一次盘(生产路径)。测试注入它,于是「首条消息长什么样」与
+   * 「loop 怎么跑」可以分开钉住,不必为了一个用例造一份完整契约目录。
+   */
+  readonly agentPrompt?: AgentPrompt;
   readonly createClient: (config: ModelConfig) => ModelClient;
   readonly now: () => Date;
-  /** 未开启事实优化时的缺省响应上限替代；opt-in 使用批次统一政策。 */
-  readonly maxRounds?: number;
-  /** 显式 opt-in：固定两次自身事实反馈、三个有效候选；每阶段独立诊断额度。 */
-  readonly scoreSourceFeedback?: boolean;
-  readonly selectBestCandidate?: boolean;
-  readonly selection?: SelectionProbe;
   /**
-   * 冻结期试跑探针。缺席即走真子进程（`trial.ts`）；测试注入桩，保持单测毫秒级
-   * （真试跑跑整张 32 场网格，约一到两分钟，只属于 e2e 与手工冒烟）。
+   * 沙箱里 bind 成 `/workspace` 的宿主目录。缺席即 `archive/<slug>/.workspace-<runId>`
+   * (一跑一份,不跨会话复用:上一位模型的残留会变成下一位的起手式)。
+   */
+  readonly workspaceDir?: string;
+  /** 覆盖会话步数上限(默认 `AGENT_MAX_STEPS`);测试用它把边界压到个位数。 */
+  readonly maxSteps?: number;
+  /** 覆盖会话总墙钟(默认 `AGENT_TOTAL_WALL_CLOCK_MS`)。 */
+  readonly totalWallClockMs?: number;
+  /** 覆盖单步墙钟(默认执行器的 `DEFAULT_STEP_WALL_CLOCK_MS`)。 */
+  readonly stepWallClockMs?: number;
+  /**
+   * 入库 rootfs 的宿主路径。缺省即 `<root>/packages/gen/sandbox-rootfs`。
+   *
+   * ── 为什么由 `root` 推,而不是执行器自己按模块位置上溯 ──
+   *
+   * 执行器的 `defaultRootfsDir()` 从模块自身位置往上数五层,在源码与 `dist` 形态下都对——但
+   * CLI 是**打包成单文件**跑的(esbuild 把 gen 打进入口 bundle),那时模块位置在临时目录里,
+   * 上溯五层得到的是 `/`,沙箱因此报 `Can't find source path /packages/...`。
+   *
+   * `--root` 的语义本来就是「安装根」(hld §9),rootfs 也在它下面,所以这里按它推——bundle
+   * 形态与源码形态算出同一个路径。
+   */
+  readonly rootfsDir?: string;
+  /**
+   * 冻结期试跑探针(被 `evaluate` 服务调)。缺席即占位实现——**本段不接真网格**(票 06),
+   * 于是 `evaluate` 不产出候选,零候选即失败档。测试注入桩。
    */
   readonly trial?: TrialProbe;
   /**
-   * 评测网格计划的搬运（`--plan` 那一次）。缺席即真子进程（`trial.ts` 的 `prepareTrialPlan`）；
-   * 测试注入桩，保持单测毫秒级且不依赖本地冻结档案（`archive/` 不入库）。
+   * 一次 `evaluate` 的**成绩**从哪来(`pipeline.ts` 的 `EvaluateScoring`)。
+   *
+   * 真网格归票 06。缺席即占位实现(`undefined`),这条路径因此是「会话能跑完、档能落下来、
+   * 但没有任何成绩」——本段要验的正是这条。
    */
-  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
+  readonly evaluateScoring?: EvaluateScoring;
 };
 
 export type GenerationOptions = {
   readonly root: string;
   /** `--config` 的取值,相对 `root`(传绝对路径亦按 `resolve` 归一)。 */
   readonly configPath: string;
-  /** 对应 CLI --score-source-feedback；缺省不启用。 */
-  readonly scoreSourceFeedback?: boolean;
-  readonly selectBestCandidate?: boolean;
-  readonly selection?: SelectionProbe;
   /** `--model <slug>`:只跑一个模型。 */
   readonly modelFilter?: string;
   /** 测试注入桩;缺省用真实 HTTP 客户端(`http/client.ts`,唯一允许联网的代码)。 */
   readonly createClient?: (config: ModelConfig) => ModelClient;
-  /** 测试注入桩;缺省跑真试跑子进程（整张 32 场网格，见 `trial.ts`）。 */
+  /** 首条 prompt 的注入缝(缺省现读盘)。 */
+  readonly agentPrompt?: AgentPrompt;
+  /** 会话预算与工作区的覆盖缝(测试用)。 */
+  readonly workspaceDir?: string;
+  /** rootfs 的覆盖缝;缺省由 `root` 推。 */
+  readonly rootfsDir?: string;
+  readonly maxSteps?: number;
+  readonly totalWallClockMs?: number;
+  readonly stepWallClockMs?: number;
+  /** 评测探针与成绩接缝(票 06 的真实现在那里)。 */
   readonly trial?: TrialProbe;
-  /**
-   * 评测网格计划的搬运（`--plan` 那一次）。缺席即真子进程（`trial.ts` 的 `prepareTrialPlan`）；
-   * 测试注入桩，保持单测毫秒级且不依赖本地冻结档案（`archive/` 不入库）。
-   */
-  readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
+  readonly evaluateScoring?: EvaluateScoring;
 };
 
 const messageOf = (cause: unknown): string =>
@@ -109,12 +133,8 @@ const sessionIdOf = (runId: string, slug: string): string => `modelwar-gen-${run
  * 模型之间**串行**(模型内并发固定 1):`for … await` 保证前一个模型的全部轮次结束后才开下一个。
  */
 export const runGeneration = async (options: GenerationOptions): Promise<number> => {
-  if (options.selectBestCandidate === true && options.scoreSourceFeedback !== true)
-    throw new Error("--select-best-candidate 要求 --score-source-feedback");
   const root = resolve(options.root);
   const config = loadModelsConfig(resolve(root, options.configPath));
-  const docs = readRuleDocs(root);
-  const template = loadBaseTemplate(root);
   const now = (): Date => new Date();
 
   const selected =
@@ -140,19 +160,20 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
   const request: GenerationRequest = {
     root,
     runId,
-    docs,
-    template,
     createClient,
     now,
-    ...(options.selectBestCandidate === undefined
+    // 由安装根推 rootfs:打包形态下执行器的模块位置上溯不可用(见 `GenerationRequest.rootfsDir`)。
+    rootfsDir: join(root, SANDBOX_ROOTFS_DIR),
+    ...(options.agentPrompt === undefined ? {} : { agentPrompt: options.agentPrompt }),
+    ...(options.workspaceDir === undefined ? {} : { workspaceDir: options.workspaceDir }),
+    ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
+    ...(options.totalWallClockMs === undefined
       ? {}
-      : { selectBestCandidate: options.selectBestCandidate }),
-    ...(options.selection === undefined ? {} : { selection: options.selection }),
+      : { totalWallClockMs: options.totalWallClockMs }),
+    ...(options.stepWallClockMs === undefined ? {} : { stepWallClockMs: options.stepWallClockMs }),
+    ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
     ...(options.trial === undefined ? {} : { trial: options.trial }),
-    ...(options.trialPlan === undefined ? {} : { trialPlan: options.trialPlan }),
-    ...(options.scoreSourceFeedback === undefined
-      ? {}
-      : { scoreSourceFeedback: options.scoreSourceFeedback }),
+    ...(options.evaluateScoring === undefined ? {} : { evaluateScoring: options.evaluateScoring }),
   };
 
   let failures = 0;
@@ -172,6 +193,7 @@ export const runGeneration = async (options: GenerationOptions): Promise<number>
         generatedAt: startedAt.toISOString(),
         runId: outcome.runId,
         failure: outcome.failure,
+        agent: outcome.agent,
       });
       if (!written.ok) {
         process.stderr.write(
@@ -198,8 +220,6 @@ type GenArgs = {
   readonly root: string | undefined;
   readonly config: string | undefined;
   readonly model: string | undefined;
-  readonly scoreSourceFeedback: boolean;
-  readonly selectBestCandidate: boolean;
 };
 
 const parseGenArgs = (args: readonly string[]): GenArgs => {
@@ -207,27 +227,20 @@ const parseGenArgs = (args: readonly string[]): GenArgs => {
     root: string | undefined;
     config: string | undefined;
     model: string | undefined;
-    scoreSourceFeedback: boolean;
-    selectBestCandidate: boolean;
   } = {
     root: undefined,
     config: undefined,
     model: undefined,
-    scoreSourceFeedback: false,
-    selectBestCandidate: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined || !arg.startsWith("-")) {
       throw new Error(`gen 不接受位置参数:${String(arg)}`);
     }
-    if (arg === "--select-best-candidate") {
-      parsed.selectBestCandidate = true;
-      continue;
-    }
-    if (arg === "--score-source-feedback") {
-      parsed.scoreSourceFeedback = true;
-      continue;
+    // 阶段机器与它的两个开关一起消失(ADR-0032):agent 形态没有阶段,`evaluate` 就是提交。
+    // 传进来就明确拒掉,而不是静默忽略——一个被忽略的开关会让人以为它生效了。
+    if (arg === "--select-best-candidate" || arg === "--score-source-feedback") {
+      throw new Error(`${arg} 已随阶段机器一起移除(agent 形态下 evaluate 就是提交,没有阶段可推进)`);
     }
     const value = args[index + 1];
     if (value === undefined) {
@@ -260,8 +273,6 @@ export const generateAndFreeze = async (args: readonly string[]): Promise<number
   } catch (cause) {
     return writeFailure(messageOf(cause));
   }
-  if (parsed.selectBestCandidate && !parsed.scoreSourceFeedback)
-    return writeFailure("--select-best-candidate 要求 --score-source-feedback");
   if (parsed.config === undefined) {
     return writeFailure("缺 --config <models.yaml>(用法:modelwar gen --config models.yaml)");
   }
@@ -282,8 +293,6 @@ export const generateAndFreeze = async (args: readonly string[]): Promise<number
     root,
     configPath: parsed.config,
     ...(parsed.model !== undefined ? { modelFilter: parsed.model } : {}),
-    ...(parsed.selectBestCandidate ? { selectBestCandidate: true } : {}),
-    ...(parsed.scoreSourceFeedback ? { scoreSourceFeedback: true } : {}),
   };
   try {
     return await runGeneration(options);

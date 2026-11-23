@@ -195,6 +195,17 @@ export const retryTransport = async (options: {
   readonly sleep?: RetrySleep;
   /** 注入的抖动源;缺省 `Math.random`。 */
   readonly random?: RetryRandom;
+  /**
+   * 截断的处置:**默认由本层重试一枪**(`RETRY.truncation`,one-shot 形态)。
+   *
+   * 传 `"caller"` 时本层**不碰**截断:响应原样交回调用方。这是 agent 形态要的那一格
+   * (ADR-0032)——那时模型能自我修正,所以第一次截断的重试归 loop(它要在第二次仍截断时
+   * 转格式反馈,而不是继续退避)。
+   *
+   * 为什么是选项而不是改全局默认:one-shot 路径没有「格式反馈」这条腿,第二次仍截断即判
+   * 传输失败(ADR-0036 残余风险 2)。两条形态的策略不同,而这里是唯一同时看得见两方的地方。
+   */
+  readonly truncation?: "retry" | "caller";
 }): Promise<RetryOutcome> => {
   const sleep = options.sleep ?? realSleep;
   const random = options.random ?? Math.random;
@@ -226,7 +237,7 @@ export const retryTransport = async (options: {
     let cause: unknown;
     try {
       const response = await options.send();
-      if (!isTruncated(response)) {
+      if (!isTruncated(response) || options.truncation === "caller") {
         return { ok: true, response };
       }
       // 截断:半截文本直接丢掉,不回喂、不当产物(回喂等于把一段编译不过的文本当模型的回答)。

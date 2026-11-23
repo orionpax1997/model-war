@@ -205,7 +205,17 @@ export type ArchiveStepAction =
   /** 整块去空白后恰为 `evaluate`：这一次 `evaluate` 产出一个候选。 */
   | { readonly kind: "evaluate" }
   /** 被块级 `done` 哨兵终止。 */
-  | { readonly kind: "done" };
+  | { readonly kind: "done" }
+  /**
+   * 这一步**没有可执行的动作**：零个块 / 多个块 / 块标记不是 `bash`，或者响应两次都被输出上限
+   * 截断而转了格式反馈。命令一条都没跑，但这一步照样计入步数与过程记录（ADR-0032「`done` 不是
+   * 免费出口」的同一条计数口径：一次模型调用就是一步）。
+   *
+   * 为什么不复用 `bash` 加一个空 `command`：空命令在 `bash` 那一格是不合法的（`minLength: 1`），
+   * 而放宽它等于让「跑了空 shell」与「什么都没跑」在档案里同形——后者恰恰是校准 harness 时最
+   * 想看见的那种步。
+   */
+  | { readonly kind: "none" };
 
 /** 结果侧证据：这一轮被什么驱动、编译错误码（发送侧证据在 `generationLog` 里）。 */
 export type ArchiveStepResult = {
@@ -507,6 +517,12 @@ const ARCHIVE_STEP_ACTION_JSON_SCHEMA = {
       additionalProperties: false,
       required: ["kind"],
       properties: { kind: { type: "string", const: "done" } },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind"],
+      properties: { kind: { type: "string", const: "none" } },
     },
   ],
 } as const;
