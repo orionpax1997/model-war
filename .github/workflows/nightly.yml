@@ -50,9 +50,23 @@ jobs:
           - { script: "test:gates", slug: "test-gates", advisory: false, timeout: 60 }
           - { script: "test:slow", slug: "test-slow", advisory: false, timeout: 120 }
           - { script: "check:selfproof", slug: "check-selfproof", advisory: false, timeout: 60 }
-          - { script: "check:cross-process", slug: "check-cross-process", advisory: false, timeout: 60 }
+          - {
+              script: "check:cross-process",
+              slug: "check-cross-process",
+              advisory: false,
+              timeout: 60,
+            }
           - { script: "check:limits", slug: "check-limits", advisory: false, timeout: 60 }
-          - { script: "check:budget-recheck", slug: "check-budget-recheck", advisory: false, timeout: 60 }
+          - {
+              script: "check:budget-recheck",
+              slug: "check-budget-recheck",
+              advisory: false,
+              timeout: 60,
+            }
+          # 沙箱执行器的自证腿(ADR-0033):真跑可用性 / 无网络 / 后台进程回收 / rootfs 漂移。
+          # 它是硬门禁而不是观测项,因为「bwrap 不可用」必须失败在它自己那一行——「不可用就跳过」
+          # 会让 Ubuntu 收紧非特权 userns 这类环境变化悄悄变成一整排静默通过的检查。
+          - { script: "check:sandbox", slug: "check-sandbox", advisory: false, timeout: 30 }
           # 棘轮:变异跑完就地比入库基线,低于基线即红(ADR-0026;不设绝对阈值)。
           - { script: "mutate", slug: "mutate", advisory: false, timeout: 300 }
           # ---- 观测项:红不阻断,只把 outcome 落盘(ADR-0010:只落盘不设红线)----
@@ -70,6 +84,14 @@ jobs:
           node-version: "22"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
+
+      # 沙箱前置只对真跑 bwrap 的那条腿做:bubblewrap 不在 runner 镜像的预装清单里,而
+      # Ubuntu 24.04 起默认限制非特权 user namespace。仍然只调命名脚本——apt-get / sysctl
+      # 都在 `scripts/setup-sandbox.sh` 里,workflow 里一个裸命令都没有(ADR-0033、ADR-0010)。
+      # 放在 install 之前:环境准备好之前不装依赖,失败点更靠前。
+      - name: Setup sandbox
+        if: matrix.script == 'check:sandbox'
+        run: pnpm run setup:sandbox
 
       - name: Install
         run: pnpm install --frozen-lockfile

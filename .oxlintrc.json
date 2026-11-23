@@ -17,7 +17,11 @@
     "**/*.d.ts",
     "**/coverage/**",
     "packages/tools/selfproof/stub/**",
-    "packages/engine/sandbox-runtime/runtime.iife.js"
+    "packages/engine/sandbox-runtime/runtime.iife.js",
+    // 入库沙箱 rootfs(ADR-0033):bin/ 下是静态 ELF 二进制,contract/ 是 `docs/rules-v2/` 的
+    // **逐字节副本**(被 `check:sandbox-rootfs` 钉住)。两者都不是本仓库的源码:格式化器或 linter
+    // 碰它们只会让「现算 == 入库」红在一个与被检对象无关的原因上。
+    "packages/gen/sandbox-rootfs/**"
   ],
   "categories": { "correctness": "error" },
   "rules": {
