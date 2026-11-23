@@ -5,7 +5,7 @@
  *
  * 源码哈希会因为一次重构就变,那是噪音;清单只在其行为真的改了时变,而那正是「换 harness」
  * 的定义。所以清单里写的是模型面对的世界:动作语法、可见二进制、挂载、网络、配额、服务形状、
- * 观测出口、deadline、截断上限与比例、上下文守卫、工具链、`done` 的语义。
+ * **工具收不收参数**、观测出口、deadline、截断上限与比例、上下文守卫、工具链、`done` 的语义。
  *
  * ── 清单**不含**两样东西 ──
  *
@@ -32,6 +32,7 @@ import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
 import { DONE_SENTINEL } from "./host/done.js";
+import { PROTOCOL_EXIT_CODE } from "./host/dispatcher.js";
 import { bwrapArgv } from "./sandbox/argv.js";
 import { CHANNEL_FD, DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
 import {
@@ -87,6 +88,23 @@ export type HarnessManifest = {
     readonly tools: readonly string[];
     readonly shape: "host-side-service";
     readonly channelFd: number;
+    /**
+     * 参数面:两个服务型工具(`check` / `evaluate`)**都不收参数**。
+     *
+     * 它们做什么由「当前的 `/workspace/script.ts`」唯一决定,命令行没有可填的东西。所以
+     * `evaluate --help` 这类试探是一条**被拒**的请求:模型看到一句用法 + 非零退出码,评测不执行、
+     * 配额也不消耗(判据在 `host/dispatcher.ts`,这里记录模型撞得到的那一面)。
+     *
+     * 它进清单的理由与别的格一样:它不是「内部实现细节」,而是模型会试、试了会拿到不同结果的
+     * 一条行为面——以前那一次试探会真的跑掉 91 秒与一次额度。
+     */
+    readonly args: {
+      readonly accepted: false;
+      /** 被拒时模型看到的退出码(协议误用,与「工具不可用」同档)。 */
+      readonly exitCode: number;
+      /** 被拒的那一次不执行、不占 `evaluate` 配额。 */
+      readonly consumesQuota: false;
+    };
   };
   readonly observation: {
     readonly keys: readonly string[];
@@ -146,7 +164,13 @@ export const harnessManifest = (): HarnessManifest => {
     // 配额取 **dispatcher 执行的那个**常量(`EVALUATE_CALL_LIMIT`),不是它的同值邻居:
     // 清单要记录的是「模型撞得到的判据」。两者同源只在这一处(out of `tool-channel.ts`)。
     quotas: { evaluate: EVALUATE_CALL_LIMIT, check: "counts-as-step" },
-    services: { tools: HOST_SERVICE_TOOLS, shape: "host-side-service", channelFd: CHANNEL_FD },
+    services: {
+      tools: HOST_SERVICE_TOOLS,
+      shape: "host-side-service",
+      channelFd: CHANNEL_FD,
+      // 退出码取自 dispatcher(执行那条判据的地方),清单不另写一个数字。
+      args: { accepted: false, exitCode: PROTOCOL_EXIT_CODE, consumesQuota: false },
+    },
     observation: {
       keys: ["stdout", "stderr"],
       stdout: {
@@ -206,7 +230,7 @@ export const digestOf = (manifest: HarnessManifest): string =>
  * 它是**入库常量**而不是运行时现算,与 `SANDBOX_ROOTFS_TREE_HASH` 同一条纪律:判据锚定确切
  * 取值,回填时必须有人有意改这一行,于是「上限变了但没人注意」在 diff 里看得见。
  */
-export const HARNESS_DIGEST = "863eeca5eaeb966de1820be28332da3c2025fce79c404053daa18c7026ec9756";
+export const HARNESS_DIGEST = "551f471faa9c5d803b616274ded6a9ad69e2d3865c303fc44ef7d8a17a3d3efc";
 
 /** 现算的身份:`harnessVersion` + `harnessDigest`,落进档案的就是这两个。 */
 export const harnessIdentity = (): { version: string; digest: string } => ({

@@ -28,8 +28,8 @@ import { spawnSync } from "node:child_process";
 
 import type { AgentExecResult } from "./types.js";
 
-/** 三个走通道的薄壳:它们的命令行本身就是要发给宿主的那个请求。 */
-export const TOOL_COMMANDS: ReadonlySet<string> = new Set(["check", "evaluate", "done"]);
+/** 三个走通道的薄壳:它们的命令行本身就是要发给宿主的那个请求。本文件内部用,不出口。 */
+const TOOL_COMMANDS: ReadonlySet<string> = new Set(["check", "evaluate", "done"]);
 
 /** 一次 `sandbox.run` 的替身:入参只要这三格,返回值只要四格。 */
 export type SandboxRun = (request: {

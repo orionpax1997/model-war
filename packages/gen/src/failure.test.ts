@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { AGENT_ARCHIVE_REQUIRED_KEYS, RULESET_VERSION } from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./model-client.js";
+import { withHostBash } from "./agent/sandbox.fixture.js";
 import { buildFailureRecord } from "./failure.js";
 import { runGeneration } from "./run.js";
 import { fail, replies, stubClient } from "./stub-client.js";
@@ -87,25 +88,14 @@ const onlyEntry = (dir: string): string => {
 const readRecord = (dir: string, name: string): Record<string, unknown> =>
   JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, unknown>;
 
-/** 只回空输出的沙箱替身:这些用例验的是编排层落盘,不是沙箱里发生了什么。 */
-const withPlainSandbox = async <T>(run: () => Promise<T>): Promise<T> => {
-  const mod = await import("./agent/sandbox/index.js");
-  const original = mod.sandbox.run;
-  Object.defineProperty(mod.sandbox, "run", {
-    configurable: true,
-    writable: true,
-    value: async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
-  });
-  try {
-    return await run();
-  } finally {
-    Object.defineProperty(mod.sandbox, "run", {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
-  }
-};
+/**
+ * 只回空输出的沙箱替身:这些用例验的是编排层落盘,不是沙箱里发生了什么。
+ *
+ * 共用 `agent/sandbox.fixture.ts` 那一份(本文件曾经自带一套只换 `run`、不漏 `preflight` 的版本,
+ * 于是它在没装 bubblewrap 的机器上会先死在启动自证上——正是「本机绿、CI 红」那种假绿)。
+ */
+const withPlainSandbox = async <T>(run: () => Promise<T>): Promise<T> =>
+  await withHostBash(async () => ({ stdout: "", stderr: "", exitCode: 0 }), run);
 
 it("用尽步数:写失败记录(过程记录 + 逐步日志 + 诊断 + 分类),不建存档目录", async () => {
   const root = writeRoot(configOf(entry("alpha")));

@@ -12,6 +12,7 @@ import {
   type ModelConfig,
 } from "@model-war/gen";
 import { readArchiveReports, runArchiveReport } from "@model-war/runner";
+import { withRealBash } from "@model-war/gen/testing";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "usage-report-pipeline-"));
@@ -229,20 +230,22 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   try {
-    const outcome = await generateOneModel(
-      {
-        root,
-        runId: "r1",
-        agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
-        createClient: createHttpModelClient,
-        workspaceDir,
-        // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
-        // 「会话已到点」,而那与被测的 usage 投影毫无关系。
-        now: () => new Date(),
-        trial: completeGridTrial(),
-        trialPlan: () => gridPlanFixture(),
-      },
-      config,
+    const outcome = await withRealBash(workspaceDir, () =>
+      generateOneModel(
+        {
+          root,
+          runId: "r1",
+          agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
+          createClient: createHttpModelClient,
+          workspaceDir,
+          // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
+          // 「会话已到点」,而那与被测的 usage 投影毫无关系。
+          now: () => new Date(),
+          trial: completeGridTrial(),
+          trialPlan: () => gridPlanFixture(),
+        },
+        config,
+      ),
     );
     expect(outcome.kind).toBe("frozen");
     // 三步 = 三次 HTTP 调用(一步一次):写脚本 → evaluate → done。usage 取第一条日志行。
@@ -363,20 +366,22 @@ it("messages 族：缓存断点进请求体、口径写 anthropic、报告出 1h
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   try {
-    const outcome = await generateOneModel(
-      {
-        root,
-        runId: "r1",
-        agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
-        createClient: createHttpModelClient,
-        workspaceDir,
-        // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
-        // 「会话已到点」,而那与被测的 usage 投影毫无关系。
-        now: () => new Date(),
-        trial: completeGridTrial(),
-        trialPlan: () => gridPlanFixture(),
-      },
-      config,
+    const outcome = await withRealBash(workspaceDir, () =>
+      generateOneModel(
+        {
+          root,
+          runId: "r1",
+          agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
+          createClient: createHttpModelClient,
+          workspaceDir,
+          // 时钟取**当下**:会话墙钟 = 起点 + 1800s,固定在过去会让第一次工具调用就被判
+          // 「会话已到点」,而那与被测的 usage 投影毫无关系。
+          now: () => new Date(),
+          trial: completeGridTrial(),
+          trialPlan: () => gridPlanFixture(),
+        },
+        config,
+      ),
     );
     expect(outcome.kind).toBe("frozen");
     const requestBody = fetch.mock.calls[0]?.[1]?.body;

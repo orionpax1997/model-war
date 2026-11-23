@@ -23,7 +23,7 @@
     "sandbox:rootfs:build": "node packages/tools/src/sandbox-rootfs/build-rootfs.ts",
     "setup:hooks": "git config core.hooksPath .githooks",
     "setup:sandbox": "bash scripts/setup-sandbox.sh",
-    "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
+    "fmt": "oxfmt --check apps packages package.json tsconfig.base.json tsconfig.scripts.json tsconfig.json vitest.config.ts vitest.global-setup.ts vitest.kernel-guard.setup.ts pnpm-workspace.yaml .oxfmtrc.json .oxlintrc.json .dependency-cruiser.js",
     "lint": "oxlint apps packages",
     "lint:types": "tsc -b --pretty false && oxlint --type-aware apps packages",
     "lint:diagnose": "node packages/tools/src/vitest/run-vitest-rules-diagnose.ts",

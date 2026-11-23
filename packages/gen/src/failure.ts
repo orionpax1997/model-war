@@ -124,6 +124,35 @@ export type WriteFailureRecordInput = FailureIdentity & {
 };
 
 /**
+ * 失败档的候选描述符**只在字节还在时写**。
+ *
+ * ── 为什么要这一刀 ──
+ *
+ * 候选快照在**评测那一刻**落盘(「快照即提交」),而那时还不知道整场会话会不会成功。会话失败
+ * 时 `pipeline.ts` 的 `finally` 会把这一跑的候选旁挂产物清干净(发布不变量是「失败只写
+ * `failed-<runId>.json`」),而失败记录是在那之后才写的。于是记录里那张候选清单会指向**已经被
+ * 删掉的文件**:报告侧照它去读 `.candidate.js`,拿到 `scriptState: "missing"`——不崩,但「成绩
+ * 可核」这句话当场变成假话(文件的摘要写着、字节却不在)。
+ *
+ * 所以判据落在写盘这一刻:名字还在磁盘上才写它。缺席即「没有保留」——那是这一档的诚实说法,
+ * 而不是「字节丢了」(后者是另一件事:搬运 / 手工删除,由读侧照常报 `missing`)。
+ *
+ * 读侧因此不需要猜:失败档里**出现的**候选一定有字节,**不出现的**是没保留。
+ */
+const retainedCandidatesOf = (root: string, model: string, failure: ModelFailure): ModelFailure => {
+  const candidates = failure.candidates;
+  if (candidates === undefined) return failure;
+  const directory = join(root, "archive", model);
+  const retained = candidates.filter((candidate) =>
+    existsSync(join(directory, candidate.scriptFile)),
+  );
+  if (retained.length === candidates.length) return failure;
+  return retained.length === 0
+    ? (({ candidates: _dropped, ...rest }) => rest)(failure)
+    : { ...failure, candidates: retained };
+};
+
+/**
  * 把一条失败记录写到 `archive/<modelSlug>/failed-<runId>.json`。
  *
  * 目录不存在则递归创建(失败记录可能与冻结存档共用父目录,也可能一个模型都没通过)。
@@ -142,7 +171,7 @@ export const writeFailureRecord = (options: WriteFailureRecordInput): WriteFailu
       channelId: options.channelId,
       generatedAt: options.generatedAt,
       runId: options.runId,
-      failure: options.failure,
+      failure: retainedCandidatesOf(options.root, options.model, options.failure),
       ...(options.agent === undefined ? {} : { agent: options.agent }),
     });
     mkdirSync(join(options.root, "archive", options.model), { recursive: true });

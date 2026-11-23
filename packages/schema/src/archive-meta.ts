@@ -71,6 +71,7 @@ import {
   ARCHIVE_SELECTION_JSON_SCHEMA,
   type ArchiveSelection,
 } from "./selection-plan.js";
+import { EVALUATE_CALL_LIMIT } from "./tool-channel.js";
 import { TRIAL_GRID_SCORE_JSON_SCHEMA, type TrialGridScore } from "./trial-grid-summary.js";
 import {
   TRIAL_MATCHES_PER_CANDIDATE,
@@ -113,10 +114,17 @@ export const OPTIMIZATION_STAGES = [0, 1, 2] as const;
 /**
  * 评测配额（= 一份档案最多几个候选）。三次 `evaluate` 是**上限**，不是下限。
  *
+ * ── 它是**派生值**，不是真源 ──
+ *
+ * 真源在 harness 侧：`tool-channel.ts` 的 `EVALUATE_CALL_LIMIT`（dispatcher 执行的那个数）。
+ * 「一次会话最多几次真评测」与「一份档案最多几个候选」是同一个事实的两种读法——候选就是真评出
+ * 成绩的 `evaluate`——所以这里只做投影，不另写一个字面量。方向不能反过来：档案形状是消费侧的
+ * 记录格式，让它去带动 harness 配额，等于「改 JSON 排版就让榜断代」（ADR-0029）。
+ *
  * 与 `OPTIMIZATION_STAGES.length` 数值相同是巧合而不是同一个事实：那张表是 v1/v2 的
  * 三阶段下标，本常量是分步形态的调用配额。改一个不意味着改另一个。
  */
-export const OPTIMIZATION_CANDIDATE_LIMIT = 3 as const;
+export const OPTIMIZATION_CANDIDATE_LIMIT = EVALUATE_CALL_LIMIT;
 
 /**
  * 档案形状版本（ADR-0031「三个版本号各管一件事」的第一件：档案级的**读兼容契约**）。

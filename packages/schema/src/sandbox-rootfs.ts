@@ -18,8 +18,13 @@
  * ── 为什么是手写常量,而不是「运行时现算」 ──
  * 与 runtime bundle 同一条纪律:判据锚定确切字节,不锚运行目录。改产物后跑
  * `pnpm run sandbox:rootfs:build` 重算并手写回这里,门禁(`check:sandbox-rootfs`)负责证明
- * 两者一致,并顺带证明清单不多不少、五个二进制确实是静态 ELF、`contract/` 与 `docs/rules-v2/`
- * 逐字节相同、薄壳与 `packages/gen/src/agent/shim/shim.sh` 逐字节相同。
+ * 两者一致,并顺带证明清单不多不少、`bin/` 里每个二进制(三个薄壳之外)确实是静态 ELF、
+ * `contract/` 与 `docs/rules-v2/` 逐字节相同、薄壳与 `packages/gen/src/agent/shim/shim.sh` 逐字节相同。
+ *
+ * ── 清单与「谁是什么」只在这里写一遍 ──
+ * 门禁侧(`packages/tools/src/sandbox-rootfs/`)不另抄「哪些是二进制、哪些是薄壳」:它从本文件的
+ * `SANDBOX_ROOTFS_FILES` 与 `SANDBOX_ROOTFS_SHIMS` 推出来——`bin/*` 里除薄壳之外的每一个都必须是
+ * 静态 ELF。上一轮给 `cp` 补清单时要同时改两处手写表,那种双家正是「漏一处不红」的形状。
  *
  * ── `PROVENANCE.md` 不在清单里 ──
  * 它是产物旁边的来路说明书,不是挂载面:沙箱只 `--ro-bind` 这棵树的 `bin/` 与 `contract/`
@@ -34,6 +39,9 @@ export const SANDBOX_ROOTFS_DIR = "packages/gen/sandbox-rootfs";
  *
  * 「多一个少一个都红」由它承担,而不是由人记:新增内容物要同时改清单、哈希与
  * `docs/adr/0033-sandbox-executor.md` 那张内容物表——三处都要改,所以它不可能悄悄长大。
+ *
+ * 清单里 `bin/` 之外的分组是数据而不是形状:门禁按**路径前缀**分组(`contract/` 对真源、`bin/`
+ * 里除薄壳之外必须都是静态 ELF),所以这里不需要再写「哪几个是二进制」。
  */
 export const SANDBOX_ROOTFS_FILES = [
   "bin/bash",
@@ -49,6 +57,15 @@ export const SANDBOX_ROOTFS_FILES = [
   "contract/examples/minimal.ts",
   "contract/rules.md",
 ] as const;
+
+/**
+ * 三个薄壳的名字(相对 `bin/`):它们不是二进制,是 `shim.sh` 的三个副本(工具名取自 `$0`)。
+ *
+ * 与 `SANDBOX_ROOTFS_FILES` 是同一件事的两种投影——清单说「有这些文件」,这里说「其中这三个不是
+ * ELF」。门禁据此反推「`bin/` 里其余每一个都必须是静态 ELF」,于是新增二进制只有一处要改:
+ * 写进清单。漏写进清单的文件由「磁盘 == 清单」那条双向判据红,漏分类不可能发生(分类是推出来的)。
+ */
+export const SANDBOX_ROOTFS_SHIMS = ["check", "done", "evaluate"] as const;
 
 /**
  * 整棵 rootfs 的树哈希:**按路径排序、每份拼 `path\0bytes`、串接后 sha256**。

@@ -5,7 +5,7 @@
  *
  * 「档案写得出来、装载得进」这条判据在常跑链上就必须有人盯着,而它**不需要**内核能力:
  * 沙箱只负责「命令跑在哪一层进程里」,`check` / `evaluate` 的答案、编译、校验、落档都不经过它。
- * 所以这里把执行器换成宿主 `bash`(`@model-war/gen` 的 `withRealBash`),通道、宿主服务与
+ * 所以这里把执行器换成宿主 `bash`(`@model-war/gen/testing` 的 `withRealBash`),通道、宿主服务与
  * 归档三侧全部是真实现。同一套断言在真 bwrap 下的那一份住
  * `apps/cli/src/agent-real-session.test.ts`,由命名脚本 `check:sandbox` 跑(那里有 bubblewrap);
  * 本文件跑在 `unit`(常跑链),不装 bubblewrap 也绿。
@@ -45,9 +45,9 @@ import {
   gridPlanFixture,
   reply,
   stubClient,
-  withRealBash,
   type ModelConfig,
 } from "@model-war/gen";
+import { withRealBash } from "@model-war/gen/testing";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-agent-session-"));

@@ -342,7 +342,11 @@ export const createEvaluateService = (deps: EvaluateServiceDeps): EvaluateServic
       );
       const plan = deps.plan();
 
-      const result = deps.trial({
+      // 探针可以是异步的(注入缝的两种形态):真探针是 `spawnSync`(它阻塞,那正是子进程语义),
+      // 而测试要演「服务在宿主侧干了几秒」时不该被迫把事件循环一起冻住——冻住的话单步墙钟的
+      // 计时器根本不会到期,于是「服务在途时冻结墙钟」这件事在测试里测不出来。见
+      // `apps/cli/src/agent-real-session.test.ts` 那条慢评测用例。
+      const result = await deps.trial({
         root: deps.root,
         model: deps.model,
         artifactPath: compiled.jsPath,
