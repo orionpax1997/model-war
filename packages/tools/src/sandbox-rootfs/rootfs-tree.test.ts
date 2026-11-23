@@ -114,7 +114,7 @@ describe("文件枚举", () => {
     }
   });
 
-  it("真实 rootfs:清单里除薄壳之外的每个 bin/ 都在,且真的没有 PT_INTERP", () => {
+  it("真实 rootfs:清单里每个 bin/ 都在,且真的没有 PT_INTERP", () => {
     const rootfsDir = join(repoRoot, "packages/gen/sandbox-rootfs");
     const paths = rootfsFilePaths(rootfsDir);
     // 哪几个要过这条判断由 schema 的清单推出来,本文件不另写一张:上一轮给 `cp` 补清单时,
@@ -124,8 +124,8 @@ describe("文件枚举", () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    const binaries = staticBinariesOf(parsed.constants.files, parsed.constants.shims);
-    expect(binaries.length, "推导出 0 个二进制:清单或薄壳表抽空了").toBeGreaterThan(0);
+    const binaries = staticBinariesOf(parsed.constants.files);
+    expect(binaries.length, "推导出 0 个二进制:清单抽空了").toBeGreaterThan(0);
     for (const path of binaries) {
       expect(paths, `${path} 不在入库 rootfs 里`).toContain(path);
       expect(

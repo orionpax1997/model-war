@@ -11,9 +11,20 @@
  *   `api.md` 中间段读不到就是这个形状:字节在那里,取它的工具不在 `bin/` 里,而散文只说「两条命令」。
  * - **散文里写了、常量里没有**:模型照着散文敲,拿到 `command not found`,然后是纠正、重试、浪费步。
  *
- * 所以判据是**集合相等**,两个方向都判,并且按组判:`bin/` 里除薄壳之外是静态二进制,薄壳是
- * 经通道交给宿主执行的三件工具。两组混着写也能让集合相等,但模型会以为 `evaluate` 是本地命令
- * ——那不是文案洁癖,它决定模型怎么用那三次额度。
+ * 所以判据是**集合相等**,两个方向都判,并且按组判:`bin/` 里是静态二进制,另一组是**宿主工具**
+ * (它们不在沙箱里,是模型发起的工具调用)。两组混着写也能让集合相等,但模型会以为 `evaluate`
+ * 是本地命令——那不是文案洁癖,它决定模型怎么用那三次额度。
+ *
+ * ── 宿主工具那一组的两半,本票只接一半 ──
+ *
+ * 这一组以前从 schema 里那张「哪几个 `bin/` 名字不是二进制」的薄壳表推出来。薄壳与那张表
+ * 都已删除(票 03,见 `docs/adr/0029-bash-mini-harness-identity.md`),它的唯一真源现在是
+ * `packages/gen/src/agent/tools.ts` 的 `AGENT_TOOLS` 声明,本文件按**源码文本**取名字
+ * (零构建:工具包不得 import `@model-war/gen`)。
+ *
+ * 只判「文案点了名 ⇒ 声明里有它」这**一个**方向:反方向(声明里有而文案没写)要等首条消息
+ * 换成「宿主工具」那一节,而那是票 04 的文案工作;它同时新增 `check:prompt-tools` 把两个方向
+ * 都判上。在那之前,这里不能要求文案点名 `probe`——声明里有它,而文案还没改。
  *
  * ── 为什么判的是模板文本,不是渲染结果 ──
  *
@@ -56,7 +67,14 @@ export const AGENT_TEMPLATE_PATH = "prompts/agent.md";
 /** 静态二进制那一组的标题行。模板里必须**逐字**出现它:分组靠这一行认,换了词就是另一组。 */
 export const BINARY_GROUP_HEADING = "### 静态二进制:通用命令";
 
-/** 工具薄壳那一组的标题行。同上,逐字。 */
+/**
+ * 第二组(宿主工具)的标题行。同上,逐字。
+ *
+ * ⚠️ 它的**名字与内容此刻都是旧的**:文案还是「工具薄壳:经通道交给宿主执行」,而引擎里既没有
+ * 薄壳也没有通道。票 04 会把这一节的标题与清单一起改成「宿主工具」,那时这个常量跟着改名
+ * (`HOST_TOOL_GROUP_HEADING`)。本票不动它,是因为**文案是票 04 的**,而门禁必须与文案说同一
+ * 件事——改一半会让 `check:prompt-commands` 当场红。
+ */
 export const SHIM_GROUP_HEADING = "### 工具薄壳:经通道交给宿主执行,不是二进制";
 
 /** 一条违规。`where` 指到文件或那个命令名,报告里直接读得懂。 */
@@ -65,37 +83,61 @@ export type PromptCommandFinding = {
   readonly detail: string;
 };
 
-/** 两组命令的名字:`binaries` 是静态 ELF,`shims` 是经通道交给宿主的薄壳。 */
+/** 两组名字:`binaries` 是沙箱里敲得到的静态 ELF,`hostTools` 是模型调用的宿主工具。 */
 export type CommandGroups = {
   readonly binaries: readonly string[];
-  readonly shims: readonly string[];
+  readonly hostTools: readonly string[];
 };
 
 /** `bin/<名字>` → `<名字>`。清单项、报告与门禁说的都是名字,不是路径。 */
 const commandNameOf = (path: string): string => path.slice("bin/".length);
 
 /**
- * 从 rootfs 常量推出命令集合。
+ * 推出两组名字。
  *
- * 分组规则只有一条:`SANDBOX_ROOTFS_FILES` 里 `bin/` 开头的那些,**减掉** `SANDBOX_ROOTFS_SHIMS`
- * 是静态二进制,剩下的是薄壳。这条规则的家**不在这里**:它住在 `sandbox-rootfs/rootfs-drift.ts`
- * 的 `staticBinariesOf`——rootfs 漂移判据(「哪几份必须是静态 ELF」)与本判据问的是同一件事,
- * 同包、零构建,所以直接复用,不另写一份「哪些是二进制」。这里只做两件本判据自己的事:
- * 把路径换成名字、把薄壳去重排序(清单里一个名字只该出现一次)。
+ * 静态二进制那一组:`SANDBOX_ROOTFS_FILES` 里 `bin/` 开头的**全部**。这条规则的家**不在这里**:
+ * 它住在 `sandbox-rootfs/rootfs-drift.ts` 的 `staticBinariesOf`——rootfs 漂移判据(「哪几份必须
+ * 是静态 ELF」)与本判据问的是同一件事,同包、零构建,所以直接复用,不另写一份「哪些是二进制」。
+ *
+ * 宿主工具那一组:调用方给(门禁从 `AGENT_TOOLS` 的源码文本里取,理由见文件头注)。这里只做
+ * 两件本判据自己的事:把路径换成名字、去重排序(清单里一个名字只该出现一次)。
  */
 export const derivedCommandGroups = (
   files: readonly string[],
-  shims: readonly string[],
+  hostTools: readonly string[],
 ): CommandGroups => ({
-  binaries: staticBinariesOf(files, shims).map(commandNameOf),
-  shims: [...new Set(shims)].sort(),
+  binaries: staticBinariesOf(files).map(commandNameOf),
+  hostTools: [...new Set(hostTools)].sort(),
 });
+
+/** 工具声明的源码文本(相对仓库根)。零构建下这是取工具名的唯一途径。 */
+export const AGENT_TOOLS_SOURCE = "packages/gen/src/agent/tools.ts";
+
+/**
+ * 从 `AGENT_TOOLS` 的源码文本里取名字。
+ *
+ * 取法与 `rootfs-drift.ts` 读 schema 常量同源:先切出 `AGENT_TOOLS = [...]` 那一段,再取段内的
+ * `name: "..."`。**切整段**而不是全文件搜,是因为文件里别处也会出现 `name: "xxx"` 这种字样
+ * (头注就在讲这条取法本身)。
+ *
+ * 抽不出来时返回空数组,由入口按空转判红(`run-prompt-commands-gate.ts` 的 `vacuousReason`)——
+ * 抽不出来即静默放行,正是这套判据最容易漏的形状。宿主工具那一组要减掉 `bash`:它是沙箱里
+ * 敲的,归静态二进制那一组。
+ */
+export const hostToolNamesFrom = (source: string): readonly string[] => {
+  const array = /export const AGENT_TOOLS = \[([\s\S]*?)\] as const;/u.exec(source);
+  const body = array?.[1];
+  if (body === undefined) return [];
+  return [...body.matchAll(/\bname: "([A-Za-z][A-Za-z0-9-]*)"/gu)]
+    .flatMap((match) => (match[1] === undefined ? [] : [match[1]]))
+    .filter((name) => name !== "bash");
+};
 
 /** 清单里的一行:`- \`名字\` — 用途`。`index` 是它在模板里的行号(1 起),报错时指得到。 */
 export type ListedCommand = {
   readonly name: string;
   readonly purpose: string;
-  readonly group: "binaries" | "shims";
+  readonly group: "binaries" | "hostTools";
   readonly index: number;
 };
 
@@ -110,9 +152,9 @@ const HEADING = /^#{2,6}\s/u;
  * 「沙箱里有而清单没写」——诊断指错了地方。所以判据换成常量与模板共享的两条字面量:
  * 模板写什么,这里就认什么;模板换了词,`commandListFindings` 的第一条判据当场红。
  */
-const groupOfHeading = (line: string): "binaries" | "shims" | undefined => {
+const groupOfHeading = (line: string): "binaries" | "hostTools" | undefined => {
   const heading = line.trim();
-  if (heading === SHIM_GROUP_HEADING) return "shims";
+  if (heading === SHIM_GROUP_HEADING) return "hostTools";
   if (heading === BINARY_GROUP_HEADING) return "binaries";
   return undefined;
 };
@@ -127,7 +169,7 @@ const LISTED_COMMAND = /^\s*-\s+`([^`]+)`\s*[—–-]+\s*(\S.*)$/u;
 /** 模板里被点名、且在某个命令分组下面的那些行。 */
 export const listedCommands = (template: string): readonly ListedCommand[] => {
   const listed: ListedCommand[] = [];
-  let group: "binaries" | "shims" | undefined;
+  let group: "binaries" | "hostTools" | undefined;
   template.split("\n").forEach((line, offset) => {
     if (HEADING.test(line)) {
       group = groupOfHeading(line);
@@ -148,7 +190,13 @@ export const listedCommands = (template: string): readonly ListedCommand[] => {
 const MIN_PURPOSE_CHARS = 2;
 
 /**
- * 集合相等(两个方向)+ 组内唯一 + 每项一句用途 + 两条分组标题逐字在场。
+ * 集合关系 + 组内唯一 + 每项一句用途 + 两条分组标题逐字在场。
+ *
+ * 两个方向不是对称的,理由见文件头注「宿主工具那一组的两半」:
+ * - 静态二进制那一组**两个方向都判**(多一条、少一条都红);
+ * - 宿主工具那一组只判「文案点了名 ⇒ 声明里有它」。反方向要等票 04 改写文案,否则声明的
+ *   `probe` 会让这条门禁当场红在一个**还没轮到改**的文件上。
+ *
  * 空集合不在这里判——它是入口的空转判据。
  */
 export const commandListFindings = (
@@ -186,7 +234,7 @@ export const commandListFindings = (
     }
   }
 
-  for (const group of ["binaries", "shims"] as const) {
+  for (const group of ["binaries", "hostTools"] as const) {
     const want = derived[group];
     const got = listed.filter((item) => item.group === group);
     const seen = new Set<string>();
@@ -201,9 +249,11 @@ export const commandListFindings = (
     }
     const have = new Set(got.map((item) => item.name));
     const wantSet = new Set(want);
-    const groupName = group === "binaries" ? "静态二进制" : "工具薄壳";
+    const groupName = group === "binaries" ? "静态二进制" : "宿主工具";
 
-    for (const name of want) {
+    // 「声明里有、文案没写」只对静态二进制组判:宿主工具那一组的反方向归票 04 的
+    // `check:prompt-tools`(它与改写后的文案一起落地)。
+    for (const name of group === "binaries" ? want : []) {
       if (!have.has(name)) {
         findings.push({
           where: `${AGENT_TEMPLATE_PATH}:${groupName}`,
@@ -219,9 +269,12 @@ export const commandListFindings = (
         findings.push({
           where: `${AGENT_TEMPLATE_PATH}:${String(name.index)}`,
           detail:
-            `命令清单点名了 \`${name.name}\`,而 rootfs 常量里没有它。模型照这条敲会拿到 ` +
-            "`command not found`——要么把它加进 `SANDBOX_ROOTFS_FILES` 并重跑 `sandbox:rootfs:build`," +
-            "要么把这行删掉。",
+            group === "binaries"
+              ? `命令清单点名了 \`${name.name}\`,而 rootfs 常量里没有它。模型照这条敲会拿到 ` +
+                "`command not found`——要么把它加进 `SANDBOX_ROOTFS_FILES` 并重跑 " +
+                "`sandbox:rootfs:build`,要么把这行删掉。"
+              : `命令清单点名了 \`${name.name}\`,而工具声明里没有它。模型会照着去调一个不存在的` +
+                "工具,拿一次拒绝换一条纠正——要么把它加进 `AGENT_TOOLS`,要么把这行删掉。",
         });
       }
     }

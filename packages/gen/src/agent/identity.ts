@@ -21,8 +21,8 @@
  * ── 数字不在本文件里再抄一遍 ──
  *
  * 截断上限取自 `truncate.ts`、步数与墙钟取自 `limits.ts`、配额取自真源包的
- * `EVALUATE_CALL_LIMIT`、单步墙钟与通道 fd 取自执行器、挂载与网络**直接取 bwrap 的
- * 参数表**。所以本文件没有第二份取值:改真源,清单跟着变,digest 跟着断代。
+ * `EVALUATE_CALL_LIMIT`、单步墙钟取自执行器、工具名取自工具声明(`tools.ts`)、挂载与网络
+ * **直接取 bwrap 的参数表**。所以本文件没有第二份取值:改真源,清单跟着变,digest 跟着断代。
  */
 
 import { createHash } from "node:crypto";
@@ -33,7 +33,8 @@ import { ACTION_REJECT_EXIT_CODE, ACTION_REJECT_REASONS } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
 import { PROTOCOL_EXIT_CODE } from "./host/dispatcher.js";
 import { bwrapArgv } from "./sandbox/argv.js";
-import { CHANNEL_FD, DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
+import { DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
+import { HOST_SERVICE_TOOLS } from "./tools.js";
 import {
   OBSERVATION_LIMITS,
   RAW_PATHOLOGICAL_LIMIT_BYTES,
@@ -44,11 +45,13 @@ import {
 export const HARNESS_VERSION = "bash-mini/0.1";
 
 /**
- * 受限工具的三个名字。它们必须是 rootfs 里真实存在的薄壳(单测比对清单)。
+ * 宿主受理的工具名:**从工具声明派生**(`tools.ts` 的 `HOST_SERVICE_TOOLS` = 五个声明减 `bash`)。
  *
- * 收工工具叫 `finish`:`done` 是 bash 保留字,裸写一行就是语法错误,薄壳不可达(ADR-0032 修订)。
+ * 本文件以前在这里手写一份 `["check","evaluate","finish"]`,与 `tool-channel.ts` 的那一份同名
+ * 双份;两份各说一遍「必须是沙箱里真实存在的薄壳」。薄壳已删(票 03),清单与声明现在是同一个
+ * 集合的两个投影,所以只留声明那一份。
  */
-export const HOST_SERVICE_TOOLS = ["check", "evaluate", "finish"] as const;
+export { HOST_SERVICE_TOOLS };
 
 /**
  * 观测告警里必须出现的**可执行方向**。
@@ -84,19 +87,20 @@ export type HarnessManifest = {
     readonly rejectExitCode: number;
   };
   /**
-   * 收工工具这一格:它是沙箱里的一条真命令(`bin/finish` 薄壳),不是文本标记。
+   * 收工工具这一格:它是模型发起的一次**工具调用**,不是沙箱里的命令、也不是文本标记。
    *
-   * 键名叫 `finish`(与模型看到的那条命令同名),子键说的是**行为**:它经通道上报、由宿主在
-   * 本步结束后收工、照常占一步;而 `stopsRemainingCommands: false` 是这一版的行为放宽——
-   * 整块由 `bash` 解析,`finish` 之后写的行**仍会执行**。
+   * ⚠️ **本格与档案形状无关,票 06 会整格定型**。票 03 只改了它里面已经是假话的两个取值
+   * (`form` 与 `signal` 说的是已删除的薄壳通道),其余子键保持原样,免得把清单改形的决定
+   * 塞进这一票。`stopsRemainingCommands` 在新协议下没有对应物(一次调用就是一个动作,没有
+   * 「之后的行」),它的去留归票 06。
    *
    * 档案侧的 `action.kind: "done"` / `termination: "done"` 是 v3 形状里的常量,不跟着改名:
    * 改它等于升 `archiveSchemaVersion`,而旧档要照旧可读。
    */
   readonly finish: {
     readonly command: "finish";
-    readonly form: "rootfs-shim";
-    readonly signal: "host-channel";
+    readonly form: "host-tool";
+    readonly signal: "tool-call";
     readonly stopsRemainingCommands: false;
     readonly endsSession: true;
     readonly countsAsStep: true;
@@ -109,7 +113,6 @@ export type HarnessManifest = {
   readonly services: {
     readonly tools: readonly string[];
     readonly shape: "host-side-service";
-    readonly channelFd: number;
     /**
      * 参数面:两个服务型工具(`check` / `evaluate`)**都不收参数**。
      *
@@ -175,8 +178,8 @@ export const harnessManifest = (): HarnessManifest => {
     },
     finish: {
       command: "finish",
-      form: "rootfs-shim",
-      signal: "host-channel",
+      form: "host-tool",
+      signal: "tool-call",
       stopsRemainingCommands: false,
       endsSession: true,
       countsAsStep: true,
@@ -188,9 +191,9 @@ export const harnessManifest = (): HarnessManifest => {
     // 清单要记录的是「模型撞得到的判据」。两者同源只在这一处(out of `tool-channel.ts`)。
     quotas: { evaluate: EVALUATE_CALL_LIMIT, check: "counts-as-step" },
     services: {
+      // 名字取自工具声明(`tools.ts` 的 `HOST_SERVICE_TOOLS`),不是本文件的手写副本。
       tools: HOST_SERVICE_TOOLS,
       shape: "host-side-service",
-      channelFd: CHANNEL_FD,
       // 退出码取自 dispatcher(执行那条判据的地方),清单不另写一个数字。
       args: { accepted: false, exitCode: PROTOCOL_EXIT_CODE, consumesQuota: false },
     },
@@ -253,12 +256,12 @@ export const digestOf = (manifest: HarnessManifest): string =>
  * 它是**入库常量**而不是运行时现算,与 `SANDBOX_ROOTFS_TREE_HASH` 同一条纪律:判据锚定确切
  * 取值,回填时必须有人有意改这一行,于是「上限变了但没人注意」在 diff 里看得见。
  *
- * ⚠️ 这一版是**过渡值**:票 02 只改了 `actionSyntax.rejects` 的四个名字(拒绝档从围栏块那四族
- * 换成工具调用那四族),清单的其余格子(围栏标记、`blocks`、`observationRole`、`finish` 的形状、
- * `services.channelFd` 与 `tools`)要等票 06 才重写。票 06 落地后这个数还会再变一次——那是有意的
- * 断代:一个「协议已经换了」的世界不该与旧世界共用一个身份。
+ * ⚠️ 这一版是**过渡值**:票 03 删掉了 `services.channelFd`(通道没了)、把 `services.tools` 换成
+ * 从工具声明派生的名字、并把 `finish` 那格里已经是假话的两个取值(`form` / `signal`)改成
+ * 「工具调用」。清单的其余格子(围栏标记、`blocks`、`observationRole`)要等票 06 才重写——票 06
+ * 落地后这个数还会再变一次,那是有意的断代:一个「协议已经换了」的世界不该与旧世界共用一个身份。
  */
-export const HARNESS_DIGEST = "78a36d1e7d2c11ac650a5fbeb90dce9588e671c1b63e4781365f874b91c5a821";
+export const HARNESS_DIGEST = "f1eb25bfcc471403c6dd7aca6eb6f02afb03e7742841c9a137448a53cb139e65";
 
 /** 现算的身份:`harnessVersion` + `harnessDigest`,落进档案的就是这两个。 */
 export const harnessIdentity = (): { version: string; digest: string } => ({

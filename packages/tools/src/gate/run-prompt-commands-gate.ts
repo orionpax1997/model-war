@@ -5,9 +5,10 @@
  *
  * ── 两侧各读什么、为什么这么读 ──
  *
- * - **常量侧**:`packages/schema/src/sandbox-rootfs.ts` 的**源码文本**(取法与
- *   `check:sandbox-rootfs` 同一份:`rootfs-drift.ts` 的 `sandboxRootfsConstantsFrom`)。不 import
- *   真源包:它的 `exports` 指向 `dist/`,import 就让这条快门禁依赖一次 `tsc -b`。
+ * - **常量侧**:两处**源码文本**——`packages/schema/src/sandbox-rootfs.ts`(取法与
+ *   `check:sandbox-rootfs` 同一份:`rootfs-drift.ts` 的 `sandboxRootfsConstantsFrom`)与
+ *   `packages/gen/src/agent/tools.ts` 的 `AGENT_TOOLS`(宿主工具声明的唯一真源)。都不 import
+ *   真源包:它们的 `exports` 指向 `dist/`,import 就让这条快门禁依赖一次 `tsc -b`。
  * - **文案侧**:`prompts/agent.md` 的**模板文本**。渲染器只替换 `{{contractIndex}}` /
  *   `{{contractDigest}}` 两处,不碰命令清单——判模板等于判模型真的读到的那段。渲染器住在
  *   `@model-war/gen`,同样 import 不得(零构建)。
@@ -28,9 +29,11 @@ import { resolve } from "node:path";
 
 import {
   AGENT_TEMPLATE_PATH,
+  AGENT_TOOLS_SOURCE,
   absentToolFindings,
   commandListFindings,
   derivedCommandGroups,
+  hostToolNamesFrom,
   listedCommands,
   type PromptCommandFinding,
 } from "../prompt-commands.ts";
@@ -55,7 +58,11 @@ const main = (): number => {
     return 1;
   }
 
-  const derived = derivedCommandGroups(parsed.constants.files, parsed.constants.shims);
+  const toolsSource = existsSync(resolve(repoRoot, AGENT_TOOLS_SOURCE))
+    ? readFileSync(resolve(repoRoot, AGENT_TOOLS_SOURCE), "utf8")
+    : "";
+  const hostTools = hostToolNamesFrom(toolsSource);
+  const derived = derivedCommandGroups(parsed.constants.files, hostTools);
   const listed = listedCommands(template);
 
   // 空转:两侧任一侧读到空,集合相等就变成「空 == 空」——那是一条什么都没断言的绿。
@@ -64,9 +71,13 @@ const main = (): number => {
       subject: "首条消息模板的正文",
       scope: AGENT_TEMPLATE_PATH,
     }),
-    vacuousReason(derived.binaries.length + derived.shims.length, {
+    vacuousReason(derived.binaries.length, {
       subject: "rootfs 常量推出的命令",
       scope: SCHEMA_CONSTANTS_SOURCE,
+    }),
+    vacuousReason(derived.hostTools.length, {
+      subject: "工具声明推出的宿主工具",
+      scope: AGENT_TOOLS_SOURCE,
     }),
     vacuousReason(listed.length, {
       subject: "首条消息里点名的命令",
@@ -88,11 +99,11 @@ const main = (): number => {
   }
   const scale =
     `静态二进制 ${String(derived.binaries.length)} 条(${derived.binaries.join(" / ")})、` +
-    `薄壳 ${String(derived.shims.length)} 条(${derived.shims.join(" / ")})`;
+    `宿主工具 ${String(derived.hostTools.length)} 条(${derived.hostTools.join(" / ")})`;
   process.stdout.write(
     findings.length === 0
-      ? `✓ 命令清单门禁:${scale}——首条消息里的清单与 rootfs 常量逐项相等,` +
-          "缺项(awk / sleep)与替代写法都在。\n" +
+      ? `✓ 命令清单门禁:${scale}——首条消息里的静态二进制清单与 rootfs 常量逐项相等、` +
+          "宿主工具的点名都能在声明里找到,缺项(awk / sleep)与替代写法都在。\n" +
           "命令清单门禁:绿(模型看到的就是沙箱里有的)\n"
       : `命令清单门禁:红(${String(findings.length)} 处)。${scale}。` +
           "改文案或改常量,两者必须说同一件事——模型只知道文案那一份。\n",
