@@ -17,6 +17,9 @@
  * 但**不冒充**预算截断。缺停止字段保持 `"unknown"`;原状态和原因单独保留在 `stopDetails`。
  * 重试层只认 `"length"` 重发同一轮。
  *
+ * 工具调用那一轮的 `content` 常常是空串、真正的产物在 `tool_calls` 里——所以统一形状同时有
+ * `text` 与 `toolCalls` 两格,两个键各自承载一种产物(见 `ModelResponse.toolCalls`)。
+ *
  * 解析全程用 `unknown` 收窄(`no-explicit-any` 是 error):端点返回的永远是外部输入,
  * 遇到缺字段就退到安全缺省,而不是抛"取属性时 undefined"的下游崩溃。
  */
@@ -28,6 +31,8 @@ import type {
   ReasoningCarry,
   ReasoningEcho,
 } from "../model-client.js";
+import type { ToolCall, ToolDeclaration } from "../agent/tools.js";
+import { toolCallIdAt } from "../agent/tools.js";
 import type { EndpointFamily, ModelConfig } from "../config.js";
 import { isRecord } from "../record.js";
 import {
@@ -56,6 +61,42 @@ export type ReasoningCapability = {
 };
 
 /**
+ * 一条端点族的**工具调用能力声明**。
+ *
+ * ── 为什么是可选字段,缺省 = 不支持 ──
+ *
+ * 与 `streaming?: StreamingEndpoint` 同一条先例:四族的工具形状并不相同(OpenAI 是
+ * `{type:"function", function:{name, description, parameters}}` + `tool_calls`,Anthropic 是
+ * `{name, description, input_schema}` + `tool_use` / `tool_result` 块),而只有 `chat-completions`
+ * 的工具读法被**真实响应**验证过。给没被验证过的族写一版翻译,只会造出「看起来支持」的假象
+ * (ADR-0032 已经否过一次这个形状)。所以缺省即「本族不支持工具调用」,用它的席位在**会话
+ * 起跑之前**拒跑(`pipeline.ts` 的 `assertToolSurface`),而不是发一个上游认不出的请求。
+ *
+ * `messages` 族为什么不声明:2026-11-20 真请求探针里,`claude-haiku-5-5` 在 `/messages` 上
+ * **带不带 `tools` 都是 HTTP 403 permission_error**(席位整体被渠道拒,与请求体无关),于是
+ * 「`tool_result` 能否配对」**零证据**。零证据不写翻译,这是本仓的既有规矩。
+ */
+export type ToolCapability = {
+  /** 这一族把工具声明写成什么形状。今天是 chat 族那一种(JSON Schema + `tool_calls`)。 */
+  readonly shape: "function-json-schema";
+};
+
+/**
+ * 一次请求的**协议面**:工具声明从这里进来,不从 `params` 进来。
+ *
+ * ── 为什么工具声明必须是一等入参 ──
+ *
+ * `ModelParams` 是**生成策略的产出面**(`generationParams()`),它的每个键都是「怎么采样」;
+ * 让工具声明从那里进来,`generationPolicy` 就能意外改掉协议——于是「换 harness」与「调一个
+ * 参数」在代码里长得一模一样,而二者的后果差着整整一个世界。所以它走这条独立的缝。
+ *
+ * 缺省(`{}`)= 没有工具声明 = 请求体与工具调用引入之前**逐字节相同**。
+ */
+export type EndpointRequest = {
+  readonly tools?: readonly ToolDeclaration[];
+};
+
+/**
  * 一条端点族的翻译规则。`path` 相对 `baseUrl` 拼;`buildBody` 造请求体;`parseResponse` 读回统一形状。
  *
  * `path` 是按配置求值的函数而不是常量串:Google 系把模型名与流式动词都写进路径
@@ -67,8 +108,16 @@ export type EndpointSpec = {
     config: ModelConfig,
     messages: readonly ChatMessage[],
     params: ModelParams,
+    request?: EndpointRequest,
   ) => Record<string, unknown>;
   readonly parseResponse: (json: unknown) => ModelResponse;
+  /**
+   * 工具调用能力声明(见 `ToolCapability`)。**可选 = 本族不支持**。
+   *
+   * 可选而不是必填:与 `reasoning` 相反的那一侧——那里的「忘了声明」是一个接错,这里的
+   * 「不声明」是一个**正当答案**(这一族零证据)。
+   */
+  readonly tools?: ToolCapability;
   /**
    * 推理回传的能力声明(ADR-0032「reasoning 按端点族分家」)。**每族必填**。
    *
@@ -142,6 +191,29 @@ const toWireMessage = (message: ChatMessage): Record<string, unknown> => ({
 /** 把值收窄成键值对记录;不是记录就给空记录,免得下游取属性崩。 */
 const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
 
+/**
+ * 读一条消息的 `tool_calls`。
+ *
+ * `arguments` **原样交出字符串**,不在这里 `JSON.parse`:解析失败是模型可自我修复的格式失败
+ * (`malformed-arguments`,归动作层判、计一步、回纠正消息),放进传输层就变成了端点错误。
+ * 同一个道理要求它**不重编码**——`JSON.stringify(JSON.parse(x))` 会改掉缩进与转义写法,而发回
+ * 历史时用的就是这串字节(ADR-0031「与发回去的字节同源」)。
+ *
+ * 缺 `function.name` 或 `function.arguments` 的那一格**丢掉**,不折成空名字的调用:
+ * 「说不出调了什么」不是一个可判定的动作,凑空名字只会把上游的呲变成下游的 `unknown-tool`。
+ */
+const toolCallsOf = (message: Record<string, unknown>): readonly ToolCall[] => {
+  const calls: ToolCall[] = [];
+  for (const entry of asArray(message.tool_calls)) {
+    const fn = asRecord(asRecord(entry).function);
+    const name = stringField(fn, "name");
+    const argumentsJson = stringField(fn, "arguments");
+    if (name === undefined || argumentsJson === undefined) continue;
+    calls.push({ name, argumentsJson });
+  }
+  return calls;
+};
+
 // ── 推理回传的能力声明(ADR-0032「reasoning 按端点族分家」)────────────────────
 //
 // 三份声明跟在族的那一节之前,`buildBody`、累积器、`parseResponse` 都从它们取策略:
@@ -188,9 +260,10 @@ const GENERATE_CONTENT_REASONING: ReasoningCapability = { carry: "drop", read: (
 // ── chat-completions(OpenAI 系)─────────────────────────────────────────────
 
 /**
- * chat 族的一条请求消息:推理回传落在 `reasoning_details` 里,与端点吐出来的位置一致。
+ * chat 族的一条请求消息:推理回传落在 `reasoning_details` 里,与端点吐出来的位置一致;
+ * 工具调用落在 `tool_calls` / `tool_call_id` 上,与端点吐出来的位置一致。
  *
- * 只有带条目的消息才多那一格:历史里其余消息仍是 `{role, content}`。
+ * 只有带东西的消息才多那几格:历史里其余消息仍是 `{role, content}`。
  */
 const chatWireMessage = (message: ChatMessage): Record<string, unknown> => {
   const wire = toWireMessage(message);
@@ -198,13 +271,51 @@ const chatWireMessage = (message: ChatMessage): Record<string, unknown> => {
   if (echo !== undefined) {
     writeChatReasoning(wire, echo, CHAT_REASONING.carry);
   }
+  // `tool` 角色回答的是哪一次调用:渠道要求 assistant 的 `tool_calls[i].id` 与 tool 消息的
+  // `tool_call_id` 逐字相等。实证结果:配对关系服务端**不校验**,但 `id` 本身是**必填**
+  // (缺它回 400 `messages.N.tool_calls.0.id expected string`)。所以两处都从 `toolCallId` 派生。
+  if (message.role === "tool" && message.toolCallId !== undefined) {
+    wire.tool_call_id = message.toolCallId;
+  }
+  // assistant 那一轮发起了什么:原样回传 `argumentsJson` 的字节,不重编码。
+  if (message.toolCalls !== undefined && message.toolCalls.length > 0) {
+    const base = message.toolCallId;
+    wire.tool_calls = message.toolCalls.map((call, index) => ({
+      // 缺 `toolCallId` 时退到 `call-0` 而不是漏掉这个键:漏掉会让渠道 400。
+      id: toolCallIdAt(base ?? "call-0", index),
+      type: "function",
+      function: { name: call.name, arguments: call.argumentsJson },
+    }));
+  }
   return wire;
 };
 
-const chatCompletionsBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
+/**
+ * 工具声明的线上形状(chat 族):`[{type:"function", function:{name, description, parameters}}]`。
+ *
+ * 实证形状取自 2026-11-20 的真请求探针(见票 01 的验收证据)。
+ */
+const chatToolsField = (tools: readonly ToolDeclaration[]): readonly unknown[] =>
+  tools.map((tool) => ({
+    type: "function",
+    function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+  }));
+
+/**
+ * 工具声明与 `tool_choice` 排在 `...params` **之后**。
+ *
+ * 这是「工具声明是一等参数」的物理实现点:`params` 是生成策略的产出面,把它写在后面就是让
+ * `generationPolicy` 能意外覆盖协议。``tool_choice: "auto"` 而不是 `"required"` 的理由在 ADR-0032
+ * 的落选段:强制调用会把「我想先想想」变成一条被强迫的命令,而`auto` 下「零次调用」照旧是
+ * 一条计步的拒绝档。
+ */
+const chatCompletionsBody: EndpointSpec["buildBody"] = (config, messages, params, request) => ({
   model: config.modelId,
   messages: messages.map(chatWireMessage),
   ...params,
+  ...(request?.tools === undefined || request.tools.length === 0
+    ? {}
+    : { tools: chatToolsField(request.tools), tool_choice: "auto" }),
 });
 
 /**
@@ -214,8 +325,13 @@ const chatCompletionsBody: EndpointSpec["buildBody"] = (config, messages, params
  * 就整段缺 token 数。两者排在 `...params` **之后**,故调用方 params 里的同名键压不过本层——
  * 「这条请求走流式」是端点族的传输决定,不是可被模型配置覆盖的生成参数。
  */
-const chatCompletionsStreamBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
-  ...chatCompletionsBody(config, messages, params),
+const chatCompletionsStreamBody: EndpointSpec["buildBody"] = (
+  config,
+  messages,
+  params,
+  request,
+) => ({
+  ...chatCompletionsBody(config, messages, params, request),
   stream: true,
   stream_options: { include_usage: true },
 });
@@ -233,6 +349,14 @@ const createChatCompletionsAccumulator = (): StreamAccumulator => {
   let finishReason: string | undefined;
   let usage: unknown;
   const reasoning = chatReasoningStream(CHAT_REASONING.carry);
+  /**
+   * 按 `index` 聚合的在途工具调用。
+   *
+   * `delta.tool_calls` 是**分片**的:首帧常常只带 `index` 与 `function.name`,`arguments` 的文本
+   * 分数帧追加。所以键是渠道给的 `index`,不是本帧的数组下标——一次响应可能有多个调用,而它们
+   * 的参数帧会交错。`name` 也拼字符串(实路上只来一帧,但不赌)。
+   */
+  const toolCalls = new Map<number, { name: string; argumentsJson: string }>();
 
   return {
     push: (frame) => {
@@ -241,6 +365,18 @@ const createChatCompletionsAccumulator = (): StreamAccumulator => {
       const delta = asRecord(choice.delta);
       text += stringField(delta, "content") ?? "";
       reasoning.push(delta);
+
+      for (const [position, entry] of asArray(delta.tool_calls).entries()) {
+        const call = asRecord(entry);
+        // `index` 缺席时退到本帧里的位次:没有它就无法分辨「同一个调用的下一帧」与「另一个
+        // 调用」,而推一个到末尾会把两串参数交错成一串无意义的字节。
+        const index = typeof call.index === "number" ? call.index : position;
+        const current = toolCalls.get(index) ?? { name: "", argumentsJson: "" };
+        const fn = asRecord(call.function);
+        current.name += stringField(fn, "name") ?? "";
+        current.argumentsJson += stringField(fn, "arguments") ?? "";
+        toolCalls.set(index, current);
+      }
 
       // 首帧与中途帧都带 `finish_reason: null`;只被「最后一个非空值」覆盖(终点帧 / 截断的 length)。
       const frameFinish = stringField(choice, "finish_reason");
@@ -256,8 +392,15 @@ const createChatCompletionsAccumulator = (): StreamAccumulator => {
     },
     result: () => {
       const echo = reasoning.result();
+      // 按 `index` 排序:Map 的插入序在「多个调用交错返回」时不可靠(第二个可能先到一帧),而
+      // 档案里的顺序得与模型发起的顺序一致。空名字或空参数的那一格与非流式同样丢掉。
+      const calls = [...toolCalls.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([, call]) => call)
+        .filter((call) => call.name !== "" && call.argumentsJson !== "");
       return {
         text,
+        ...(calls.length === 0 ? {} : { toolCalls: calls }),
         finishReason: finishReason ?? "unknown",
         usage,
         stopDetails: finishReason === undefined ? {} : { reason: finishReason },
@@ -273,8 +416,10 @@ const parseChatCompletions: EndpointSpec["parseResponse"] = (json) => {
   const message = asRecord(choice.message);
   const rawStop = stringField(choice, "finish_reason");
   const echo = CHAT_REASONING.read(root);
+  const calls = toolCallsOf(message);
   return {
     text: stringField(message, "content") ?? "",
+    ...(calls.length === 0 ? {} : { toolCalls: calls }),
     finishReason: rawStop ?? "unknown",
     usage: root.usage,
     stopDetails: rawStop === undefined ? {} : { reason: rawStop },
@@ -336,6 +481,19 @@ const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
   const systemParts: string[] = [];
   const dialog: ChatMessage[] = [];
   for (const message of messages) {
+    // ── `tool` 角色在这里是**拒跑**，不是翻译 ──
+    //
+    // 本族的工具形状是 `tool_use` / `tool_result` **块**，不是 `{role:"tool"}`，而它今天
+    // **零证据**（`claude-haiku-5-5` 在 `/messages` 上带不带 `tools` 都是 403，见 `ToolCapability`）。
+    // 所以本族不声明工具能力，agent 会话用它的席位在**起跑前**就被拒（`pipeline.ts`）。
+    // 这条抛错是**最后一道防线**:它把「上层忘了拒跑」变成一条本地红，而不是一个上游 400——
+    // 而 400 在报告里与「模型写错了」同形，归因就错了。
+    if (message.role === "tool") {
+      throw new Error(
+        'messages 族不支持工具调用:收到 role:"tool" 的观测消息,而本族的工具形状是 tool_result 块且未被验证。' +
+          "这是 agent 会话的接线错误(应在起跑前拒跑),不是模型写错了。",
+      );
+    }
     if (message.role === "system") {
       systemParts.push(message.content);
     } else {
@@ -371,8 +529,8 @@ const messagesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
  * 实测新中转在非流式下长时间不回响应头(网关等上游全量生成完才回),300s 空闲超时先到;
  * 同一请求开流式后首帧 6s 即到——「这条请求走流式」是端点族的传输决定,params 压不过本层。
  */
-const messagesStreamBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
-  ...messagesBody(config, messages, params),
+const messagesStreamBody: EndpointSpec["buildBody"] = (config, messages, params, request) => ({
+  ...messagesBody(config, messages, params, request),
   stream: true,
 });
 
@@ -471,11 +629,23 @@ const responsesWireItems = (message: ChatMessage): unknown[] => {
     : writeResponsesReasoning(message.reasoning, item, RESPONSES_REASONING.carry);
 };
 
-const responsesBody: EndpointSpec["buildBody"] = (config, messages, params) => ({
-  model: config.modelId,
-  ...params,
-  input: messages.flatMap(responsesWireItems),
-});
+const responsesBody: EndpointSpec["buildBody"] = (config, messages, params) => {
+  for (const message of messages) {
+    // 同上族:`responses` 的工具形状（`function_call` 条目 + `output` 里的 `function_call_output`）
+    // 同样**零证据**，所以本族不声明工具能力。上层应该起跑前拒跑，这里只防「静默发出非法 body」。
+    if (message.role === "tool") {
+      throw new Error(
+        'responses 族不支持工具调用（未声明工具能力）:收到 role:"tool" 的观测消息，' +
+          "这是 agent 会话的接线错误。",
+      );
+    }
+  }
+  return {
+    model: config.modelId,
+    ...params,
+    input: messages.flatMap(responsesWireItems),
+  };
+};
 
 const parseResponses: EndpointSpec["parseResponse"] = (json) => {
   const root = asRecord(json);
@@ -587,6 +757,14 @@ const generateContentBody: EndpointSpec["buildBody"] = (_config, messages, param
   const systemParts: string[] = [];
   const contents: { role: string; parts: { text: string }[] }[] = [];
   for (const message of messages) {
+    // 本族不声明工具能力（今日零证据）。`tool` 角色在这里会被下面的 `?? "user"` 静默折成
+    // 一条 user 消息——那是**发得出去但意思错了**的 body，比 400 更难查。所以当场抬错。
+    if (message.role === "tool") {
+      throw new Error(
+        'generate-content 族不支持工具调用（未声明工具能力）:收到 role:"tool" 的观测消息，' +
+          "这是 agent 会话的接线错误。",
+      );
+    }
     if (message.role === "system") {
       systemParts.push(message.content);
       continue;
@@ -666,6 +844,9 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         buildBody: chatCompletionsBody,
         parseResponse: parseChatCompletions,
         reasoning: CHAT_REASONING,
+        // 本族的工具读法被**真实响应**验证过(2026-11-20 的两个席位各一条,证据在票 01 尾)。
+        // 它是四族里唯一声明工具能力的一族。
+        tools: { shape: "function-json-schema" },
         streaming: {
           buildBody: chatCompletionsStreamBody,
           createAccumulator: createChatCompletionsAccumulator,
@@ -677,6 +858,9 @@ export const endpointSpec = (family: EndpointFamily): EndpointSpec => {
         buildBody: messagesBody,
         parseResponse: parseMessages,
         reasoning: MESSAGES_REASONING,
+        // **不声明工具能力**:`claude-haiku-5-5` 在本账号档位下整套 `/messages` 被渠道拒
+        // (带不带 `tools` 都是 403),「`tool_use` / `tool_result` 能不能配对」零证据。
+        // 零证据不写翻译——否则只会造出「看起来支持」的假象。
         streaming: {
           buildBody: messagesStreamBody,
           createAccumulator: createMessagesAccumulator,

@@ -43,6 +43,7 @@ import { runGeneration, type GenerationRequest } from "./run.js";
 import type { ModelConfig } from "./config.js";
 import type { ChatMessage, ModelParams, ModelResponse } from "./model-client.js";
 import { HARNESS_DIGEST, HARNESS_VERSION } from "./agent/identity.js";
+import { AGENT_TOOLS } from "./agent/tools.js";
 import { ACTION_REJECT_EXIT_CODE } from "./agent/action.js";
 import { withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
 import type { AgentExecResult } from "./agent/types.js";
@@ -1120,4 +1121,43 @@ it("一次 evaluate 都不做的会话不搬计划:网格不是入场费", async
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") return;
   expect(outcome.agent.termination).toBe("done");
+});
+
+it("工具声明每轮都带:会话的每次 send 都收到同一份 AGENT_TOOLS(协议面,不从 params 走)", async () => {
+  const root = mkRoot();
+  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
+  const outcome = await withHostBash(
+    () => stepOk(),
+    () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
+  );
+
+  expect(outcome.kind).toBe("failed");
+  // 两次调用(两步)都带声明:历史逐轮变长,协议面不变。
+  expect(model.calls).toHaveLength(2);
+  for (const call of model.calls) {
+    expect(call.tools).toEqual(AGENT_TOOLS);
+  }
+  // 工具声明**不从 params 走**:它是发送路径的一等入参,生成策略的产出面一个字没变。
+  for (const call of model.calls) {
+    expect("tools" in call.params).toBe(false);
+    expect("tool_choice" in call.params).toBe(false);
+  }
+});
+
+it("本族未声明工具能力就在**起跑前**拒跑:零次模型调用,零步会话", async () => {
+  const root = mkRoot();
+  const model = stubClient([]);
+  // `messages` 族零证据(整套 `/messages` 被渠道拒),所以它的席位不该开始一场会话:
+  // 「不支持」要在起跑前说出来,而不是花 20 分钟跑到 0 候选才发现。
+  await expect(
+    withRealBash(join(root, "ws"), () =>
+      generateOneModel(
+        requestWith(root, { createClient: () => model, workspaceDir: join(root, "ws") }),
+        configOf({ endpointFamily: "messages" }),
+      ),
+    ),
+  ).rejects.toThrow(/未声明工具调用能力/);
+  expect(model.calls).toHaveLength(0);
+  // 一次都没开始:没有推进到落档那一步。
+  expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
 });

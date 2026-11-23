@@ -27,6 +27,7 @@
  */
 
 import type { ModelClient, ModelParams, ModelResponse } from "../model-client.js";
+import type { ToolDeclaration } from "./tools.js";
 import {
   buildHistory,
   type HistorySeed,
@@ -58,6 +59,14 @@ export const ACTION_PARSE_FAILURE_LIMIT = 3;
 export type AgentLoopRequest = {
   readonly model: ModelClient;
   readonly executor: AgentExecutor;
+  /**
+   * 本会话的工具声明(`AGENT_TOOLS`)。
+   *
+   * 由接线方注入而不是本模块 import 常量:loop 不认识「模型看得见的世界」里有哪五个工具,
+   * 它只负责把声明原样送到端口上(`SendOptions.tools`)。这样同一份 loop 也能被只声明一个
+   * 工具的测试钉住。缺席 = 不带 `tools` 发请求(请求体与工具调用之前逐字节相同)。
+   */
+  readonly tools?: readonly ToolDeclaration[];
   /** `system`:协议(动作语法、`finish` 收工命令的语义)。 */
   readonly system: string;
   /** 首条 `user`:任务、目录与三条硬约束。 */
@@ -209,11 +218,13 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
     // ③ 调用:截断重发一枪,两枪挂在同一步的 attempts 上。
     let attempts = 1;
     let response: ModelResponse;
+    // 工具声明是**每次请求**都带的:历史逐轮变长,协议面不变。不传时请求体逐字节不变。
+    const sendOptions = request.tools === undefined ? undefined : { tools: request.tools };
     try {
-      response = await request.model.send(history, params);
+      response = await request.model.send(history, params, sendOptions);
       if (response.finishReason === "length") {
         attempts = 2;
-        response = await request.model.send(history, params);
+        response = await request.model.send(history, params, sendOptions);
       }
     } catch (cause) {
       // 传输重试耗尽(重试预算在传输层,不在 loop)与「总墙钟到点、调用被中止」都到这里:
@@ -297,6 +308,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
     });
     turnHistory.push({
       raw,
+      ...(response.toolCalls === undefined ? {} : { toolCalls: response.toolCalls }),
       observation,
       ...(response.reasoning === undefined ? {} : { reasoning: response.reasoning }),
     });
