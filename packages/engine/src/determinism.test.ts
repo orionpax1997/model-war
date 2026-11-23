@@ -71,6 +71,13 @@ const runOnce = (strategies: readonly StubStrategy[]): readonly ReplayLine[] => 
 const movingStrategies = (): readonly StubStrategy[] =>
   [0, 1, 2, 3].map((seat) => marchToNearestEnemy(seat as 0 | 1 | 2 | 3));
 
+/**
+ * 第一条用例跑出的第一列。下一条只断言「这列不是一片常量」,用的是同一份入参同一批策略,
+ * 再跑一局拿到的是同一列——那一局的 0.8s 不买到任何新证据。`-t` 单跑下一条时它是 `undefined`,
+ * 走的仍是真跑。
+ */
+let baselineColumn: readonly string[] | undefined;
+
 it("同配置重跑 10 次,每 tick 的 stateHash 十列全等", () => {
   const columns: (readonly string[])[] = [];
   for (let run = 0; run < 10; run++) {
@@ -80,6 +87,7 @@ it("同配置重跑 10 次,每 tick 的 stateHash 十列全等", () => {
     columns.push(stateHashesOf(parsed));
   }
   const first = columns[0];
+  baselineColumn = first;
   expect(first).toHaveLength(RULESET.tickLimit);
   // 逐列比:不是「第一列像」,是每一列都与第一列相等。十列里任何一列与别的列岔开,这里就红。
   for (const [run, column] of columns.entries()) {
@@ -89,7 +97,7 @@ it("同配置重跑 10 次,每 tick 的 stateHash 十列全等", () => {
 
 it("材质是有内容的:那十列不是一片常量", () => {
   // 「十列全等」若发生在「每 tick 哈希都一样」的退化回放上,它证明不了什么。
-  const column = stateHashesOf(runOnce(movingStrategies()));
+  const column = baselineColumn ?? stateHashesOf(runOnce(movingStrategies()));
   expect(new Set(column).size).toBeGreaterThan(1);
 }, 120_000);
 

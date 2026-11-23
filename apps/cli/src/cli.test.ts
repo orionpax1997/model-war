@@ -1,6 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -582,19 +590,17 @@ it.each([
   expect(result.status, `${tamper} 应当按装载期拒跑退 1,stderr:\n${result.stderr}`).toBe(1);
 });
 
-it("`match` 缺参退 1", () => {
-  expect(run(["match"]).status).toBe(1);
+it("`match` 缺参退 1,且处理器已登记(不再走「未实现」)", () => {
+  const result = run(["match"]);
+  expect(result.status).toBe(1);
+  // 「处理器住在 CLI 的 match 模块」不必再花一整场去证:`handler === undefined` 那条分支在
+  // **调用处理器之前**就退 1(`apps/cli/src/index.ts`),所以任何一次真的走进去的调用都不会
+  // 打印「未实现」——包括这一次缺参的。原先有单独一条跑满 600 tick 只为断言 stderr 不含它。
+  expect(result.stderr).not.toContain("未实现");
 });
 
 it("`match` 读不到输入文件退 1", () => {
   expect(run(["match", join(scratch, "no-such-input.json")]).status).toBe(1);
-});
-
-it("`match` 不再走「未实现」那条路径:处理器住在 CLI 的 match 模块", { timeout: 120_000 }, () => {
-  const inputPath = writeMatchInput();
-  const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
-  const result = run(["match", inputPath, "--root", root]);
-  expect(result.stderr).not.toContain("未实现");
 });
 
 // ── `run`:fixture 赛季端到端(串行、真沙箱) ────────────────────────────────────
@@ -713,13 +719,13 @@ it("`run` 规则版本不一致(存档 meta.ruleset ≠ 赛季 ruleset)→ 退 1
 
 // ── `verify`:按 input.json 重新执行 → 逐 tick hash 比对 ───────────────────────
 
-/** 跑一局拿到回放路径与它的 root。返回 `[replayPath, root]`。 */
-const matchToReplay = (): readonly [string, string] => {
+/** 跑一局拿到回放路径与它的 root。 */
+const matchToReplay = (): { readonly replayPath: string; readonly root: string } => {
   const inputPath = writeMatchInput();
   const root = inputPath.slice(0, inputPath.indexOf("/runs/"));
   const matched = run(["match", inputPath, "--root", root]);
   expect(matched.status, matched.stderr).toBe(0);
-  return [join(inputPath, "..", "replay.jsonl"), root];
+  return { replayPath: join(inputPath, "..", "replay.jsonl"), root };
 };
 
 /** 读回放为可改的对象数组,改完写回同一个目录(verify 按 `dirname(replay)/input.json` 找输入)。 */
@@ -735,11 +741,34 @@ const editReplay = (
   writeFileSync(replayPath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
 };
 
+/**
+ * 下面六条 `verify` 用例共用**一场** match。
+ *
+ * 它们原先各自 `matchToReplay()` 一次(一场 600 tick 约 4.5s),而要的输入逐字相同:
+ * `writeMatchInput()` 无参时的产物是确定的。共用一场之后,要改回放的用例各改**自己的副本**
+ * (`verify` 只按 `dirname(replay)/input.json` 找输入,同目录即可),所以不会串味,
+ * 断言一字未减。`beforeAll` 的超时显式给了 120s:hook 默认 10s,一场 600 tick 远不止。
+ */
+let sharedMatch: { readonly replayPath: string; readonly root: string } | undefined;
+
+beforeAll(() => {
+  sharedMatch = matchToReplay();
+}, 120_000);
+
+/** 取一份本用例专属的回放副本(与共享的那场同目录、同 `input.json`)。 */
+const replayCopy = (suffix: string): readonly [string, string] => {
+  // `-t` 单跑某一条时 `beforeAll` 也会跑,但万一某天 hook 被跳过,这里退回真跑一场。
+  const shared = sharedMatch ?? matchToReplay();
+  const copyPath = join(dirname(shared.replayPath), `replay-${suffix}.jsonl`);
+  copyFileSync(shared.replayPath, copyPath);
+  return [copyPath, shared.root];
+};
+
 it(
   "`verify` 按 input.json 重新执行:match → verify 逐 tick 一致,退出 0",
   { timeout: 120_000 },
   () => {
-    const [replayPath, root] = matchToReplay();
+    const [replayPath, root] = replayCopy("ok");
     const verified = run(["verify", replayPath, "--root", root]);
     expect(verified.status, verified.stderr).toBe(0);
     expect(verified.stdout).toContain("逐项一致");
@@ -755,7 +784,7 @@ it(
   "`verify` 改回放里一个数字即红:改一个 tick 的 stateHash(与自己载荷不符)退 1",
   { timeout: 120_000 },
   () => {
-    const [replayPath, root] = matchToReplay();
+    const [replayPath, root] = replayCopy("tick-hash");
     editReplay(replayPath, (lines) => {
       const tick = lines[1];
       if (tick === undefined) {
@@ -770,7 +799,7 @@ it(
 );
 
 it("`verify` 改末行 result 的一个数字即红,退 1", { timeout: 120_000 }, () => {
-  const [replayPath, root] = matchToReplay();
+  const [replayPath, root] = replayCopy("result");
   editReplay(replayPath, (lines) => {
     const result = lines.at(-1);
     const rankings = result?.["rankings"];
@@ -786,7 +815,7 @@ it(
   "`verify` 核 meta 的运行时 hash 与本次执行是否一致:不一致即报错退 1,不静默换",
   { timeout: 120_000 },
   () => {
-    const [replayPath, root] = matchToReplay();
+    const [replayPath, root] = replayCopy("runtime-hash");
     editReplay(replayPath, (lines) => {
       const meta = lines[0];
       if (meta === undefined) {
@@ -805,7 +834,7 @@ it(
   "`verify` 核 meta 的执行方式:存档写 stub 与本次真沙箱不符即退 1,不静默换",
   { timeout: 120_000 },
   () => {
-    const [replayPath, root] = matchToReplay();
+    const [replayPath, root] = replayCopy("runner");
     editReplay(replayPath, (lines) => {
       const meta = lines[0];
       if (meta === undefined) {
@@ -833,7 +862,7 @@ it(
   "`verify` 回放里插一行非回放行即红:统一到 parseReplay 后不再静默忽略,退 1",
   { timeout: 120_000 },
   () => {
-    const [replayPath, root] = matchToReplay();
+    const [replayPath, root] = replayCopy("bogus");
     // 自家 parseLines 是裸 cast:非回放行会被随后的 filter/find 静默忽略,verify 反而退 0;
     // 走 parseReplay 后这类行一律拒跑。这条测试盯着「唯一读入端」的统一不再被拆开。
     editReplay(replayPath, (lines) => {
@@ -879,17 +908,17 @@ it(
 );
 
 /**
- * 三份基准脚本作为夹具在真沙箱里各跑完整场:**含 `cell-c`**。
+ * 基准脚本作为夹具在真沙箱里各跑完整场:**含 `cell-c`**。
  *
  * `cell-c`(占点不采集)在真规则下**不累积占领进度**——它的占领机制是猜的(契约 §5 未排期),
  * 那笔账归「占领契约补齐」这条开放项(hld §12),不是本仓库的缺口。这里要证的是
  * 它**仍能跑完**(产出合法 result 行),不假装它不存在,也不被它拖住。
+ *
+ * `cell-a` 不在这一组里:上面「真实基准脚本 cell-a:match 写回放 → verify 复算一致」那条
+ * 已经把它跑了一整场,而且多验了一样(verify 复算)。同一份脚本在同一层再跑一遍,
+ * 拿到的是同一行 meta 与同一个 result 类型——那 4.8s 不买到新证据。
  */
-const BENCHMARK_CELLS = [
-  "cell-a-melee-pressure",
-  "cell-b-expansion-economy",
-  "cell-c-claim-no-harvest",
-] as const;
+const BENCHMARK_CELLS = ["cell-b-expansion-economy", "cell-c-claim-no-harvest"] as const;
 
 it.each(BENCHMARK_CELLS)(
   "真实基准脚本 %s 作为夹具在真沙箱里跑完整场,退出 0",
