@@ -365,10 +365,12 @@ it("messages 族：起跑前拒跑并点名「本族未声明工具能力」,一
   try {
     // ── 这条用例以「拒跑」为被测行为,不是以 usage 投影为被测行为 ──
     //
-    // 2026-11-20 真请求探针:该席位在 `/messages` 上**带不带 `tools` 都是 HTTP 403
-    // permission_error**(整套端点被渠道拒),所以「`tool_use` / `tool_result` 能不能配对」
-    // 零证据;零证据就不写翻译(票 01 / ADR-0032)。于是 agent 会话在**起跑前**被拒,
-    // 而不是花 20 分钟跑到 0 候选才发现。
+    // 该席位挂 `messages` 族,而那一族的 `tool_use` / `tool_result` 翻译还没写:协议事实
+    // 2026-11-21 已拿到(`probes/messages-tool-roundtrip/`),缺的是实现。所以 agent 会话在
+    // **起跑前**被拒(`assertToolSurface`),而不是花 20 分钟跑到 0 候选才发现。
+    //
+    // 订正:这里原先写「该席位带不带 `tools` 都是 403,零证据」——那两次 403 是链路故障,
+    // 复测三步全 200,详见 ADR-0032 的 2026-11-21 修订段。
     //
     // 它原先覆盖的三件事仍然各有自己的家,没有丢:
     // - 缓存断点进请求体 → `packages/gen/src/http/endpoints.test.ts`(messages 族 buildBody);

@@ -482,15 +482,20 @@ const createExecutor =
  *
  * ── 文案说的是「本族未声明」,不是「该席位被渠道拒」──
  *
- * 后者是**运行期**事实（`claude-haiku-5-5` 在本账号档位下整个 `/messages` 都 403），归渠道
- * 与档位管;而本函数判的是**协议**:「这一族的工具翻译被真实响应验证过吗」。把两件事写成
- * 一句话,只会让后人以为「修好席位就能跑」,而实际要修的是翻译。
+ * 后者是**运行期**事实,归渠道与档位管;而本函数判的是**协议**:「这一族的工具翻译写了、
+ * 且被真实会话验证过吗」。把两件事写成一句话,只会让后人以为「修好席位就能跑」,而实际要修
+ * 的是翻译。
+ *
+ * 这条边界在 `messages` 族上被真事试过一次:2026-11-20 该族带不带 `tools` 都 403,当时判成
+ * 「席位被渠道整体拒」。2026-11-21 复测三步全 200(那两次 403 是链路故障),证据有了、翻译
+ * 仍没写——ADR-0032 的 2026-11-21 修订段记着这件事。`403` 与 `没写翻译` 是两条独立的判据,
+ * 任一条都能让本函数抛错,但混成一句就会指错方向。
  */
 const assertToolSurface = (config: ModelConfig): void => {
   if (endpointSpec(config.endpointFamily).tools === undefined) {
     throw new Error(
       `模型 ${config.slug}:端点位 ${config.endpointFamily} 未声明工具调用能力（未经验证），拒绝起跑 ` +
-        `agent 会话。这不等于该席位被渠道拒：原因是本族的工具翻译零证据，不是账号档位。`,
+        `agent 会话。这不等于该席位被渠道拒：原因是本族的工具翻译没写或没被真实会话验证过，不是账号档位。`,
     );
   }
 };
@@ -627,7 +632,7 @@ export const generateOneModel = async (
     );
 
   const prompt: AgentPrompt = request.agentPrompt ?? loadAgentPrompt(request.root);
-  // 起跑前拒跑:本族的工具翻译零证据就不开始(理由见 `assertToolSurface`)。
+  // 起跑前拒跑:本族没声明工具能力就不开始(理由见 `assertToolSurface`)。
   assertToolSurface(config);
   // ── 工作区不住在 `archive/` 里 ──
   //
