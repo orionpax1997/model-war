@@ -30,6 +30,8 @@ import type { ModelConfig } from "./config.js";
 import { generateAndFreeze, runGeneration } from "./run.js";
 import { fail, reply, stubClient, type StubClient } from "./stub-client.js";
 import type { AgentPrompt } from "./agent-prompt.js";
+import { completeGridTrial } from "./trial-grid.fixture.js";
+import { gridPlanFixture } from "./trial-plan.fixture.js";
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-agent-run-"));
@@ -177,8 +179,10 @@ it("顺利路径:一次 evaluate 出成绩就冻结,退出码 0", { timeout: 30_
       agentPrompt: PROMPT,
       workspaceDir,
       maxSteps: 2,
-      // 试跑桩:验的是编排层,不是网格(真网格归票 06)。
-      trial: () => ({ passed: true, stdout: "" }),
+      // 试跑与计划桩:验的是编排层,不是网格本身(真网格在 `check:gen-grid` 那一侧)。
+      // 桩写的是形状真实的一整张网格——候选的入场券就是「32 场一场不少」。
+      trial: completeGridTrial(),
+      trialPlan: () => gridPlanFixture(),
       evaluateScoring: async () => ({
         score: { totalPoints: 4, averagePoints: 1, countedMatches: 4 },
         matchCount: 4,
@@ -256,8 +260,10 @@ it("一批两模型一败一成:退出码非零,但成功那个照旧冻结", { 
       agentPrompt: PROMPT,
       workspaceDir,
       maxSteps: 2,
-      // 试跑桩:验的是编排层,不是网格(真网格归票 06)。
-      trial: () => ({ passed: true, stdout: "" }),
+      // 试跑与计划桩:验的是编排层,不是网格本身(真网格在 `check:gen-grid` 那一侧)。
+      // 桩写的是形状真实的一整张网格——候选的入场券就是「32 场一场不少」。
+      trial: completeGridTrial(),
+      trialPlan: () => gridPlanFixture(),
       evaluateScoring: async () => ({
         score: { totalPoints: 4, averagePoints: 1, countedMatches: 4 },
         matchCount: 4,

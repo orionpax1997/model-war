@@ -1878,6 +1878,10 @@ it.each([
   ["跨进程一致性门禁", "run-cross-process-gate.ts", "check:cross-process"],
   ["单局墙钟与快照回放门禁", "run-limits-gate.ts", "check:limits"],
   ["标定复算门禁", "run-budget-recheck-gate.ts", "check:budget-recheck"],
+  // 真网格那条腿:它不碰内核(所以不进 `check:sandbox`),但要一份别的东西——四份钉死的
+  // 陪练存档,而 `archive/` 不入库。混进 `check:sandbox` 会让「沙箱坏了」与「这台机器没有
+  // 陪练存档」变成同一条红,所以它自己一条腿。
+  ["真网格一次评测门禁", "run-gen-grid-gate.ts", "check:gen-grid"],
 ])("%s按需跑:不在快链里,但有独立入口", (gate, entryFragment, keyword) => {
   const scripts = manifest().scripts;
   // 缺席:它不在任何一个常跑入口里。

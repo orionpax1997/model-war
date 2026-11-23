@@ -7,14 +7,13 @@
  * |---|---|---|
  * | `ModelClient` | 既有端口(`model-client.ts`),真实实现 = HTTP 适配器 | 只调 `send`,不关心端点族 |
  * | `AgentExecutor` | 执行器(票 03 的 `sandbox.run`)后面挂宿主服务(票 04 的 dispatcher) | 只把「一块命令 + done 行号」交给它 |
- * | `EvaluateProbe` | 评测网格(票 06) | 本段只有类型与占位实现:loop **不直接调它**,它挂在宿主服务后面 |
  *
- * ── 为什么 `EvaluateProbe` 在 loop 的请求类型里,却不由 loop 调用 ──
+ * ── 为什么这里没有「评测探针」这个缝 ──
  *
  * 一次 `evaluate` 是模型在 bash 块里叫人跑的,不是 loop 主动发起的(ADR-0030「没有提交动作,
- * `evaluate` 就是提交」)。所以把 probe 放在 `host` 上而不是放在 loop 的调用面上:loop 只把
- * `host.requestHandler` 递给执行器,真正回答 `evaluate` 请求的是宿主服务,它手里才有 probe。
- * 这样「谁执行」与「谁计数」都留在宿主侧,模型无论用循环还是子 shell 调用都只能打到薄壳。
+ * `evaluate` 就是提交」)。所以网格挂在**宿主服务**后面(`agent/host/evaluate-service.ts`),
+ * loop 只从执行器的回包里搬运「这一步真评出成绩了」这个事实(`AgentExecResult.submission`)。
+ * 给它另开一条 loop 侧的注入缝,等于给「谁执行 `evaluate`」造第二个答案。
  *
  * ── 步记录与终止原因直接复用 schema ──
  *
@@ -23,8 +22,6 @@
  */
 
 import type { ArchiveStep, ArchiveStepResult, ArchiveTermination } from "@model-war/schema";
-
-import type { RequestHandler } from "./sandbox/index.js";
 
 /** 会话的终止原因(ADR-0032):六个取值,与落档判据正交。 */
 export type AgentTermination = ArchiveTermination;
@@ -44,8 +41,6 @@ export type AgentExecRequest = {
   /** 整块原文,原样交给一次 `bash -c`。 */
   readonly command: string;
   readonly doneAtLine?: number;
-  /** 宿主服务(fd 3)的端:给了就说明这一场会话有宿主;本段不接。 */
-  readonly requestHandler?: RequestHandler;
 };
 
 /** 一步的执行结果。命令自己的非零退出不是异常;起不来才是(执行器 reject)。 */
@@ -63,12 +58,14 @@ export type AgentExecResult = {
    * 这一步里**真评出过成绩**的那次 `evaluate` 的提交身份。
    *
    * 它是宿主服务的事实,loop 只搬运(见 `pipeline.ts` 的「宿主侧的事实怎么回到步骤上」)。
-   * 候选条目的 `step` 由 loop 填(步号),`score` 与 `matchCount` 由网格填(票 06)。
+   * 候选条目的 `step` 由 loop 填(步号),`score` 与 `matchCount` 由网格填(`pipeline.ts` 的评分接缝)。
    */
   readonly submission?: {
     readonly scriptSha256: string;
     readonly hostPath: string;
     readonly observationsPath: string;
+    /** 编出这份产物的 tsc 版本：冻结时要写进 `meta.tscVersion`，所以随身份一起搬运。 */
+    readonly tscVersion: string;
   };
   /** 这是第几次 `evaluate`(1 起,由 dispatcher 的计数器给)。 */
   readonly evaluateCall?: number;
@@ -76,36 +73,6 @@ export type AgentExecResult = {
 
 /** 执行一步。 */
 export type AgentExecutor = (request: AgentExecRequest) => Promise<AgentExecResult>;
-
-/** 一次评测的结论。`failed` 是「跑了但没产出候选」,不是「沙箱坏了」。 */
-export type EvaluateProbeOutcome =
-  | { readonly kind: "scored" }
-  | { readonly kind: "failed"; readonly stderr: string };
-
-/**
- * 评测探针:票 06 才接真实网格。本段只有类型与不接线的占位实现。
- *
- * ── 为什么它不叫 `TrialProbe` ──
- *
- * 那个名字在 `trial.ts` 里已经被 one-shot 形态的「试跑探针」占了(跑缩小的预算试跑)。两者是
- * 不同概念:那个是「这份脚本跑起来会不会飞」,这个是「这张网格上排第几」。共用一个名字会让
- * 接线时看不出自己在接哪一个,而 ADR-0030 已裁掉「冒烟试跑」那一档——所以这里按概念命名。
- */
-export interface EvaluateProbe {
-  evaluate(): Promise<EvaluateProbeOutcome>;
-}
-
-/**
- * 宿主侧服务面。
- *
- * `requestHandler` 是票 03 的执行器与票 04 的 dispatcher 之间那条 fd 通道的宿主端;
- * `evaluate` 是 `evaluate` 请求背后的网格。两者一起交给 loop,是因为它们回答的是同一类问题
- * ——「沙箱里那条命令实际做了什么」——而 loop 对两者都不该有第二套认识。
- */
-export type AgentToolHost = {
-  readonly requestHandler: RequestHandler;
-  readonly evaluate: EvaluateProbe;
-};
 
 /**
  * 一步的发送侧证据(轮号等于步号,ADR-0031/0035)。
