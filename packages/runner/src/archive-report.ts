@@ -31,6 +31,9 @@ import {
   SELECTION_AGENT_VERSION,
   SELECTION_VERSION,
   TRIAL_PLAN_JSON_SHAPE,
+  TRIAL_GRID_SUMMARY_SUFFIX,
+  TRIAL_SCRIPT_ID_SEPARATOR,
+  TRIAL_SUBSTITUTE_SOURCE_SUFFIX,
   type ArchiveOptimization,
   type ArchiveOptimizationCandidateAgent,
   type ArchiveSelection,
@@ -70,7 +73,7 @@ import {
   type ReportSteps,
 } from "./archive-report-steps.js";
 import { buildSelectionPlan } from "./selection.js";
-import { checkTrialPlan } from "./trial-plan.js";
+import { checkTrialPlan, readTrialPlan } from "./trial-plan.js";
 import {
   objectOf,
   numberOf,
@@ -433,6 +436,42 @@ export type ReportPlanScript = {
 };
 
 /**
+ * 一个候选**旁挂网格汇总**（`<观测文件>.grid.json`）里的陪练身份。
+ *
+ * ── 为什么报告要去读旁挂件 ──
+ * v3 分步档的优化段不装计划（ADR-0035 / ADR-0031），于是「这 32 场跟谁打」在存档 `meta`
+ * 里根本没有。但执行器跑每一次 `evaluate` 都把整份计划写在了观测文件旁的 `.grid.json` 里
+ * （`packages/gen/src/trial-grid.ts`）：报告只**读**它，不新增采集、不改档案形状。
+ *
+ * ── 只记录不裁决 ──
+ * 跨会话分数可不可比是 A2 的事。这里只回答三件事：跟谁打（四份身份）、计划是哪一份
+ * （`planSha256`）、在位那份是不是**本席位自己的上一场**。最后一条不自带走：`selfReference`
+ * 只在两个条件同时成立时非 `null`（见 `sparringSelfReferenceOf`）。
+ */
+export type ReportCandidateSparring = {
+  /** 这条证据属于哪个候选（v3 里就是那次 `evaluate` 的步号）。 */
+  readonly protocolRound: number;
+  /** 旁挂汇总在档里的相对位置（`<目录>/<观测文件>.grid.json`）。 */
+  readonly source: string;
+  /** 计划摘要；读不到时 `null`。 */
+  readonly planSha256: string | null;
+  /**
+   * 四份陪练身份（`id` / `role` / `source` / `scriptSha256`）；**`null` = 读不到**。
+   *
+   * 文件不在 / 没有 `plan` / 形状不合，一律是 `null`——渲染成「未记录」，不猜、不抛。
+   */
+  readonly scripts: readonly ReportPlanScript[] | null;
+  /** 自指：在位陪练就是本席位的上一场冻结存档。 */
+  readonly selfReference: ReportSparringSelfReference | null;
+};
+
+/** 「陪练 = 本席位上一场」的那一场：席位与运行标识（两个都进报告，不只看 runId）。 */
+export type ReportSparringSelfReference = {
+  readonly slug: string;
+  readonly runId: string;
+};
+
+/**
  * 一个「轮空一份陪练」组合的覆盖范围。
  *
  * 报告**不搬 32 场明文**：计划正文就在 `ReportGridPlan.source` 指向的存档里；这里只给
@@ -562,6 +601,13 @@ export type ArchiveReport = {
    * 生成阶段计划：v2 才有（v1 历史档没有计划字段，不迁移、不回填）。`null` = 不适用。
    */
   readonly plan: ReportGridPlan | null;
+  /**
+   * 各候选旁挂网格汇总（`<观测文件>.grid.json`）里的陪练身份（v3 才有，旧档为空数组）。
+   *
+   * 一个候选一条：v3 每次 `evaluate` 各跑一张网格，各自的旁挂件是那一次的证据。
+   * 空数组 = 本档没有可读的计划（v1 / v2 的计划在 `plan` 那一节）。
+   */
+  readonly sparring: readonly ReportCandidateSparring[];
   /** 三类分数分列，每个候选一行；没有优化旁证（失败档等）时为空数组。 */
   readonly scores: readonly ReportCandidateScores[];
   readonly candidateStages: number;
@@ -1026,6 +1072,129 @@ const observationsOf = (
     noScoreSource: readings.filter((reading) => reading.noScoreSource).length,
     readings,
     issues,
+  };
+};
+
+/**
+ * 网格汇总（`.grid.json`）里的计划 → 那 32 场跟谁打。
+ *
+ * ── 只读，不改形状 ──
+ * 文件就在候选观测文件旁边（`<观测文件>.grid.json`，见 `trial-grid.ts` 的落点约定与
+ * `observationsOf` 读观测文件的那一行）：路径按同一个约定算，不另记一份。
+ *
+ * ── 读不到就是读不到 ──
+ * 文件不在 / 不是合法 JSON / 没有 `plan` / 计划读取失败，四种都是 `scripts: null`（渲染成
+ * 「未记录」）。报告是只读面：不因一份旁挂件坏了就不出整份报告，也不拿今天的陪练池堆一个
+ * 「大概是谁」——那会把 A2 要判断的事提前变成一个编造的事实。
+ *
+ * ── 为什么只对 v3 读 ──
+ * v1 / v2 的计划本来就在 `meta` 里（`optimization.plan`），那一节已经把四份身份列出来了；
+ * 再到旁挂件读一遍就是第二个家。v3 的优化段不装计划（ADR-0035），旁挂件是唯一处——这一节
+ * 只补那个缺口。
+ */
+const candidateSparringOf = (options: {
+  readonly root: string;
+  /** 档案目录（`archive/<slug>`），与读观测文件那一处同一个写法。 */
+  readonly directory: string;
+  /** 档案所属席位 slug（= `archive/` 下的一级目录名）。 */
+  readonly model: string;
+  /** 本档运行标识：判「上一场」要拿它和来源里的 runId 比。 */
+  readonly runId: string;
+  readonly candidate: ArchiveOptimizationCandidate;
+}): ReportCandidateSparring => {
+  const source = `${options.directory}/${options.candidate.observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`;
+  const reading = {
+    protocolRound: options.candidate.protocolRound,
+    source,
+    planSha256: null,
+    scripts: null,
+    selfReference: null,
+  } as const;
+  let text: string;
+  try {
+    text = readFileSync(join(options.root, source), "utf8");
+  } catch {
+    return reading;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return reading;
+  }
+  const plan = objectOf(value)["plan"];
+  if (plan === undefined) return reading;
+  let parsed: TrialPlan;
+  try {
+    parsed = readTrialPlan(plan);
+  } catch {
+    return reading;
+  }
+  const scripts = parsed.scripts.map(({ id, role, source: from, scriptSha256 }) => ({
+    id,
+    role,
+    source: from,
+    scriptSha256,
+  }));
+  return {
+    ...reading,
+    planSha256: parsed.planSha256,
+    scripts,
+    selfReference: sparringSelfReferenceOf({
+      scripts,
+      model: options.model,
+      runId: options.runId,
+    }),
+  };
+};
+
+/**
+ * 自指判据：这一场的在位陪练是不是**本席位自己的上一场**。
+ *
+ * 两个条件同时成立才标（差一个就不标——宁可不说，也不说错）：
+ * 1. `incumbent:<slug>` 的 `<slug>` 等于档案所属席位（`archive/<slug>/` 一级目录名）；
+ * 2. 来源 `archive:<slug>/<runId>` 里的 `runId` 不是本档的 `runId`（它是「上一场」，不是「本场」）。
+ *
+ * 来源的 slug 也必须一致：两处都说本席位才是同一个事实，只说一处不算（不猜）。
+ * 代位（`#substitute`）的 slug 是另一份档，所以天然不会命中；它的 `source` 仍然是
+ * `archive:` 开头，所以这里不靠前缀排除，靠 slug 不等。
+ */
+const sparringSelfReferenceOf = (options: {
+  readonly scripts: readonly ReportPlanScript[];
+  readonly model: string;
+  readonly runId: string;
+}): ReportSparringSelfReference | null => {
+  const incumbent = options.scripts.find((script) => script.role === "incumbent");
+  if (incumbent === undefined) return null;
+  const separator = incumbent.id.indexOf(TRIAL_SCRIPT_ID_SEPARATOR);
+  if (separator === -1) return null;
+  const idSlug = incumbent.id.slice(separator + TRIAL_SCRIPT_ID_SEPARATOR.length);
+  if (idSlug !== options.model) return null;
+  const from = archiveSourceOf(incumbent.source);
+  if (from === null || from.slug !== options.model) return null;
+  if (from.runId === options.runId) return null;
+  return { slug: options.model, runId: from.runId };
+};
+
+/**
+ * 来源指针的读法：`archive:<slug>/<runId>`（代位带 `#substitute` 后缀）。
+ *
+ * 形态对不上就交回 `null`——这个函数只服务于「上一场」那一条判断，没有第二种容错语义。
+ */
+const archiveSourceOf = (
+  source: string,
+): { readonly slug: string; readonly runId: string } | null => {
+  const prefix = "archive:";
+  if (!source.startsWith(prefix)) return null;
+  const rest = source.slice(prefix.length);
+  const withoutSubstitute = rest.endsWith(TRIAL_SUBSTITUTE_SOURCE_SUFFIX)
+    ? rest.slice(0, -TRIAL_SUBSTITUTE_SOURCE_SUFFIX.length)
+    : rest;
+  const slash = withoutSubstitute.lastIndexOf("/");
+  if (slash <= 0 || slash === withoutSubstitute.length - 1) return null;
+  return {
+    slug: withoutSubstitute.slice(0, slash),
+    runId: withoutSubstitute.slice(slash + 1),
   };
 };
 
@@ -1564,6 +1733,21 @@ const readRecord = (
       : null;
   const scores = candidateScoresOf(optimization, selection);
   const stages = describedCandidates.length;
+  /**
+   * 陪练身份：**只对 v3 读**旁挂的 `.grid.json`（v1 / v2 的计划在 `meta` 里，见 `candidateSparringOf`）。
+   * 一个候选一条：v3 每次 `evaluate` 各跑一张网格，各自那份汇总才是那一次的证据。
+   */
+  const sparring = agentShape
+    ? describedCandidates.map((candidate) =>
+        candidateSparringOf({
+          root,
+          directory: `archive/${slug}`,
+          model: slug,
+          runId,
+          candidate,
+        }),
+      )
+    : [];
   const expectedAttempts =
     protocolRounds + (kind === "failure" && record.classification === "transport" ? 1 : 0);
   /**
@@ -1588,6 +1772,7 @@ const readRecord = (
           : "historical",
     candidateStages: stages,
     plan,
+    sparring,
     scores,
     distinctScripts: new Set(describedCandidates.map((candidate) => candidate.scriptSha256)).size,
     selectionFailure:
@@ -1884,6 +2069,63 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       .join("；")}`,
     `- 逐场种子：${renderSeeds(plan.seeds)}`,
   ];
+  /**
+   * 陪练一节（v3）：计划不进 `meta`（ADR-0035），四份身份只在候选旁挂的 `.grid.json` 里。
+   *
+   * ── 为什么每候选一组，而不是合并成一份 ──
+   * v3 每次 `evaluate` 各跑一张网格，各自那份旁挂件才是那一次的证据（真档里两次提交之间可能
+   * 换了陪练池，或者还停在旧的一份）。合并展示会把「第 2 次评测跟第 1 次是同一张网格吗」
+   * 这个可查的事实抹平。
+   *
+   * ── 为何又去重 ──
+   * 真档（`archive/gpt-6-luna/2026-11-19T01-33-42-820Z`）两个候选的两份 `.grid.json` 是**逐字
+   * 相同**的（同一 `planSha256`）：把那四行再排一遍只会让人以为两次评测的对手变了。所以
+   * 逐字相同的就写「与第 N 步候选逐字相同」，不重复四份身份——但两个候选各自的文件仍是
+   * 分开读的（上一条的那句话只有在两份都读过之后才能说得出来）。
+   *
+   * 读不到就写「未记录」（并指名找的是哪个文件）——不猜、不抛。
+   */
+  const renderSparring = (sparring: readonly ReportCandidateSparring[]): string[] => {
+    const lines: string[] = [];
+    let previous: ReportCandidateSparring | undefined;
+    for (const reading of sparring) {
+      const where = `来源 ${escape(reading.source)}${
+        reading.planSha256 === null ? "" : `；planSha256=${reading.planSha256}`
+      }`;
+      if (reading.scripts === null) {
+        lines.push(`- 陪练：未记录（第 ${reading.protocolRound} 步候选，${where}）`);
+        previous = reading;
+        continue;
+      }
+      const sameAs = previous;
+      if (
+        sameAs !== undefined &&
+        sameAs.scripts !== null &&
+        JSON.stringify(sameAs.scripts) === JSON.stringify(reading.scripts) &&
+        sameAs.planSha256 === reading.planSha256
+      ) {
+        lines.push(
+          `- 陪练（第 ${reading.protocolRound} 步候选，${where}）：与第 ${sameAs.protocolRound} 步候选逐字相同（同一张网格，四份身份不重列）`,
+        );
+        // 去重只去「四份身份」那几行；自指是**这一份**自己的判定，仍单独说一句。
+        if (reading.selfReference !== null)
+          lines.push(
+            `  - **陪练 = 本席位上一场（\`${reading.selfReference.runId}\`）；本场与它不可直接比**`,
+          );
+        previous = reading;
+        continue;
+      }
+      lines.push(`- 陪练（第 ${reading.protocolRound} 步候选，${where}）：`);
+      for (const script of reading.scripts) lines.push(`  - ${renderPlanScript(script)}`);
+      // 自指单独一行：它不是第四份身份的注，而是「这一场的分数不能当能力提升读」那句。
+      if (reading.selfReference !== null)
+        lines.push(
+          `  - **陪练 = 本席位上一场（\`${reading.selfReference.runId}\`）；本场与它不可直接比**`,
+        );
+      previous = reading;
+    }
+    return lines;
+  };
   const fields = [
     "sendMs",
     "input",
@@ -2170,10 +2412,15 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     out.push("", "### 计划、陪练与三类分数", "");
     if (report.plan === null)
       out.push(
+        // 「不追填」说的是**档案**不回填；v3 的陪练身份改从旁挂件读（下一节），不是把它堵在档里。
         "- 生成阶段计划：不适用（版本 1 历史档没有计划字段，不迁移、不回填）" +
-          "；v3 分步档的优化段也不装计划——网格计划不进档案，不追填",
+          "；v3 分步档的优化段也不装计划——网格计划不进档案" +
+          (report.sparring.length > 0
+            ? "；这一跑跟谁打从候选旁挂的 `.grid.json` 读（见下）"
+            : "，不追填"),
       );
     else out.push(...renderGridPlan(report.plan));
+    if (report.sparring.length > 0) out.push(...renderSparring(report.sparring));
     out.push(
       "- 同字节直读：看下表「复用来源」列——标出阶段号的是编译产物与那一阶段字节相同、复用它的网格结果",
       "- 不适用 = 该口径不属本档（v1 历史档没有网格分数；无选拔段时没有复算读数；赛季分数恒不适用）",
