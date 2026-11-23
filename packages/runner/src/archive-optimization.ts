@@ -31,6 +31,8 @@ import {
   AGENT_ARCHIVE_REQUIRED_KEYS,
   ARCHIVE_META_JSON_SCHEMA,
   ARCHIVE_SCHEMA_VERSION,
+  ARCHIVE_SCHEMA_VERSIONS,
+  V4_ONLY_STEP_ACTION_KINDS,
   OPTIMIZATION_AGENT_VERSION,
   OPTIMIZATION_CANDIDATE_LIMIT,
   OPTIMIZATION_GRID_VERSION,
@@ -55,13 +57,25 @@ const archiveMetaSchema = z.fromJSONSchema(
   JSON.parse(JSON.stringify(ARCHIVE_META_JSON_SCHEMA)) as z.core.JSONSchema.JSONSchema,
 );
 
-/** 档案形状版本的分派结果：`"legacy"` = 没有 `archiveSchemaVersion`（v1/v2 历史档）。 */
-export type ArchiveShapeVersion = "legacy" | typeof ARCHIVE_SCHEMA_VERSION;
+/**
+ * 档案形状版本的分派结果：`"legacy"` = 没有 `archiveSchemaVersion`（v1/v2 历史档），其余是
+ * **读侧认得的**那些版本号（`ARCHIVE_SCHEMA_VERSIONS`：v3 与 v4 并认）。
+ *
+ * 返回类型从 schema 包派生、不另写一份：两个数组一旦分叉，会出现「形状那层认得、分派这层不认」
+ * 这种只有某一条路径红的组合。
+ */
+export type ArchiveShapeVersion = import("@model-war/schema").ArchiveShapeVersion;
 
 /**
- * 按 `archiveSchemaVersion` 分派（ADR-0031）：旧档、v3、其余拒读。
+ * 按 `archiveSchemaVersion` 分派（ADR-0031）：旧档、v3 / v4、其余拒读。
  *
- * 第二个拒读分支防的是一件真会发生的事：**只写了一半升级的档**。那些 agent 字段在旧读法里
+ * ── 读侧 3 与 4 都认，写侧只写 4 ──
+ *
+ * v3 档不迁移：`archive/` 下的真档是校准 harness 的证据，改写形状等于改证据。两个版本的差别
+ * 只有一处（v3 的步里不许有 `check` / `probe` / `toolCall`），而那条判据在
+ * `archiveShapeIssueOf` 里——分派这一层只回答「按哪一版读」。
+ *
+ * 第二个拒读分支防的是一件真会发生的��：**只写了一半升级的档**。那些 agent 字段在旧读法里
  * 全是额外属性，`additionalProperties: false` 会拒它，但拒的理由是「多了几个键」，而真正的事实
  * 是「形状版本没跟上」。先把事实说出来。
  *
@@ -71,15 +85,28 @@ export const archiveShapeVersionOf = (record: unknown): ArchiveShapeVersion => {
   if (typeof record !== "object" || record === null) throw new Error("档案不是 JSON 对象");
   const declared: unknown = Reflect.get(record, "archiveSchemaVersion");
   if (declared !== undefined) {
-    if (declared !== ARCHIVE_SCHEMA_VERSION)
-      throw new Error(`不认识的档案形状版本 ${JSON.stringify(declared)}：拒读，不猜`);
-    return ARCHIVE_SCHEMA_VERSION;
+    const known = (ARCHIVE_SCHEMA_VERSIONS as readonly unknown[]).includes(declared);
+    if (!known) throw new Error(`不认识的档案形状版本 ${JSON.stringify(declared)}：拒读，不猜`);
+    return declared as ArchiveShapeVersion;
   }
   const stray = AGENT_ARCHIVE_FIELD_KEYS.find((key) => Object.hasOwn(record, key));
   if (stray !== undefined)
-    throw new Error(`档案带 agent 字段 ${stray} 却缺 archiveSchemaVersion: 3：新形状必须显式声明`);
+    throw new Error(
+      `档案带 agent 字段 ${stray} 却缺 archiveSchemaVersion: ${String(ARCHIVE_SCHEMA_VERSION)}：新形状必须显式声明`,
+    );
   return "legacy";
 };
+
+/**
+ * 这个形状版本是不是 agent 形态（分步会话）。
+ *
+ * 判据是「不是 `legacy`」而不是「等于某两个数」：`archiveShapeVersionOf` 已经把不认识的版本拒掉，
+ * 所以到这里非 `legacy` 就一定是某一个认得的 agent 版本。写成等号就得在每一处并列 `3` 与
+ * `ARCHIVE_SCHEMA_VERSION`，而下一个版本落地时那些并列点会各自漏一处。
+ */
+export const isAgentShape = (
+  shape: ArchiveShapeVersion,
+): shape is Exclude<ArchiveShapeVersion, "legacy"> => shape !== "legacy";
 
 /**
  * 形状版本与协议轮数的那几条判据（ADR-0031「断言合并成一个公式」）。
@@ -91,9 +118,57 @@ export const archiveShapeVersionOf = (record: unknown): ArchiveShapeVersion => {
  * runner 这一侧要把它抛成拒读。判据只有这一份，措辞也只在 `message` 里写一遍。
  */
 export type ArchiveShapeIssue = {
-  readonly kind: "archive-schema-version" | "archive-agent-fields" | "archive-protocol-rounds";
+  readonly kind:
+    | "archive-schema-version"
+    | "archive-agent-fields"
+    | "archive-protocol-rounds"
+    | "archive-step-shape";
   readonly pointer: string;
   readonly message: string;
+};
+
+/**
+ * 按形状版本排除步里不许出现的东西（v3 与 v4 的**唯一**差别）。
+ *
+ * ── 为什么这条判据住在装载期，不住在 JSON Schema ──
+ *
+ * `check` / `probe` 两档动作与 `toolCall` 在 v4 才存在。要用 schema 表达「v3 档不许有它们」得
+ * 写 `if/then`，而读入端有两条（`apps/cli` 的 ajv 与 runner 的 `z.fromJSONSchema`），后者不支持
+ * 条件 schema；并排两套进 `oneOf` 也不行（v4 的 `bash` 分支是 v3 的超集，两分支会同时命中）。
+ * 所以形状层收并集，版本的排除写在这里一处。
+ *
+ * 还有一条理由：`oneOf` 失败给不出**名字**，而这条验收要的正是点名——「v3 档塞了 `check`」
+ * 必须读到 `check` 这两个字，否则修的人只能看到一句「形状不合法」。
+ */
+export const archiveStepShapeIssuesOf = (
+  meta: ArchiveMeta,
+  shape: ArchiveShapeVersion,
+): readonly ArchiveShapeIssue[] => {
+  const steps = meta.steps ?? [];
+  return steps.flatMap((step, index) => {
+    const pointer = `/steps/${String(index)}`;
+    const pointerOf = (field: string): string => `${pointer}/${field}`;
+    const onV3 = shape === ARCHIVE_SCHEMA_VERSIONS[0];
+    const kind: unknown = step.action.kind;
+    const v4Only = (V4_ONLY_STEP_ACTION_KINDS as readonly unknown[]).includes(kind);
+    if (onV3 && v4Only)
+      return [
+        {
+          kind: "archive-step-shape" as const,
+          pointer: pointerOf("action/kind"),
+          message: `v3 档案的步里有 ${String(kind)} 动作：v3 的世界里没有这个工具，拒读`,
+        },
+      ];
+    if (onV3 && step.toolCall !== undefined)
+      return [
+        {
+          kind: "archive-step-shape" as const,
+          pointer: pointerOf("toolCall"),
+          message: "v3 档案的步里带 toolCall：工具调用信封是 v4 的形状，拒读",
+        },
+      ];
+    return [];
+  });
 };
 
 export const archiveShapeIssuesOf = (meta: ArchiveMeta): readonly ArchiveShapeIssue[] => {
@@ -109,14 +184,14 @@ export const archiveShapeIssuesOf = (meta: ArchiveMeta): readonly ArchiveShapeIs
       },
     ];
   }
-  if (shape === ARCHIVE_SCHEMA_VERSION) {
+  if (isAgentShape(shape)) {
     const missing = AGENT_ARCHIVE_REQUIRED_KEYS.filter((key) => !Object.hasOwn(meta, key));
     if (missing.length > 0)
       return [
         {
           kind: "archive-agent-fields",
           pointer: "/steps",
-          message: `v3 档案缺 agent 字段：${missing.join("、")}`,
+          message: `v${String(shape)} 档案缺 agent 字段：${missing.join("、")}`,
         },
       ];
     const steps = meta.steps ?? [];
@@ -136,7 +211,7 @@ export const archiveShapeIssuesOf = (meta: ArchiveMeta): readonly ArchiveShapeIs
           message: `起始 prompt 应恰为 ${steps.length > 0 ? "一条" : "零条"}，实际 ${String(meta.prompts.length)} 条`,
         },
       ];
-    return [];
+    return archiveStepShapeIssuesOf(meta, shape);
   }
   return meta.prompts.length === meta.protocolRounds
     ? []
@@ -354,21 +429,30 @@ export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
     if (meta.selection !== undefined) throw new Error("选拔存档必须包含优化段");
     return;
   }
-  if (shape === ARCHIVE_SCHEMA_VERSION) {
+  // 两条 agent 形状（v3 与 v4）在这一层是同一条规则：优化段必须是 agent 版、选拔段必须是 v3 版。
+  // 两个版本号不同源（形状版本管「这份文件按哪种形状读」，优化段版本管「优化段内部是哪种变体」），
+  // 所以文案里各自点名，不拿一个数字代另一个。
+  if (isAgentShape(shape)) {
     if (optimization.version !== OPTIMIZATION_AGENT_VERSION)
-      throw new Error("档案形状版本 3 要求优化段版本为 3");
+      throw new Error(
+        `档案形状版本 ${String(shape)} 要求优化段版本为 ${String(OPTIMIZATION_AGENT_VERSION)}`,
+      );
     checkAgentCandidateRelations(meta, optimization);
     const selection = meta.selection;
     if (selection !== undefined) {
-      // 形状上三种选拔记录都合 schema；形状版本 3 只接受 v3 那一种。
+      // 形状上三种选拔记录都合 schema；agent 形状只接受 v3 那一种。
       if (selection.version !== SELECTION_AGENT_VERSION)
-        throw new Error("档案形状版本 3 要求选拔段版本为 3");
+        throw new Error(
+          `档案形状版本 ${String(shape)} 要求选拔段版本为 ${String(SELECTION_AGENT_VERSION)}`,
+        );
       checkAgentSelection(meta, optimization, selection);
     }
     return;
   }
   if (optimization.version === OPTIMIZATION_AGENT_VERSION)
-    throw new Error("优化段版本 3 必须同时声明 archiveSchemaVersion: 3");
+    throw new Error(
+      `优化段版本 ${String(OPTIMIZATION_AGENT_VERSION)} 必须同时声明 archiveSchemaVersion: ${ARCHIVE_SCHEMA_VERSIONS.join(" 或 ")}`,
+    );
   checkCandidateRelations(meta, optimization.candidates);
   // v1 没有额外关系要判：三个固定试跑种子由 schema 的 v1 分支钉住，与赛季种子的隔离
   // 由调度器负责（`scheduler.ts`）。不为了「对称」给历史档加新判据——那会让旧档读不进来。
@@ -383,7 +467,7 @@ export const validateArchiveCandidateRelations = (meta: ArchiveMeta): void => {
   // 先拒 v3 再分派读法，顺序是**判据**而不是排版：拒读那一条说的是「这份档案自相矛盾」，
   // 它比「网格关系不合法」更靠近成因。
   if (selection.version === SELECTION_AGENT_VERSION)
-    throw new Error("档案形状版本不到 3 时不得带 v3 选拔记录");
+    throw new Error(`档案形状版本不到 ${String(ARCHIVE_SCHEMA_VERSIONS[0])} 时不得带 v3 选拔记录`);
   if (!isLegacySelection(selection)) checkGridSelection(optimization, selection);
   if (
     selection.plan.ruleset !== meta.ruleset ||
@@ -439,7 +523,17 @@ export const isLegacyOptimization = (
  * 就跟着放行。
  */
 export const optimizationMetaOf = (value: unknown): ArchiveMeta | undefined => {
-  archiveShapeVersionOf(value);
+  const shape = archiveShapeVersionOf(value);
+  // 形状判据在**早退之前**跑:一份没有优化段、也没有选拔段的 agent 档案（零候选失败档、或
+  // 一份只带过程记录的档）照样可能带着「它那一版不该有的步形状」，而那条判据不能因为
+  // 「这份档没有优化段」就被跳过——那样 v3 档塞一条 `check` 会静默读成合法。
+  if (isAgentShape(shape)) {
+    // 只跑**步形状**那一条（含 `check` / `probe` / `toolCall` 的版本排除），不跑轮数公式：
+    // 后者归 `archiveShapeIssuesOf`（CLI 渲染成诊断、赛季与装载期抛成拒读），而报告这一侧
+    // 对**失败档**的轮数口径本来就是另一条（`prompts` 在旧失败档里是逐轮一份）。
+    const [stepIssue] = archiveStepShapeIssuesOf(value as ArchiveMeta, shape);
+    if (stepIssue !== undefined) throw new Error(stepIssue.message);
+  }
   if (
     typeof value !== "object" ||
     value === null ||

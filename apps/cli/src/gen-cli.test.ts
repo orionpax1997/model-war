@@ -63,6 +63,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import {
+  ARCHIVE_SCHEMA_VERSION,
   RULESET_VERSION,
   TRIAL_GRID_MAP_NAMES,
   TRIAL_GRID_SUMMARY_SUFFIX,
@@ -80,18 +81,24 @@ const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
 /** 契约目录说明(首条消息全量内联的那一份)。 */
 const CONTRACT_INDEX = "# contract\n\n- rules.md:机制\n- api.md:接口\n";
 /**
- * 一条「把脚本写进 /workspace」的动作块。
+ * 一条「把脚本写进 /workspace」的工具调用。
  *
  * 走 heredoc:模型在沙箱里写文件的自然写法,也是 ADR-0032 举的那一种(重定向 + heredoc)。
- * 写成动作块而不是裸脚本正文,是 agent 形态与 one-shot 的分界线——裸正文不会被解析成任何动作。
+ * 写成 `bash` 的 `command` 而不是裸脚本正文,是 agent 形态与 one-shot 的分界线——裸正文不会
+ * 被解析成任何动作。
  */
-const writeScriptAction = (body: string): string =>
-  `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${body}EOF\n\`\`\``;
+const writeScriptAction = (name: string, body: string): FakeToolCall => ({
+  name,
+  argumentsJson: JSON.stringify({ command: `cat > /workspace/script.ts <<'EOF'\n${body}EOF` }),
+});
+
+/** 一次不收参数的工具调用(`check` / `probe` / `evaluate` / `finish`)。 */
+const toolAction = (name: string): FakeToolCall => ({ name, argumentsJson: "{}" });
 
 /** 首条 `user` 的模板:两个占位符都得在,否则渲染器明确报错。 */
 const AGENT_TEMPLATE = "{{contractIndex}}\n\n任务:\n\ncontract: {{contractDigest}}\n";
 /** `system` 的模板:原样使用,不渲染。 */
-const AGENT_SYSTEM_TEMPLATE = "# 协议:每一步一个动作块\n\n恰好一个 ```bash 块。\n";
+const AGENT_SYSTEM_TEMPLATE = "# 协议:每一步一次工具调用\n\n恰好一次调用。\n";
 /** 过得了 tsc 与静态校验的最简脚本:假服务的回文本。 */
 const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
 
@@ -138,18 +145,33 @@ type Captured = {
 };
 
 /**
- * 起一个本地假端点(chat-completions 方言),按序回放 `contents`。
+ * 假端点的一步:一次 `tool_calls` 响应(线协议全形状)。
+ *
+ * `content` 刻意留空(工具调用那一轮模型通常不说话),`arguments` 是**字符串**——渠道形状就是
+ * 这样,解析归动作层,不归传输层。
+ */
+type FakeToolCall = { readonly name: string; readonly argumentsJson: string };
+
+/**
+ * 起一个本地假端点(chat-completions 方言),按序回放 `turns`。
  *
  * ── 为什么是**一串**而不是一句 ──
  *
  * agent 形态下一次会话有多步,每步一次模型调用,而每步该回什么由**上一步的观测**决定:
  * 先写脚本、再 `evaluate`、最后 `done`。回同一句会让会话永远停在第一步的意图上。
- * 剧本用尽后重复最后一句(那是「模型不再有新动作」的最接近模拟)。
+ * 剧本用尽后重复最后一步(那是「模型不再有新动作」的最接近模拟)。
  *
  * 返回值带上收到的请求,好让断言能钉住「CLI 真的按配置打到了这个端点、带上了鉴权头」。
  */
 const startFakeEndpoint = async (
-  contents: readonly string[] = [VALID_SCRIPT],
+  turns: readonly FakeToolCall[] = [
+    {
+      name: "bash",
+      argumentsJson: JSON.stringify({
+        command: `cat > /workspace/script.ts <<'EOF'\n${VALID_SCRIPT}EOF`,
+      }),
+    },
+  ],
 ): Promise<{
   readonly baseUrl: string;
   readonly requests: readonly Captured[];
@@ -169,12 +191,28 @@ const startFakeEndpoint = async (
         path: req.url ?? "",
         authorization: req.headers.authorization,
       });
-      const content = contents[call] ?? contents[contents.length - 1] ?? "";
+      const turn = turns[call] ??
+        turns[turns.length - 1] ?? { name: "finish", argumentsJson: "{}" };
       call += 1;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
-          choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [
+                  {
+                    id: `call-${String(call)}`,
+                    type: "function",
+                    function: { name: turn.name, arguments: turn.argumentsJson },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         }),
       );
@@ -312,9 +350,9 @@ it.skipIf(!archivePresent)(
   async () => {
     // 一次 agent 会话三步:写脚本 → evaluate(提交并跑满整张网格) → done。
     const endpoint = await startFakeEndpoint([
-      writeScriptAction(VALID_SCRIPT),
-      "```bash\nevaluate\n```",
-      "```bash\nfinish\n```",
+      writeScriptAction("bash", VALID_SCRIPT),
+      toolAction("evaluate"),
+      toolAction("finish"),
     ]);
     try {
       const root = mkRoot(endpoint.baseUrl);
@@ -362,7 +400,7 @@ it.skipIf(!archivePresent)(
           }[];
         };
       };
-      expect(meta.archiveSchemaVersion).toBe(3);
+      expect(meta.archiveSchemaVersion).toBe(ARCHIVE_SCHEMA_VERSION);
       // v3 的公式:轮数 = 过程记录条数;起始 prompt 恒一条(不是每步一份)。
       expect(meta.protocolRounds).toBe(3);
       expect(meta.steps).toHaveLength(3);
@@ -455,9 +493,9 @@ it.skipIf(!archivePresent)(
     // 写惯犯脚本 → evaluate(真试跑,32 场照样判拦)。被拦下的一次不产出候选,
     // 所以这次会话零候选 → 失败档(ADR-0030「失败 = 一个候选都没有」)。
     const endpoint = await startFakeEndpoint([
-      writeScriptAction(HABITUAL_SCRIPT),
-      "```bash\nevaluate\n```",
-      "```bash\nfinish\n```",
+      writeScriptAction("bash", HABITUAL_SCRIPT),
+      toolAction("evaluate"),
+      toolAction("finish"),
     ]);
     try {
       const root = mkRoot(endpoint.baseUrl);

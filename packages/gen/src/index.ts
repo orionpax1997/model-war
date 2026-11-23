@@ -53,6 +53,7 @@ export {
   reply,
   replies,
   stubClient,
+  toolCall,
   type StubCall,
   type StubClient,
   type StubReply,

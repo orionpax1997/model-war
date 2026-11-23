@@ -27,14 +27,14 @@
  */
 
 import type { ModelClient, ModelParams, ModelResponse } from "../model-client.js";
-import type { ToolDeclaration } from "./tools.js";
+import type { ToolCall, ToolDeclaration } from "./tools.js";
 import {
   buildHistory,
   type HistorySeed,
   type HistoryTurn,
   type StepObservation,
 } from "./history.js";
-import { ACTION_REJECT_EXIT_CODE, isEvaluateAction, parseAction } from "./action.js";
+import { ACTION_REJECT_EXIT_CODE, parseAction } from "./action.js";
 import {
   AGENT_MAX_STEPS,
   AGENT_TOTAL_WALL_CLOCK_MS,
@@ -51,6 +51,7 @@ import type {
   AgentTurnEvidence,
 } from "./types.js";
 import type { ArchiveStepAction } from "@model-war/schema";
+import type { ActionParse } from "./action.js";
 
 /** 连续几次动作解析失败即停:一次是模型手滑,三次是它没读懂协议。 */
 export const ACTION_PARSE_FAILURE_LIMIT = 3;
@@ -137,13 +138,50 @@ const noActionObservation = (message: string): StepObservation => ({
   exitCode: ACTION_REJECT_EXIT_CODE,
 });
 
-/** 一步的动作类别。`evaluate` 只认整块(见 `isEvaluateAction`)。 */
-const actionOf = (command: string, done: boolean): ArchiveStepAction =>
-  done
-    ? { kind: "done" }
-    : isEvaluateAction(command)
-      ? { kind: "evaluate" }
-      : { kind: "bash", command };
+/**
+ * 这一步交给执行器的**命令串**。
+ *
+ * `bash` 交那条命令本身;另外四个交**工具名**(`check` / `probe` / `evaluate` / `finish`)——
+ * 它们由宿主受理,不经 `bash -c`。
+ *
+ * ⚠️ 这一处是**过渡态**:执行器的入参现在仍是 `{step, command}` 一格命令串,而 `check` /
+ * `evaluate` / `finish` 在沙箱里仍有同名薄壳认得这个串(票 03 把分派器入口改形、删掉 fd 3
+ * 薄壳之后,这里换成「工具名 + 参数」的显式入参)。`probe` 在这条过渡路径上没有执行体,模型
+ * 真调它只会拿到一条「命令不存在」的观测——**这是有意的**:`probe` 要到票 08 才接进分派器,
+ * 而档案形状(含 `{kind:"probe"}` 一档)本票就定型。
+ */
+const commandOf = (parsed: Extract<ActionParse, { kind: "ok" }>): string =>
+  parsed.tool === "bash" ? (parsed.command ?? "") : parsed.tool;
+
+/** 这一步发起的**那一次**工具调用;零次或多于一次时没有「那一次」可指,回 `undefined`。 */
+const toolCallOf = (toolCalls: readonly ToolCall[] | undefined): ToolCall | undefined =>
+  toolCalls?.length === 1 ? toolCalls[0] : undefined;
+
+/**
+ * 一步的动作类别:从**工具名**推出来,不再从命令文本猜。
+ *
+ * 旧读法要问「整块去空白后是不是恰好 `evaluate`」,因为那时 `check` / `evaluate` / `finish`
+ * 都是 `bash` 里的一条命令——那是唯一能区分它们的信号。新世界里工具名本身就是答案,那条判据
+ * (以及它对「`evaluate; 别的东西`」的边界讨论)整个消失。
+ *
+ * `done` 这一档的名字留在档案形状里(见 `ArchiveStepAction`),工具名是 `finish`:两者是不同的
+ * 东西——一个是档案枚举值,一个是模型调的工具。
+ */
+const actionOf = (parsed: Extract<ActionParse, { kind: "ok" }>): ArchiveStepAction => {
+  switch (parsed.tool) {
+    case "bash":
+      // `parseAction` 只在 `bash` 这一档产出 `command`,别处不会走到这里。
+      return { kind: "bash", command: parsed.command ?? "" };
+    case "check":
+      return { kind: "check" };
+    case "probe":
+      return { kind: "probe" };
+    case "evaluate":
+      return { kind: "evaluate" };
+    case "finish":
+      return { kind: "done" };
+  }
+};
 
 /**
  * 把一次执行结果并进一步的记录。
@@ -264,19 +302,18 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
     let action: ArchiveStepAction = { kind: "none" };
     let observation = noActionObservation(TRUNCATED_RESPONSE_FEEDBACK);
     let result: AgentExecResult["result"];
-    // 收工**只在执行之后读一次**:判据是宿主在这一步里有没有收到 `finish` 请求(执行器搬运),
-    // 不是命令字节里某一行长什么样。
+    // 收工判据是「这一步调用了 `finish` 工具」:它是工具名,不是命令字节里某一行长什么样。
     let done = false;
     if (response.finishReason !== "length") {
-      const parsed = parseAction(response.text);
+      const parsed = parseAction(response.toolCalls ?? []);
       if (parsed.kind === "reject") {
         parseFailures += 1;
         observation = noActionObservation(parsed.correction);
       } else {
         parseFailures = 0;
-        const executed = await request.executor({ step, command: parsed.command });
-        done = executed.done === true;
-        action = actionOf(parsed.command, done);
+        const executed = await request.executor({ step, command: commandOf(parsed) });
+        done = parsed.tool === "finish";
+        action = actionOf(parsed);
         observation = observationOf(executed);
         result = executed.result;
         // 宿主服务说「这一次真评出了成绩」时,把提交身份记下来(loop 只搬运)。
@@ -294,6 +331,8 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
     }
     // `harnessMs` 覆盖沙箱执行与观测回填:sendMs 的补集,两者相加就是整步。
     const harnessMs = now() - harnessStart;
+    // 逐字字节的那一格:只在**恰好一次**调用时记(理由见 `steps.push` 那里的注释)。
+    const recorded = toolCallOf(response.toolCalls);
 
     steps.push({
       step,
@@ -304,6 +343,11 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
       atMs,
       harnessMs,
       raw,
+      // 逐字字节的家:那一次调用叫什么、`arguments` 原文是什么。**只在这一步恰好一次调用时**记。
+      // 零次没有可记的;多于一次则「那一次」这个说法不成立(拒档的 `none` + 退出码 64 说明它们
+      // 一次都没执行)。被拒的**单次**调用照样记:字节留下来,读侧才看得见模型当时到底写了什么
+      // (ADR-0031),而 `action.kind` 与退出码回答「它有没有被执行」。
+      ...(recorded === undefined ? {} : { toolCall: recorded }),
       ...(result === undefined ? {} : { result }),
     });
     turnHistory.push({

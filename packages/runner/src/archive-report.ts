@@ -22,7 +22,6 @@ import {
   ACTION_EFFECT_NAMES,
   ARCHIVE_OPTIMIZATION_CANDIDATE_AGENT_JSON_SCHEMA,
   ARCHIVE_OPTIMIZATION_CANDIDATE_JSON_SCHEMA,
-  ARCHIVE_SCHEMA_VERSION,
   ARCHIVE_SELECTION_JSON_SCHEMA,
   OPTIMIZATION_AGENT_VERSION,
   OPTIMIZATION_CANDIDATE_LIMIT,
@@ -1292,8 +1291,8 @@ const failureCandidatesOf = (record: unknown): ArchiveOptimizationCandidate[] =>
   if (typeof record !== "object" || record === null) return [];
   const raw = (record as { candidates?: unknown }).candidates;
   if (!Array.isArray(raw)) return [];
-  if (archiveShapeVersionOf(record) === ARCHIVE_SCHEMA_VERSION)
-    return agentFailureCandidatesOf(raw);
+  // agent 形状的失败档用 v3 候选序读法（`step` 而不是 `stage`）——v3 与 v4 在候选序上是同一版。
+  if (archiveShapeVersionOf(record) !== "legacy") return agentFailureCandidatesOf(raw);
   if (raw.length > (objectOf(record).classification === "selection" ? 3 : 2)) return [];
   const seen = new Set<string>();
   const out: ArchiveOptimizationCandidate[] = [];
@@ -1567,9 +1566,9 @@ const readRecord = (
       } catch {
         throw new Error("日志行 JSON 不合法");
       }
-      if (shape === ARCHIVE_SCHEMA_VERSION) {
-        // 旧档的行里有这两个键，那时代它们就是结果侧证据；v3 不许再带——复写让同一个事实有了
-        // 两个家，而后者迟早是陈的（ADR-0031「一个事实一个家」）。显式拒读，不静默忽略。
+      if (shape !== "legacy") {
+        // 旧档的行里有这两个键，那时代它们就是结果侧证据；agent 形状不许再带——复写让同一个事实
+        // 有了两个家，而后者迟早是陈的（ADR-0031「一个事实一个家」）。显式拒读，不静默忽略。
         if (Object.hasOwn(log, "errorCodes"))
           throw new Error("v3 日志行不带结果侧 errorCodes 字段");
         if (log.kind !== undefined && log.kind !== "converged" && log.kind !== "transport")
@@ -1638,8 +1637,8 @@ const readRecord = (
     }
   });
   rounds.sort((a, b) => a.round - b.round);
-  /** agent 形态（v3）：步列、终止原因与受污染分层都按它分派。 */
-  const agentShape = shape === ARCHIVE_SCHEMA_VERSION;
+  /** agent 形态（v3 / v4）：步列、终止原因与受污染分层都按它分派。两版在这些读法上同形。 */
+  const agentShape = shape !== "legacy";
   const failureDescriptors = kind === "failure" ? failureCandidatesOf(record) : [];
   const failedSelection =
     kind === "failure" ? selectionFailureOf(record, failureDescriptors, protocolRounds) : null;
@@ -2389,6 +2388,24 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
                 : `；与上一次提交（第 ${previous.protocolRound} 步）${previous.scriptSha256 === commit.scriptSha256 ? "**字节相同**" : "字节不同"}；之间经过 ${between.length} 步（${between.length === 0 ? "无" : between.map((entry) => `${entry.step}:${entry.action ?? "null"}`).join(" / ")}）`),
           );
         }
+      }
+      /**
+       * 工具调用的**逐字字节**（v4 才有那一格）。
+       *
+       * 它在这里而不是在步级表里，是因为它必须**原样**出现：表里那一列是窄的，而这条证据的全部
+       * 意义是「发回历史的 `arguments` 与这里逐字相同」（ADR-0031）。所以报告只搬
+       * `steps[i].toolCall.argumentsJson`，**不按 `action.command` 重编码**——两者可以不同形
+       * （转义写法、多余空格），而重编码等于悄悄换掉发回去的东西。
+       *
+       * v3 档没有这一格（那时还没有工具调用信封），整节不渲染。
+       */
+      const calls = steps.entries.filter((step) => step.toolCall !== null);
+      if (calls.length > 0) {
+        out.push("", "工具调用（逐字字节，发回历史的 `arguments` 与这里相同）：");
+        for (const step of calls)
+          out.push(
+            `- 第 ${step.step} 步：name=${escape(step.toolCall!.name)}；argumentsJson=${escape(step.toolCall!.argumentsJson)}`,
+          );
       }
       const results = steps.entries.filter((step) => step.result !== null);
       // `result` 缺席（这一步没有结果）**不渲染**；`errorCodes: []` 渲染成空（跑过了、没错误）。

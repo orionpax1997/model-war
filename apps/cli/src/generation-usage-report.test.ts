@@ -149,6 +149,17 @@ const fixtures = [
   },
 ];
 
+/**
+ * 一条 chat-completions 的 `tool_calls` 响应消息(不收参数的工具):线协议全形状。
+ *
+ * 夹具走**真 HTTP 适配器**,所以这里的字节就是渠道形状:解析那一侧读
+ * `message.tool_calls[].function.{name,arguments}`,`arguments` 是**字符串**(不在这里解析)。
+ */
+const wireToolCall = (name: string) => ({
+  content: null,
+  tool_calls: [{ id: "call-1", type: "function", function: { name, arguments: "{}" } }],
+});
+
 const evidence = {
   official: { status: "documented" as const, source: "offline-fixture/official-contract" },
   channel: { status: "accepted" as const, source: "offline-fixture/channel-contract" },
@@ -200,11 +211,23 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
       choices: [
         {
           message: {
-            // 写脚本与 evaluate 必须**各自一块**:整块去空白恰为 `evaluate` 才算那次提交
-            // (ADR-0032 的动作边界),拼在一起的块只是 bash。
-            content: `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${script}EOF\n\`\`\``,
+            // 写脚本与 evaluate 必须是**两次工具调用**(一步恰好一次):`evaluate` 那一次才算提交;
+            // 把两件事塞进同一次 `bash` 的 `command` 里只是跑了一个 shell(ADR-0032 的动作边界)。
+            content: "",
+            tool_calls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: {
+                  name: "bash",
+                  arguments: JSON.stringify({
+                    command: `cat > /workspace/script.ts <<'EOF'\n${script}EOF`,
+                  }),
+                },
+              },
+            ],
           },
-          finish_reason: "stop",
+          finish_reason: "tool_calls",
         },
       ],
       usage: {
@@ -216,13 +239,13 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
       },
     }),
     JSON.stringify({
-      choices: [{ message: { content: "```bash\nevaluate\n```" }, finish_reason: "stop" }],
+      choices: [{ message: wireToolCall("evaluate"), finish_reason: "tool_calls" }],
       // 后续步骤不带 usage:这些用例的合计口径都对着**第一步**那一条响应。
       usage: null,
     }),
-    // 第三步收工:不 done 的话会话会一直跑后续 evaluate 直到步数耗尽(每次都是一次调用)。
+    // 第三步收工:不 `finish` 的话会话会一直跑后续 evaluate 直到步数耗尽(每次都是一次调用)。
     JSON.stringify({
-      choices: [{ message: { content: "```bash\nfinish\n```" }, finish_reason: "stop" }],
+      choices: [{ message: wireToolCall("finish"), finish_reason: "tool_calls" }],
       // 后续步骤不带 usage:这些用例的合计口径都对着**第一步**那一条响应。
       usage: null,
     }),

@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 
 import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
-import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE, ACTION_REJECT_REASONS } from "./action.js";
+import { ACTION_REJECT_EXIT_CODE, ACTION_REJECT_REASONS } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
 import { PROTOCOL_EXIT_CODE } from "./host/dispatcher.js";
 import { bwrapArgv } from "./sandbox/argv.js";
@@ -68,6 +68,14 @@ export const OBSERVATION_ADVICE_HINTS = [
 /** 清单本身。键名就是「模型面对的世界」的栏目,不按档案的形状排。 */
 export type HarnessManifest = {
   readonly actionSyntax: {
+    /**
+     * ⚠️ **占位格,票 06 要删掉它**。
+     *
+     * 它记的是旧协议里的东西(`bash` 围栏标记),而新协议里没有围栏——动作是一次工具调用。
+     * 票 02 删了 `ACTION_FENCE_TAG` 常量,这一格因此失去真源;为了不把整个 `harnessManifest()`
+     * 的改形塞进票 02(那是票 06 的范围),这里先记一个中性的占位值让它继续编译。
+     * 同一批里 `blocks` / `multiLine` / `observationRole` / `rejectExitCode` 四格也要一起重写。
+     */
     readonly fenceTag: string;
     readonly blocks: "exactly-one";
     readonly multiLine: "one-bash-c";
@@ -158,7 +166,7 @@ export const harnessManifest = (): HarnessManifest => {
   );
   return {
     actionSyntax: {
-      fenceTag: ACTION_FENCE_TAG,
+      fenceTag: "none",
       blocks: "exactly-one",
       multiLine: "one-bash-c",
       observationRole: "user",
@@ -244,8 +252,13 @@ export const digestOf = (manifest: HarnessManifest): string =>
  *
  * 它是**入库常量**而不是运行时现算,与 `SANDBOX_ROOTFS_TREE_HASH` 同一条纪律:判据锚定确切
  * 取值,回填时必须有人有意改这一行,于是「上限变了但没人注意」在 diff 里看得见。
+ *
+ * ⚠️ 这一版是**过渡值**:票 02 只改了 `actionSyntax.rejects` 的四个名字(拒绝档从围栏块那四族
+ * 换成工具调用那四族),清单的其余格子(围栏标记、`blocks`、`observationRole`、`finish` 的形状、
+ * `services.channelFd` 与 `tools`)要等票 06 才重写。票 06 落地后这个数还会再变一次——那是有意的
+ * 断代:一个「协议已经换了」的世界不该与旧世界共用一个身份。
  */
-export const HARNESS_DIGEST = "9c3ba5e089f7577d7ab7b5869bc5383cac3729f411d8890000e90763f720b542";
+export const HARNESS_DIGEST = "78a36d1e7d2c11ac650a5fbeb90dce9588e671c1b63e4781365f874b91c5a821";
 
 /** 现算的身份:`harnessVersion` + `harnessDigest`,落进档案的就是这两个。 */
 export const harnessIdentity = (): { version: string; digest: string } => ({

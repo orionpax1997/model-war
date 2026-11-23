@@ -35,7 +35,7 @@ import type {
   AnyArchiveOptimizationCandidate,
   ArchiveStep,
   ArchiveTermination,
-  ARCHIVE_SCHEMA_VERSION,
+  ARCHIVE_SCHEMA_VERSIONS,
 } from "./archive-meta.js";
 
 /** 失败记录文件名的前缀:`failed-<runId>.json` 与存档目录 `<runId>/` 在同一父目录下并列。 */
@@ -132,7 +132,7 @@ export type FailureRecord = FailureIdentity & {
    *
    * 七格同进同出；缺 `archiveSchemaVersion` = one-shot 形态的历史记录。
    */
-  readonly archiveSchemaVersion?: typeof ARCHIVE_SCHEMA_VERSION;
+  readonly archiveSchemaVersion?: (typeof ARCHIVE_SCHEMA_VERSIONS)[number];
   /** 过程记录：一步一条；零步会话为空数组。 */
   readonly steps?: readonly ArchiveStep[];
   readonly contextLength?: number;
