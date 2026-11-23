@@ -2016,14 +2016,14 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       (field) => ttlRecorded || !(TTL_WRITE_FIELDS as readonly string[]).includes(field),
     );
     /**
-     * 这一跑**评测过几次**——从过程记录的动作列数出来。
+     * 过程记录里出现过几步——失败档渲染候选那一行时的第二列。
      *
-     * 它与 `candidateStages` 不是同一件事：后者是「记录里留了几个候选描述符」，而失败档的描述符
-     * 只在字节还在时才写（`packages/gen/src/failure.ts` 的 `retainedCandidatesOf`）。所以失败档的
-     * 这两个数可以合法地不相等，差额就是「评测过、但字节没保留」的那几份。
+     * 它**不是**「这一跑 evaluate 了几次」：那个数以前由动作列数出来（`action === "evaluate"`），
+     * 而动作标签是人读的注解——模型把 `check` 与 `evaluate` 写进同一块时它记成 `bash`，据此计数
+     * 只会少数（真档里 2 个候选记成 1 次）。评测过几次在过程记录里根本没有结构化的落点，所以报
+     * 告不造这个数：把两个能数的事实并置（候选描述符数 / 过程记录步数），差额叫「未保留」。
      */
-    const evaluatedSteps =
-      report.steps?.entries.filter((entry) => entry.action === "evaluate").length ?? 0;
+    const stepEntries = report.steps?.entries.length ?? 0;
     out.push(
       `## ${escape(report.model)} · ${report.kind}`,
       "",
@@ -2085,19 +2085,24 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
           `| ${step.step} | ${step.action ?? "null"} | ${step.stepMs ?? "null"} | ${step.sendMs ?? "null"} | ${step.harnessMs ?? "null"} | ${step.atMs ?? "null"} | ${step.inputTokens ?? "null"} | ${step.inputGrowth ?? "null"} | ${percent(step.cacheHitRate)} | ${step.result === null ? "null" : `${step.result.kind}（${step.result.errorCodes.length} 个错误码）`} | ${step.roundLinked ? "round==step" : "缺日志行"} |`,
         );
       /**
-       * 候选序与步：`evaluate` 就是提交（ADR-0030），所以「第几步评了哪一版」由两个已存在的字段
-       * 合成——步列的 `action === "evaluate"` 与 `scores[].protocolRound / scriptSha256`。
+       * 候选序与步：序的**真源是候选描述符**（`optimization.candidates` 的
+       * `step` / `scriptSha256` / `score`），不是「动作标签等于 `evaluate` 的那些步」。
+       *
+       * 两者的区别是真会话上撞见的：模型把 `check` 与 `evaluate` 写进同一块时动作记成 `bash`，
+       * 于是档案里有 2 个候选、报告只列出 1 条。动作标签是**人读的注解**，不能承担「有没有提交
+       * 过」的判据——它现在只回答「这一步除提交之外还跑了什么」。
        *
        * 这里**不猜模型命令写了什么**（那要 grep 自由文本，ADR-0036 已否掉那种分类法），只报
-       * 结构事实：哪几步是 `evaluate`、两次之间过了几步、两次提交的字节同不同。
+       * 结构事实：候选在第几步、两次之间过了几步、两次提交的字节同不同。
        */
-      const commits = report.scores.filter((score) =>
-        steps.entries.some(
-          (entry) => entry.step === score.protocolRound && entry.action === "evaluate",
-        ),
-      );
+      // 一条候选描述符 = 一次提交（ADR-0030）；序按步号递增，装载期已核过。
+      const commits = report.scores;
       if (commits.length > 0) {
-        out.push("", "候选序（`evaluate` 即提交）：");
+        out.push(
+          "",
+          "候选序（`evaluate` 即提交）：",
+          "- 真源：候选描述符（`optimization.candidates`）；动作标签只作注，不参与筛选",
+        );
         for (const [index, commit] of commits.entries()) {
           const previous = commits[index - 1];
           const between =
@@ -2107,8 +2112,16 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
                   (entry) =>
                     entry.step > previous.protocolRound && entry.step < commit.protocolRound,
                 );
+          // 动作标签降级为注：不是 `evaluate` 时注出这一步还跑了别的命令，是时注为空。
+          const stepEntry = steps.entries.find((entry) => entry.step === commit.protocolRound);
+          const actionNote =
+            stepEntry === undefined
+              ? "；这一步不在过程记录里（动作未知）"
+              : stepEntry.action === "evaluate"
+                ? ""
+                : `；这一步还跑了别的命令（动作=${stepEntry.action ?? "null"}）`;
           out.push(
-            `- 第 ${commit.protocolRound} 步：scriptSha256=${commit.scriptSha256}` +
+            `- 第 ${commit.protocolRound} 步：scriptSha256=${commit.scriptSha256}${actionNote}` +
               (previous === undefined
                 ? ""
                 : `；与上一次提交（第 ${previous.protocolRound} 步）${previous.scriptSha256 === commit.scriptSha256 ? "**字节相同**" : "字节不同"}；之间经过 ${between.length} 步（${between.length === 0 ? "无" : between.map((entry) => `${entry.step}:${entry.action ?? "null"}`).join(" / ")}）`),
@@ -2166,11 +2179,11 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     if (report.scores.length === 0)
       out.push(
         // 失败档的候选**字节**随清理撤掉了，于是描述符也不写进记录（`failure.ts` 的
-        // `retainedCandidatesOf`）。这里必须说成「未保留」而不是「字节缺失」：前者是这一档
-        // 的诚实说法（我们主动没留），后者是搬运 / 手工删除那类事故的读数。次数不会丢——
-        // 过程记录的动作列里每一步都在。
-        report.kind === "failure" && evaluatedSteps > 0
-          ? `- 候选：未保留（这一跑 evaluate ${evaluatedSteps} 次；候选字节与描述符随失败清理一并撤掉，次数见过程记录的动作列）`
+        // `retainedCandidatesOf`）。两列并置：记录里留了几个候选描述符、过程记录里出现过几步。
+        // 差额按上一轮口径渲染成「未保留」，**不渲染成异常**——这是我们主动没留，不是搬运事故。
+        // 这里不再从动作列数「这一跑 evaluate 了几次」：动作标签是注解，不能当计数（见 `stepEntries`）。
+        report.kind === "failure" && stepEntries > 0
+          ? `- 候选：未保留（候选描述符数 ${report.candidateStages}；过程记录里出现过的步数 ${stepEntries}；差额按「未保留」记，不当作异常——描述符与字节随失败清理一并撤掉，动作列不是计数判据）`
           : "- 候选分数：不适用（本档没有优化旁证，没有候选可出分数）",
       );
     else
