@@ -214,7 +214,7 @@ const correctionOf = (reason: ActionRejectReason, blocks: readonly FencedBlock[]
     `✅ 正例(逐字,下一步照这个形状写):`,
     POSITIVE_EXAMPLE,
     "",
-    `❌ 反例(逐字,四种都会被拒,一条命令都不执行;标 ◀ 的是这一次踩到的那种):`,
+    `❌ 反例(逐字,${String(REJECT_EXAMPLES.length)} 种都会被拒,一条命令都不执行;标 ◀ 的是这一次踩到的那种):`,
   ];
   for (const example of REJECT_EXAMPLES) {
     const mark = example.reason === reason ? " ◀" : "";

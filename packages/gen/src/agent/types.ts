@@ -52,6 +52,10 @@ export type AgentExecResult = {
   /**
    * 这一步里模型报过收工(`finish` 薄壳经通道上报给宿主)。
    *
+   * 字段名是 `done` 而命令叫 `finish`——**这是有意的不一致,不是漏改**:它与档案枚举
+   * `action.kind: "done"`(`packages/schema/src/archive-meta.ts`)同源,该枚举是 v3 形状里的
+   * 常量,改名等于升 `archiveSchemaVersion`(与 `identity.finish` 那处同源)。
+   *
    * 它**不**意味着块里 `finish` 之后的行没执行——整块由 `bash` 解析,那些行照常跑(ADR-0032 修订)。
    */
   readonly done?: boolean;

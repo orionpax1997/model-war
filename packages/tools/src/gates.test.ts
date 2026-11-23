@@ -1194,7 +1194,13 @@ it("契约挂载门禁挂在 check:quick,且没被挪进按需 / 慢链", () => 
 /** 模型在沙箱里能看见的命令清单真源。加它一项 = 沙箱里多一个命令。 */
 const ROOTFS_MANIFEST_FILE = "packages/schema/src/sandbox-rootfs.ts";
 
-/** 首条 `user` 消息的模板。命令清单是它的一部分(渲染只换占位符,不碰清单)。 */
+/**
+ * 首条 `user` 消息的模板。命令清单是它的一部分(渲染只换占位符,不碰清单)。
+ *
+ * 与 `prompt-commands.ts` 的 `AGENT_TEMPLATE_PATH`、`agent-prompt.ts` 的 `AGENT_TEMPLATE_NAME`
+ * 是同一个路径的第三份字面量:零构建下工具包不得 import `@model-war/gen`,合不成一份。它靠「读不到即红」
+ * 兜底(探针改不到文件时 `withPatchedText` 自己会先红,不会静默放过)。
+ */
 const AGENT_TEMPLATE_FILE = "prompts/agent.md";
 
 it("命令清单门禁:常量加了二进制而文案没跟上时变红并点名,还原变绿", () => {
@@ -1239,6 +1245,19 @@ it("命令清单门禁:删掉「没有 sleep / awk」那句时变红(缺项也�
   );
   expect(violated.status, "删掉缺项说明时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("sleep");
+  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("命令清单门禁:分组标题换词时红在标题上(不把整组报成「清单没写」)", () => {
+  // 标题是分组的判据:它一换词,整组清单就不再算数。诊断必须指得到那一行,
+  // 否则人会去补八九条清单项,而真正该改的只是一行标题。
+  const violated = withPatchedText(
+    AGENT_TEMPLATE_FILE,
+    (source) => source.replace("### 工具薄壳", "### 宿主工具"),
+    () => script("check:prompt-commands"),
+  );
+  expect(violated.status, "分组标题换词时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("没有那条分组标题");
   expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
 });
 

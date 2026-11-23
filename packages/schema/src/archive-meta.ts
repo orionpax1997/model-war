@@ -220,7 +220,6 @@ export type ArchiveStepAction =
    * 语法错误（ADR-0032 修订）。改这个枚举等于升 `archiveSchemaVersion`，本批不升。
    */
   | { readonly kind: "done" }
-  | { readonly kind: "done" }
   /**
    * 这一步**没有可执行的动作**：零个块 / 多个块 / 块标记不是 `bash`，或者响应两次都被输出上限
    * 截断而转了格式反馈。命令一条都没跑，但这一步照样计入步数与过程记录（ADR-0032「`done` 不是
