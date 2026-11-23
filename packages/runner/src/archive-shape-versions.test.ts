@@ -396,6 +396,36 @@ it("v3 档的步带 `toolCall`:拒读(工具调用信封是 v4 的形状)", () =
   expect(issue?.message).toContain("toolCall");
 });
 
+it("v3 档的 `none` 步带 `action.rejectReason`:拒读(拒绝档名是 v4 的形状)", () => {
+  const root = mkdtempSync(join(scratch, "v3-reject-reason-"));
+  writeMinimalV3(root, {
+    ...STEP_BASE,
+    action: { kind: "none", rejectReason: "malformed-arguments" },
+    exitCode: 64,
+  });
+  const [issue] = archiveShapeIssuesOf(
+    JSON.parse(
+      readFileSync(join(root, "archive", "v3mut", "2026-01-05T00-00-00-001Z", "meta.json"), "utf8"),
+    ) as never,
+  );
+  expect(issue?.kind).toBe("archive-step-shape");
+  expect(issue?.pointer).toBe("/steps/0/action/rejectReason");
+  expect(issue?.message).toContain("rejectReason");
+});
+
+it("v4 档的 `none` 步带 `action.rejectReason` 就合法:同一份步只换版本号", () => {
+  const root = mkdtempSync(join(scratch, "v4-reject-reason-"));
+  writeMinimalV3(root, {
+    ...STEP_BASE,
+    action: { kind: "none", rejectReason: "malformed-arguments" },
+    exitCode: 64,
+  });
+  const path = join(root, "archive", "v3mut", "2026-01-05T00-00-00-001Z", "meta.json");
+  const meta = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  writeFileSync(path, `${JSON.stringify({ ...meta, archiveSchemaVersion: 4 }, null, 2)}\n`);
+  expect(archiveShapeIssuesOf(JSON.parse(readFileSync(path, "utf8")) as never)).toEqual([]);
+});
+
 it("同样的形状放进 v4 档就合法:两版的差别只有这一条,不是两套读法", () => {
   const root = mkdtempSync(join(scratch, "v4-check-"));
   writeMinimalV3(root, {
@@ -421,8 +451,9 @@ it("同样的形状放进 v4 档就合法:两版的差别只有这一条,不是�
 /**
  * 造一份最小的 v4 失败档（`failed-<runId>.json`），`termination: action-parse`。
  *
- * 诊断正文按 gen 侧 `diagnosticLines` 的形状写（「第 N 步(none,exit 64): …」），并**故意**把
- * 票 02 的四档名字塞进去：读侧若手抄了那四个名字，这份档就会在报告里把名字回显出来。
+ * 诊断正文按 gen 侧 `diagnosticLines` 的形状写（「第 N 步(none,exit 64,拒绝档=…): …」），并
+ * **故意**把票 02 的四档名字塞进去：读侧若手抄了那四个名字，这份档就会在报告里把名字回显出来。
+ * 档名由 gen 侧写进诊断文本、读侧只渲染「诊断条数」——这条分工就是这份夹具在钉的那件事。
  */
 const writeMinimalV4Failure = (root: string): void => {
   const slugDir = join(root, "archive", "v4fail");
@@ -462,9 +493,9 @@ const writeMinimalV4Failure = (root: string): void => {
         sandboxRuntimeHash: "b".repeat(64),
         classification: "contract",
         diagnostics: [
-          "第 1 步(none,exit 64): no-tool-call",
-          "第 1 步(none,exit 64): multiple-tool-calls",
-          "第 1 步(none,exit 64): unknown-tool 与 malformed-arguments 都在这里",
+          "第 1 步(none,exit 64,拒绝档=no-tool-call): 请只发起一次工具调用",
+          "第 1 步(none,exit 64,拒绝档=multiple-tool-calls): 请只发起一次工具调用",
+          "第 1 步(none,exit 64,拒绝档=unknown-tool): … 与 malformed-arguments 都在这里",
         ],
         message: "连续三次动作解析失败",
       },

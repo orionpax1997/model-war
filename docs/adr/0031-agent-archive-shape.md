@@ -80,6 +80,10 @@ status: accepted
 > - `steps[i].raw` 是模型那一轮的自然语言，在工具调用轮次里**常态为空**，但它的存在让「模型兼说了话」那种轮次仍能被逐字复原。
 >
 > 两条**不是**一回事，而它们各自都有读侧用途（前者供回放与诊断，后者供读模型的想法）。明确的落选做法是**把 `tool_calls` 重编码进 `raw`**：那会把两份字节（渠道原样 vs 我们序列化回来的）混成一个字段，而「模型当时到底写了什么」就再也没法逐字回答——且 `inkling` 那种 `raw` 本应为空的场次会变成一个假的非空串。
+>
+> **追加（2026-11-21）：`{kind:"none"}` 多了可选键 `rejectReason`，形状版本不动。**
+>
+> 四个拒绝原因（`no-tool-call` / `multiple-tool-calls` / `unknown-tool` / `malformed-arguments`）原本在过程记录里全部塌成 `{kind:"none"}`，档名只活在回给模型的纠正消息正文里，于是失败档的诊断答不出「这一步被哪一种拒了」——而四档的处方不同。按本册「条目可选键不升形状版本」那条先例，它进的是 `none` 这一档内部（不是 `steps[i]` 顶层）：判别区间的那一档本身就是「被拒」这个前提，编译器替契约做了一次检查。缺席也有意义且不许与「被拒」合并：`none` 没有它是「两次截断转格式反馈」，有它才是被拒。取值域在 `packages/schema/src/archive-meta.ts`（`ARCHIVE_STEP_REJECT_REASONS`，与 gen 侧 `ACTION_REJECT_REASONS` 双向由类型级断言对齐——依赖方向仍是 gen → schema）。它同样是**只在 v4 存在**的形状，归装载期那条 `archive-step-shape` 判据（v3 档带了就拒读并点名 `rejectReason`）。
 
 ### 快照沿用既有命名族
 

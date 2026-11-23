@@ -1127,6 +1127,14 @@ const messageOfNoCandidate = (slug: string, loop: AgentLoopResult): string => {
  *
  * 取前两行而不是全量:诊断是给人读的一行提示清单,全文就在 `steps` 里(同一步的两路输出都已
  * 落盘),不在这里再复写一份。
+ *
+ * ── 拒绝档的名字进标题行,不进正文 ──
+ *
+ * 四档的纠正消息都是一大段(规则 + 正反例),而它们的开头几句长得很像,读诊断的人靠正文分不出来
+ * 这一步到底踩了哪一条。所以档名写在括号里一格,取值与档案里 `steps[i].action.rejectReason` 逐字
+ * 相同。名字的真源是动作层的 `ACTION_REJECT_REASONS`,这里只把它写出来,不另开一张表。
+ *
+ * `none` 里没有 `rejectReason` 的那一半也要分得清:那是两次截断转格式反馈,不是被拒。
  */
 const diagnosticLines = (loop: AgentLoopResult): readonly string[] => {
   if (loop.steps.length === 0) {
@@ -1139,7 +1147,11 @@ const diagnosticLines = (loop: AgentLoopResult): readonly string[] => {
       .map((line) => line.trimEnd())
       .filter((line) => line !== "")
       .slice(0, 2);
-    const head = `第 ${String(step.step)} 步(${step.action.kind},exit ${String(step.exitCode)}):`;
+    const reject =
+      step.action.kind === "none" && step.action.rejectReason !== undefined
+        ? `,拒绝档=${step.action.rejectReason}`
+        : "";
+    const head = `第 ${String(step.step)} 步(${step.action.kind},exit ${String(step.exitCode)}${reject}):`;
     return lines.length === 0
       ? [`${head} 两路输出都是空的`]
       : lines.map((line) => `${head} ${line}`);
