@@ -188,8 +188,24 @@ const arrowAfter = (text: string, index: number): boolean => {
 const isAccountingNumber = (text: string, start: number, end: number): boolean =>
   arrowBefore(text, start) || arrowAfter(text, end);
 
+/**
+ * 正则是按名字造的,而调用它是「行 × 键」的双重循环——不缓存就是行数乘键数次的 `new RegExp`
+ * (实测这一处占门禁 1.2s 的大头)。`matchAll` 不消费 `lastIndex`,同一个实例可以反复用安全。
+ */
+const patternCache = new Map<string, RegExp>();
+const memoPattern = (key: string, build: () => RegExp): RegExp => {
+  const hit = patternCache.get(key);
+  if (hit !== undefined) return hit;
+  const built = build();
+  patternCache.set(key, built);
+  return built;
+};
+
 const forwardPattern = (name: string): RegExp =>
-  new RegExp(String.raw`(?<![A-Za-z0-9_$])${escapeRegExp(name)}${GAP}(\d+(?:\.\d+)?)`, "g");
+  memoPattern(
+    `f:${name}`,
+    () => new RegExp(String.raw`(?<![A-Za-z0-9_$])${escapeRegExp(name)}${GAP}(\d+(?:\.\d+)?)`, "g"),
+  );
 
 /**
  * 反向写法(`20 = carryLimit`)。连接件除 `=` `:` 外**也收箭头**:反向的变更记账
@@ -197,10 +213,21 @@ const forwardPattern = (name: string): RegExp =>
  * 豁免必须是显式判定,不能是漏网。
  */
 const backwardPattern = (name: string): RegExp =>
-  new RegExp(
-    String.raw`(\d+(?:\.\d+)?)[\s]*(?:[=＝:：]|→|->|←|<-)[\s]*(?<![A-Za-z0-9_$])${escapeRegExp(name)}`,
-    "g",
+  memoPattern(
+    `b:${name}`,
+    () =>
+      new RegExp(
+        String.raw`(\d+(?:\.\d+)?)[\s]*(?:[=＝:：]|→|->|←|<-)[\s]*(?<![A-Za-z0-9_$])${escapeRegExp(name)}`,
+        "g",
+      ),
   );
+
+/**
+ * 「这一行里一个受管参数名都没有」的快速判断。散文面的绝大多数行都是这种行,而它们进去以后
+ * 要把「键 × 两种写法」各扫一遍才得出「没有」——一次交替匹配掉九成五的行,剩下的才走慢路径。
+ */
+const anyNamePattern = (names: readonly string[]): RegExp =>
+  memoPattern(`any:${names.join(",")}`, () => new RegExp(names.map(escapeRegExp).join("|"), "u"));
 
 /**
  * 一行里该键名**第一个不放行的**命中片段;没有则返回 null。
@@ -235,10 +262,13 @@ export const handCopiedValuesIn = (
   names: readonly string[],
 ): readonly HandCopiedValue[] => {
   const found: HandCopiedValue[] = [];
+  if (names.length === 0) return found;
+  const anyName = anyNamePattern(names);
 
   for (const [index, line] of proseLinesOf(file).entries()) {
     // 行内代码的反引号先摘掉:`carryLimit`(=20) 与 carryLimit(=20) 是同一处手抄。
     const bare = line.replaceAll("`", "");
+    if (!anyName.test(bare)) continue;
     for (const name of names) {
       const hit = firstUnaccountedHit(bare, name);
       if (hit !== null) found.push({ key: name, fragment: hit, line: index + 1 });
