@@ -1155,6 +1155,8 @@ it("本族未声明工具能力就在**起跑前**拒跑:零次模型调用,零�
   const model = stubClient([]);
   // `messages` 族零证据(整套 `/messages` 被渠道拒),所以它的席位不该开始一场会话:
   // 「不支持」要在起跑前说出来,而不是花 20 分钟跑到 0 候选才发现。
+  // 第一句钉判据（本族未声明就拒跑），第二句钉**逐字文案**：真会话 stderr 曾经读出
+  // 「拒绝起跑agent 会话」——缺一个空格。粘连的文案会被读成两个词拼错，改字/丢空格都会红。
   await expect(
     withRealBash(join(root, "ws"), () =>
       generateOneModel(
@@ -1162,7 +1164,9 @@ it("本族未声明工具能力就在**起跑前**拒跑:零次模型调用,零�
         configOf({ endpointFamily: "messages" }),
       ),
     ),
-  ).rejects.toThrow(/未声明工具调用能力/);
+  ).rejects.toThrow(
+    /未声明工具调用能力（未经验证），拒绝起跑 agent 会话。这不等于该席位被渠道拒：原因是本族的工具翻译零证据，不是账号档位。$/u,
+  );
   expect(model.calls).toHaveLength(0);
   // 一次都没开始:没有推进到落档那一步。
   expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);

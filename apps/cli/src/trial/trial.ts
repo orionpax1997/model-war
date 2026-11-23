@@ -261,6 +261,16 @@ export type ProbeReport = {
  *
  * 两句都不是客套：没有它们，"探针绿了"会被读成"整张网格过了"，而那是 50% 的错误率。
  * N=8 与 80% 的来历见 `@model-war/schema` 的 `probe-limits.ts`。
+ *
+ * ── 后两档还有第三句：读数对应的是**哪一版**脚本 ──
+ *
+ * 探针量的是**当前**脚本，而读数会被模型带过好几步。真档（mimo 2026-11-20 那场）第 18 步读到
+ * 充裕 60%，第 19–20 步整份重写脚本，第 22 步**没再 probe** 就 `evaluate`——评的是新脚本，手里
+ * 是旧读数，于是第二次 `evaluate`（总共三次）直接被拦在第 6 场。所以有读数的那两档都要说一句
+ * 「改过脚本就重新 probe」。
+ *
+ * 三档里**只有已越线档不说这句**：那一档回的是 `renderTrialFeedback` 的逐字复用话术（越线时
+ * 该做的是改，不是复测），加一句就与 `evaluate` 的拦下文案不再同源。
  */
 export const probeReportOf = (options: {
   readonly plan: TrialPlan;
@@ -306,6 +316,10 @@ export const probeReportOf = (options: {
   const missRate =
     `漏检率：真档四例预算触限发生在第 1、8、25、11 场，` +
     `前 ${String(PROBE_MATCH_LIMIT)} 场只抓得到两例（2/4）。`;
+  // 有读数的两档共用这一句（来历见函数头注第三段）：防止模型拿旧读数去 evaluate 新脚本。
+  const retest =
+    "改过脚本之后要重新 probe 再 evaluate：否则 evaluate 评的是新脚本，" +
+    "而你手上这份读数是上一版脚本的。";
 
   const tracks = probeTracksOf(options.peakUsage, options.limits ?? {});
   if (tracks.length === 0) {
@@ -321,7 +335,7 @@ export const probeReportOf = (options: {
     return {
       text:
         `${head}最坏读数：${readings}。**已经贴边**：换个地图或组合就可能越线，` +
-        `建议先降下来再 evaluate。\n${disclaimer}\n${missRate}`,
+        `建议先降下来再 evaluate。\n${retest}\n${disclaimer}\n${missRate}`,
       verdict,
       nearLimit: true,
     };
@@ -330,7 +344,7 @@ export const probeReportOf = (options: {
   return {
     text:
       `probe：前 ${String(options.matchCount)} 场跑完。最坏读数：${readings}。` +
-      `${disclaimer}\n${missRate}`,
+      `${retest}\n${disclaimer}\n${missRate}`,
     verdict,
     nearLimit: false,
   };

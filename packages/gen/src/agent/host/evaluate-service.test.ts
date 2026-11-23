@@ -27,6 +27,7 @@ import {
   candidateScriptFile,
   candidateSourceFile,
   createEvaluateService,
+  discardCandidateArtifacts,
   isCandidateArtifactOf,
   type EvaluateServiceDeps,
 } from "./evaluate-service.js";
@@ -249,6 +250,30 @@ describe("完整性:缺场的网格不产出候选", () => {
     const outcome = await service({ workspaceDir: dir, call: 1, step: 1 });
     expect(outcome.submission).toBeUndefined();
     expect(outcome.stderr).toContain("试跑没有写观测文件");
+  });
+});
+
+describe("空状态:第一次跑这个席位不是异常", () => {
+  it("`archive/<slug>/` 根本不存在时 `evaluate` 照跑:空目录就是「一次都没评过」", async () => {
+    // 新 worktree / 干净克隆 / 第一次跑这个席位的真形状:存档目录不存在。
+    // 「没有历史」是正常状态,不是错误——把它抛出来会把一次正常的首次评测变成 infra。
+    const root = installRoot();
+    expect(existsSync(join(root, "archive"))).toBe(false);
+    const dir = workspace(SOURCE);
+    const service = createEvaluateService(depsOf({ root }));
+
+    const outcome = await service({ workspaceDir: dir, call: 1, step: 1 });
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.submission).toBeDefined();
+    // 跑完就把目录建出来并落下候选证据族（首次评测的产物与第二次同一形状）。
+    expect(existsSync(join(root, "archive", "alpha"))).toBe(true);
+  });
+
+  it("同一跑在空目录上清旁挂产物是空操作,不抛", () => {
+    // 失败会话的清理在 `finally` 里无条件调；目录不在时它只能是空操作。
+    const root = installRoot();
+    expect(existsSync(join(root, "archive", "alpha"))).toBe(false);
+    expect(() => discardCandidateArtifacts({ root, model: "alpha", runId: "r1" })).not.toThrow();
   });
 });
 
