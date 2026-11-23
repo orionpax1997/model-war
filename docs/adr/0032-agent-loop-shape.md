@@ -355,4 +355,15 @@ POST /provider/v1/chat/completions → 400
 
 ### ④ 这条族本来会踩的坑（实现前先记下）
 
-`input` 是**对象**，不是 chat 族那种 `arguments` 原文字符串。ADR-0031 的「模型看到的字节 = 落盘的字节」在 `messages` 族上**没有落点**：`TaggedToolCall` 存的是原文，本族要求的是对象，翻译时必须 `JSON.parse`。这不是实现疏漏，是协议形态决定的——本族的逐字性只能保住「解析成功的那份对象」，保不住原文字节。而 `argumentsJson` 是**可以被模型写坏的**（`malformed-arguments` 拒绝档的前提），于是 `JSON.parse` 必须有一个确定兜底，否则一条坏参数会把整个历史构造炸掉。
+`input` 是**对象**，不是 chat 族那种 `arguments` 原文字符串。ADR-0031 的「模型看到的字节 = 落盘的字节」在 `messages` 族上**没有落点**：`ToolCall`（`packages/gen/src/agent/tools.ts`）存的是 `argumentsJson` 原文，本族要求的是对象，翻译时必须 `JSON.parse`。这不是实现疏漏，是协议形态决定的——本族的逐字性只能保住「解析成功的那份对象」，保不住原文字节。而 `argumentsJson` 是**可以被模型写坏的**（`malformed-arguments` 拒绝档的前提），于是 `JSON.parse` 必须有一个确定兜底，否则一条坏参数会把整个历史构造炸掉。
+
+### ⑤ 翻译必须补的两处协议修补（不是可选项）
+
+本族对配对的校验比 chat 族硬得多：每个 `tool_use` 都必须有一条对应的 `tool_result`，且**紧邻**。而本仓的历史构造是「每条 turn 固定两条消息」（`history.ts`），与 `toolCalls` 有几条无关。两处直接冲突，都要在翻译层修，且都不是「以后再说」的优化——不修，一次被拒的调用就把整场会话打成 400：
+
+1. **多调用被拒那一步，补齐没结果的调用。** `multiple-tool-calls` 那一档模型一步发 N 条、一条都不执行，观测只有一条（id 是首条）。翻译层按 id 铺满：对上的那条放真观测，其余补 `is_error: true` + 一句事实（「一步只执行一条调用，其余归拒绝档」）。**这是本族唯一发 `is_error` 的地方**，而那个事实是翻译层自己知道的，不是从历史读出来的（历史里没有 `isError`，它在 `loop.ts` 的 `observationOf` 处断掉）。
+2. **零调用那一步，观测不能翻成 `tool_result`。** `no-tool-call` 那一档模型一步零调用，而历史构造仍给观测派一个 `call-<步>` 的 id。照 id 翻就是一个没有 `tool_use` 可配对的孤儿块 → 400。判据是「前一条 assistant 有没有 `tool_use`」，所以形状判断从「一条消息」提升到「成对的一条 assistant + 一条观测」。
+
+顺带一条：本族要求 user / assistant 交替，而「零调用那一步的观测」变成普通文本之后可能与上一条 `user` 相邻，所以要合并同角色消息——同一件事在 `generateContentBody` 里已经有一份先例。
+
+**本族不发历史里的 `isError`。** 那需要给 `StepObservation` / `ChatMessage` 加一格、并动档案形状，与本册不是一件事；而拒绝档的纠正文案本来就逐字说明了「这一步没有可用动作」。记成残余风险，需要时单独立票。
