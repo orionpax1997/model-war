@@ -31,9 +31,9 @@ import { fileURLToPath } from "node:url";
 import {
   completeGridTrial,
   gridPlanFixture,
-  reply,
   runGeneration,
   stubClient,
+  toolCall,
 } from "@model-war/gen";
 import { withRealBash } from "@model-war/gen/testing";
 import { RULESET_VERSION, SANDBOX_RUNTIME_HASH, type JsonValue } from "@model-war/schema";
@@ -97,9 +97,12 @@ it("gen 产出的存档过 `validateArchiveMeta`:三件套齐、哈希与版本�
       configPath: "models.yaml",
       createClient: () =>
         stubClient([
-          reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${VALID_SCRIPT}EOF\n\`\`\``),
-          reply("```bash\nevaluate\n```"),
-          reply("```bash\nfinish\n```"),
+          toolCall(
+            "bash",
+            JSON.stringify({ command: `cat > /workspace/script.ts <<'EOF'\n${VALID_SCRIPT}EOF` }),
+          ),
+          toolCall("evaluate", "{}"),
+          toolCall("finish", "{}"),
         ]),
       agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
       workspaceDir,

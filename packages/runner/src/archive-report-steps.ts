@@ -21,13 +21,16 @@
  */
 
 import {
-  ARCHIVE_SCHEMA_VERSION,
+  ARCHIVE_STEP_JSON_SCHEMA,
   ARCHIVE_TERMINATIONS,
+  type ArchiveShapeVersion,
+  type ArchiveStepAction,
   type ArchiveTermination,
 } from "@model-war/schema";
 
 import type { ArchiveReport, ArchiveReportRound } from "./archive-report.js";
 import { numberOf, objectOf } from "./archive-report-evidence.js";
+import { isAgentShape } from "./archive-optimization.js";
 
 /**
  * 分位读数。`count` 是参与计算的值个数——它是「这些分位由几个数得来」的唯一凭据：
@@ -43,7 +46,7 @@ export type ReportPercentiles = {
 /** v3 档的形状事实（ADR-0029 / ADR-0031）：旧档一律 `null`，不迁移、不回填。 */
 export type ReportArchiveShape = {
   /** `"legacy"` = 没有 `archiveSchemaVersion` 的历史档；报告按它分派整张表。 */
-  readonly archiveSchemaVersion: "legacy" | typeof ARCHIVE_SCHEMA_VERSION;
+  readonly archiveSchemaVersion: ArchiveShapeVersion;
   readonly harnessVersion: string | null;
   /** harness 行为清单的摘要。与 `modelVersion` 一起构成步级分位的**分组维度**。 */
   readonly harnessDigest: string | null;
@@ -55,8 +58,23 @@ export type ReportArchiveShape = {
   readonly atStep: number | null;
 };
 
-/** 过程记录里那一步的**动作**（ADR-0031 的闭集）。`null` = 档案里的取值不在闭集里。 */
-export type ReportStepAction = "bash" | "evaluate" | "done" | "none";
+/**
+ * 过程记录里那一步的**动作**（ADR-0031 的闭集，v4 起六档）。`null` = 档案里的取值不在闭集里。
+ *
+ * ── 它不是第二份枚举 ──
+ *
+ * 类型从 `ArchiveStepAction` 的判别字段派生，运行期的闭集从 `ARCHIVE_STEP_JSON_SCHEMA` 的
+ * `oneOf` 派生（那是装载期实际校验用的那一份）。上一轮复核删掉过一处同款的手抄白名单
+ * （`archive-report-evidence.ts` 的失败分类），教训是「两份枚举之间总有一条路会红」：
+ * 新加一档忘了抄进运行期数组时，步级表那一格渲染成 `null`——看起来像「档案里没这一项」
+ * 而不是「这一项没被认识」。
+ */
+export type ReportStepAction = ArchiveStepAction["kind"];
+
+/** 运行期闭集（与上面那个类型同源，两处都不手写）：动作名 → 它自己，顺序即 schema 的书写序。 */
+const actions: readonly ReportStepAction[] = ARCHIVE_STEP_JSON_SCHEMA.properties.action.oneOf.map(
+  (branch) => branch.properties.kind.const,
+);
 
 /** 结果侧证据（`steps[i].result`）：这一轮被什么驱动、编译错误码。 */
 export type ReportStepResult = {
@@ -85,8 +103,32 @@ export type ReportStep = {
   readonly cacheHitRate: number | null;
   readonly result: ReportStepResult | null;
   readonly exitCode: number | null;
+  /**
+   * 这一步交给 `bash` 的那条命令串：`steps[i].action.command` 的解析值（只有 `bash` 那一档有）。
+   *
+   * 它**不是**从 `toolCall.argumentsJson` 重解一份。v4 的逐字字节住在 `toolCall`，这一格是写侧
+   * 解析出来给人读的值——ADR-0031 的两个家。两者可以不同形（`\u003c` 与 `<`、多余空格），所以
+   * 报告两个都给：读者看得出「发回去的字节」与「我们实际跑的命令」在哪里分岔，也就能一眼看出
+   * `raw` 为空串的那一步到底做了什么。
+   */
+  readonly command: string | null;
+  /**
+   * 这一步发起的那一次工具调用（v4 才有）：`name` 与**逐字**的 `argumentsJson`。
+   *
+   * 它是 ADR-0031「模型看到的字节 = 落盘的字节」在读侧的落点：发回历史的
+   * `tool_calls[0].function.arguments` 就是这串字节。所以报告只搬它、**不按 `action.command`
+   * 重编码**——两者可以不同形（转义写法、空格），而重编码等于悄悄换掉发回去的东西。
+   * v3 档（那时还没有工具调用信封）与 `action.kind === "none"` 的步都是 `null`。
+   */
+  readonly toolCall: ReportStepToolCall | null;
   /** 这一行日志关联上了没有（`round == step`）。 */
   readonly roundLinked: boolean;
+};
+
+/** 一次工具调用的报告投影：名字 + 参数原文（不解析、不重编码）。 */
+export type ReportStepToolCall = {
+  readonly name: string;
+  readonly argumentsJson: string;
 };
 
 /**
@@ -193,7 +235,21 @@ const integerOf = (value: unknown): number | null =>
 
 const stringOf = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
-const actions: readonly ReportStepAction[] = ["bash", "evaluate", "done", "none"];
+/**
+ * `steps[i].toolCall` 的读入。
+ *
+ * **缺席是合法的**（v3 档、以及没有动作的步），而在场就必须两个键都是字符串：把它降级成
+ * `null` 会让「读不出」与「没有过这次调用」同形——那正是 ADR-0031 那一格要防的事。
+ */
+const toolCallOf = (raw: unknown): ReportStepToolCall | null => {
+  if (raw === undefined) return null;
+  const value = objectOf(raw);
+  const name = stringOf(value.name);
+  const argumentsJson = stringOf(value.argumentsJson);
+  if (name === null || argumentsJson === null)
+    throw new Error("过程记录的工具调用必须是 {name, argumentsJson} 两个字符串");
+  return { name, argumentsJson };
+};
 
 const actionOf = (raw: unknown): ReportStepAction | null => {
   const kind = objectOf(raw).kind;
@@ -201,6 +257,9 @@ const actionOf = (raw: unknown): ReportStepAction | null => {
     ? (kind as ReportStepAction)
     : null;
 };
+
+/** `steps[i].action.command` 的读入：只有 `bash` 那一档带它，其余档与旧档都是 `null`。 */
+const commandOf = (raw: unknown): string | null => stringOf(objectOf(raw).command);
 
 /**
  * 结果侧证据的读入。
@@ -223,7 +282,7 @@ const resultOf = (raw: unknown): ReportStepResult | null => {
 /** v3 档的形状事实。旧档没有这几格：一律 `null`，不按今天的配置兜底。 */
 export const archiveShapeOf = (
   record: Record<string, unknown>,
-  shape: "legacy" | typeof ARCHIVE_SCHEMA_VERSION,
+  shape: ArchiveShapeVersion,
 ): ReportArchiveShape => {
   if (shape === "legacy")
     return {
@@ -258,16 +317,19 @@ export const archiveShapeOf = (
  */
 export const stepsOf = (input: {
   readonly record: Record<string, unknown>;
-  readonly shape: "legacy" | typeof ARCHIVE_SCHEMA_VERSION;
+  readonly shape: ArchiveShapeVersion;
   readonly rounds: readonly ArchiveReportRound[];
   readonly protocolRounds: number;
 }): ReportSteps | null => {
-  if (input.shape !== ARCHIVE_SCHEMA_VERSION) return null;
+  if (!isAgentShape(input.shape)) return null;
   const raw = input.record.steps;
-  if (!Array.isArray(raw)) throw new Error("v3 档案缺过程记录 steps：形状版本 3 要求它，拒读");
+  if (!Array.isArray(raw))
+    throw new Error(`档案形状版本 ${String(input.shape)} 缺过程记录 steps：这一版要求它，拒读`);
   const numbers = raw.map((item) => numberOf(objectOf(item).step));
   if (numbers.length !== input.protocolRounds || numbers.some((step, index) => step !== index + 1))
-    throw new Error("v3 档案的过程记录步号不是 1..协议轮数 的连续序列：拒读");
+    throw new Error(
+      `档案形状版本 ${String(input.shape)} 的过程记录步号不是 1..协议轮数 的连续序列：拒读`,
+    );
 
   // 传输末行不占步（ADR-0031）：它没有过程记录条目，也不该被数成「轮号多余」。
   const converged = input.rounds.filter((round) => round.responseConverged);
@@ -295,6 +357,8 @@ export const stepsOf = (input: {
       cacheHitRate: round?.cacheHitRate ?? null,
       result: resultOf(value.result),
       exitCode: integerOf(value.exitCode),
+      command: commandOf(value.action),
+      toolCall: toolCallOf(value.toolCall),
       roundLinked: round !== undefined,
     };
     previousInput = inputTokens;
@@ -348,10 +412,10 @@ export const stepsOf = (input: {
  * 模型），所以这一列在历史档上恒为 `null`，不是「没有撞过限流」。
  */
 export const contaminationOf = (input: {
-  readonly shape: "legacy" | typeof ARCHIVE_SCHEMA_VERSION;
+  readonly shape: ArchiveShapeVersion;
   readonly rounds: readonly ArchiveReportRound[];
 }): ReportContamination | null => {
-  if (input.shape !== ARCHIVE_SCHEMA_VERSION) return null;
+  if (!isAgentShape(input.shape)) return null;
   let rateLimitedAttempts = 0;
   let backoffMs: number | null = null;
   for (const round of input.rounds) {

@@ -1,5 +1,5 @@
 /**
- * rootfs 漂移判据的自测:常量抽取、七条判据的**每条两个方向**,以及「真实这棵树现在是绿的」。
+ * rootfs 漂移判据的自测:常量抽取、六条判据的**每条两个方向**,以及「真实这棵树现在是绿的」。
  *
  * ── 为什么最后那条最重要 ──
  * 其余用例证明判据会红、也会绿;只有「真实这棵树绿」把判据接到了入库产物上——它让默认的
@@ -24,7 +24,6 @@ import {
   provenanceRows,
   sandboxRootfsConstantsFrom,
   SCHEMA_CONSTANTS_SOURCE,
-  shimPathsOf,
   staticBinariesOf,
   staticBinaryFinding,
   topLevelFindings,
@@ -37,14 +36,17 @@ const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const schemaSource = readFileSync(`${repoRoot}${SCHEMA_CONSTANTS_SOURCE}`, "utf8");
 
 describe("从 schema 源码文本里抽常量", () => {
-  it("四个常量都抽得到:路径、清单、哈希、薄壳名", () => {
+  it("三个常量都抽得到:路径、清单、哈希", () => {
     const parsed = sandboxRootfsConstantsFrom(schemaSource);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.constants.dir).toBe("packages/gen/sandbox-rootfs");
     expect(parsed.constants.files).toContain("bin/bash");
     expect(parsed.constants.treeHash).toMatch(/^[0-9a-f]{64}$/u);
-    expect(parsed.constants.shims).toEqual(["check", "evaluate", "finish"]);
+    // 薄壳那三个名字**不在**清单里:它们是宿主工具,不是沙箱内容物(票 03)。
+    expect(parsed.constants.files).not.toContain("bin/check");
+    expect(parsed.constants.files).not.toContain("bin/evaluate");
+    expect(parsed.constants.files).not.toContain("bin/finish");
   });
 
   it("抽不出来时点名缺的是哪一个,并按失败交回(不猜、不跳过)", () => {
@@ -63,47 +65,25 @@ describe("从 schema 源码文本里抽常量", () => {
       'export const SANDBOX_ROOTFS_DIR = "x";',
       "export const SANDBOX_ROOTFS_FILES = [] as const;",
       'export const SANDBOX_ROOTFS_TREE_HASH = "abc";',
-      "export const SANDBOX_ROOTFS_SHIMS = [] as const;",
       "",
     ].join("\n");
     expect(sandboxRootfsConstantsFrom(source).ok).toBe(false);
   });
-
-  it("薄壳表抽不出来也按失败处理:没有它就分不清谁是二进制", () => {
-    const source = [
-      'export const SANDBOX_ROOTFS_DIR = "x";',
-      'export const SANDBOX_ROOTFS_FILES = ["bin/bash"] as const;',
-      'export const SANDBOX_ROOTFS_TREE_HASH = "abc";',
-      "",
-    ].join("\n");
-    const parsed = sandboxRootfsConstantsFrom(source);
-    expect(parsed.ok).toBe(false);
-    if (parsed.ok) return;
-    expect(parsed.reason).toContain("SANDBOX_ROOTFS_SHIMS");
-  });
 });
 
 describe("「谁是什么」从清单推出来,不另写一张表", () => {
-  it("清单里新加一个 bin/,没进薄壳表 → 当场进静态 ELF 判据", () => {
+  it("清单里新加一个 bin/,当场进静态 ELF 判据(没有例外这一类了)", () => {
     // 上一轮给 `cp` 补清单时,门禁侧的手写二进制表漏写它不会有任何红:判据只遍历那张表。
     // 现在是反过来的——新增内容物写进清单,它自动被静态 ELF 判据覆盖。
-    const binaries = staticBinariesOf(
-      ["bin/bash", "bin/check", "bin/cp", "contract/rules.md"],
-      ["check", "evaluate", "finish"],
-    );
+    //
+    // 这里曾经还有一个「减掉薄壳」的参数:`bin/` 里有三个名字不是 ELF。那三个副本随通道删除
+    // (票 03),"例外"这一类因此消失——分类退化成一条,而它仍然是从清单推的。
+    const binaries = staticBinariesOf(["bin/bash", "bin/cp", "contract/rules.md"]);
     expect(binaries).toEqual(["bin/bash", "bin/cp"]);
-  });
-
-  it("薄壳路径带 bin/ 前缀,而且按字典序(报文顺序稳定)", () => {
-    expect(shimPathsOf(["finish", "check", "evaluate"])).toEqual([
-      "bin/check",
-      "bin/evaluate",
-      "bin/finish",
-    ]);
   });
 });
 
-describe("七条判据各自两个方向", () => {
+describe("六条判据各自两个方向", () => {
   it("① 树哈希:相符时没有话说,不符时把现算值与处方一起给", () => {
     expect(treeHashFinding("same", "same")).toBeUndefined();
     const finding = treeHashFinding("expected", "actual");
@@ -132,7 +112,7 @@ describe("七条判据各自两个方向", () => {
     expect(broken?.detail).toContain("解析不出");
   });
 
-  it("④⑤ 逐字节副本:相同没有话说,不同则把两边字节数与真源路径都写出来", () => {
+  it("④ 逐字节副本:相同没有话说,不同则把两边字节数与真源路径都写出来", () => {
     const same = Buffer.from("x");
     expect(
       byteCopyFinding("contract/README.md", "docs/rules-v2/README.md", same, same),
@@ -149,12 +129,12 @@ describe("七条判据各自两个方向", () => {
     expect(finding?.detail).toContain("2 字节");
   });
 
-  it("⑤' 可执行位也是产物的一部分", () => {
-    expect(executableFinding("bin/check", true)).toBeUndefined();
-    expect(executableFinding("bin/check", false)?.detail).toContain("+x");
+  it("④' 可执行位也是产物的一部分", () => {
+    expect(executableFinding("bin/bash", true)).toBeUndefined();
+    expect(executableFinding("bin/bash", false)?.detail).toContain("+x");
   });
 
-  it("⑦ 来路说明书:三向都判——缺行、hex 不符、多出来的行", () => {
+  it("⑥ 来路说明书:三向都判——缺行、hex 不符、多出来的行", () => {
     const binaries = [
       { path: "bin/bash", sha256: "a".repeat(64) },
       { path: "bin/sed", sha256: "b".repeat(64) },
@@ -182,7 +162,7 @@ describe("七条判据各自两个方向", () => {
     expect(extra[0]?.where).toBe("bin/gone");
   });
 
-  it("⑦ 来路表的形态:只认「产物 | 版本 | sha256」三列且前两列是 bin/ 路径与 hex 的行", () => {
+  it("⑥ 来路表的形态:只认「产物 | 版本 | sha256」三列且前两列是 bin/ 路径与 hex 的行", () => {
     const markdown = [
       "| 产物 | 版本 | 字节 sha256 |",
       "|---|---|---|",
@@ -193,7 +173,7 @@ describe("七条判据各自两个方向", () => {
     expect(provenanceRows(markdown)).toEqual([{ name: "bin/sed", sha256: "f".repeat(64) }]);
   });
 
-  it("⑥ 顶层只许两个挂载目录与来路说明书", () => {
+  it("⑤ 顶层只许两个挂载目录与来路说明书", () => {
     expect(
       topLevelFindings(["bin", "contract", "PROVENANCE.md"], ["bin", "contract", "PROVENANCE.md"]),
     ).toEqual([]);
@@ -208,7 +188,7 @@ describe("七条判据各自两个方向", () => {
 });
 
 describe("真实入库产物", () => {
-  it("现在这棵树是绿的:七条判据全过,且查到了内容物", () => {
+  it("现在这棵树是绿的:六条判据全过,且查到了内容物", () => {
     const check = checkRootfsTree(repoRoot);
     expect(check.findings).toEqual([]);
     // 空转的反面:真的读到了东西。份数由清单决定,这里只要求非零——写死数字会让「加一份内容物」

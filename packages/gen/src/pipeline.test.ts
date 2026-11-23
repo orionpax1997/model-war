@@ -36,13 +36,14 @@ import {
   type ArchiveMeta,
 } from "@model-war/schema";
 
-import { fail, reply, replies, stubClient } from "./stub-client.js";
+import { fail, reply, stubClient, toolCall, type StubStep } from "./stub-client.js";
 import { TransportError } from "./transport-error.js";
 import { generateOneModel } from "./pipeline.js";
 import { runGeneration, type GenerationRequest } from "./run.js";
 import type { ModelConfig } from "./config.js";
 import type { ChatMessage, ModelParams, ModelResponse } from "./model-client.js";
 import { HARNESS_DIGEST, HARNESS_VERSION } from "./agent/identity.js";
+import { AGENT_TOOLS } from "./agent/tools.js";
 import { ACTION_REJECT_EXIT_CODE } from "./agent/action.js";
 import { withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
 import type { AgentExecResult } from "./agent/types.js";
@@ -56,8 +57,19 @@ const scratch = mkdtempSync(join(tmpdir(), "modelwar-agent-pipeline-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 const FIRST_USER = "任务:/workspace 里写 script.ts";
-const SYSTEM = "协议:每一步一个动作块";
-const ACTION = "```bash\nls /contract\n```";
+const SYSTEM = "协议:每一步一次工具调用";
+
+/** 一次 `bash` 工具调用(`command` 是一条命令串)。参数走 `JSON.stringify` 只为好读:桩不帮忙序列化。 */
+const bashOf = (command: string) => toolCall("bash", JSON.stringify({ command }));
+
+/** 一次不收参数的工具调用(`check` / `probe` / `evaluate` / `finish`)。 */
+const toolOf = (name: string) => toolCall(name, "{}");
+
+/** 一条合法动作。 */
+const ACTION = bashOf("ls /contract");
+
+/** 那一条动作的原始调用数组(`reply` 的额外参数用它:要给同一轮挂用量/截断标记时)。 */
+const ACTION_CALLS = [{ name: "bash", argumentsJson: '{"command":"ls /contract"}' }];
 
 /** 一个合法的参赛脚本(有顶层 loop 入口,体积远小于上限)。 */
 const SCRIPT = "function loop() {}\n";
@@ -144,8 +156,8 @@ it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 
   const root = mkRoot();
   // 两步:第一步写脚本,第二步 evaluate 出成绩。
   const model = stubClient([
-    reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
-    reply("```bash\nevaluate\n```"),
+    bashOf("cat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF"),
+    toolOf("evaluate"),
   ]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
@@ -187,17 +199,16 @@ it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 
   expect(candidates[0]?.step).toBe(2);
 });
 
-it("模型原文落 steps[i].raw,且与发回去的字节同源", async () => {
+it("工具调用的字节原样落 steps[i].toolCall,且与发回去的字节同源", async () => {
   const root = mkRoot();
   // 三步:写脚本 → evaluate(出成绩) → done。中间那一步让档落得下来,于是 `steps` 可读。
   const script = "function loop() {}\n";
-  const write = `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${script}EOF\n\`\`\``;
+  const command = `cat > /workspace/script.ts <<'EOF'\n${script}EOF`;
+  // 渠道给的原始 JSON 文本(带它自己的空格),`JSON.parse` 再 `stringify` 会改掉它——而发回下一轮
+  // 用的就是这串字节,重编码等于「发回去的 ≠ 落盘的」(ADR-0031)。
+  const argumentsJson = `{ "command" : ${JSON.stringify(command)} }`;
   const sent: string[][] = [];
-  const stub = stubClient([
-    reply(write),
-    reply("```bash\nevaluate\n```"),
-    reply("```bash\nfinish\n```"),
-  ]);
+  const stub = stubClient([toolCall("bash", argumentsJson), toolOf("evaluate"), toolOf("finish")]);
   const recording = {
     calls: stub.calls,
     send: async (messages: readonly ChatMessage[], params: ModelParams) => {
@@ -218,19 +229,20 @@ it("模型原文落 steps[i].raw,且与发回去的字节同源", async () => {
   );
 
   const meta = metaOf(root);
-  // 原文逐字节 = 模型写的那一段,不是解析后的命令。
-  expect(meta.steps?.[0]?.raw).toBe(write);
-  expect(meta.steps?.[0]?.action).toEqual({
-    kind: "bash",
-    command: `cat > /workspace/script.ts <<'EOF'\n${script}EOF`,
-  });
-  // 第二步的历史里,assistant 那一条就是第一步的原文(一个字节都不改写)。
-  expect(sent[1]?.[2]).toBe(write);
+  // 逐字字节的家是 `toolCall.argumentsJson`:一个字节都不重编码。
+  expect(meta.steps?.[0]?.toolCall).toEqual({ name: "bash", argumentsJson });
+  // `action.command` 是它的**派生值**,与那串字节不同形——这正是这条用例存在的理由。
+  expect(meta.steps?.[0]?.action).toEqual({ kind: "bash", command });
+  // 工具调用那一轮模型没说话:`raw` 空串是合法的,真正的产物在 `toolCall` 里。
+  expect(meta.steps?.[0]?.raw).toBe("");
+  expect(typeof meta.steps?.[0]?.raw).toBe("string");
+  // 第二步发回去的历史里,`raw` 仍是那段原文(这里是空串),调用本身逐字带上。
+  expect(sent[1]?.[2]).toBe("");
 });
 
 it("零候选即失败档:done 收工但从未 evaluate,档的形状与成功档同键集合", async () => {
   const root = mkRoot();
-  const model = stubClient([reply(ACTION), reply("```bash\nfinish\n```")]);
+  const model = stubClient([ACTION, toolOf("finish")]);
   const outcome = await withHostBash(
     () => stepOk(),
     () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
@@ -249,7 +261,7 @@ it("零候选即失败档:done 收工但从未 evaluate,档的形状与成功档
 
 it("步数耗尽:max-steps,步号等于上限,协议轮数等于步数", async () => {
   const root = mkRoot();
-  const model = stubClient(replies([ACTION, ACTION, ACTION]));
+  const model = stubClient([ACTION, ACTION, ACTION]);
   const outcome = await withHostBash(
     () => stepOk(),
     () =>
@@ -268,7 +280,7 @@ it("步数耗尽:max-steps,步号等于上限,协议轮数等于步数", async (
 
 it("动作解析失败三次即停:每一步都是非零退出码,一条命令都没跑", async () => {
   const root = mkRoot();
-  const model = stubClient([reply("只说不动"), reply("```ts\nx\n```"), reply("")]);
+  const model = stubClient([reply("只说不动"), toolCall("bash", "{oops"), reply("")]);
   const commands: string[] = [];
   const outcome = await withHostBash(
     (command) => {
@@ -286,14 +298,25 @@ it("动作解析失败三次即停:每一步都是非零退出码,一条命令�
   // 协议不服从是模型违反契约那一格,不因新增 `budget` 档而改写。
   expect(outcome.failure.classification).toBe("contract");
   for (const step of outcome.agent.steps) {
-    expect(step.action).toEqual({ kind: "none" });
+    expect(step.action.kind).toBe("none");
     expect(step.exitCode).toBe(ACTION_REJECT_EXIT_CODE);
   }
+  // 三步的拒绝档各是各的:两步「一次调用都没有」,中间那步「参数坏了」。
+  expect(outcome.agent.steps.map((step) => step.action)).toEqual([
+    { kind: "none", rejectReason: "no-tool-call" },
+    { kind: "none", rejectReason: "malformed-arguments" },
+    { kind: "none", rejectReason: "no-tool-call" },
+  ]);
+  // 票 05 那条判据的落点:**失败档的诊断文本里出现档名本身**,不是「拒绝档」三个字的占位。
+  // 名字的真源是动作层的 `ACTION_REJECT_REASONS`,这里用真值钉住,不写正则。
+  expect(outcome.failure.diagnostics.join("\n")).toContain(
+    "第 2 步(none,exit 64,拒绝档=malformed-arguments):",
+  );
 });
 
 it("传输耗尽:那次调用不进 steps、不进协议轮数,生成日志留一条传输末行", async () => {
   const root = mkRoot();
-  const model = stubClient([reply(ACTION), fail(new Error("ECONNRESET"))]);
+  const model = stubClient([ACTION, fail(new Error("ECONNRESET"))]);
   const outcome = await withHostBash(
     () => stepOk(),
     () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
@@ -321,8 +344,8 @@ it("退避记账取实测:等待实现没真等就写 0,不按请求时长记", 
   const model = stubClient([
     fail(new TransportError("被限流", { retryable: true, status: 429 })),
     fail(new TransportError("被限流", { retryable: true, status: 429 })),
-    reply(ACTION),
-    reply("```bash\nfinish\n```"),
+    ACTION,
+    toolOf("finish"),
   ]);
   const outcome = await withHostBash(
     () => stepOk(),
@@ -366,10 +389,7 @@ it("传输耗尽在第一步:零步会话的 prompts 为空、steps 为空", asy
 
 it("截断重试并入同一步:第二次成功就照常执行,attempts 记 2,日志仍一行", async () => {
   const root = mkRoot();
-  const model = stubClient([
-    reply("```bash\nls /contract", { finishReason: "length" }),
-    reply(ACTION),
-  ]);
+  const model = stubClient([reply('{"command":"ls /contract', { finishReason: "length" }), ACTION]);
   const outcome = await withHostBash(
     () => stepOk({ stdout: "README.md\n" }),
     () =>
@@ -398,10 +418,10 @@ it("截断重试的证据按步聚合:该步日志行装两条 attempts,两枪�
   // 旧写法按下标取,第二行会拿到第一步的证据、第二枪丢掉(ADDR-0032:同一步的第二个 attempt,
   // `generationLog` 一行、`attempts` 两条)。
   const model = stubClient([
-    reply(writeScript(SCRIPT)),
-    reply("```bash\nls /contract", { finishReason: "length" }),
-    reply("```bash\nevaluate\n```"),
-    reply("```bash\nfinish\n```"),
+    bashOf(writeScript(SCRIPT)),
+    reply('{"command":"ls /contract', { finishReason: "length" }),
+    toolOf("evaluate"),
+    toolOf("finish"),
   ]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
@@ -432,17 +452,20 @@ it("截断重试的证据按步聚合:该步日志行装两条 attempts,两枪�
   expect(logs.map((log) => log.attempts)).toEqual([1, 2, 1]);
   // 截断那一步的两枪都在这一行里,且先后到位(读侧按下标校验 1..n)。
   expect(logs[1]?.attemptEvidence.map((item) => item.attempt)).toEqual([1, 2]);
-  expect(logs[1]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["length", "stop"]);
+  expect(logs[1]?.attemptEvidence.map((item) => item.finishReason)).toEqual([
+    "length",
+    "tool_calls",
+  ]);
   // 另外两步各一枪,不会舋到截断那一步的证据。
-  expect(logs[0]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["stop"]);
-  expect(logs[2]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["stop"]);
+  expect(logs[0]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["tool_calls"]);
+  expect(logs[2]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["tool_calls"]);
 }, 60_000);
 
 it("第二次仍截断:转格式反馈,不执行任何命令", async () => {
   const root = mkRoot();
   const model = stubClient([
-    reply("```bash\nls", { finishReason: "length" }),
-    reply("```bash\nls", { finishReason: "length" }),
+    reply('{"command":"ls', { finishReason: "length" }),
+    reply('{"command":"ls', { finishReason: "length" }),
   ]);
   const commands: string[] = [];
   const outcome = await withHostBash(
@@ -462,7 +485,10 @@ it("第二次仍截断:转格式反馈,不执行任何命令", async () => {
 
 it("上下文守卫:上一轮读数到窗口 80% 就停,下一步不发出", async () => {
   const root = mkRoot();
-  const model = stubClient([reply(ACTION, { usage: { prompt_tokens: 80_000 } }), reply(ACTION)]);
+  const model = stubClient([
+    reply("", { toolCalls: ACTION_CALLS, usage: { prompt_tokens: 80_000 } }),
+    ACTION,
+  ]);
   const outcome = await withHostBash(
     () => stepOk(),
     () =>
@@ -482,7 +508,7 @@ it("上下文守卫:上一轮读数到窗口 80% 就停,下一步不发出", asy
 it("总墙钟耗尽:已跑完的步留着,不判失败(终止与落档正交)", async () => {
   const root = mkRoot();
   let elapsed = 0;
-  const model = stubClient(replies([ACTION, ACTION, ACTION, ACTION]));
+  const model = stubClient([ACTION, ACTION, ACTION, ACTION]);
   const outcome = await withHostBash(
     () => {
       elapsed += 600;
@@ -568,7 +594,7 @@ it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 
 
 it("配额拒绝模型看得见:第 4 次 evaluate 被 dispatcher 拒掉,stderr 进观测", async () => {
   const root = mkRoot();
-  const model = stubClient(replies([ACTION, ACTION, ACTION, ACTION, "```bash\nfinish\n```"]));
+  const model = stubClient([ACTION, ACTION, ACTION, ACTION, toolOf("finish")]);
   const seen: string[] = [];
   const outcome = await withHostBash(
     () => {
@@ -589,7 +615,7 @@ it("配额拒绝模型看得见:第 4 次 evaluate 被 dispatcher 拒掉,stderr 
 it("步骤的 atMs 是相对偏移,harnessMs 覆盖沙箱执行", async () => {
   const root = mkRoot();
   let clock = 0;
-  const model = stubClient([reply(ACTION), reply(ACTION)]);
+  const model = stubClient([ACTION, ACTION]);
   const outcome = await withHostBash(
     () => {
       clock += 50;
@@ -618,12 +644,8 @@ it("步骤的 atMs 是相对偏移,harnessMs 覆盖沙箱执行", async () => {
 it("候选序的条数就是真评出成绩的 evaluate 次数(一到三条)", async () => {
   const root = mkRoot();
   const script = "function loop() {}\n";
-  const write = `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${script}EOF\n\`\`\``;
-  const model = stubClient([
-    reply(write),
-    reply("```bash\nevaluate\n```"),
-    reply("```bash\nevaluate\n```"),
-  ]);
+  const write = `cat > /workspace/script.ts <<'EOF'\n${script}EOF`;
+  const model = stubClient([bashOf(write), toolOf("evaluate"), toolOf("evaluate")]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   const outcome = await withRealBash(workspaceDir, () =>
@@ -654,7 +676,7 @@ it("候选序的条数就是真评出成绩的 evaluate 次数(一到三条)", a
 
 it("唯一入口与调用计数:步数为 N 时模型被调 N 次、沙箱执行 N 次", async () => {
   const root = mkRoot();
-  const model = stubClient(replies([ACTION, ACTION, ACTION]));
+  const model = stubClient([ACTION, ACTION, ACTION]);
   let sandboxCalls = 0;
   await withHostBash(
     () => {
@@ -675,7 +697,7 @@ it("配置缺 contextLength 就在请求前拒绝(守卫不能静默跳过)", as
   const model = {
     send: async () => {
       calls += 1;
-      return { text: ACTION, finishReason: "stop", usage: {} };
+      return { text: "", finishReason: "tool_calls", usage: {}, toolCalls: ACTION_CALLS };
     },
   };
   await expect(
@@ -690,7 +712,7 @@ it("配置缺 contextLength 就在请求前拒绝(守卫不能静默跳过)", as
 
 it("没有引用的候选条目不写(候选序只装真评出成绩的)", async () => {
   const root = mkRoot();
-  const model = stubClient([reply("```bash\nevaluate\n```")]);
+  const model = stubClient([toolOf("evaluate")]);
   const outcome = await withHostBash(
     () => stepOk(),
     () =>
@@ -708,12 +730,12 @@ it("没有引用的候选条目不写(候选序只装真评出成绩的)", async
   expect(outcome.agent.termination).toBe("max-steps");
 });
 
-it("宿主不切块:`for … do … done` 的整块原文原样交给执行器,退出码是它自己的", async () => {
+it("命令串原样交给执行器:`for … do … done` 一个字节都不改,退出码是它自己的", async () => {
   // 旧实现把收尾的 `done` 当哨兵,交给执行器的是半截块(真实世界里 `bash -c` 当场报语法错误)。
-  // 这一条钉的是生产接缝:`loop → executor → sandbox.run` 的命令字节等于模型写的那一块。
+  // 这一条钉的是生产接缝:`loop → executor → sandbox.run` 的命令字节等于那次工具调用的 `command`。
   const root = mkRoot();
   const block = ["for f in a b; do", '  echo "$f"', "done", "printf 'tail'"].join("\n");
-  const model = stubClient([reply(`\`\`\`bash\n${block}\n\`\`\``)]);
+  const model = stubClient([bashOf(block)]);
   const commands: string[] = [];
   const outcome = await withHostBash(
     (command) => {
@@ -734,11 +756,11 @@ it("宿主不切块:`for … do … done` 的整块原文原样交给执行器,�
   expect(outcome.agent.termination).toBe("max-steps");
 });
 
-it("`finish` 独占一块:它是一条真命令,必须跑到薄壳才会上报收工", async () => {
-  // 旧实现里「整块只有哨兵」走的是「切完 body 为空 → 不起 shell」的短路;收工改成命令之后,
-  // 那条短路不再是收工路径:请求本身由执行器给出(这里由通道替身应答),动作记 done。
+it("`finish` 是一次工具调用:交给执行器的是工具名,收工判据归那一次调用", async () => {
+  // 过渡形态:执行器的入参仍是 `{step, command}` 一格命令串,`finish` 在沙箱里仍有同名薄壳
+  // 认得它(票 03 把分派器入口改形、删掉 fd 3 之后,这里换成「工具名 + 参数」的显式入参)。
   const root = mkRoot();
-  const model = stubClient([reply("```bash\nfinish\n```")]);
+  const model = stubClient([toolOf("finish")]);
   const commands: string[] = [];
   const outcome = await withHostBash(
     (command) => {
@@ -760,7 +782,7 @@ it("`finish` 独占一块:它是一条真命令,必须跑到薄壳才会上报�
 
 it("runGeneration 写失败档:agent 字段与 steps 一起落盘", async () => {
   const root = mkRoot();
-  const model = stubClient([reply(ACTION), fail(new Error("ECONNRESET"))]);
+  const model = stubClient([ACTION, fail(new Error("ECONNRESET"))]);
   writeFileSync(
     join(root, "models.yaml"),
     [
@@ -811,19 +833,21 @@ it("runGeneration 写失败档:agent 字段与 steps 一起落盘", async () => 
   void SCRIPT;
 });
 
-/** 一条「把脚本写进 /workspace」的动作块（heredoc：模型在沙箱里写文件的自然写法）。 */
-const writeScript = (body: string): string =>
-  `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${body}EOF\n\`\`\``;
+/** 一条「把脚本写进 /workspace」的命令串（heredoc：模型在沙箱里写文件的自然写法）。 */
+const writeScript = (body: string): string => `cat > /workspace/script.ts <<'EOF'\n${body}EOF`;
 
 /** 候选序里的三条候选（档案里唯一允许的 1..3 区间）。 */
 const candidatesOf = (meta: ArchiveMeta) =>
   (meta.optimization as unknown as { candidates: readonly Record<string, unknown>[] }).candidates;
 
-/** 一次会话：写脚本 N 次、每次之后 evaluate，最后 done；`scripts[i]` 是第 i 次评测时的字节。 */
-const sessionOf = (scripts: readonly string[]): readonly string[] =>
+/**
+ * 一次会话的**动作序列**：写脚本 N 次、每次之后 evaluate，最后 done。
+ * `scripts[i]` 是第 i 次评测时的字节。
+ */
+const sessionOf = (scripts: readonly string[]): readonly StubStep[] =>
   scripts
-    .flatMap((script) => [writeScript(script), "```bash\nevaluate\n```"])
-    .concat(["```bash\nfinish\n```"]);
+    .flatMap((script) => [bashOf(writeScript(script)), toolOf("evaluate")])
+    .concat([toolOf("finish")]);
 
 it("freeze 失败也清干净:`archive/<slug>/` 里只剩那一份 failed-<runId>.json", async () => {
   const root = mkRoot();
@@ -850,7 +874,7 @@ it("freeze 失败也清干净:`archive/<slug>/` 里只剩那一份 failed-<runId
       "    contextLength: 100000",
     ].join("\n"),
   );
-  const model = stubClient([reply(writeScript(SCRIPT)), reply("```bash\nevaluate\n```")]);
+  const model = stubClient([bashOf(writeScript(SCRIPT)), toolOf("evaluate")]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   const code = await withRealBash(workspaceDir, () =>
@@ -891,7 +915,7 @@ it("候选一到三条:1 次 / 2 次 / 3 次评测各产出同等条数,下标�
       { length: count },
       (_, index) => `var ticks = ${String(index)};\nfunction loop() {}\n`,
     );
-    const model = stubClient(sessionOf(scripts).map((text) => reply(text)));
+    const model = stubClient(sessionOf(scripts));
     const workspaceDir = join(root, "ws");
     mkdirSync(workspaceDir, { recursive: true });
     const outcome = await withRealBash(workspaceDir, () =>
@@ -938,7 +962,7 @@ it("第 4 次 evaluate 被宿主配额拒掉、不执行:候选仍是三条", as
     "var c = 0;\nfunction loop() {}\n",
     "var d = 0;\nfunction loop() {}\n",
   ];
-  const model = stubClient(sessionOf(scripts).map((text) => reply(text)));
+  const model = stubClient(sessionOf(scripts));
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   const outcome = await withRealBash(workspaceDir, () =>
@@ -963,7 +987,7 @@ it("第 4 次 evaluate 被宿主配额拒掉、不执行:候选仍是三条", as
 
 it("观测不完整不产候选:缺场的那一次不产出成绩,档落成失败档", async () => {
   const root = mkRoot();
-  const model = stubClient(sessionOf(["function loop() {}\n"]).map((text) => reply(text)));
+  const model = stubClient(sessionOf(["function loop() {}\n"]));
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   const outcome = await withRealBash(workspaceDir, () =>
@@ -997,12 +1021,12 @@ it("快照字节 == 评估时的工作区字节:评完之后改文件不影响�
   const second = "var second = 2;\nfunction loop() {}\n";
   // 两次评测之后**再改一次文件**,然后 done:那次改动不进任何候选。
   const model = stubClient([
-    reply(writeScript(first)),
-    reply("```bash\nevaluate\n```"),
-    reply(writeScript(second)),
-    reply("```bash\nevaluate\n```"),
-    reply(writeScript("var broken = ;\n")),
-    reply("```bash\nfinish\n```"),
+    bashOf(writeScript(first)),
+    toolOf("evaluate"),
+    bashOf(writeScript(second)),
+    toolOf("evaluate"),
+    bashOf(writeScript("var broken = ;\n")),
+    toolOf("finish"),
   ]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
@@ -1038,9 +1062,7 @@ it("快照字节 == 评估时的工作区字节:评完之后改文件不影响�
 it("meta.scriptSha256 等于末位候选的产物哈希(胜者取末位,不是某一版的源哈希)", async () => {
   const root = mkRoot();
   const model = stubClient(
-    sessionOf(["var a = 1;\nfunction loop() {}\n", "var b = 2;\nfunction loop() {}\n"]).map(
-      (text) => reply(text),
-    ),
+    sessionOf(["var a = 1;\nfunction loop() {}\n", "var b = 2;\nfunction loop() {}\n"]),
   );
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
@@ -1067,11 +1089,7 @@ it("meta.scriptSha256 等于末位候选的产物哈希(胜者取末位,不是�
 
 it("计划与现场事实不符即 infra:会话大声失败,不把环境故障解释成模型手滑", async () => {
   const root = mkRoot();
-  const model = stubClient([
-    reply(writeScript(SCRIPT)),
-    reply("```bash\nevaluate\n```"),
-    reply("```bash\nfinish\n```"),
-  ]);
+  const model = stubClient([bashOf(writeScript(SCRIPT)), toolOf("evaluate"), toolOf("finish")]);
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
   // 试跑入口在 infra 上抛错(计划重建不符 / 子进程异常):那是环境的事,不是候选的错。
@@ -1097,7 +1115,7 @@ it("计划与现场事实不符即 infra:会话大声失败,不把环境故障�
 
 it("一次 evaluate 都不做的会话不搬计划:网格不是入场费", async () => {
   const root = mkRoot();
-  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
+  const model = stubClient([bashOf("ls /contract"), toolOf("finish")]);
   let planned = 0;
   const outcome = await withHostBash(
     () => stepOk(),
@@ -1120,4 +1138,48 @@ it("一次 evaluate 都不做的会话不搬计划:网格不是入场费", async
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") return;
   expect(outcome.agent.termination).toBe("done");
+});
+
+it("工具声明每轮都带:会话的每次 send 都收到同一份 AGENT_TOOLS(协议面,不从 params 走)", async () => {
+  const root = mkRoot();
+  const model = stubClient([bashOf("ls /contract"), toolOf("finish")]);
+  const outcome = await withHostBash(
+    () => stepOk(),
+    () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
+  );
+
+  expect(outcome.kind).toBe("failed");
+  // 两次调用(两步)都带声明:历史逐轮变长,协议面不变。
+  expect(model.calls).toHaveLength(2);
+  for (const call of model.calls) {
+    expect(call.tools).toEqual(AGENT_TOOLS);
+  }
+  // 工具声明**不从 params 走**:它是发送路径的一等入参,生成策略的产出面一个字没变。
+  for (const call of model.calls) {
+    expect("tools" in call.params).toBe(false);
+    expect("tool_choice" in call.params).toBe(false);
+  }
+});
+
+it("本族未声明工具能力就在**起跑前**拒跑:零次模型调用,零步会话", async () => {
+  const root = mkRoot();
+  const model = stubClient([]);
+  // 用一个**没声明**工具能力的族（本轮是 `messages`：协议事实已有、翻译还没写）当样本:
+  // 它的席位不该开始一场会话:
+  // 「不支持」要在起跑前说出来,而不是花 20 分钟跑到 0 候选才发现。
+  // 第一句钉判据（本族未声明就拒跑），第二句钉**逐字文案**：真会话 stderr 曾经读出
+  // 「拒绝起跑agent 会话」——缺一个空格。粘连的文案会被读成两个词拼错，改字/丢空格都会红。
+  await expect(
+    withRealBash(join(root, "ws"), () =>
+      generateOneModel(
+        requestWith(root, { createClient: () => model, workspaceDir: join(root, "ws") }),
+        configOf({ endpointFamily: "messages" }),
+      ),
+    ),
+  ).rejects.toThrow(
+    /未声明工具调用能力（未经验证），拒绝起跑 agent 会话。这不等于该席位被渠道拒：原因是本族的工具翻译没写或没被真实会话验证过，不是账号档位。$/u,
+  );
+  expect(model.calls).toHaveLength(0);
+  // 一次都没开始:没有推进到落档那一步。
+  expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
 });

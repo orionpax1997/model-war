@@ -13,11 +13,26 @@
  * 藏进"文本为空"这种下游症状里;在桩上直接抛,才能让 bug **停在缝上**。
  */
 
-import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./model-client.js";
+import type {
+  ChatMessage,
+  ModelClient,
+  ModelParams,
+  ModelResponse,
+  SendOptions,
+} from "./model-client.js";
+import type { ToolCall, ToolDeclaration } from "./agent/tools.js";
 
-/** 一步回放:回一段文本(可带截断/用量),或抛一个错误(传输失败)。 */
+/**
+ * 一步回放:回一段文本(可带工具调用 / 截断 / 用量),或抛一个错误(传输失败)。
+ *
+ * `text` 与 `toolCalls` **同时可给**:工具调用那一轮模型也可能说话了——实测 `hy4-flash` 在
+ * `finish_reason: "tool_calls"` 时 `content` 是一段短文本,而 `mimo-v2.6-flash` 那边是 `null`。
+ * 夹具能同时造出两种形状,才能钉住「`text` 与 `toolCalls` 各承载一种产物」。
+ */
 export type StubReply = {
   readonly text: string;
+  /** 这一轮发起的工具调用;缺席 = 只说话。 */
+  readonly toolCalls?: readonly ToolCall[];
   /** 缺省 `"stop"`;截断场景填 `"length"`(重试判据见 `packages/gen/src/retry.ts`)。 */
   readonly finishReason?: string;
   /** 缺省 `{}`;逐轮落进生成日志的用量读数。 */
@@ -30,6 +45,8 @@ export type StubStep = { readonly reply: StubReply } | { readonly fail: Error };
 export type StubCall = {
   readonly messages: readonly ChatMessage[];
   readonly params: ModelParams;
+  /** 这一次请求带上的工具声明(`SendOptions.tools`);没带时缺席。 */
+  readonly tools?: readonly ToolDeclaration[];
 };
 
 export type StubClient = ModelClient & {
@@ -39,8 +56,31 @@ export type StubClient = ModelClient & {
 /** 便利构造:一步"回文本"。 */
 export const reply = (
   text: string,
-  extra: { readonly finishReason?: string; readonly usage?: unknown } = {},
+  extra: {
+    readonly toolCalls?: readonly ToolCall[];
+    readonly finishReason?: string;
+    readonly usage?: unknown;
+  } = {},
 ): StubStep => ({ reply: { text, ...extra } });
+
+/**
+ * 便利构造:一步"回一次工具调用"(`text` 缺省空串)。
+ *
+ * 参数是**原始 JSON 字符串**,与渠道同形:桩不帮忙序列化,否则「`argumentsJson` 是逐字字节」
+ * 这条断言就在夹具里被中和了。
+ */
+export const toolCall = (
+  name: string,
+  argumentsJson: string,
+  extra: { readonly text?: string; readonly usage?: unknown } = {},
+): StubStep => ({
+  reply: {
+    text: extra.text ?? "",
+    toolCalls: [{ name, argumentsJson }],
+    finishReason: "tool_calls",
+    ...(extra.usage === undefined ? {} : { usage: extra.usage }),
+  },
+});
 
 /** 便利构造:一步"抛错"(传输失败/超时的模拟)。 */
 export const fail = (error: Error): StubStep => ({ fail: error });
@@ -55,8 +95,12 @@ export const stubClient = (steps: readonly StubStep[]): StubClient => {
   let next = 0;
   return {
     calls,
-    send: async (messages, params): Promise<ModelResponse> => {
-      calls.push({ messages, params });
+    send: async (messages, params, options?: SendOptions): Promise<ModelResponse> => {
+      calls.push({
+        messages,
+        params,
+        ...(options?.tools === undefined ? {} : { tools: options.tools }),
+      });
       const step = steps[next];
       next += 1;
       if (step === undefined) {
@@ -67,6 +111,7 @@ export const stubClient = (steps: readonly StubStep[]): StubClient => {
       }
       return {
         text: step.reply.text,
+        ...(step.reply.toolCalls === undefined ? {} : { toolCalls: step.reply.toolCalls }),
         finishReason: step.reply.finishReason ?? "stop",
         usage: step.reply.usage ?? {},
       };

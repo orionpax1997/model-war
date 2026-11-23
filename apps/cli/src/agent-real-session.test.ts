@@ -51,12 +51,23 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
-import { RULESET_VERSION, TRIAL_MATCHES_PER_CANDIDATE, type ArchiveMeta } from "@model-war/schema";
+import {
+  ARCHIVE_SCHEMA_VERSION,
+  RULESET_VERSION,
+  TRIAL_MATCHES_PER_CANDIDATE,
+  type ArchiveMeta,
+} from "@model-war/schema";
 import { readArchiveReports } from "@model-war/runner";
 
 import { HARNESS_DIGEST, HARNESS_VERSION, generateOneModel } from "@model-war/gen";
 import type { ModelConfig } from "@model-war/gen";
-import { completeGridTrial, gridPlanFixture, reply, stubClient } from "@model-war/gen";
+import { completeGridTrial, gridPlanFixture, stubClient, toolCall } from "@model-war/gen";
+
+/** 一次 `bash` 工具调用(参数是原始 JSON 字符串,与渠道形状同构)。 */
+const bashOf = (command: string) => toolCall("bash", JSON.stringify({ command }));
+
+/** 一次不收参数的工具调用(`check` / `probe` / `evaluate` / `finish`)。 */
+const toolOf = (name: string) => toolCall(name, "{}");
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -106,12 +117,12 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   // 每一步都是一次真的 `sandbox.run`。用 `cp` 而不是 heredoc 是有意的:那是模型真正会照做的第一步,
   // 它曾因 rootfs 里没有 `cp` 而以 `exit 127` 白费一步。
   const model = stubClient([
-    reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
-    // 真 bwrap 下跑一个 `for … do … done`:它必须整块跑完(退出码 0),而不是被切成半截。
-    reply('```bash\nfor f in /contract/api.md /contract/rules.md; do\n  wc -l "$f"\ndone\n```'),
-    reply("```bash\ncheck\n```"),
-    reply("```bash\nevaluate\n```"),
-    reply("```bash\nfinish\n```"),
+    bashOf("cp /contract/examples/minimal.ts /workspace/script.ts"),
+    // 真 bwrap 下跑一个 `for … do … done`:它必须整条命令串跑完(退出码 0),而不是被切成半截。
+    bashOf('for f in /contract/api.md /contract/rules.md; do\n  wc -l "$f"\ndone'),
+    toolOf("check"),
+    toolOf("evaluate"),
+    toolOf("finish"),
   ]);
 
   const outcome = await generateOneModel(
@@ -139,7 +150,7 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   ) as ArchiveMeta;
 
   // ── 身份与形状 ──
-  expect(meta.archiveSchemaVersion).toBe(3);
+  expect(meta.archiveSchemaVersion).toBe(ARCHIVE_SCHEMA_VERSION);
   expect(meta.harnessVersion).toBe(HARNESS_VERSION);
   expect(meta.harnessDigest).toBe(HARNESS_DIGEST);
   expect(meta.contextLength).toBe(100_000);
@@ -150,10 +161,11 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   expect(meta.steps).toHaveLength(5);
   expect(meta.protocolRounds).toBe(5);
   expect(meta.prompts).toHaveLength(1);
+  // `check` 是独立一档:新世界里没有一次 `bash -c` 跑过它。
   expect(meta.steps?.map((step) => step.action.kind)).toEqual([
     "bash",
     "bash",
-    "bash",
+    "check",
     "evaluate",
     "done",
   ]);
@@ -234,7 +246,7 @@ it(
     mkdirSync(workspaceDir, { recursive: true });
 
     // 只 done、不 evaluate:一个候选都没有(ADR-0030「失败 = 一个候选都没有」)。
-    const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
+    const model = stubClient([bashOf("ls /contract"), toolOf("finish")]);
 
     const outcome = await generateOneModel(
       {
@@ -279,9 +291,9 @@ it(
     mkdirSync(workspaceDir, { recursive: true });
 
     const model = stubClient([
-      reply("```bash\ncp /contract/examples/minimal.ts /workspace/script.ts\n```"),
-      reply("```bash\nevaluate\n```"),
-      reply("```bash\nfinish\n```"),
+      bashOf("cp /contract/examples/minimal.ts /workspace/script.ts"),
+      toolOf("evaluate"),
+      toolOf("finish"),
     ]);
     const grid = completeGridTrial();
     const outcome = await generateOneModel(

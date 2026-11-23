@@ -40,7 +40,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { type Dirent, readdirSync, readFileSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -187,7 +187,12 @@ const readPinnedScript = (options: {
   if (!read.ok) {
     return {
       ok: false,
-      reason: `${where}的存档脚本读不到：${path}（该运行标识下没有 script.js，或整个存档目录不存在）`,
+      // 缺档有两种成因，而它们的**做法完全不同**：盘上真没有这份存档（例如新 worktree / 干净克隆
+      // 没拷 `archive/`，见 README）vs 存档目录在但那一跑没落 `script.js`。只写「读不到」会
+      // 让人先去翻摘要，所以区分开；两种都说清能做的事。
+      reason: existsSync(join(options.root, "archive", options.slug))
+        ? `${where}的存档脚本读不到：${path}（该运行标识下没有 script.js）`
+        : `${where}的存档脚本读不到：${path}（archive/${options.slug}/ 整个不存在：新 worktree 或干净克隆要先拷 archive/，见 README）`,
     };
   }
   const actual = sha256Hex(read.bytes);

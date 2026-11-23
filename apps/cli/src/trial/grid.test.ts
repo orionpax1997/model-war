@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
 import {
+  PROBE_MATCH_LIMIT,
   QUICKJS_WASI_WASM_PATH,
   RULESET_VERSION,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
@@ -41,6 +42,7 @@ import { validateTrialObservation } from "../validator.js";
 import {
   gridSummaryPathOf,
   runTrialGrid,
+  runTrialGridSubset,
   summaryOfGrid,
   trialScriptSha256,
   writeTrialGridSummary,
@@ -228,6 +230,64 @@ it("预算触限也跑满：不早停，后场照样有观测，判定仍按零�
   }
 });
 
+/**
+ * 探针那条路的探针形状：**1 组合 × 4 座位 × 2 图 = 8 场**（就是 `PROBE_MATCH_LIMIT` 覆盖的那一组）。
+ *
+ * 只跑 4 个 tick：断言的是"跑了几场"，不是对局长度。
+ */
+const probeShapedPlan = (loaded: LoadedTrial): TrialPlan => {
+  const scripts: readonly TrialPlanScript[] = loaded.opponents.map((entry) => entry.script);
+  const map = loaded.maps[0]!;
+  const base = [TRIAL_CANDIDATE_ID, ...scripts.slice(0, 3).map((script) => script.id)] as [
+    string,
+    string,
+    string,
+    string,
+  ];
+  const matches: TrialPlanMatch[] = Array.from({ length: PROBE_MATCH_LIMIT }, (_, index) => {
+    const rotation = index % 4;
+    const seats = rotateSeats(base, rotation);
+    return {
+      matchIndex: index,
+      comboIndex: 0,
+      seed: TRIAL_GRID_SEED_BASE + index,
+      seats,
+      candidateSeat: seats.indexOf(TRIAL_CANDIDATE_ID) as 0 | 1 | 2 | 3,
+      map: map.name,
+      mapSha256: map.sha256,
+    };
+  });
+  return {
+    version: TRIAL_PLAN_VERSION,
+    ruleset: RULESET_VERSION,
+    rulesetSha256: loaded.rulesetSha256,
+    sandboxRuntimeHash: loaded.sandboxRuntimeHash,
+    scripts,
+    maps: [{ name: map.name, sha256: map.sha256 }],
+    matchesPerCandidate: matches.length,
+    matches,
+    planSha256: "0".repeat(64),
+  };
+};
+
+it("判据 6（不早停）：第 1 场就触限，探针那条路仍跑满 8 场", { timeout: 120_000 }, async () => {
+  const loaded = fixtureLoaded({
+    // 每 tick 801 次 API 调用（上限 800）：候选座位在第 1 场第 1 个非空 tick 就触限。
+    candidateCode: "function loop() { for (var i = 0; i < 801; i++) move(999999, 1, 0); }\n",
+    ruleset: { tickLimit: 4 },
+  });
+  const plan = probeShapedPlan(loaded);
+  expect(plan.matches).toHaveLength(PROBE_MATCH_LIMIT);
+  const ran = await runTrialGridSubset(loaded, plan, PROBE_MATCH_LIMIT, false);
+  // 首场就有触限——早停会在这里停下。
+  expect(ran.trips.some((trip) => trip.matchIndex === 0)).toBe(true);
+  // 但探针要的是跑完前缀的峰值：8 场一场不少。
+  expect(ran.matchesRun).toBe(PROBE_MATCH_LIMIT);
+  expect(ran.readings.map((reading) => reading.matchIndex)).toEqual(
+    Array.from({ length: PROBE_MATCH_LIMIT }, (_, index) => index),
+  );
+});
+
 it("宿主执行异常（wasm 编译失败）大声抛出：不写半截证据", { timeout: 60_000 }, async () => {
   const loaded = fixtureLoaded({
     candidateCode: "function loop() {}\n",
@@ -268,4 +328,63 @@ it("观测写盘失败只交回原因，不改判定也不写半截文件", () =
   expect(written.ok).toBe(false);
   if (written.ok) return;
   expect(written.reason.length).toBeGreaterThan(0);
+});
+
+// ── 子集运行（探针那条路）：收窄循环范围，不裁计划 ──────────────────────────────
+//
+// 以下三条钉的是"探针跑前缀"这件事的形状，不是占用读数的准不准（那归引擎侧）。
+
+it("子集只跑前 N 场：计划对象逐字节不动，座位仍取自计划", { timeout: 60_000 }, async () => {
+  const loaded = fixtureLoaded({
+    candidateCode: "function loop() { move(999999, 1, 0); }\n",
+    ruleset: { tickLimit: 4 },
+  });
+  const plan = reducedPlan(loaded);
+  const before = JSON.stringify(plan);
+  const ran = await runTrialGridSubset(loaded, plan, 1, false);
+  expect(ran.matchesRun).toBe(1);
+  expect(ran.readings.map((reading) => reading.matchIndex)).toEqual([0]);
+  // 计划一个字节都没变：这是「探针不许碰计划」那条判据的读数面。
+  expect(JSON.stringify(plan)).toBe(before);
+  // 座位来自计划（不是恒 0）。
+  expect(ran.readings[0]?.actionFacts?.seat).toBe(plan.matches[0]?.candidateSeat);
+});
+
+it("stopOnFirstTrip=false → 触限之后照样跑完前缀（不早停）", { timeout: 60_000 }, async () => {
+  // 每 tick 801 次 API 调用：两场都在候选座位上触限。
+  const loaded = fixtureLoaded({
+    candidateCode: "function loop() { for (var i = 0; i < 801; i++) move(999999, 1, 0); }\n",
+    ruleset: { tickLimit: 4 },
+  });
+  const plan = reducedPlan(loaded);
+  const all = await runTrialGridSubset(loaded, plan, plan.matches.length, false);
+  expect(all.trips.length).toBeGreaterThan(0);
+  // 第 1 场就触限了，但后一场照样跑、照样有读数。
+  expect(all.matchesRun).toBe(plan.matches.length);
+  expect(all.readings.map((reading) => reading.matchIndex)).toEqual([0, 1]);
+
+  // 同一份夹具、只把那个开关打开：这是唯一一处早停，且只有显式要求才发生。
+  const stopped = await runTrialGridSubset(loaded, plan, plan.matches.length, true);
+  expect(stopped.matchesRun).toBe(1);
+  expect(stopped.readings).toHaveLength(1);
+});
+
+it("子集运行也交回占用读数（探针的三档文案就靠它）", { timeout: 60_000 }, async () => {
+  // 每 tick 80 次 API 调用（上限 800）：不越线，但读数非零。上限按 1 场缩放不是为了绕开判据，
+  // 而是让「读数存在」这件事与「越没越线」分开验。
+  const loaded = fixtureLoaded({
+    candidateCode: "function loop() { for (var i = 0; i < 80; i++) move(999999, 1, 0); }\n",
+    ruleset: { tickLimit: 4 },
+  });
+  const plan = reducedPlan(loaded);
+  const ran = await runTrialGridSubset(loaded, plan, 1, false);
+  expect(ran.trips).toHaveLength(0);
+  const usage = ran.peakUsage;
+  if (usage === undefined) {
+    throw new Error("子集运行没交回占用读数：探针的三档文案就没有原料");
+  }
+  // API 轨启用着 → 有 apiCalls；事件计数回调只在三条计数轨任一条启用时安装，
+  // 而 `eventTickLimit` 在预算里总是启用着，所以 eventCount 也在。
+  expect(usage.apiCalls).toBeGreaterThan(0);
+  expect(usage.eventCount).toBeGreaterThanOrEqual(0);
 });

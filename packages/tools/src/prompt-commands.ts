@@ -1,5 +1,6 @@
 /**
- * 首条消息里的**命令清单**与沙箱里真实存在的东西是不是同一批(根脚本 `check:prompt-commands`)。
+ * 首条消息里的**沙箱二进制清单**与 rootfs 里真实存在的东西是不是同一批(根脚本
+ * `check:prompt-commands`)。
  *
  * ── 它守的是什么 ──
  *
@@ -11,9 +12,15 @@
  *   `api.md` 中间段读不到就是这个形状:字节在那里,取它的工具不在 `bin/` 里,而散文只说「两条命令」。
  * - **散文里写了、常量里没有**:模型照着散文敲,拿到 `command not found`,然后是纠正、重试、浪费步。
  *
- * 所以判据是**集合相等**,两个方向都判,并且按组判:`bin/` 里除薄壳之外是静态二进制,薄壳是
- * 经通道交给宿主执行的三件工具。两组混着写也能让集合相等,但模型会以为 `evaluate` 是本地命令
- * ——那不是文案洁癖,它决定模型怎么用那三次额度。
+ * 所以判据是**集合相等**,两个方向都判。
+ *
+ * ── 宿主工具那一节已经不在本文件判了(票 04) ──
+ *
+ * 首条消息是两节(「静态二进制」⇄「宿主工具」),但两节的**真源不同**:二进制那一节的真源是
+ * `SANDBOX_ROOTFS_FILES`,宿主工具那一节的真源是 `AGENT_TOOLS` 声明。一个判据只对住一个真源,
+ * 于是两节各自一条门禁:本节判二进制(`check:prompt-commands`),宿主工具归
+ * `prompt-tools.ts`(`check:prompt-tools`)。本文件仍负责**解析**两节(分组靠标题认,不解析就
+ * 没法知道二进制那一节在哪里结束),但只对二进制那一节下判决。
  *
  * ── 为什么判的是模板文本,不是渲染结果 ──
  *
@@ -56,8 +63,14 @@ export const AGENT_TEMPLATE_PATH = "prompts/agent.md";
 /** 静态二进制那一组的标题行。模板里必须**逐字**出现它:分组靠这一行认,换了词就是另一组。 */
 export const BINARY_GROUP_HEADING = "### 静态二进制:通用命令";
 
-/** 工具薄壳那一组的标题行。同上,逐字。 */
-export const SHIM_GROUP_HEADING = "### 工具薄壳:经通道交给宿主执行,不是二进制";
+/**
+ * 宿主工具那一组的标题行。同上,逐字。
+ *
+ * 判决归 `check:prompt-tools`(`prompt-tools.ts`),但**字面量住在这里**:分组解析在本文件,
+ * 两条标题必须是同一处常量。它同时是三处读它的人的同一份真源——`check:prompt-commands`
+ * (解析分组)、`check:prompt-tools`(判这一节的内容)、`prompt-commands.test.ts`(纯函数层)。
+ */
+export const HOST_TOOL_GROUP_HEADING = "### 宿主工具:调用它们,不在沙箱里";
 
 /** 一条违规。`where` 指到文件或那个命令名,报告里直接读得懂。 */
 export type PromptCommandFinding = {
@@ -65,37 +78,29 @@ export type PromptCommandFinding = {
   readonly detail: string;
 };
 
-/** 两组命令的名字:`binaries` 是静态 ELF,`shims` 是经通道交给宿主的薄壳。 */
-export type CommandGroups = {
-  readonly binaries: readonly string[];
-  readonly shims: readonly string[];
-};
-
 /** `bin/<名字>` → `<名字>`。清单项、报告与门禁说的都是名字,不是路径。 */
 const commandNameOf = (path: string): string => path.slice("bin/".length);
 
 /**
- * 从 rootfs 常量推出命令集合。
+ * 推出沙箱里能敲的命令名。
  *
- * 分组规则只有一条:`SANDBOX_ROOTFS_FILES` 里 `bin/` 开头的那些,**减掉** `SANDBOX_ROOTFS_SHIMS`
- * 是静态二进制,剩下的是薄壳。这条规则的家**不在这里**:它住在 `sandbox-rootfs/rootfs-drift.ts`
- * 的 `staticBinariesOf`——rootfs 漂移判据(「哪几份必须是静态 ELF」)与本判据问的是同一件事,
- * 同包、零构建,所以直接复用,不另写一份「哪些是二进制」。这里只做两件本判据自己的事:
- * 把路径换成名字、把薄壳去重排序(清单里一个名字只该出现一次)。
+ * 规则的家**不在这里**:它住在 `sandbox-rootfs/rootfs-drift.ts` 的 `staticBinariesOf`——rootfs
+ * 漂移判据(「哪几份必须是静态 ELF」)与本判据问的是同一件事,同包、零构建,所以直接复用,
+ * 不另写一份「哪些是二进制」。薄壳已删(票 03),`bin/` 里现在只有二进制,没有例外。
  */
-export const derivedCommandGroups = (
-  files: readonly string[],
-  shims: readonly string[],
-): CommandGroups => ({
-  binaries: staticBinariesOf(files, shims).map(commandNameOf),
-  shims: [...new Set(shims)].sort(),
-});
+export const derivedBinaries = (files: readonly string[]): readonly string[] =>
+  staticBinariesOf(files).map(commandNameOf);
 
-/** 清单里的一行:`- \`名字\` — 用途`。`index` 是它在模板里的行号(1 起),报错时指得到。 */
+/**
+ * 清单里的一行:`- \`名字\` — 用途`。`index` 是它在模板里的行号(1 起),报错时指得到。
+ *
+ * `group` 是**解析结果**不是判决:`hostTools` 那一组的判决归 `check:prompt-tools`,本文件
+ * 用它只是为了知道「二进制那一节到这里结束了」。
+ */
 export type ListedCommand = {
   readonly name: string;
   readonly purpose: string;
-  readonly group: "binaries" | "shims";
+  readonly group: "binaries" | "hostTools";
   readonly index: number;
 };
 
@@ -108,11 +113,12 @@ const HEADING = /^#{2,6}\s/u;
  * 早先的判据是「标题里含『静态』/『薄壳』」,那是一条按词猜组的规则:模板把标题改成
  * 「本地命令」或「宿主工具」,清单就被静默归错组(甚至整组不算),而门禁会把它报成
  * 「沙箱里有而清单没写」——诊断指错了地方。所以判据换成常量与模板共享的两条字面量:
- * 模板写什么,这里就认什么;模板换了词,`commandListFindings` 的第一条判据当场红。
+ * 模板写什么,这里就认什么;模板换了词,对应那条门禁当场红(`check:prompt-commands` 判
+ * 二进制那条标题,`check:prompt-tools` 判宿主工具那条)。
  */
-const groupOfHeading = (line: string): "binaries" | "shims" | undefined => {
+const groupOfHeading = (line: string): "binaries" | "hostTools" | undefined => {
   const heading = line.trim();
-  if (heading === SHIM_GROUP_HEADING) return "shims";
+  if (heading === HOST_TOOL_GROUP_HEADING) return "hostTools";
   if (heading === BINARY_GROUP_HEADING) return "binaries";
   return undefined;
 };
@@ -120,14 +126,14 @@ const groupOfHeading = (line: string): "binaries" | "shims" | undefined => {
 /**
  * 一行清单项。名字只取**第一对反引号**里的第一段(`sed -i 's/a/b/'` 这种用法写在用途里)。
  *
- * 分隔符认三种破折号,因为排版会被人顺手统一;用途没写成的行由 `commandListFindings` 报。
+ * 分隔符认三种破折号,因为排版会被人顺手统一;用途没写成的行由各自的判决函数报。
  */
 const LISTED_COMMAND = /^\s*-\s+`([^`]+)`\s*[—–-]+\s*(\S.*)$/u;
 
-/** 模板里被点名、且在某个命令分组下面的那些行。 */
+/** 模板里被点名、且在某个命令分组下面的那些行。两组都收,判决各归各的门禁。 */
 export const listedCommands = (template: string): readonly ListedCommand[] => {
   const listed: ListedCommand[] = [];
-  let group: "binaries" | "shims" | undefined;
+  let group: "binaries" | "hostTools" | undefined;
   template.split("\n").forEach((line, offset) => {
     if (HEADING.test(line)) {
       group = groupOfHeading(line);
@@ -145,85 +151,81 @@ export const listedCommands = (template: string): readonly ListedCommand[] => {
 };
 
 /** 单行用途的判据。两个字以下等于没说:「`wc` — 计数」也够,「`wc` —」不够。 */
-const MIN_PURPOSE_CHARS = 2;
+export const MIN_PURPOSE_CHARS = 2;
+
+/** 用途没写成的行报一条:`{group}` 那一节的清单项要各自给出用途。 */
+export const purposeFindings = (
+  listed: readonly ListedCommand[],
+  group: ListedCommand["group"],
+): readonly PromptCommandFinding[] =>
+  listed
+    .filter((item) => item.group === group && item.purpose.length < MIN_PURPOSE_CHARS)
+    .map((item) => ({
+      where: `${AGENT_TEMPLATE_PATH}:${String(item.index)}`,
+      detail:
+        `命令清单里的 \`${item.name}\` 没写用途。模型读到的是名字,不是用法:` +
+        "「有这个命令」与「拿它干什么」两件事都得说,否则它还是得靠试。",
+    }));
 
 /**
- * 集合相等(两个方向)+ 组内唯一 + 每项一句用途 + 两条分组标题逐字在场。
+ * 二进制那一节的判决:标题逐字在场 + 每项一句用途 + 组内唯一 + 集合相等(两个方向)。
+ *
  * 空集合不在这里判——它是入口的空转判据。
  */
 export const commandListFindings = (
   template: string,
-  derived: CommandGroups,
+  binaries: readonly string[],
 ): readonly PromptCommandFinding[] => {
   const listed = listedCommands(template);
   const findings: PromptCommandFinding[] = [];
 
-  // 两条分组标题先判:标题缺席时下面那堆「沙箱里有而清单没写」全是噪声,
+  // 标题先判:它缺席时下面那堆「沙箱里有而清单没写」全是噪声,
   // 真正该改的是那一行标题(或者它被挪走了)。
-  const headings = [
-    [BINARY_GROUP_HEADING, "静态二进制"],
-    [SHIM_GROUP_HEADING, "工具薄壳"],
-  ] as const;
-  for (const [heading, groupName] of headings) {
-    if (!template.split("\n").some((line) => line.trim() === heading)) {
+  if (!template.split("\n").some((line) => line.trim() === BINARY_GROUP_HEADING)) {
+    findings.push({
+      where: AGENT_TEMPLATE_PATH,
+      detail:
+        `首条消息里没有那条分组标题 \`${BINARY_GROUP_HEADING}\`(静态二进制组):分组靠它逐字认,` +
+        "改了词就等于把整组从清单里抹掉——这一行保持逐字不变,措辞放进它下面的清单项里。",
+    });
+  }
+
+  findings.push(...purposeFindings(listed, "binaries"));
+
+  const got = listed.filter((item) => item.group === "binaries");
+  const seen = new Set<string>();
+  for (const item of got) {
+    if (seen.has(item.name)) {
       findings.push({
-        where: AGENT_TEMPLATE_PATH,
+        where: `${AGENT_TEMPLATE_PATH}:${String(item.index)}`,
+        detail: `命令清单里 \`${item.name}\` 出现了不止一次。重复点名会让「一共有什么」读不清。`,
+      });
+    }
+    seen.add(item.name);
+  }
+
+  const have = new Set(got.map((item) => item.name));
+  const want = new Set(binaries);
+  for (const name of want) {
+    if (!have.has(name)) {
+      findings.push({
+        where: `${AGENT_TEMPLATE_PATH}:静态二进制`,
         detail:
-          `首条消息里没有那条分组标题 \`${heading}\`(${groupName}组):分组靠它逐字认,` +
-          "改了词就等于把整组从清单里抹掉——这一行保持逐字不变,措辞放进它下面的清单项里。",
+          `沙箱里有 \`${name}\`(它由 rootfs 常量推出,属于静态二进制组),而首条消息的命令清单没有它。` +
+          "模型不会去试一个没被点名的命令:能力在 `bin/` 里,但它不知道,于是拿步数去撞 127。" +
+          `补一行清单项:名字 \`${name}\`、破折号、一句用途。`,
       });
     }
   }
-
-  for (const item of listed) {
-    if (item.purpose.length < MIN_PURPOSE_CHARS) {
+  for (const item of got) {
+    if (!want.has(item.name)) {
       findings.push({
         where: `${AGENT_TEMPLATE_PATH}:${String(item.index)}`,
         detail:
-          `命令清单里的 \`${item.name}\` 没写用途。模型读到的是名字,不是用法:` +
-          "「有这个命令」与「拿它干什么」两件事都得说,否则它还是得靠试。",
+          `命令清单点名了 \`${item.name}\`,而 rootfs 常量里没有它。模型照这条敲会拿到 ` +
+          "`command not found`——要么把它加进 `SANDBOX_ROOTFS_FILES` 并重跑 " +
+          "`sandbox:rootfs:build`,要么把这行删掉。",
       });
-    }
-  }
-
-  for (const group of ["binaries", "shims"] as const) {
-    const want = derived[group];
-    const got = listed.filter((item) => item.group === group);
-    const seen = new Set<string>();
-    for (const item of got) {
-      if (seen.has(item.name)) {
-        findings.push({
-          where: `${AGENT_TEMPLATE_PATH}:${String(item.index)}`,
-          detail: `命令清单里 \`${item.name}\` 出现了不止一次。重复点名会让「一共有什么」读不清。`,
-        });
-      }
-      seen.add(item.name);
-    }
-    const have = new Set(got.map((item) => item.name));
-    const wantSet = new Set(want);
-    const groupName = group === "binaries" ? "静态二进制" : "工具薄壳";
-
-    for (const name of want) {
-      if (!have.has(name)) {
-        findings.push({
-          where: `${AGENT_TEMPLATE_PATH}:${groupName}`,
-          detail:
-            `沙箱里有 \`${name}\`(它由 rootfs 常量推出,属于${groupName}组),而首条消息的命令清单没有它。` +
-            "模型不会去试一个没被点名的命令:能力在 `bin/` 里,但它不知道,于是拿步数去撞 127。" +
-            `补一行清单项:名字 \`${name}\`、破折号、一句用途。`,
-        });
-      }
-    }
-    for (const name of got) {
-      if (!wantSet.has(name.name)) {
-        findings.push({
-          where: `${AGENT_TEMPLATE_PATH}:${String(name.index)}`,
-          detail:
-            `命令清单点名了 \`${name.name}\`,而 rootfs 常量里没有它。模型照这条敲会拿到 ` +
-            "`command not found`——要么把它加进 `SANDBOX_ROOTFS_FILES` 并重跑 `sandbox:rootfs:build`," +
-            "要么把这行删掉。",
-        });
-      }
     }
   }
 

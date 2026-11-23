@@ -69,7 +69,15 @@ import {
   type UsageCaliber,
 } from "./generation-evidence.js";
 import { generationParams, generationRequestEvidence } from "./generation-policy.js";
-import type { ChatMessage, ModelClient, ModelParams, ModelResponse } from "./model-client.js";
+import type {
+  ChatMessage,
+  ModelClient,
+  ModelParams,
+  ModelResponse,
+  SendOptions,
+} from "./model-client.js";
+import { endpointSpec } from "./http/endpoints.js";
+import { AGENT_TOOLS, type ToolDeclaration } from "./agent/tools.js";
 import {
   SCRIPT_PRODUCT_NAME,
   SCRIPT_SOURCE_NAME,
@@ -94,10 +102,17 @@ import {
   discardCandidateArtifacts,
 } from "./agent/host/evaluate-service.js";
 import { createSessionTools } from "./agent/host/dispatcher.js";
+import { createProbeService } from "./agent/host/probe-service.js";
 import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
 import { retryTransport, type RetrySleep } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
-import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
+import {
+  prepareTrialPlan,
+  runTrialProbeScript,
+  runTrialScript,
+  type TrialProbe,
+  type TrialProbeScript,
+} from "./trial.js";
 import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
@@ -322,6 +337,7 @@ const observeServices = (options: {
   readonly model: string;
   readonly runId: string;
   readonly trial: TrialProbe;
+  readonly probeScript: TrialProbeScript;
   readonly plan: () => TrialPlan;
   readonly facts: StepFacts;
 }) => {
@@ -333,7 +349,16 @@ const observeServices = (options: {
     plan: options.plan,
     trial: options.trial,
   });
+  // 探针与 evaluate 拿**同一个** `plan` 闭包:于是"这张网格是什么"在第一次 evaluate 之前就被
+  // 验证过一次(搬不出来时模型在一次便宜的探针里就知道,而不是赔一次 74 s 的评测)。
+  const probe = createProbeService({
+    root: options.root,
+    model: options.model,
+    plan: options.plan,
+    probe: options.probeScript,
+  });
   return {
+    probe,
     check: async (request: { readonly workspaceDir: string }) => {
       const response = await check(request);
       // 结果侧证据只在这一步的槽里;`result` 缺席 = 没有可归纳的东西(与服务自己的口径一致)。
@@ -375,14 +400,21 @@ const observeServices = (options: {
 };
 
 /**
- * 把执行器接到沙箱上。
+ * 把执行器接到两条路上:**`bash` 去沙箱,其余四个去宿主**。
  *
- * 一次调用 = 一次 `sandbox.run`,**整块原样**交给一次 `bash -c`:宿主不再切块。收工是模型在块里
- * 调用 `finish`(rootfs 里那条薄壳),它经通道报给宿主,宿主据此在本步结束后收工(ADR-0032 修订)。
- * 手工切块曾经存在,但它与 `for … done` 的收尾撞车——那是「为了一条更弱的保证牺牲整场会话」。
+ * ── 分流只按工具名,不按任何字节的形状 ──
  *
- * 通道端(`requestHandler`)是票 04 的 dispatcher:它是配额的唯一判据源,超限时回一份伪造
- * stderr 且**真执行函数一次都不调**。
+ * `bash` 那一步 = 一次 `sandbox.run`,整条命令串原样交给一次 `bash -c`(宿主不切块:手工切块与
+ * `for … done` 的收尾撞车)。`check` / `probe` / `evaluate` / `finish` 一步 = 一次
+ * `tools.dispatch`:它们**不在沙箱里**,沙箱里连这三个名字都没有。旧世界那条「薄壳经 fd 3
+ * 敲宿主」的通道已删(票 03)——分流的判据从「沙箱里有没有同名薄壳」变成「这次调用的是谁」。
+ *
+ * ── 两条路的回包形状不同,而差别是有意义的 ──
+ *
+ * 沙箱回 `{stdout, stderr, exitCode, timedOut}`:那是一条命令的过程记录。宿主回
+ * `ToolOutcome`:它多了 `isError`(这次**调用**失败,不是命令非零退出)与 `result`(tsc /
+ * contract 的稳定错误码)。执行器把它们归一成 `AgentExecResult`,额外那两位原样带上——loop
+ * 要用 `isError` 守住「被拒的 `finish` 不是收工」。
  */
 const createExecutor =
   (options: {
@@ -395,21 +427,27 @@ const createExecutor =
   }): AgentExecutor =>
   async (request: AgentExecRequest): Promise<AgentExecResult> => {
     options.facts.reset();
-    // 空块(模型只写了围栏行)不跑空 shell:那不是命令,起一次 `bash` 只为退出 0 没有意义。
-    // 收工不再走这条短路——`finish` 是一条真命令,它必须真的跑到薄壳才会上报。
+    // 两条路各交回自己的形状,在这里归一成「这一步跑了什么」。不并成一种中间类型的理由:
+    // 沙箱的 `timedOut` 只对命令有意义,宿主的 `isError` / `result` 只对工具调用有意义,
+    // 压成一个「什么都有」的桶就等于把两种语义混成一种。
     const executed =
-      request.command.trim() === ""
-        ? { stdout: "", stderr: "", exitCode: 0, timedOut: false }
-        : await sandbox.run({
-            command: request.command,
-            workspaceDir: options.workspaceDir,
-            // 这一步的应答端:步号绑在这里,不经过会话级槽位。
-            requestHandler: options.tools.requestHandlerFor(request.step),
-            ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
-            ...(options.stepWallClockMs === undefined
-              ? {}
-              : { wallClockMs: options.stepWallClockMs }),
-          });
+      request.call.name === "bash"
+        ? // `bash` 且命令串只有空白:不起一次只为退出 0 的 `bash`。动作层已经拒掉了**空**
+          // `command`(归 `malformed-arguments`),所以这里只剩「一串空白」这一种。
+          (request.command ?? "").trim() === ""
+          ? { stdout: "", stderr: "", exitCode: 0, timedOut: false, isError: undefined }
+          : {
+              ...(await sandbox.run({
+                command: request.command ?? "",
+                workspaceDir: options.workspaceDir,
+                ...(options.rootfsDir === undefined ? {} : { rootfsDir: options.rootfsDir }),
+                ...(options.stepWallClockMs === undefined
+                  ? {}
+                  : { wallClockMs: options.stepWallClockMs }),
+              })),
+              isError: undefined,
+            }
+        : await options.tools.dispatch(request.step, request.call);
     const facts = options.facts.current;
     // 宿主侧报告基础设施失败:这一刻才大声失败(loop 的 executor reject 是 infra 的专用通道),
     // 而不是把它折成模型的一次手滑。既然这次会话的网格身份已经不可信,后面的步也没意义了。
@@ -420,15 +458,47 @@ const createExecutor =
       stdout: executed.stdout,
       stderr: executed.stderr,
       exitCode: executed.exitCode,
-      timedOut: executed.timedOut,
-      // 收工判据是「这一步收到过 `finish` 请求」,不是命令字节里的某一行的形状。
+      ...("timedOut" in executed && executed.timedOut !== undefined
+        ? { timedOut: executed.timedOut }
+        : {}),
+      // 收工判据是「宿主收下了这一步的 `finish` 调用」,不是命令字节里的某一行的形状。
       ...(options.tools.finishRequested() ? { done: true } : {}),
       ...(facts.result === undefined ? {} : { result: facts.result }),
+      ...(executed.isError === undefined ? {} : { isError: executed.isError }),
       ...(facts.submission === undefined
         ? {}
         : { submission: facts.submission, evaluateCall: facts.evaluateCall ?? 1 }),
     };
   };
+
+/**
+ * 会话起跑前的**工具能力拒跑**(ADR-0032「未验证的翻译不写」)。
+ *
+ * ── 为什么在起跑前,而不是第一步 ──
+ *
+ * 不支持工具调用的席位不会「报错」:它的每一步都是一次零调用,仃步累积到 `action-parse`,
+ * 墙钟与 token 全部白花,而读报告的人只能看到「0 候选」。同样一件事在这里只需一句抛错就能
+ * 说清,而且一分钱不花。
+ *
+ * ── 文案说的是「本族未声明」,不是「该席位被渠道拒」──
+ *
+ * 后者是**运行期**事实,归渠道与档位管;而本函数判的是**协议**:「这一族的工具翻译写了、
+ * 且被真实会话验证过吗」。把两件事写成一句话,只会让后人以为「修好席位就能跑」,而实际要修
+ * 的是翻译。
+ *
+ * 这条边界在 `messages` 族上被真事试过一次:2026-11-20 该族带不带 `tools` 都 403,当时判成
+ * 「席位被渠道整体拒」。2026-11-21 复测三步全 200(那两次 403 是链路故障),证据有了、翻译
+ * 仍没写——ADR-0032 的 2026-11-21 修订段记着这件事。`403` 与 `没写翻译` 是两条独立的判据,
+ * 任一条都能让本函数抛错,但混成一句就会指错方向。
+ */
+const assertToolSurface = (config: ModelConfig): void => {
+  if (endpointSpec(config.endpointFamily).tools === undefined) {
+    throw new Error(
+      `模型 ${config.slug}:端点位 ${config.endpointFamily} 未声明工具调用能力（未经验证），拒绝起跑 ` +
+        `agent 会话。这不等于该席位被渠道拒：原因是本族的工具翻译没写或没被真实会话验证过，不是账号档位。`,
+    );
+  }
+};
 
 /**
  * 一次 `send` 的传输层包装:`retryTransport` 负责 429 / 连接级两套预算(ADR-0036)。
@@ -445,6 +515,8 @@ const sendWithTransportRetry = async (options: {
   readonly params: ModelParams;
   readonly evidence: AttemptEvidence[];
   readonly caliber: UsageCaliber | undefined;
+  /** 本会话的工具声明;缺席即不带 `tools` 发请求。 */
+  readonly tools?: readonly ToolDeclaration[];
   /** 会话总墙钟的中止信号(ADR-0029/0035):到点即打断进行中的调用。 */
   readonly signal: AbortSignal;
   /** 退避等待的实现(会话预算在这里停表,ADR-0036)。 */
@@ -462,6 +534,7 @@ const sendWithTransportRetry = async (options: {
       try {
         const response = await options.client.send(options.messages, options.params, {
           signal: options.signal,
+          ...(options.tools === undefined ? {} : { tools: options.tools }),
         });
         options.evidence.push(responseAttemptEvidence(number, response, options.caliber));
         return response;
@@ -559,6 +632,8 @@ export const generateOneModel = async (
     );
 
   const prompt: AgentPrompt = request.agentPrompt ?? loadAgentPrompt(request.root);
+  // 起跑前拒跑:本族没声明工具能力就不开始(理由见 `assertToolSurface`)。
+  assertToolSurface(config);
   // ── 工作区不住在 `archive/` 里 ──
   //
   // 那个目录的发布不变量是「目录存在 ⇔ 三件套完整」(ADR-0031),而工作区是一个**中途"留下来**的
@@ -606,6 +681,7 @@ export const generateOneModel = async (
     plan: planOf,
     // 缺省走真试跑子进程(与 one-shot 时代同一个入口):`evaluate` 因此是真网格。
     trial: request.trial ?? runTrialScript,
+    probeScript: request.probeScript ?? runTrialProbeScript,
     facts: facts.current,
   });
   const tools = createSessionTools({
@@ -613,6 +689,7 @@ export const generateOneModel = async (
     deadlineAtMs: startedAt + totalWallClockMs,
     check: services.check,
     evaluate: services.evaluate,
+    probe: services.probe,
     // 会话墙钟与 loop 用**同一个**钟。不传的话 dispatcher 默认走真实 `Date.now()`,
     // 而 `deadlineAtMs` 是从 `request.now()` 算出来的——两个钟一混,在注入了时钟的测试里
     // deadline 恒已过期(而生产上恰好看不出来,因为两者都是真实时间)。
@@ -683,7 +760,11 @@ export const generateOneModel = async (
   try {
     const loop = await runAgentSession({
       model: {
-        send: async (messages: readonly ChatMessage[], sendParams: ModelParams) => {
+        send: async (
+          messages: readonly ChatMessage[],
+          sendParams: ModelParams,
+          sendOptions?: SendOptions,
+        ) => {
           const record: SendRecord = { evidence: [], backoffMs: 0 };
           sends.push(record);
           inFlightSend = record;
@@ -695,6 +776,7 @@ export const generateOneModel = async (
               client,
               messages,
               params: sendParams,
+              ...(sendOptions?.tools === undefined ? {} : { tools: sendOptions.tools }),
               evidence: record.evidence,
               caliber,
               signal: controller.signal,
@@ -717,6 +799,8 @@ export const generateOneModel = async (
       executor,
       system: prompt.system,
       firstUser: prompt.user,
+      // 五个工具的声明(票 01 的 `AGENT_TOOLS`)。这是**协议面**:它每轮都带,不从 `params` 走。
+      tools: AGENT_TOOLS,
       params,
       contextLength,
       maxSteps,
@@ -1048,6 +1132,14 @@ const messageOfNoCandidate = (slug: string, loop: AgentLoopResult): string => {
  *
  * 取前两行而不是全量:诊断是给人读的一行提示清单,全文就在 `steps` 里(同一步的两路输出都已
  * 落盘),不在这里再复写一份。
+ *
+ * ── 拒绝档的名字进标题行,不进正文 ──
+ *
+ * 四档的纠正消息都是一大段(规则 + 正反例),而它们的开头几句长得很像,读诊断的人靠正文分不出来
+ * 这一步到底踩了哪一条。所以档名写在括号里一格,取值与档案里 `steps[i].action.rejectReason` 逐字
+ * 相同。名字的真源是动作层的 `ACTION_REJECT_REASONS`,这里只把它写出来,不另开一张表。
+ *
+ * `none` 里没有 `rejectReason` 的那一半也要分得清:那是两次截断转格式反馈,不是被拒。
  */
 const diagnosticLines = (loop: AgentLoopResult): readonly string[] => {
   if (loop.steps.length === 0) {
@@ -1060,7 +1152,11 @@ const diagnosticLines = (loop: AgentLoopResult): readonly string[] => {
       .map((line) => line.trimEnd())
       .filter((line) => line !== "")
       .slice(0, 2);
-    const head = `第 ${String(step.step)} 步(${step.action.kind},exit ${String(step.exitCode)}):`;
+    const reject =
+      step.action.kind === "none" && step.action.rejectReason !== undefined
+        ? `,拒绝档=${step.action.rejectReason}`
+        : "";
+    const head = `第 ${String(step.step)} 步(${step.action.kind},exit ${String(step.exitCode)}${reject}):`;
     return lines.length === 0
       ? [`${head} 两路输出都是空的`]
       : lines.map((line) => `${head} ${line}`);

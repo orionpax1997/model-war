@@ -1,35 +1,39 @@
 /**
- * 宿主侧工具服务与 fd 通道的对外面:**一个会话一个 `createSessionTools(...)`**。
+ * 宿主侧工具服务的对外面:**一个会话一个 `createSessionTools(...)`**。
  *
- * ── 票 05 从这里接 ──
+ * ── 接线方从这里接 ──
  *
  * ```ts
  * const tools = createSessionTools({
- *   workspaceDir,                                   // bind 成 /workspace 的那个宿主目录
+ *   workspaceDir,                                     // bind 成 /workspace 的那个宿主目录
  *   deadlineAtMs: sessionStartedAt + sessionBudgetMs, // 会话墙钟的绝对到点时刻
  *   check: createCheckService({ root }),
  *   evaluate: createEvaluateService({ root, model, runId, plan: () => plan, trial }),
+ *   probe: createProbeService({ root, model, plan: () => plan, probe: runTrialProbeScript }),
  * });
  *
- * const step = await sandbox.run({
- *   command: modelOutput,                           // 整块一次 bash -c,宿主不切块
- *   workspaceDir,
- *   requestHandler: tools.requestHandlerFor(step),  // 薄壳的 fd 3 由此应答(步号绑在这里)
- * });
- * if (tools.finishRequested()) break;               // 模型在块里调过 `finish`:本步结束后收工
+ * // `bash` 由执行器交给沙箱;其余四个由宿主受理。
+ * const outcome =
+ *   call.name === "bash"
+ *     ? await sandbox.run({ command, workspaceDir })   // 一步一次 bash -c,宿主不切块
+ *     : await tools.dispatch(step, call);              // 工具名 + 参数进,结果对象出
+ * if (tools.finishRequested()) break;                  // 模型调过 `finish`:本步结束后收工
  * ```
  *
- * 三件事在这一层就位:**通道应答**(带配额与会话墙钟)、**两个服务**(check / evaluate)、
- * **收工信号**(`finish` 请求)。执行器仍然只有 `sandbox.run` 一个动作,通道只是它的一个入参。
+ * 三件事在这一层就位:**工具分派**(带配额与会话墙钟)、**三个服务**(check / probe /
+ * evaluate)、**收工信号**(`finish` 调用)。沙箱仍然只有 `sandbox.run` 一个动作,而且它只跑
+ * `bash`。
  *
  * ── 为什么这个目录叫 `host` ──
- * 它与 `agent/sandbox`(执行器)和 `agent/shim`(沙箱里的薄壳)是**三个位置**,不是三份实现:
- * 判据全在宿主(本目录),执行只在执行器,沙箱里只有那条通道的一端。把服务写进沙箱是这一票
- * 明确不做的事(ADR-0033 的重评条件),所以目录名要把「哪一侧」说清。
+ * 它与 `agent/sandbox`(执行器)是两个位置,不是两份实现:判据全在宿主(本目录),隔离只在
+ * 执行器。把服务写进沙箱是这一批明确不做的事(ADR-0033 的重评条件),所以目录名要把「哪一侧」
+ * 说清。旧的第三个位置(`agent/shim`,沙箱里的薄壳)已删除——限制工具不再靠「沙箱里放一个
+ * 只会敲宿主的程序」,靠「沙箱里没有那条路」(票 03)。
  */
 
 export {
   createSessionTools,
+  PROBE_QUOTA_EXHAUSTED_MESSAGE,
   PROTOCOL_EXIT_CODE,
   QUOTA_EXHAUSTED_MESSAGE,
   REFUSAL_EXIT_CODE,
@@ -53,6 +57,12 @@ export {
   type CompileFn,
   type ValidateFn,
 } from "./check-service.js";
+export {
+  createProbeService,
+  type ProbeRequest,
+  type ProbeService,
+  type ProbeServiceDeps,
+} from "./probe-service.js";
 export {
   OBSERVATIONS_DIR_NAME,
   OBSERVATIONS_DIR_PATH,

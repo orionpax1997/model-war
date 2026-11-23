@@ -1,13 +1,13 @@
 /**
  * 沙箱执行器的对外面:一个 `sandbox.run(...)`、一个 `sandbox.preflight(...)`。
  *
- * ── 交接缝(票 04 / 05 从这里接) ──
- * - `sandbox.run({ command, workspaceDir, requestHandler? })` → `{ stdout, stderr, exitCode, timedOut }`
+ * ── 交接缝 ──
+ * - `sandbox.run({ command, workspaceDir })` → `{ stdout, stderr, exitCode, timedOut }`
  *   每步一次调用,每步一棵新进程树。工作区是**会话级**的(宿主持有、持久),沙箱实例是
  *   **步级**的(一步一个,不可复用)——连续性由工作区提供,不由沙箱提供。
- * - `requestHandler` 是薄壳—宿主通道(fd 3)的**唯一入口**:给了就按「一行进、一行出」把请求
- *   转给它。协议体在 `@model-war/schema` 的 `tool-channel.ts`,应答端是
- *   `agent/host` 的 `createSessionTools(...).requestHandler`;执行器只负责那条 fd 的开关。
+ * - 沙箱只跑 `bash`:一步一条命令串,没有第二个方向。`check` / `evaluate` / `finish` 是**工具
+ *   调用**,由宿主分派(`agent/host`),根本不进这里——那条 fd 3 通道与它的三个薄壳副本
+ *   已删除(票 03)。
  * - `sandbox.preflight()` 是启动自证:失败即抛,**不降级**到宿主进程。它的接线位置是**批入口**
  *   (`run.ts` 的 `runGeneration`,一批一次、在第一次模型调用之前):自证问的是「这台机器的
  *   内核能力够不够」,一批之内不会变,而每步重做只是把同一件事问 N 遍。
@@ -27,15 +27,10 @@ import { SANDBOX_ROOTFS_DIR } from "@model-war/schema";
 import { runStep, type SandboxStepRequest, type SandboxStepResult } from "./execute.js";
 import { assertSandboxReady, type PreflightOptions } from "./preflight.js";
 
-export type { RequestHandler, SandboxStepRequest, SandboxStepResult } from "./execute.js";
+export type { SandboxStepRequest, SandboxStepResult } from "./execute.js";
 export type { StepLimits } from "./argv.js";
 export type { PreflightOptions } from "./preflight.js";
-export {
-  CHANNEL_FD,
-  DEFAULT_STEP_WALL_CLOCK_MS,
-  OUTPUT_LIMIT_BYTES,
-  TIMEOUT_EXIT_CODE,
-} from "./execute.js";
+export { DEFAULT_STEP_WALL_CLOCK_MS, OUTPUT_LIMIT_BYTES, TIMEOUT_EXIT_CODE } from "./execute.js";
 export { BWRAP_MIN_VERSION, preflightFailureMessage } from "./preflight.js";
 export { LIMIT_FAILURE_EXIT_CODE, STEP_LIMITS } from "./argv.js";
 

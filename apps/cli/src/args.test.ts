@@ -136,3 +136,21 @@ it("--expected-plan：值被摘走，与 --observations 各归各家", () => {
     undefined,
   );
 });
+
+it("--match-limit：探针模式的场数，值被摘走、不被吃掉也不吃掉下一条 flag", () => {
+  const split = splitArgs([
+    "candidate.js",
+    "--root",
+    "/install",
+    "--model",
+    "alpha",
+    "--match-limit",
+    "8",
+  ]);
+  expect(split.matchLimit).toBe("8");
+  // 值原样是字符串：是不是正整数由入口判（它才是知道自己要不要这个数的那一侧）。
+  expect(split.positional).toEqual(["candidate.js"]);
+  // 缺值同义于不给（探针模式的判据是「给了这个 flag」，不给就是整张网格那条路）。
+  expect(splitArgs(["candidate.js", "--match-limit"]).matchLimit).toBeUndefined();
+  expect(splitArgs(["candidate.js", "--match-limit", "--root", "/x"]).matchLimit).toBeUndefined();
+});

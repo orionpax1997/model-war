@@ -17,6 +17,15 @@
  * 被忽略的触限打到 stderr 留痕，而不影响结论。
  *
  * 回放行直接丢弃：试跑要的只是一条结论与首触明细，重跑可复现，不留对局产物。
+ *
+ * ── 占用读数：只对候选座位聚合，且只披露 ──
+ *
+ * 执行器每 tick 在返回载荷里带一行 `peakUsage`（这一 tick 用了多少），记录器逐 tick 取更坏值。
+ * 它是**只披露**的读数，与 `tripped` 走的那条判定链不相交：`verdictOfTrips` 的零容忍规则
+ * 一个字不改，这里也不产出任何能被判定读到的形状。
+ *
+ * 只聚合**候选座位**：对手座位的占用不是候选的账——与 `verdictOfTrips` 把触限收窄到候选座位、
+ * `score-source` 的 tracker 只认 `owner` 是同一条纪律。
  */
 
 import { runMatch, type RunMatchParams } from "@model-war/engine";
@@ -28,6 +37,12 @@ import {
 
 import { terminalSummaryOf } from "./terminal-summary.js";
 
+import {
+  mergePeakUsage,
+  peakUsageOf,
+  type PeakUsageAccumulator,
+  type PeakUsageReading,
+} from "./peak-usage.js";
 import type { RecordedTrip } from "./trial.js";
 import {
   createScoreSourceTracker,
@@ -50,6 +65,13 @@ export type TrialMatchOutcome = {
   readonly terminalSummary?: TrialTerminalSummary;
   /** 作废即无结论：本场 void，调用方按"无法判定"处理（重跑一次，仍作废则大声失败）。 */
   readonly fault: { readonly tick: number } | null;
+  /**
+   * 候选座位逐 tick 的最坏占用读数（跨全部 tick 取更坏值）。**只披露、不判罚**。
+   *
+   * 缺席 = 整场一条读数都没采到。早退的那些 tick 只带事件计数，所以这里可能只有 `eventCount`
+   * ——那是这一场真实的采样面，不补零。
+   */
+  readonly peakUsage?: PeakUsageReading;
 };
 
 /**
@@ -71,6 +93,7 @@ const wrapWithRecorder = (
   trips: RecordedTrip[],
   observe: ((snapshot: ScoreSourceSnapshot) => void) | null,
   observeActions: ReturnType<typeof createActionFactsTracker>["observeTick"] | null,
+  peak: PeakUsageAccumulator | null,
 ): TrialRunner => {
   let tick = 0;
   return {
@@ -82,6 +105,9 @@ const wrapWithRecorder = (
     drainIntents: () => {
       const output = runner.drainIntents();
       observeActions?.(output.actionFacts);
+      // 占用读数逐 tick 取更坏值：它是「这条轨最坏用了多少」，不是这一 tick 的瞬时值。
+      // 只对候选座位挂累加器（`peak` 在别的座位上是 null），理由见文件头注。
+      if (peak !== null) mergePeakUsage(peak, output.peakUsage);
       for (const observation of output.observations) {
         if (observation.kind === "tripped") {
           trips.push({
@@ -121,6 +147,7 @@ export const runTrialMatch = (options: {
   const trips: RecordedTrip[] = [];
   const tracker = createScoreSourceTracker(candidateSeat);
   const actions = createActionFactsTracker(candidateSeat);
+  const peak: PeakUsageAccumulator = {};
   const outcome = runMatch({
     ruleset: options.ruleset,
     map: options.map,
@@ -135,6 +162,7 @@ export const runTrialMatch = (options: {
         trips,
         seat === candidateSeat ? tracker.observe : null,
         seat === candidateSeat ? actions.observeTick : null,
+        seat === candidateSeat ? peak : null,
       ),
     ),
     budget: options.budget,
@@ -143,8 +171,10 @@ export const runTrialMatch = (options: {
   });
   const scoreSource = tracker.reading();
   const actionFacts = actions.reading();
+  const peakUsage = peakUsageOf(peak);
+  const usage = peakUsage === undefined ? {} : { peakUsage };
   if (outcome.status === "uncertain-timeout") {
-    return { trips, scoreSource, actionFacts, fault: { tick: outcome.tick } };
+    return { trips, scoreSource, actionFacts, fault: { tick: outcome.tick }, ...usage };
   }
   return {
     trips,
@@ -152,5 +182,6 @@ export const runTrialMatch = (options: {
     actionFacts,
     terminalSummary: terminalSummaryOf(outcome, { ...options, candidateSeat }),
     fault: null,
+    ...usage,
   };
 };
