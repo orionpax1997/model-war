@@ -1164,8 +1164,8 @@ it("工具声明每轮都带:会话的每次 send 都收到同一份 AGENT_TOOLS
 it("本族未声明工具能力就在**起跑前**拒跑:零次模型调用,零步会话", async () => {
   const root = mkRoot();
   const model = stubClient([]);
-  // 用一个**没声明**工具能力的族（本轮是 `messages`：协议事实已有、翻译还没写）当样本:
-  // 它的席位不该开始一场会话:
+  // 用一个**没声明**工具能力的族（本轮是 `responses`：连协议事实都还没有）当样本:
+  // 它的席位不该开始一场会话:`messages` 已随票 09 声明,不再是样本。
   // 「不支持」要在起跑前说出来,而不是花 20 分钟跑到 0 候选才发现。
   // 第一句钉判据（本族未声明就拒跑），第二句钉**逐字文案**：真会话 stderr 曾经读出
   // 「拒绝起跑agent 会话」——缺一个空格。粘连的文案会被读成两个词拼错，改字/丢空格都会红。
@@ -1173,7 +1173,7 @@ it("本族未声明工具能力就在**起跑前**拒跑:零次模型调用,零�
     withRealBash(join(root, "ws"), () =>
       generateOneModel(
         requestWith(root, { createClient: () => model, workspaceDir: join(root, "ws") }),
-        configOf({ endpointFamily: "messages" }),
+        configOf({ endpointFamily: "responses" }),
       ),
     ),
   ).rejects.toThrow(
