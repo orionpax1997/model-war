@@ -12,7 +12,7 @@
  * 伪造**响应**。这条性质是结构性的,不要把它降级成「协议里加一个签名」。
  *
  * ── 为什么形状是手写解析 + 手写序列化 ──
- * 消费者是沙箱里的 `bash`:`packages/gen/src/agent/shim/shim.sh` 只有 `bash` 与三个 coreutils,
+ * 消费者是沙箱里的 `bash`:`packages/gen/src/agent/shim/shim.sh` 只有 `bash` 与 `cat`/`cp`/`ls`/`grep`,
  * 没有 `jq`。所以**响应的字节形态是协议的一部分**,由本模块的 `serializeToolResponse` 定死:
  *
  * - 键序固定 `exitCode` → `result` → `stdout` → `stderr`(最后一个字段永远是 `stderr`);
@@ -32,6 +32,8 @@
  * 本模块的序列化逐字节对齐(测试直接喂序列化输出给真 `bash`)。
  */
 
+import { OPTIMIZATION_CANDIDATE_LIMIT } from "./archive-meta.js";
+
 /** 通道用的 fd 序号。执行器(`packages/gen`)与薄壳写死同一个数。 */
 export const TOOL_CHANNEL_FD = 3;
 
@@ -46,8 +48,20 @@ export const TOOL_NAMES = ["check", "evaluate", "done"] as const;
 /** 受限工具名。 */
 export type ToolName = (typeof TOOL_NAMES)[number];
 
-/** `evaluate` 的会话级调用上限(ADR-0030:三次,总量固定、自由分配)。 */
-export const EVALUATE_CALL_LIMIT = 3;
+/**
+ * `evaluate` 的会话级调用上限(ADR-0030:三次,总量固定、自由分配)。
+ *
+ * ── 它只有一份真源 ──
+ *
+ * 这个数同时是两个判据:dispatcher **执行**它(超限即拒且不执行),harness 身份清单**记录**它
+ * (`identity.ts` 的 `quotas.evaluate`)。以前是两处各写一个 `3`,谁也说不清它们是不是同一个
+ * 事实——而「档案里说三次、实际能调四次」这种漂移在读侧看不出来。
+ *
+ * 真源取档案侧那个常量(`OPTIMIZATION_CANDIDATE_LIMIT`):它约束「一份档案最多几个候选」,而
+ * 候选就是真评出成绩的 `evaluate`,所以配额与它是同一件事。清单记录的是**执行的那个**名字
+ * (`EVALUATE_CALL_LIMIT`),因为它才是模型撞得到的那条判据。
+ */
+export const EVALUATE_CALL_LIMIT = OPTIMIZATION_CANDIDATE_LIMIT;
 
 /** 一行请求的形状。`args` 是模型给薄壳的参数(目前三个工具都不读它)。 */
 export type ToolRequest = {

@@ -67,3 +67,19 @@ export const inputTokensOf = (usage: unknown): number | undefined => {
   }
   return undefined;
 };
+
+/**
+ * 会话总墙钟已到点:进行中的模型调用被中止。
+ *
+ * ── 为什么是一个类型,而不是一句错误文本 ──
+ *
+ * 终止原因要落在 `wall-clock` 上,而不是 `transport`(ADR-0029/0032)。两者在诊断与处置上是
+ * 两件事:传输重试耗尽值得看状态码与退避账,而预算用完了只说明「这场会话跑得太久」——重跑一次
+ * 同样的会话不会更好,多给时间才会。loop 只认这一个类型,不去解析错误文本(文本是给人读的)。
+ */
+export class WallClockExhausted extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WallClockExhausted";
+  }
+}

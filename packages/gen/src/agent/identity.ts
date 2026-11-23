@@ -21,16 +21,17 @@
  * ── 数字不在本文件里再抄一遍 ──
  *
  * 截断上限取自 `truncate.ts`、步数与墙钟取自 `limits.ts`、配额取自真源包的
- * `OPTIMIZATION_CANDIDATE_LIMIT`、单步墙钟与通道 fd 取自执行器、挂载与网络**直接取 bwrap 的
+ * `EVALUATE_CALL_LIMIT`、单步墙钟与通道 fd 取自执行器、挂载与网络**直接取 bwrap 的
  * 参数表**。所以本文件没有第二份取值:改真源,清单跟着变,digest 跟着断代。
  */
 
 import { createHash } from "node:crypto";
 
-import { OPTIMIZATION_CANDIDATE_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
+import { EVALUATE_CALL_LIMIT, SANDBOX_ROOTFS_FILES } from "@model-war/schema";
 
-import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE, DONE_SENTINEL } from "./action.js";
+import { ACTION_FENCE_TAG, ACTION_REJECT_EXIT_CODE } from "./action.js";
 import { AGENT_MAX_STEPS, AGENT_TOTAL_WALL_CLOCK_MS, CONTEXT_GUARD } from "./limits.js";
+import { DONE_SENTINEL } from "./host/done.js";
 import { bwrapArgv } from "./sandbox/argv.js";
 import { CHANNEL_FD, DEFAULT_STEP_WALL_CLOCK_MS } from "./sandbox/execute.js";
 import {
@@ -142,7 +143,9 @@ export const harnessManifest = (): HarnessManifest => {
     visibleBinaries: SANDBOX_ROOTFS_FILES.filter((file) => file.startsWith("bin/")),
     sandboxArgv: argv,
     network: argv.includes("--unshare-net") ? "unshared" : "present",
-    quotas: { evaluate: OPTIMIZATION_CANDIDATE_LIMIT, check: "counts-as-step" },
+    // 配额取 **dispatcher 执行的那个**常量(`EVALUATE_CALL_LIMIT`),不是它的同值邻居:
+    // 清单要记录的是「模型撞得到的判据」。两者同源只在这一处(out of `tool-channel.ts`)。
+    quotas: { evaluate: EVALUATE_CALL_LIMIT, check: "counts-as-step" },
     services: { tools: HOST_SERVICE_TOOLS, shape: "host-side-service", channelFd: CHANNEL_FD },
     observation: {
       keys: ["stdout", "stderr"],
@@ -203,7 +206,7 @@ export const digestOf = (manifest: HarnessManifest): string =>
  * 它是**入库常量**而不是运行时现算,与 `SANDBOX_ROOTFS_TREE_HASH` 同一条纪律:判据锚定确切
  * 取值,回填时必须有人有意改这一行,于是「上限变了但没人注意」在 diff 里看得见。
  */
-export const HARNESS_DIGEST = "0066e99019dc4799a54a37b5a01f2065ed7a7759924baddf8edfc4b53463e298";
+export const HARNESS_DIGEST = "863eeca5eaeb966de1820be28332da3c2025fce79c404053daa18c7026ec9756";
 
 /** 现算的身份:`harnessVersion` + `harnessDigest`,落进档案的就是这两个。 */
 export const harnessIdentity = (): { version: string; digest: string } => ({

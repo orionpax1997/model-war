@@ -6,13 +6,7 @@
  */
 
 import { expect, it } from "vitest";
-import {
-  ACTION_REJECT_EXIT_CODE,
-  doneSentinelLine,
-  fencedBlocks,
-  isEvaluateAction,
-  parseAction,
-} from "./action.js";
+import { ACTION_REJECT_EXIT_CODE, fencedBlocks, isEvaluateAction, parseAction } from "./action.js";
 
 it("恰好一个 bash 块:整块原文交出去,多行也算一块", () => {
   const parsed = parseAction(
@@ -52,19 +46,11 @@ it("非 bash 标记(解释用的 ts 块):不执行,纠正消息点名标记是�
   expect(parsed.correction).toContain("它的标记是 ```ts,不是 ```bash");
 });
 
-it("块内独占一行的 done 只暴露行号,不在这里切分", () => {
+it("块内的 done 原样留在命令里,解析层不做切分也不报行号", () => {
+  // 切分与停块归宿主侧(`host/done.ts` 的 `splitDoneBlock`)。本层曾经另报一份「行号」,
+  // 而那份行号一路传到执行器却从没被读过——同一件事的两份判据,删掉的是多余的那一份。
   const parsed = parseAction("```bash\nevaluate\ndone\necho 不该跑到\n```\n");
-  expect(parsed).toEqual({
-    kind: "ok",
-    command: "evaluate\ndone\necho 不该跑到",
-    doneAtLine: 1,
-  });
-});
-
-it("`done` 必须是独占一行:句子里出现、或带别的参数都不算哨兵", () => {
-  expect(doneSentinelLine("echo done")).toBeUndefined();
-  expect(doneSentinelLine("done | cat")).toBeUndefined();
-  expect(doneSentinelLine("\n  done  \n")).toBe(1);
+  expect(parsed).toEqual({ kind: "ok", command: "evaluate\ndone\necho 不该跑到" });
 });
 
 it("围栏必须独占一行:行内反引号不算动作块", () => {

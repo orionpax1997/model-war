@@ -304,7 +304,14 @@ export type ArchiveMeta = {
   readonly generatedAt: string;
   /** 协议迭代轮数,与 `prompts` 的长度双存,装载期断言两者相等。 */
   readonly protocolRounds: number;
-  /** 逐轮完整 prompt,下标即轮次(0 起),长度必须等于 `protocolRounds`。 */
+  /**
+   * 起始 prompt 链的逐条文本:one-shot（历史）档下标即轮次、长度等于 `protocolRounds`;v3 档
+   * 只有一条（零步会话为零条）。
+   *
+   * v3 下它装的是「这个会话是拿哪份 prompt 起的」——首条 `user` 的逐字文本。`system` 不在
+   * 这里:它是协议,归属由 `harnessVersion` / `harnessDigest` 与 `prompts/agent-system.md` 承担
+   * （同一份字节存两处就会滞）。
+   */
   readonly prompts: readonly ArchivePrompt[];
   /** 生成日志,逐行一条。 */
   readonly generationLog: readonly string[];
@@ -689,7 +696,7 @@ export const ARCHIVE_META_JSON_SCHEMA = {
     prompts: {
       type: "array",
       description:
-        "逐轮完整 prompt,下标即轮次。刻意不写成带元字段的对象:现在每轮除了文本没有别的可填字段,一个空框架是负债(同 MapVariantSlot 头注里「不是带语义字段的对象」那一条)。",
+        "起始 prompt 链。one-shot(历史)档下标即轮次、长度等于 protocolRounds;v3 档只有一条(零步会话为零条),装的是首条 user 的逐字文本——system 是协议,不进这里(归 harnessVersion / harnessDigest)。刻意不写成带元字段的对象:现在每轮除了文本没有别的可填字段,一个空框架是负债(同 MapVariantSlot 头注里「不是带语义字段的对象」那一条)。",
       items: { type: "string", minLength: 1 },
     },
     generationLog: {

@@ -37,6 +37,7 @@ import { ACTION_REJECT_EXIT_CODE, isEvaluateAction, parseAction } from "./action
 import {
   AGENT_MAX_STEPS,
   AGENT_TOTAL_WALL_CLOCK_MS,
+  WallClockExhausted,
   contextGuardTrips,
   inputTokensOf,
 } from "./limits.js";
@@ -68,6 +69,13 @@ export type AgentLoopRequest = {
   readonly maxSteps?: number;
   /** 覆盖总墙钟(默认 `AGENT_TOTAL_WALL_CLOCK_MS`)。 */
   readonly totalWallClockMs?: number;
+  /**
+   * 总墙钟的 **active** 口径:已用掉多少该计的时间(退避等待不算,ADR-0035/0036)。
+   *
+   * 由接线方注入,因为它才知道哪些时间该划掉(`pipeline.ts` 用 `BudgetClock` 在退避期间停表)。
+   * 缺席时按注入的 `now()` 算,那一档**含**退避——只在没有接线方的单测里成立。
+   */
+  readonly activeElapsedMs?: () => number;
   /** 时钟注入缝:默认 `Date.now`。测试用它把墙钟推到边界。 */
   readonly now?: () => number;
 };
@@ -80,6 +88,10 @@ export type AgentLoopResult = {
   readonly atStep: number;
   /**
    * 起始 prompt:零步会话为空数组、否则一条(ADR-0031)。
+   *
+   * 它装的就是首条 `user` 的逐字文本(`request.firstUser`)。`system` 不在这里:那是**协议**,
+   * 不是「这次会话的任务」,它的归属是 `harnessVersion` / `harnessDigest` 与
+   * `prompts/agent-system.md`(同一份字节存两处就会漂)。
    *
    * `prompts` 在分步形态下恢复原始语义——「这个会话是拿哪份 prompt 起的」,而不是「每轮发了
    * 什么」;每轮发了什么由 `steps` 与历史规则确定性还原。
@@ -170,8 +182,11 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
   });
 
   for (let step = 1; step <= maxSteps; step += 1) {
-    // ① 总墙钟:两项硬约束之一。含退避是另一册的口径(ADR-0036),本段只按注入的时钟判。
-    if (now() - startedAt >= totalWallClockMs) {
+    // ① 总墙钟:两项硬约束之一。口径是 **active**(ADR-0035):退避等待不算。
+    //
+    // 注入的 `activeElapsedMs` 由接线方给(它知道哪些时间该划掉);不给时退回实钟——那一档
+    // **含**退避,只在没有外循环的测试里成立。
+    if ((request.activeElapsedMs?.() ?? now() - startedAt) >= totalWallClockMs) {
       termination = "wall-clock";
       atStep = steps.length;
       break;
@@ -200,13 +215,18 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
         attempts = 2;
         response = await request.model.send(history, params);
       }
-    } catch {
-      // 传输重试耗尽(重试预算在传输层,不在 loop):这一次调用不进过程记录、不进协议轮数。
+    } catch (cause) {
+      // 传输重试耗尽(重试预算在传输层,不在 loop)与「总墙钟到点、调用被中止」都到这里:
+      // 这一次调用不进过程记录、不进协议轮数。
       //
       // `attempts` 仍要记:一枪就死与「第一枪被截断、第二枪死在连接上」在诊断上是两件事,
       // 而后者只有这里知道——它没有过程记录条目可挂(ADR-0031)。
+      //
+      // 两种收场共用**同一行日志**(`kind: "transport"`:这一行按传输末行的形状读),差别只在
+      // 终止原因:预算到点不是传输运气不好,重跑一次同样的会话也不会更好。半截响应没有别的
+      // 落法——它既不是一份响应(没有 `finishReason`、没有被执行的动作),也不是一次手滑。
       turns.push({ kind: "transport", round: step, attempts });
-      termination = "transport";
+      termination = cause instanceof WallClockExhausted ? "wall-clock" : "transport";
       atStep = steps.length;
       break;
     }
@@ -241,11 +261,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
         observation = noActionObservation(parsed.correction);
       } else {
         parseFailures = 0;
-        const executed = await request.executor({
-          step,
-          command: parsed.command,
-          ...(parsed.doneAtLine === undefined ? {} : { doneAtLine: parsed.doneAtLine }),
-        });
+        const executed = await request.executor({ step, command: parsed.command });
         done = executed.done === true;
         action = actionOf(parsed.command, done);
         observation = observationOf(executed);

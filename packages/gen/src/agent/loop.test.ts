@@ -11,7 +11,7 @@ import { expect, it } from "vitest";
 import type { ChatMessage, ModelResponse } from "../model-client.js";
 import { fail, reply, stubClient } from "../stub-client.js";
 import { ACTION_REJECT_EXIT_CODE } from "./action.js";
-import { AGENT_MAX_STEPS } from "./limits.js";
+import { AGENT_MAX_STEPS, WallClockExhausted } from "./limits.js";
 import {
   ACTION_PARSE_FAILURE_LIMIT,
   hasCandidates,
@@ -132,6 +132,48 @@ it("总墙钟耗尽:下一步开始前就停下,不把已跑完的步算丢", as
   expect(model.calls).toHaveLength(3);
 });
 
+it("总墙钟用 **active** 口径:退避那段时间不进账(实钟没走也照样到点)", async () => {
+  // 接线方(`pipeline.ts`)的预算是「退避期间停表」的,它把 active 读数注进来。这里只验 loop
+  // 用的是那把尺子:实钟一格没走,active 已经超了 —— 该停,而且第一次检查就停。
+  const model = stubClient([reply(ACTION), reply(ACTION)]);
+  const executor = fakeExecutor([OK]);
+  let active = 0;
+  const result = await runAgentSession(
+    requestOf({
+      model,
+      executor: executor.executor,
+      totalWallClockMs: 500,
+      activeElapsedMs: () => {
+        active += 600;
+        return active;
+      },
+      maxSteps: 10,
+    }),
+  );
+
+  expect(result.termination).toBe("wall-clock");
+  expect(result.steps).toEqual([]);
+  expect(model.calls).toHaveLength(0);
+});
+
+it("调用被总墙钟中止:终止原因是 wall-clock,而那一行日志照旧留着", async () => {
+  // 半截响应既不是一份响应(没有 `finishReason`、没有被执行的动作),也不是一次手滑;
+  // 它按传输末行的形状留一行,终止原因单独记 —— 重跑一次同样的会话不会更好,多给时间才会。
+  const model = {
+    send: async (): Promise<ModelResponse> => {
+      throw new WallClockExhausted("会话总墙钟已到点:进行中的调用被中止");
+    },
+  };
+  const result = await runAgentSession(requestOf({ model, executor: fakeExecutor([]).executor }));
+
+  expect(result.termination).toBe("wall-clock");
+  expect(result.steps).toEqual([]);
+  expect(result.atStep).toBe(0);
+  // 那一行日志在:形状是传输末行(读侧据此判「未收敛日志只能是传输末行」)。
+  expect(result.turns.map((turn) => turn.kind)).toEqual(["transport"]);
+  expect(result.turns[0]).toMatchObject({ round: 1, attempts: 1 });
+});
+
 it("上下文守卫:上一轮读数到窗口 80% 即停,不是估算", async () => {
   const model = stubClient([reply(ACTION, { usage: { prompt_tokens: 8_000 } }), reply(ACTION)]);
   const executor = fakeExecutor([OK]);
@@ -230,8 +272,10 @@ it("截断重试并入同一步:第二次成功就照常执行,attempts 是 2", 
     reply(ACTION),
   ]);
   const executor = fakeExecutor([OK]);
+  // 时钟冻结:`sendMs` 的断言是「这一行记了模型的耗时」,不是「耗时恰好不是 0」——
+  // 拿真钟去断言 0 会让这条用例在机器忙的时候随机红(两次 `Date.now()` 之间过了 1 ms)。
   const result = await runAgentSession(
-    requestOf({ model, executor: executor.executor, maxSteps: 1 }),
+    requestOf({ model, executor: executor.executor, maxSteps: 1, now: () => 0 }),
   );
 
   expect(result.steps).toHaveLength(1);
@@ -356,16 +400,12 @@ it("一次真评出成绩的 evaluate 把提交身份记下来,步号即候选�
   expect(result.submissions).toEqual([{ step: 1, call: 1, ...SUBMISSION }]);
 });
 
-it("解析层的 done 行号原样递给执行器(块内 first 行 = 0 起)", async () => {
+it("执行请求只有两格:第几步、整块原文(切分归执行器,不在请求里夹带行号)", async () => {
   const model = stubClient([reply("```bash\nevaluate\ndone\necho 不该跑\n```")]);
   const executor = fakeExecutor([{ ...OK, done: true }]);
   await runAgentSession(requestOf({ model, executor: executor.executor }));
 
-  expect(executor.requests[0]).toMatchObject({
-    step: 1,
-    command: "evaluate\ndone\necho 不该跑",
-    doneAtLine: 1,
-  });
+  expect(executor.requests[0]).toEqual({ step: 1, command: "evaluate\ndone\necho 不该跑" });
 });
 
 it("结果侧证据原样落步,没有结果时不写空壳", async () => {

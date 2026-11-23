@@ -1,9 +1,9 @@
 /**
- * 入库 rootfs 的**树口径**:文件枚举、整棵树哈希、以及「这四个是不是静态 ELF」。
+ * 入库 rootfs 的**树口径**:文件枚举、整棵树哈希、以及「这五个是不是静态 ELF」。
  *
  * ── 哈希口径与票 02 的契约树哈希同源,但**范围不同,两者不能互换** ──
  * 两边都是「按路径排序、`path\0bytes` 串接后的 sha256」。这边算的是**整棵 rootfs**
- * (`packages/gen/sandbox-rootfs/`):静态 bash、三个 coreutils、三个薄壳、`contract/` 四条。
+ * (`packages/gen/sandbox-rootfs/`):静态 bash、四个 coreutils、三个薄壳、`contract/` 四条。
  * 契约包身份(`docs/rules-v2/` 那四条)是另一个数,它由契约包自己算。把两个数当同一个用,
  * 会在「只改了 bash 版本、契约没动」时把契约身份也换掉——那是两种完全不同的断代。
  *
@@ -43,8 +43,14 @@ export const ROOTFS_PROVENANCE_DOC = "PROVENANCE.md";
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const ROOTFS_MOUNTED_DIRS = ["bin", "contract"] as const;
 
-/** 四个必须是静态 ELF 的二进制(路径相对 rootfs 根)。 */
-export const ROOTFS_STATIC_BINARIES = ["bin/bash", "bin/cat", "bin/grep", "bin/ls"] as const;
+/** 五个必须是静态 ELF 的二进制(路径相对 rootfs 根)。 */
+export const ROOTFS_STATIC_BINARIES = [
+  "bin/bash",
+  "bin/cat",
+  "bin/cp",
+  "bin/grep",
+  "bin/ls",
+] as const;
 
 /** 三个薄壳:rootfs 里那一份必须是 `packages/gen/src/agent/shim/shim.sh` 的逐字节副本。 */
 export const ROOTFS_SHIM_NAMES = ["check", "done", "evaluate"] as const;

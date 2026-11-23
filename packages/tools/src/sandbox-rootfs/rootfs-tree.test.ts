@@ -110,7 +110,7 @@ describe("文件枚举", () => {
     }
   });
 
-  it("真实 rootfs:四个静态二进制都在,且它们真的没有 PT_INTERP", () => {
+  it("真实 rootfs:五个静态二进制都在,且它们真的没有 PT_INTERP", () => {
     const rootfsDir = join(repoRoot, "packages/gen/sandbox-rootfs");
     const paths = rootfsFilePaths(rootfsDir);
     for (const path of ROOTFS_STATIC_BINARIES) {

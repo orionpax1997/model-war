@@ -22,10 +22,12 @@ import { completeGridTrial } from "../../trial-grid.fixture.js";
 import { gridPlanFixture } from "../../trial-plan.fixture.js";
 import type { CompileFn } from "./check-service.js";
 import {
+  candidateArtifactFiles,
   candidateObservationsFile,
   candidateScriptFile,
   candidateSourceFile,
   createEvaluateService,
+  isCandidateArtifactOf,
   type EvaluateServiceDeps,
 } from "./evaluate-service.js";
 
@@ -121,6 +123,33 @@ describe("快照即提交:两份字节在跑之前落定", () => {
     expect(readFileSync(join(archiveDir, candidateSourceFile(observationsFile)), "utf8")).toBe(
       SOURCE,
     );
+  });
+
+  it("编译用的字节 == 快照的字节:编译期间工作区被改写也不会串", async () => {
+    // 模型写 `evaluate &` 再改 `script.ts`:编译器跑着的时候工作区已经换了另一份字节。
+    // 分两次读(先读去编译、之后再拷一份快照)会把第二份字节当成本次提交,而产物来自第一份。
+    const root = installRoot();
+    const dir = workspace(SOURCE);
+    let compiledInput = "";
+    const compileWhileRewriting: CompileFn = (options) => {
+      compiledInput = options.source;
+      // 编译要几秒,这期间模型的写句柄真的可以动手。
+      writeFileSync(join(dir, "script.ts"), "改过了\n", "utf8");
+      return compileOk(options);
+    };
+    const service = createEvaluateService(depsOf({ root, compile: compileWhileRewriting }));
+    const outcome = await service({ workspaceDir: dir, call: 1, step: 2 });
+    expect(outcome.exitCode).toBe(0);
+
+    const observationsFile = candidateObservationsFile("r1", 2);
+    const snapshot = readFileSync(
+      join(root, "archive", "alpha", candidateSourceFile(observationsFile)),
+    );
+    // 快照 == 喂给编译器的那段字节 == `scriptSha256` 说的那一份。
+    expect(snapshot.equals(Buffer.from(compiledInput, "utf8"))).toBe(true);
+    expect(sha256Hex(snapshot)).toBe(outcome.submission?.scriptSha256);
+    // 反面证据:工作区里已经是另一份了(否则这条用例证明不了「不串」)。
+    expect(readFileSync(join(dir, "script.ts"), "utf8")).toBe("改过了\n");
   });
 
   it("同一步重复提交是可读的拒绝(不升级成 infra,不覆盖既有证据)", async () => {
@@ -276,10 +305,11 @@ describe("拒绝语义:不白花一次信息机会", () => {
 });
 
 describe("基础设施:计划是网格的身份", () => {
-  it("缺步号就大声失败(候选证据族不能无名落盘)", async () => {
+  it("步号必须是正整数(候选证据族不能无名落盘)", async () => {
+    // 类型上 `step` 已经必填;这一条拦的是契约外的调用(0 / NaN)。
     const dir = workspace(SOURCE);
     const service = createEvaluateService(depsOf());
-    await expect(service({ workspaceDir: dir, call: 1 })).rejects.toThrow(/缺步号/);
+    await expect(service({ workspaceDir: dir, call: 1, step: 0 })).rejects.toThrow(/正整数/);
   });
 
   it("试跑子进程抛错原样上抛(计划重建不符 / 入口异常都是 infra)", async () => {
@@ -293,5 +323,25 @@ describe("基础设施:计划是网格的身份", () => {
       }),
     );
     await expect(service({ workspaceDir: dir, call: 1, step: 1 })).rejects.toThrow(/计划/);
+  });
+});
+
+describe("失败清理:按名字认出自己那一族", () => {
+  it("四份旁挂产物都算自己的;别的 runId、前缀串与三件套都不算", () => {
+    const names = candidateArtifactFiles(candidateObservationsFile("r1", 3));
+    // 观测原料 + 源快照 + 产物快照 + 网格汇总:少写一份就是一条残留。
+    expect(names).toHaveLength(4);
+    for (const name of names) expect(isCandidateArtifactOf(name, "r1")).toBe(true);
+
+    // 不是自己的:三件套目录名、失败记录、别的跑的字节。
+    for (const name of [
+      "r1",
+      "failed-r1.json",
+      ...candidateArtifactFiles(candidateObservationsFile("r2", 3)),
+    ]) {
+      expect(isCandidateArtifactOf(name, "r1")).toBe(false);
+    }
+    // 前缀串不是自己:`r1-round-2` 那一跑的档不该被 `r1` 的清掉。
+    expect(isCandidateArtifactOf(candidateObservationsFile("r1-round-2", 3), "r1")).toBe(false);
   });
 });

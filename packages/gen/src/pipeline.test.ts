@@ -40,9 +40,10 @@ import { fail, reply, replies, stubClient } from "./stub-client.js";
 import { generateOneModel } from "./pipeline.js";
 import { runGeneration, type GenerationRequest } from "./run.js";
 import type { ModelConfig } from "./config.js";
-import type { ChatMessage, ModelParams } from "./model-client.js";
+import type { ChatMessage, ModelParams, ModelResponse } from "./model-client.js";
 import { HARNESS_DIGEST, HARNESS_VERSION } from "./agent/identity.js";
 import { ACTION_REJECT_EXIT_CODE } from "./agent/action.js";
+import { withHostBash, withRealBash } from "./agent/sandbox.fixture.js";
 import type { AgentExecResult } from "./agent/types.js";
 import { TRUNCATED_RESPONSE_FEEDBACK } from "./agent/truncate.js";
 import { completeGridTrial } from "./trial-grid.fixture.js";
@@ -138,92 +139,6 @@ const stepOk = (overrides: Partial<AgentExecResult> = {}): AgentExecResult => ({
 const metaOf = (root: string, slug = "alpha", runId = "r1"): ArchiveMeta =>
   JSON.parse(readFileSync(join(root, "archive", slug, runId, "meta.json"), "utf8")) as ArchiveMeta;
 
-/**
- * 把假执行器接到 `generateOneModel` 上。
- *
- * ── 为什么改 `sandbox.run` 而不是加一个 `executor` 注参 ──
- *
- * 生产路径上「怎么跑一步」只有一处(`sandbox.run`),加一个注参就是给它开第二条路,而那条只在
- * 测试里存在——那是最容易与真实路径分叉的东西。这里替掉的正是那一个调用点。
- */
-const withHostBash = async <T>(
-  handler: (command: string) => AgentExecResult | Promise<AgentExecResult>,
-  run: () => Promise<T>,
-): Promise<T> => {
-  const mod = await import("./agent/sandbox/index.js");
-  const original = mod.sandbox.run;
-  Object.defineProperty(mod.sandbox, "run", {
-    configurable: true,
-    writable: true,
-    value: async (request: {
-      command: string;
-      workspaceDir: string;
-      requestHandler?: (line: string) => Promise<string>;
-    }) => {
-      // ── 通道先于执行 ──
-      //
-      // 沙箱里那几个薄壳(`check` / `evaluate` / `done`)在真 bwrap 里会往 fd 3 写一行请求、
-      // 读一行响应，**它自己什么也不干**。所以这三个命令必须走通道，不能落到 handler 里——
-      // 后者是「其他命令」的替身。顺序反了会让 `evaluate` 变成一次「命令不存在」的失败，
-      // 而那条路径静默地把「宿主服务从没被调用」伪装成一个普通的非零退出码。
-      const tool = request.command.trim();
-      if (request.requestHandler !== undefined && TOOL_COMMANDS.has(tool)) {
-        const response = JSON.parse(
-          await request.requestHandler(JSON.stringify({ tool, args: [] })),
-        ) as { exitCode: number; stdout: string; stderr: string };
-        return {
-          stdout: response.stdout,
-          stderr: response.stderr,
-          exitCode: response.exitCode,
-          timedOut: false,
-        };
-      }
-      const result = await handler(request.command);
-      return { ...result, timedOut: result.timedOut ?? false };
-    },
-  });
-  try {
-    return await run();
-  } finally {
-    Object.defineProperty(mod.sandbox, "run", {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
-  }
-};
-
-/**
- * 在宿主 `bash` 里真跑那一块命令,并把 `/workspace` 映射到那个临时目录。
- *
- * ── 为什么要把 `/workspace` 换掉 ──
- *
- * 模型写的命令里是**沙箱视角**的绝对路径(`cat > /workspace/script.ts`)。真 bwrap 把工作区
- * bind 成 `/workspace`,所以那条路径在沙箱里成立;宿主上不成立。这里把前缀改写成真实路径再跑,
- * 于是「模型写的命令」与「工作区里真的出现了什么」这两件事在测试里也连得起来。
- *
- * 改写只换 `/workspace` 这个前缀,不动命令的其余字节——包括 heredoc 与管道。那几个薄壳
- * (`check` / `evaluate` / `done`)不在这里跑:它们由 `withHostBash` 那条通道替身应答。
- */
-const withRealBash = async <T>(workspaceDir: string, run: () => Promise<T>): Promise<T> => {
-  const { spawnSync } = await import("node:child_process");
-  return await withHostBash((command) => {
-    const hostCommand = command.replaceAll("/workspace", workspaceDir);
-    const executed = spawnSync("/bin/bash", ["-c", hostCommand], {
-      cwd: workspaceDir,
-      encoding: "utf8",
-    });
-    return {
-      stdout: executed.stdout,
-      stderr: executed.stderr,
-      exitCode: executed.status ?? 1,
-    };
-  }, run);
-};
-
-/** 三个走通道的薄壳:它们的命令行本身就是要发给宿主的那个请求。 */
-const TOOL_COMMANDS = new Set(["check", "evaluate", "done"]);
-
 it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 只存一份", async () => {
   const root = mkRoot();
   // 两步:第一步写脚本,第二步 evaluate 出成绩。
@@ -253,6 +168,9 @@ it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 
   expect(meta.protocolRounds).toBe(2);
   // 首条 prompt 只有一份(不是每步一份)。
   expect(meta.prompts).toEqual([FIRST_USER]);
+  // 它装的是首条 `user` 的逐字文本:`system` 是协议,不进档案(归 harnessVersion / harnessDigest),
+  // 否则同一份字节就有两个家。
+  expect(meta.prompts[0]).not.toContain(SYSTEM);
   // 身份字段成套(ADR-0034「身份从第一份 agent 档起就写」)。
   expect(meta.harnessVersion).toBe(HARNESS_VERSION);
   expect(meta.harnessDigest).toBe(HARNESS_DIGEST);
@@ -432,6 +350,54 @@ it("截断重试并入同一步:第二次成功就照常执行,attempts 记 2,�
   expect(outcome.failure.generationLog).toHaveLength(1);
 });
 
+it("截断重试的证据按步聚合:该步日志行装两条 attempts,两枪各就各位", async () => {
+  const root = mkRoot();
+  // 三步:写脚本 → evaluate(第一枪截断、第二枪成功) → done。
+  //
+  // 这是「一次 send 的桶 ≠ 一行日志」那条接缝:该步有**两次** send,而日志仍只有一行。
+  // 旧写法按下标取,第二行会拿到第一步的证据、第二枪丢掉(ADDR-0032:同一步的第二个 attempt,
+  // `generationLog` 一行、`attempts` 两条)。
+  const model = stubClient([
+    reply(writeScript(SCRIPT)),
+    reply("```bash\nls /contract", { finishReason: "length" }),
+    reply("```bash\nevaluate\n```"),
+    reply("```bash\ndone\n```"),
+  ]);
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const outcome = await withRealBash(workspaceDir, () =>
+    generateOneModel(
+      requestWith(root, { createClient: () => model, workspaceDir, maxSteps: 4 }),
+      configOf(),
+    ),
+  );
+
+  expect(outcome.kind).toBe("frozen");
+  if (outcome.kind !== "frozen") return;
+  // 重试不占步:三步就是三步,协议轮数也还是三。
+  expect(outcome.meta.steps).toHaveLength(3);
+  expect(outcome.meta.protocolRounds).toBe(3);
+  expect(outcome.meta.generationLog).toHaveLength(3);
+
+  const logs = outcome.meta.generationLog.map(
+    (line) =>
+      JSON.parse(line) as {
+        round: number;
+        attempts: number;
+        attemptEvidence: { attempt: number; finishReason?: string }[];
+      },
+  );
+  // 行号 = 步号,一行一步。
+  expect(logs.map((log) => log.round)).toEqual([1, 2, 3]);
+  expect(logs.map((log) => log.attempts)).toEqual([1, 2, 1]);
+  // 截断那一步的两枪都在这一行里,且先后到位(读侧按下标校验 1..n)。
+  expect(logs[1]?.attemptEvidence.map((item) => item.attempt)).toEqual([1, 2]);
+  expect(logs[1]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["length", "stop"]);
+  // 另外两步各一枪,不会舋到截断那一步的证据。
+  expect(logs[0]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["stop"]);
+  expect(logs[2]?.attemptEvidence.map((item) => item.finishReason)).toEqual(["stop"]);
+}, 60_000);
+
 it("第二次仍截断:转格式反馈,不执行任何命令", async () => {
   const root = mkRoot();
   const model = stubClient([
@@ -501,6 +467,59 @@ it("总墙钟耗尽:已跑完的步留着,不判失败(终止与落档正交)", 
   expect(outcome.agent.termination).toBe("wall-clock");
   // 走完的那几步仍在过程记录里。
   expect(outcome.agent.steps.length).toBeGreaterThan(0);
+});
+
+it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 wall-clock", async () => {
+  // ADR-0029/0035:预算是一项硬约束,而「等到步与步之间才发现」等于让一次调用随便超支
+  // (`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z` 两次调用各 816 s / 928 s)。
+  // 这里造的形状就是空闲超时挡不住的那一种:客户端一直不返回,只有在被 abort 时才结束。
+  const root = mkRoot();
+  let calls = 0;
+  const slow = {
+    send: async (
+      _messages: readonly ChatMessage[],
+      _params: ModelParams,
+      options?: { readonly signal?: AbortSignal },
+    ): Promise<ModelResponse> =>
+      await new Promise<ModelResponse>((_resolve, reject) => {
+        calls += 1;
+        options?.signal?.addEventListener("abort", () => reject(new Error("aborted by budget")), {
+          once: true,
+        });
+      }),
+  };
+
+  const startedAt = Date.now();
+  const outcome = await withHostBash(
+    () => stepOk(),
+    () =>
+      generateOneModel(
+        requestWith(root, {
+          createClient: () => slow,
+          totalWallClockMs: 200,
+          // 真钟:这条判据量的是墙钟本身,冻住它就没有被测对象了。
+          now: () => new Date(),
+        }),
+        configOf(),
+      ),
+  );
+
+  expect(Date.now() - startedAt).toBeLessThan(10_000);
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  expect(outcome.agent.termination).toBe("wall-clock");
+  // 半截响应不进过程记录、不进协议轮数(ADR-0031):它没有被执行的任何动作。
+  expect(outcome.agent.steps).toEqual([]);
+  expect(outcome.agent.atStep).toBe(0);
+  // 但**日志行仍在**:那一行的形状是传输末行(`responseConverged: false`),不是「静默丢掉」。
+  const lines = outcome.failure.generationLog.map(
+    (line) => JSON.parse(line) as Record<string, unknown>,
+  );
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatchObject({ kind: "transport", round: 1, responseConverged: false });
+  expect(Array.isArray(lines[0]?.attemptEvidence)).toBe(true);
+  // 到点之后不再发新的尝试:一次 abort 只烧掉一次调用。
+  expect(calls).toBe(1);
 });
 
 it("配额拒绝模型看得见:第 4 次 evaluate 被 dispatcher 拒掉,stderr 进观测", async () => {
@@ -652,7 +671,8 @@ it("一条 `done` 在块中:`done` 之前的命令照跑,action 记 done", async
   const outcome = await withHostBash(
     (command) => {
       commands.push(command);
-      return stepOk({ done: true });
+      // 这一块真跑了一个命令:它自己的退出码要原样落进过程记录(不是被 done 改成 0)。
+      return stepOk({ done: true, exitCode: 3 });
     },
     () => generateOneModel(requestWith(root, { createClient: () => model }), configOf()),
   );
@@ -663,6 +683,31 @@ it("一条 `done` 在块中:`done` 之前的命令照跑,action 记 done", async
   // 块被切开:执行的是 done 之前那半段。
   expect(commands[0]).toBe("ls /contract");
   expect(outcome.agent.steps[0]?.action).toEqual({ kind: "done" });
+  // 有前置命令就是一次真的执行:退出码是命令自己的那个。
+  expect(outcome.agent.steps[0]?.exitCode).toBe(3);
+});
+
+it("`done` 独占一块:不起 shell,退出码记 0(不是「起了一次空 bash」)", async () => {
+  // 切完 body 为空就不该起进程:那一步什么都没执行,过程记录里那格就该是 0。
+  // 反面证据由替身给:它一律报 7——真的把空命令交给它跑,这个 0 就变不成。
+  const root = mkRoot();
+  const model = stubClient([reply("```bash\ndone\n```")]);
+  let ran = 0;
+  const outcome = await withHostBash(
+    () => {
+      ran += 1;
+      return stepOk({ exitCode: 7, stdout: "不该跑到\n" });
+    },
+    () =>
+      generateOneModel(requestWith(root, { createClient: () => model, maxSteps: 1 }), configOf()),
+  );
+
+  expect(outcome.kind).toBe("failed");
+  if (outcome.kind !== "failed") return;
+  expect(ran).toBe(0);
+  expect(outcome.agent.steps[0]?.action).toEqual({ kind: "done" });
+  expect(outcome.agent.steps[0]?.exitCode).toBe(0);
+  expect(outcome.agent.steps[0]?.stdout).toBe("");
 });
 
 it("runGeneration 写失败档:agent 字段与 steps 一起落盘", async () => {
@@ -731,6 +776,55 @@ const sessionOf = (scripts: readonly string[]): readonly string[] =>
   scripts
     .flatMap((script) => [writeScript(script), "```bash\nevaluate\n```"])
     .concat(["```bash\ndone\n```"]);
+
+it("freeze 失败也清干净:`archive/<slug>/` 里只剩那一份 failed-<runId>.json", async () => {
+  const root = mkRoot();
+  // 把冻结期的体积上限压到 8 字节:评测能过(编译与网格都不看这个上限),静态校验必拦。
+  // 这就是一条真会发生的 freeze 失败:候选快照已经落盘,三件套却拼不出来。
+  const ruleset = JSON.parse(readFileSync(join(root, "rulesets", "v2.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  writeFileSync(
+    join(root, "rulesets", "v2.json"),
+    `${JSON.stringify({ ...ruleset, scriptSizeLimit: 8 })}\n`,
+  );
+  writeFileSync(
+    join(root, "models.yaml"),
+    [
+      "models:",
+      "  - slug: alpha",
+      "    endpointFamily: chat-completions",
+      "    baseUrl: https://example.invalid/v1",
+      "    modelId: vendor/alpha",
+      "    credentialEnvVar: TEST_KEY",
+      "    channelId: test-channel",
+      "    contextLength: 100000",
+    ].join("\n"),
+  );
+  const model = stubClient([reply(writeScript(SCRIPT)), reply("```bash\nevaluate\n```")]);
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  const code = await withRealBash(workspaceDir, () =>
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: () => model,
+      agentPrompt: { user: FIRST_USER, system: SYSTEM },
+      workspaceDir,
+      maxSteps: 2,
+      trial: completeGridTrial(),
+      trialPlan: () => gridPlanFixture(),
+    }),
+  );
+
+  expect(code).toBe(1);
+  // 发布不变量:「失败只写 failed-<runId>.json」。候选快照、观测原料、网格汇总一个不留,
+  // 临时组装目录也不留(它是 `.tmp-*`)。
+  const entries = readdirSync(join(root, "archive/alpha"));
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatch(/^failed-.+\.json$/u);
+}, 60_000);
 
 it("候选一到三条:1 次 / 2 次 / 3 次评测各产出同等条数,下标即第几次评测", async () => {
   for (const count of [1, 2, 3] as const) {
@@ -835,6 +929,8 @@ it("观测不完整不产候选:缺场的那一次不产出成绩,档落成失�
   // 「为什么没成绩」写得出来:缺场那一句在诊断里(取自那次 evaluate 的 stderr)。
   expect(outcome.failure.diagnostics.join("\n")).toContain("不完整");
   expect(existsSync(join(root, "archive/alpha/r1/meta.json"))).toBe(false);
+  // 失败会话不留旁挂产物:那一跑写过一整套候选证据族(先编译、先落快照、跑网格),全部撤掉。
+  expect(readdirSync(join(root, "archive/alpha"))).toEqual([]);
 }, 60_000);
 
 it("快照字节 == 评估时的工作区字节:评完之后改文件不影响成绩", async () => {

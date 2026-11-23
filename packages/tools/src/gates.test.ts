@@ -1912,6 +1912,35 @@ it("gates 不在 unit 的拾取范围里(否则 check 会套娃成叉炸弹)", (
   expect(gatesListed.output, gatesListed.output).toContain("gates.test.ts");
 });
 
+it("真 bwrap 的会话用例不在常跑入口上(sandbox project)", () => {
+  // 它要非特权 user namespace 与系统装的 bubblewrap,而常跑链不装——收进 `unit` 的后果是
+  // 「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」,两种处方混成一条红。
+  const path = "agent-real-session.test.ts";
+  for (const project of ["unit", "property", "gates", "slow"] as const) {
+    const listed = run("pnpm", ["exec", "vitest", "list", "--project", project]);
+    expect(listed.status, listed.output).toBe(0);
+    expect(listed.output, `${path} 被 ${project} 收进去了`).not.toContain(path);
+  }
+  // 反面证据:它确实被自己的 project 收着(排除过头与没排除是同一种失败)。
+  const sandboxListed = run("pnpm", ["exec", "vitest", "list", "--project", "sandbox"]);
+  expect(sandboxListed.status, sandboxListed.output).toBe(0);
+  expect(sandboxListed.output, sandboxListed.output).toContain(path);
+
+  // 默认 `test` 也不带它,而它的入口是命名脚本 `check:sandbox`:
+  // 拆出去是为了「有需要时手工跑」,没有入口这件事就没做完。
+  const test = manifest().scripts["test"] ?? "";
+  expect(test, "默认 test 不该跑真 bwrap 的会话用例").not.toContain("--project sandbox");
+  expect(
+    manifest().scripts["check:sandbox"] ?? "",
+    "真 bwrap 的会话用例没有落进可手工调用的命名脚本",
+  ).toContain("--project sandbox");
+
+  // 同时确认它的**假执行器孪生**还在常跑链上:移走不等于丢掉覆盖。
+  const unitListed = run("pnpm", ["exec", "vitest", "list", "--project", "unit"]);
+  expect(unitListed.status, unitListed.output).toBe(0);
+  expect(unitListed.output, unitListed.output).toContain("agent-session-archive.test.ts");
+});
+
 it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
   // `gates-slow.test.ts` 会 spawn `check`,所以它对 unit 的禁令与 gates.test.ts 完全同源:
   // 一旦被 `check` 里的 `vitest run --project unit` 收进去,后果同样是套娃,而且同样

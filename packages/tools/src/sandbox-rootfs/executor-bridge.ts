@@ -109,7 +109,19 @@ try {
           trial: () => ({ passed: true, stdout: "gate 假试跑" }),
         }),
       });
-      requestHandler = (line) => { received.push(line); return tools.requestHandler(line); };
+      // ── 名字在这里是跨包的字面量,tsc 看不见 ──
+      //
+      // 这个桥接是靠动态 import 拼起来的:入口路径是算出来的,所以 gen 把
+      // requestHandler 改名成 requestHandlerFor(step) 时,这里不会报类型错——它只会在
+      // 运行期变成 TypeError,而那条错被通道的 catch 吞掉,薄壳就等到单步墙钟为止
+      // (实测:红成一句「退出码 124、两路输出都空」)。所以先确认拿到的是函数,不是祈祷。
+      const handlerFor = tools.requestHandlerFor;
+      if (typeof handlerFor !== "function") {
+        throw new Error(
+          "执行器桥接:createSessionTools 没有交出 requestHandlerFor —— 通道应答端改名了,这里要跟着改",
+        );
+      }
+      requestHandler = (line) => { received.push(line); return handlerFor(1)(line); };
     }
     const started = performance.now();
     const result = await sandbox.run({

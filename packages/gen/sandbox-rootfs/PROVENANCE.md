@@ -6,7 +6,7 @@
 
 ## 它是什么
 
-模型在沙箱里能看见的**全部**内容物:静态 `bash`、三个静态 coreutils(`cat` / `ls` / `grep`)、
+模型在沙箱里能看见的**全部**内容物:静态 `bash`、四个静态 coreutils(`cat` / `cp` / `ls` / `grep`)、
 三个受限工具的薄壳(`check` / `evaluate` / `done`)与只读契约 `/contract` 四条。
 沙箱的根是空的(`bwrap --tmpfs /`),**只** `--ro-bind` 进这里的 `bin/` 与 `contract/`:
 宿主根目录一个 inode 都不出现,所以「绝对路径能绕过 PATH 白名单」这个问题结构上不存在。
@@ -19,16 +19,22 @@
 `ldd` 闭包门禁也整条不需要。产物入库、以字节为准,配 `check:sandbox-rootfs` 的「现算 == 入库」
 漂移门禁——与 ADR-0007 对 runtime bundle 的处理同款。
 
-## 四个二进制
+## 五个二进制
 
 | 产物 | 版本 | 字节 sha256 |
 |---|---|---|
 | `bin/bash` | 5.3-2ubuntu1 | `0c281f56c3cf92c46c3247fba94a3e9831a948f377b166e44d45dff856e158ef` |
 | `bin/cat` | coreutils 9.12 | `fe81b0d1255a8813fb56cc1cb226405e3111db87926f28a6bc59e22de4542233` |
 | `bin/ls` | coreutils 9.12 | `e3fb203387b1685b61d645f93a3d08f6f5381c22fa7ac6710ee721eab9513abe` |
+| `bin/cp` | coreutils 9.12 | `53859f703f5991919b75403d17b73e916020f476db89127d0320911e1b39ca2a` |
 | `bin/grep` | grep 3.12 | `5e9b74e48985c2150f438b3dfa6ee98984d4d7622adb38da89876267164fe407` |
 
-四者都已核对是**静态 ELF**(无 `PT_INTERP`):不向宿主要动态链接器,也不需要任何 `.so`。
+有一件事这张表**不**保证:字节可重放。同一份源码、同一条命令行,换一套工具链(gcc 版本、
+build-id)就会得到另一份字节——本仓实测过:照表里的命令重建 `cat` / `ls`,得到的 sha256 与入库
+的那两份不同。所以这张表的语义是「**入库的这份字节**是什么、它是照哪条命令得到的」,不是
+「照着跑一遍必然得到同一份字节」。稳定性由入库字节 + 漂移门禁提供,不由可重复构建提供。
+
+五者都已核对是**静态 ELF**(无 `PT_INTERP`):不向宿主要动态链接器,也不需要任何 `.so`。
 门禁用自带的 ELF 解析判这一条,不靠 `ldd`(它会执行目标文件)也不靠 `file`(输出随版本漂)。
 
 取它们的方式只有两条,都不涉及「从这台机器上顺手抄一个」:
@@ -62,6 +68,16 @@ tar xf coreutils-9.12.tar.xz && cd coreutils-9.12 && ./configure --disable-nls -
 ```
 
 得到的字节 sha256 = `e3fb203387b1685b61d645f93a3d08f6f5381c22fa7ac6710ee721eab9513abe`。
+
+### `bin/cp`(coreutils 9.12)
+
+来源:`https://mirrors.aliyun.com/gnu/coreutils/coreutils-9.12.tar.xz`
+
+```sh
+tar xf coreutils-9.12.tar.xz && cd coreutils-9.12 && ./configure --disable-nls --without-selinux --disable-libcap LDFLAGS=-static && make -j"$(nproc)" && strip src/cp
+```
+
+得到的字节 sha256 = `53859f703f5991919b75403d17b73e916020f476db89127d0320911e1b39ca2a`。
 
 ### `bin/grep`(grep 3.12)
 
