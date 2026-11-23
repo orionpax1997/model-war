@@ -1103,6 +1103,70 @@ it("散文禁抄取值门禁挂在 check:quick,且没被挪进按需 / 慢链", 
   expect(tailSteps(), "散文判据被挪进了全量门禁末尾复核组").not.toContain("check:prose");
 });
 
+// ── 契约挂载门禁:四条的字节与目录说明 ────────────────────────────────────
+//
+// 它守两件事:骨架与 API 文档 §6 **逐字节**相同(一致性靠构造,不靠「都能编译」),以及
+// 目录说明与挂载清单互相对得上。反例全部落在真实文件上:手改那份生成物、给说明加一条
+// 不存在的路径、往说明里写可写面。
+
+/** 那份生成出来的骨架。它没有生成头注释(必须逐字节等于 §6),所以手改它看起来就像改普通文件。 */
+const SKELETON_FILE = "docs/rules-v2/examples/minimal.ts";
+
+/** 那四条共用的目录说明。它同时是首条消息的全部内容(ADR-0030)。 */
+const CONTRACT_INDEX_FILE = "docs/rules-v2/README.md";
+
+it("契约挂载门禁:骨架被手改时变红,还原变绿", () => {
+  const clean = script("check:contract");
+  expect(clean.status, clean.output).toBe(0);
+  // 规模自证:报告必须给出挂载条数与目录里的文件数——「退出 0」只有在真读出东西时才成立。
+  expect(clean.output, clean.output).toContain("条挂载");
+  expect(clean.output, clean.output).toContain("个文件");
+
+  const violated = withPatchedText(
+    SKELETON_FILE,
+    (source) => `${source}\n// 手改一行\n`,
+    () => script("check:contract"),
+  );
+  expect(violated.status, "骨架与 §6 不一致时门禁必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("不是同一份字节");
+
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁:目录说明点名了不存在的挂载路径时变红", () => {
+  const violated = withPatchedText(
+    CONTRACT_INDEX_FILE,
+    (source) => `${source}\n参见 \`/contract/notes.md\`。\n`,
+    () => script("check:contract"),
+  );
+  expect(violated.status, "说明里点名不存在的文件时必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("/contract/notes.md");
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁:目录说明里出现可写面时变红", () => {
+  const violated = withPatchedText(
+    CONTRACT_INDEX_FILE,
+    (source) => `${source}\n把骨架复制到 \`/workspace\` 再改。\n`,
+    () => script("check:contract"),
+  );
+  expect(violated.status, "说明里出现可写面时必须非零退出").toBe(1);
+  expect(violated.output, violated.output).toContain("/workspace");
+  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+});
+
+it("契约挂载门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+  const scripts = manifest().scripts;
+  // 在场:它守的那份生成物没有生成头注释,而日常入口是 `verify:fast`——抓不到等于没有。
+  expect(scripts["check:quick"] ?? "", "契约挂载判据不在快门禁里").toContain("check:contract");
+  // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
+  expect(scripts["check:selfproof"] ?? "", "契约判据被挪进了按需门禁").not.toContain(
+    "check:contract",
+  );
+  expect(scripts["test:slow"] ?? "", "契约判据被挪进了慢链").not.toContain("check:contract");
+  expect(tailSteps(), "契约判据被挪进了全量门禁末尾复核组").not.toContain("check:contract");
+});
+
 // ── 验收落点门禁:落点表自己的存在性判据 ─────────────────────────────────────
 //
 // 这张表自称「验收写在能被跑出来的东西上」,所以它自己也得有判据:每一行至少一个可执行
