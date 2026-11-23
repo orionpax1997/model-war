@@ -11,7 +11,7 @@
  *
  * ```
  * bin/{bash,cat,cp,grep,head,ls,sed,tail,wc}   九个静态 ELF,不从宿主借、不带动态库闭包
- * bin/{check,evaluate,done}       `packages/gen/src/agent/shim/shim.sh` 的逐字节副本
+ * bin/{check,evaluate,finish}     `packages/gen/src/agent/shim/shim.sh` 的逐字节副本
  * contract/{README.md,rules.md,api.md,examples/minimal.ts}   `docs/rules-v2/` 的逐字节副本
  * PROVENANCE.md                   来路说明书(生成物,不在挂载面上)
  * ```
@@ -210,7 +210,7 @@ const provenanceMarkdown = (): string => {
 ## 它是什么
 
 模型在沙箱里能看见的**全部**内容物:静态 \`bash\`、${coreutilsCount} 个静态 coreutils(${coreutils.join(" / ")})、
-三个受限工具的薄壳(\`check\` / \`evaluate\` / \`done\`)与只读契约 \`/contract\` 四条。
+三个受限工具的薄壳(\`check\` / \`evaluate\` / \`finish\`)与只读契约 \`/contract\` 四条。
 沙箱的根是空的(\`bwrap --tmpfs /\`),**只** \`--ro-bind\` 进这里的 \`bin/\` 与 \`contract/\`:
 宿主根目录一个 inode 都不出现,所以「绝对路径能绕过 PATH 白名单」这个问题结构上不存在。
 依据见 \`docs/adr/0033-sandbox-executor.md\`。

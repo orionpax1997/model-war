@@ -29,7 +29,7 @@ import { spawnSync } from "node:child_process";
 import type { AgentExecResult } from "./types.js";
 
 /** 三个走通道的薄壳:它们的命令行本身就是要发给宿主的那个请求。本文件内部用,不出口。 */
-const TOOL_COMMANDS: ReadonlySet<string> = new Set(["check", "evaluate", "done"]);
+const TOOL_COMMANDS: ReadonlySet<string> = new Set(["check", "evaluate", "finish"]);
 
 /** 一次 `sandbox.run` 的替身:入参只要这三格,返回值只要四格。 */
 export type SandboxRun = (request: {
@@ -43,7 +43,7 @@ export type SandboxRun = (request: {
  *
  * ── 通道先于执行 ──
  *
- * 沙箱里那几个薄壳(`check` / `evaluate` / `done`)在真 bwrap 里会往 fd 3 写一行请求、读一行
+ * 沙箱里那几个薄壳(`check` / `evaluate` / `finish`)在真 bwrap 里会往 fd 3 写一行请求、读一行
  * 响应,**它自己什么也不干**。所以这三个命令必须走通道,不能落到 `handler` 里——后者是「其他
  * 命令」的替身。顺序反了会让 `evaluate` 变成一次「命令不存在」的失败,而那条路径静默地把
  * 「宿主服务从没被调用」伪装成一个普通的非零退出码。
@@ -92,7 +92,7 @@ export const withHostBash = async <T>(
  * 于是「模型写的命令」与「工作区里真的出现了什么」这两件事在测试里也连得起来。
  *
  * 改写只换 `/workspace` 这个前缀,不动命令的其余字节——包括 heredoc 与管道。那几个薄壳
- * (`check` / `evaluate` / `done`)不在这里跑:它们由 `withHostBash` 那条通道替身应答。
+ * (`check` / `evaluate` / `finish`)不在这里跑:它们由 `withHostBash` 那条通道替身应答。
  */
 export const withRealBash = async <T>(workspaceDir: string, run: () => Promise<T>): Promise<T> =>
   await withHostBash((command) => {

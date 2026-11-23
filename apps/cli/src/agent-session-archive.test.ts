@@ -98,7 +98,7 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
     reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
     reply("```bash\ncheck\n```"),
     reply("```bash\nevaluate\n```"),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
 
   const outcome = await withRealBash(workspaceDir, () =>
@@ -196,7 +196,7 @@ it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产
   mkdirSync(workspaceDir, { recursive: true });
 
   // 只 done、不 evaluate:一个候选都没有(ADR-0030「失败 = 一个候选都没有」)。
-  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\ndone\n```")]);
+  const model = stubClient([reply("```bash\nls /contract\n```"), reply("```bash\nfinish\n```")]);
 
   const outcome = await withRealBash(workspaceDir, () =>
     generateOneModel(
@@ -248,7 +248,7 @@ it("429 两次:实测退避落进日志行,报告受污染读数读到同一个�
     reply("```bash\ncat > /workspace/script.ts <<'EOF'\nfunction loop() {}\nEOF\n```"),
     reply("```bash\ncheck\n```"),
     reply("```bash\nevaluate\n```"),
-    reply("```bash\ndone\n```"),
+    reply("```bash\nfinish\n```"),
   ]);
 
   const outcome = await withRealBash(workspaceDir, () =>

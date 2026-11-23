@@ -2,7 +2,7 @@
  * 薄壳—宿主通道的**协议体**:一行 JSON 一请求、一行 JSON 一响应。
  *
  * ── 这条通道是什么(ADR-0032「受限工具不是二进制,是宿主侧的服务」) ──
- * 沙箱里的 `check` / `evaluate` / `done` 不是实现,是三个薄壳:它们把「要做什么」写成一行
+ * 沙箱里的 `check` / `evaluate` / `finish` 不是实现,是三个薄壳:它们把「要做什么」写成一行
  * JSON 交给继承的 fd 3,读回一行响应,按响应里的退出码与两路输出落地。真执行、`evaluate`
  * 的调用计数、会话墙钟全在宿主侧的服务里,超限时宿主回一份伪造的 stderr 且**不执行**。
  *
@@ -38,10 +38,12 @@ export const TOOL_CHANNEL_FD = 3;
 /**
  * 受限工具名。白名单由宿主侧的 dispatcher 执行,这里只定**名字的取值域**。
  *
- * `done` 也在里面:块级哨兵正常由宿主侧的执行准备切掉,但模型把它写进管道或写成
- * `true; done` 时薄壳照样会被执行,此时它必须是一条**认得但什么也不做**的合法请求。
+ * 收工工具叫 `finish` 而不叫 `done`:`done` 是 bash 的**保留字**,裸写一行 `done` 是语法错误
+ * (`未预期的记号 "done"`),整块根本不会被执行到——薄壳不可达,收工请求也就永远发不出来。
+ * 名字必须是一个 bash 认得且能当命令名执行的字。档案侧的 `action.kind: "done"` /
+ * `termination: "done"` 是 v3 档案形状里的常量,与工具名无关(ADR-0032 修订段)。
  */
-export const TOOL_NAMES = ["check", "evaluate", "done"] as const;
+export const TOOL_NAMES = ["check", "evaluate", "finish"] as const;
 
 /** 受限工具名。 */
 export type ToolName = (typeof TOOL_NAMES)[number];

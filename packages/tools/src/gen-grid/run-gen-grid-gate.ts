@@ -134,7 +134,7 @@ mkdirSync(workspaceDir, { recursive: true });
 const model = gen.stubClient([
   gen.reply("\\u0060\\u0060\\u0060bash\\ncat > /workspace/script.ts <<'EOF'\\n" + SCRIPT + "EOF\\n\\u0060\\u0060\\u0060"),
   gen.reply("\\u0060\\u0060\\u0060bash\\nevaluate\\n\\u0060\\u0060\\u0060"),
-  gen.reply("\\u0060\\u0060\\u0060bash\\ndone\\n\\u0060\\u0060\\u0060"),
+  gen.reply("\\u0060\\u0060\\u0060bash\\nfinish\\n\\u0060\\u0060\\u0060"),
 ]);
 
 const startedAt = Date.now();

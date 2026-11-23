@@ -168,7 +168,7 @@ it("沙箱起不来就整批失败:一个会话都不启动,报错带三种已�
 
 it("`--model` 只跑选中的那一个,其余模型不发请求", { timeout: 30_000 }, async () => {
   const root = writeRoot(modelsYaml(entry("alpha"), entry("beta")));
-  const alpha = clientOf([reply("```bash\ndone\n```")]);
+  const alpha = clientOf([reply("```bash\nfinish\n```")]);
   const beta = clientOf([]);
   await withPlainSandbox(() =>
     runGeneration({
@@ -271,7 +271,7 @@ it(
   async () => {
     const root = writeRoot(modelsYaml(entry("alpha")));
     writeFileSync(join(root, ".env"), "MODELWAR_RUN_ENV_PROBE=loaded\n");
-    const client = clientOf([reply("```bash\ndone\n```")]);
+    const client = clientOf([reply("```bash\nfinish\n```")]);
     await withPlainSandbox(() =>
       runGeneration({
         root,
@@ -311,7 +311,7 @@ it("模型之间串行:前一个的全部步结束后才开下一个", { timeout
       configPath: "models.yaml",
       createClient: (config: ModelConfig): StubClient => {
         order.push(`client:${config.slug}`);
-        return stubClient([reply("```bash\ndone\n```")]);
+        return stubClient([reply("```bash\nfinish\n```")]);
       },
       agentPrompt: PROMPT,
       maxSteps: 1,

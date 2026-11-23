@@ -6,7 +6,7 @@
  * | 缝 | 谁提供 | 本票做什么 |
  * |---|---|---|
  * | `ModelClient` | 既有端口(`model-client.ts`),真实实现 = HTTP 适配器 | 只调 `send`,不关心端点族 |
- * | `AgentExecutor` | 执行器(票 03 的 `sandbox.run`)后面挂宿主服务(票 04 的 dispatcher) | 只把「一块命令 + done 行号」交给它 |
+ * | `AgentExecutor` | 执行器(票 03 的 `sandbox.run`)后面挂宿主服务(票 04 的 dispatcher) | 只把整块原文交给它 |
  *
  * ── 为什么这里没有「评测探针」这个缝 ──
  *
@@ -32,8 +32,8 @@ export type AgentStep = ArchiveStep;
 /**
  * 一步的执行请求。
  *
- * 只有两格:第几步、整块原文。块级 `done` 的切分由执行器自己做(`host/done.ts` 的
- * `splitDoneBlock`)——它才是「跑哪一半」的判据持有者,所以请求里不再夹带一份行号。
+ * 只有两格:第几步、整块原文。**宿主不切块**:整块原样交给一次 `bash -c`,谁在里面喊收工
+ * (`finish` 薄壳)是运行期发生的事,不是请求里能预先描述的形状。
  */
 export type AgentExecRequest = {
   /** 步号,1 起。 */
@@ -49,7 +49,11 @@ export type AgentExecResult = {
   readonly exitCode: number;
   /** 被单步墙钟杀掉(执行器自己的读数,只作记录)。 */
   readonly timedOut?: boolean;
-  /** 这一步被块级 `done` 哨兵终止:`done` 之前的命令照常执行,之后的不执行。 */
+  /**
+   * 这一步里模型报过收工(`finish` 薄壳经通道上报给宿主)。
+   *
+   * 它**不**意味着块里 `finish` 之后的行没执行——整块由 `bash` 解析,那些行照常跑(ADR-0032 修订)。
+   */
   readonly done?: boolean;
   /** 结果侧证据(`tsc` / `contract` 与错误码);没有结果时缺席,不写空壳。 */
   readonly result?: ArchiveStepResult;

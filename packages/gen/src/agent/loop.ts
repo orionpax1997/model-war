@@ -58,7 +58,7 @@ export const ACTION_PARSE_FAILURE_LIMIT = 3;
 export type AgentLoopRequest = {
   readonly model: ModelClient;
   readonly executor: AgentExecutor;
-  /** `system`:协议(动作语法、`done` 语义)。 */
+  /** `system`:协议(动作语法、`finish` 收工命令的语义)。 */
   readonly system: string;
   /** 首条 `user`:任务、目录与三条硬约束。 */
   readonly firstUser: string;
@@ -253,6 +253,8 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
     let action: ArchiveStepAction = { kind: "none" };
     let observation = noActionObservation(TRUNCATED_RESPONSE_FEEDBACK);
     let result: AgentExecResult["result"];
+    // 收工**只在执行之后读一次**:判据是宿主在这一步里有没有收到 `finish` 请求(执行器搬运),
+    // 不是命令字节里某一行长什么样。
     let done = false;
     if (response.finishReason !== "length") {
       const parsed = parseAction(response.text);

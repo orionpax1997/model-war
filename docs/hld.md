@@ -169,7 +169,7 @@
 | # | 威胁 | 防线 | 边界 |
 |---|---|---|---|
 | T1 | 模型读到引擎源码或试跑入口,自己跑一遍 | 根文件系统从空开始,只挂入库 rootfs + 薄壳 + 只读契约;仓库路径与引擎不出现 | 任何一条「沙箱内必须可读」的例外都会重新打开 T1 |
-| T2 | 绕过配额(超次调用受限工具) | 三个受限工具(`check` / `evaluate` / `done`)是薄壳,判据在宿主侧;通道只有一条且只通向宿主 | 宿主按**调用次数**计,不信请求参数。第四个候选工具 `smoke` 已在 ADR-0030 里落选(工具面就是这三个),清单真源是 `packages/schema/src/tool-channel.ts` 的 `TOOL_NAMES` |
+| T2 | 绕过配额(超次调用受限工具) | 三个受限工具(`check` / `evaluate` / `finish`)是薄壳,判据在宿主侧;通道只有一条且只通向宿主 | 宿主按**调用次数**计,不信请求参数。第四个候选工具 `smoke` 已在 ADR-0030 里落选(工具面就是这三个),清单真源是 `packages/schema/src/tool-channel.ts` 的 `TOOL_NAMES` |
 | T3 | 后台进程活过一步(`cmd &`) | PID 命名空间在步结束时回收整棵进程树 | 一步之内合法(`cmd & sleep 1; wait` 是正常写法) |
 | T4 | 联网(外传契约、拉取外部依赖) | 网络命名空间独立,连 loopback 都没有 | 也让通道无法走 TCP,只能走继承 fd |
 | T5 | 评测后改写交付物 | 每步全新进程树;候选在提交时由宿主快照 | 快照时点由宿主决定,不由沙箱决定 |
@@ -539,6 +539,7 @@ archive/<modelSlug>/<runId>/
 | 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里除三个薄壳之外每个二进制都是静态 ELF / 契约与薄壳逐字节 / `PROVENANCE.md` 的来路表与入库字节的 sha256 一一相符)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
 | 模型知道自己有什么命令 | `check:prompt-commands`(首条消息里的命令清单与 `SANDBOX_ROOTFS_FILES` 推出的集合**逐项相等**,两组分开判;缺项 `awk` / `sleep` 与替代写法在场)+ `packages/tools/src/prompt-commands.test.ts`(两个方向 / 分组 / 每项一句用途)+ `check:sandbox`(真 bwrap 里 `sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各一条最小调用,断言输出字节) |
 | 宿主工具面与 fd 通道 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 沙箱伪造的「响应」只被当成请求)+ `packages/gen/src/agent/shim/shim.test.ts`(真 bash 对真序列化的往返:退出码 / 两路输出 / 形态不对就退出 2)+ `check:sandbox`(真 bwrap 下薄壳走 fd 跑通一次 `check`,真 tsc) |
+| 动作协议与收工命令 | `packages/gen/src/agent/host/finish.test.ts`(真 bash + 真薄壳 + 真 dispatcher:`for … done` 整块跑完且退出码 0、`finish` 之后的行仍执行、整块只有一行 `finish` 也收工)+ `packages/gen/src/agent/action.test.ts`(四种被拒形状与逐字正/反例)+ `packages/gen/src/agent/identity.test.ts`(`actionSyntax.rejects` 与 `finish` 那一格进 `harnessDigest`) |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
 | 评测网格与选拔复算 | `packages/runner/src/trial-plan.test.ts`(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ `packages/runner/src/selection-grid.test.ts`(逐场复算比对)+ `packages/runner/src/archive-report-v2.test.ts`(生成阶段分数与赛季口径分离) |
