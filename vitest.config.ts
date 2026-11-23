@@ -27,6 +27,16 @@ const SLOW_TEST = "packages/tools/src/gates-slow.test.ts";
 /** 真 bwrap 下的真会话:要内核能力(非特权 user namespace)与系统装的 bubblewrap。 */
 const SANDBOX_TEST = "apps/cli/src/agent-real-session.test.ts";
 
+/**
+ * 真 bwrap 下的 CLI 冒烟:spawn 打好的 CLI 产物、假端点、**真沙箱**跑满一整张网格。
+ *
+ * 归 `sandbox` 而不是 `unit` 的理由与上面那条相同,只是它更晚才被抓出来:它一直以
+ * `it.skipIf(!archivePresent)` 挂在 unit 上,而 `archive/` 不入库——没有冻档的机器上它是 skip,
+ * 于是「它其实要真 bwrap」这件事既没被看到也没被挡住。内核探针(`vitest.kernel-guard.setup.ts`)
+ * 落地后第一例就是它。
+ */
+const GEN_CLI_TEST = "apps/cli/src/gen-cli.test.ts";
+
 /** 各 project 通用的排除项:`tsc -b` 会把测试一并编译进各包的 dist,产物绝不能被二次拾取。 */
 const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
 
@@ -52,7 +62,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
-          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST],
+          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST, GEN_CLI_TEST],
           setupFiles: ["./vitest.kernel-guard.setup.ts"],
         },
       },
@@ -93,15 +103,18 @@ export default defineConfig({
         },
       },
       {
-        // 真 bwrap 下的**一场真会话**:真进程隔离、真 fd 通道、真宿主服务、真档案。
+        // 真 bwrap 下的两件事:一场**真会话**(真进程隔离、真 fd 通道、真宿主服务、真档案),
+        // 与一条**CLI 冒烟**(spawn 打好的单文件产物 + 假端点 + 真网格)。
         //
-        // 它不进 `unit` 的理由是**环境**而不是耗时:它要非特权 user namespace 与系统装的
+        // 它们不进 `unit` 的理由是**环境**而不是耗时:要非特权 user namespace 与系统装的
         // bubblewrap,而常跑链不装(与 `check:sandbox` 同一条理由:两种处方不该混成一条红)。
         // 入口是命名脚本 `check:sandbox`;同一套断言在 unit 里由假执行器的那一份盯住
-        // (`apps/cli/src/agent-session-archive.test.ts`),所以移走不等于丢掉覆盖。
+        // (`apps/cli/src/agent-session-archive.test.ts` / `gen-archive.test.ts`),所以移走不等于
+        // 丢掉覆盖——CLI 产物那一层的 argv 解析与退出码约定另有 `cli.test.ts` 与
+        // `packages/gen/src/run.test.ts` 在常跑链上盯着。
         test: {
           name: "sandbox",
-          include: [SANDBOX_TEST],
+          include: [SANDBOX_TEST, GEN_CLI_TEST],
           exclude: NEVER_TEST,
           // 每条用例在真沙箱里走四步(含真 tsc 编译与真静态校验),给足。
           testTimeout: 600_000,

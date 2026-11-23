@@ -1963,19 +1963,35 @@ it("gates 不在 unit 的拾取范围里(否则 check 会套娃成叉炸弹)", (
   expect(gatesListed.output, gatesListed.output).toContain("gates.test.ts");
 });
 
-it("真 bwrap 的会话用例不在常跑入口上(sandbox project)", () => {
-  // 它要非特权 user namespace 与系统装的 bubblewrap,而常跑链不装——收进 `unit` 的后果是
+it("真 bwrap 的用例不在常跑入口上(sandbox project)", () => {
+  // 它们要非特权 user namespace 与系统装的 bubblewrap,而常跑链不装——收进 `unit` 的后果是
   // 「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」,两种处方混成一条红。
-  const path = "agent-real-session.test.ts";
-  for (const project of ["unit", "property", "gates", "slow"] as const) {
-    const listed = run("pnpm", ["exec", "vitest", "list", "--project", project]);
+  //
+  // `agent-real-session.test.ts` 是早就拆出去的那条真会话;`gen-cli.test.ts` 是内核探针
+  // (`packages/tools/src/vitest/kernel-guard.test.ts` 的头注记着这一例)抓出来的:它 spawn 打好的
+  // CLI 产物、打假端点、**在真沙箱里**跑满一整张网格,却一直以 `it.skipIf(!archivePresent)` 挂在
+  // `unit` 上——`archive/` 不入库,于是「本机 skip、CI 也 skip」把这条要内核能力的用例藏了两边。
+  //
+  // 这里按**文件**列(`--filesOnly`),不按用例名列:被 `it.skipIf(...)` 包着的用例在默认的
+  // 名字列举里一条都不出现(实测),而 `gen-cli.test.ts` 整条都由 `skipIf` 包着——恰好是那种
+  // 「列举不到」的文件,用它做缺席证据会得出反向结论。
+  const filesOf = (project: string): string => {
+    const listed = run("pnpm", ["exec", "vitest", "list", "--filesOnly", "--project", project]);
     expect(listed.status, listed.output).toBe(0);
-    expect(listed.output, `${path} 被 ${project} 收进去了`).not.toContain(path);
+    return listed.output;
+  };
+  const paths = ["agent-real-session.test.ts", "gen-cli.test.ts"] as const;
+  for (const project of ["unit", "property", "gates", "slow"] as const) {
+    const listed = filesOf(project);
+    for (const path of paths) {
+      expect(listed, `${path} 被 ${project} 收进去了`).not.toContain(path);
+    }
   }
-  // 反面证据:它确实被自己的 project 收着(排除过头与没排除是同一种失败)。
-  const sandboxListed = run("pnpm", ["exec", "vitest", "list", "--project", "sandbox"]);
-  expect(sandboxListed.status, sandboxListed.output).toBe(0);
-  expect(sandboxListed.output, sandboxListed.output).toContain(path);
+  // 反面证据:它们确实被自己的 project 收着(排除过头与没排除是同一种失败)。
+  const sandboxListed = filesOf("sandbox");
+  for (const path of paths) {
+    expect(sandboxListed, `${path} 没被 sandbox 收着`).toContain(path);
+  }
 
   // 默认 `test` 也不带它,而它的入口是命名脚本 `check:sandbox`:
   // 拆出去是为了「有需要时手工跑」,没有入口这件事就没做完。
