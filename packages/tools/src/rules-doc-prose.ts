@@ -254,16 +254,20 @@ export type ProseScanTarget = {
 };
 
 /**
- * 显式清单:四份面向模型的契约文档 + 设计文档 + 词汇表 + 基准说明。
+ * 显式清单:四份面向模型的契约文档 + 它们共用的目录说明 + 设计文档 + 词汇表 + 基准说明。
  *
  * 为什么是清单而不是「扫到谁算谁」:这几份是**模型真读的**散文面,少列一份就是少一个家;
  * 新增一份同类的散文面时,改这一处即可。
+ *
+ * 目录说明为什么在清单里:它讲的是「四份文档各管什么」,而它同时是首条消息的全部内容
+ * (ADR-0030)。它不生成、也不在漂移检查的覆盖里,所以本清单是它唯一能挂上的判据。
  */
 export const PROSE_SCANNED_DOCS: readonly ProseScanTarget[] = [
   { label: "docs/rules-v1/rules.md", path: "docs/rules-v1/rules.md" },
   { label: "docs/rules-v1/api.md", path: "docs/rules-v1/api.md" },
   { label: "docs/rules-v2/rules.md", path: "docs/rules-v2/rules.md" },
   { label: "docs/rules-v2/api.md", path: "docs/rules-v2/api.md" },
+  { label: "docs/rules-v2/README.md", path: "docs/rules-v2/README.md" },
   { label: "docs/hld.md", path: "docs/hld.md" },
   { label: "docs/vision.md", path: "docs/vision.md" },
   { label: "CONTEXT.md", path: "CONTEXT.md" },

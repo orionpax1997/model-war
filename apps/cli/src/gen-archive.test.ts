@@ -28,7 +28,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { reply, runGeneration, stubClient } from "@model-war/gen";
+import {
+  completeGridTrial,
+  gridPlanFixture,
+  reply,
+  runGeneration,
+  stubClient,
+} from "@model-war/gen";
+import { withRealBash } from "@model-war/gen/testing";
 import { RULESET_VERSION, SANDBOX_RUNTIME_HASH, type JsonValue } from "@model-war/schema";
 import { afterAll, expect, it } from "vitest";
 
@@ -49,6 +56,7 @@ const MODELS_YAML = [
   "    modelId: provider/alpha-1",
   "    credentialEnvVar: GEN_TEST_KEY",
   "    channelId: gen-test-channel",
+  "    contextLength: 100000",
   "",
 ].join("\n");
 
@@ -63,7 +71,6 @@ const mkRoot = (): string => {
   writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
   writeFileSync(join(root, "docs", "rules-v2", "api.md"), CONTRACT_API);
   mkdirSync(join(root, "prompts"), { recursive: true });
-  writeFileSync(join(root, "prompts", "base.md"), "契约:\n\n{{contract}}\n");
   writeFileSync(join(root, "models.yaml"), MODELS_YAML);
   mkdirSync(join(root, "rulesets"), { recursive: true });
   writeFileSync(
@@ -75,17 +82,40 @@ const mkRoot = (): string => {
 
 it("gen 产出的存档过 `validateArchiveMeta`:三件套齐、哈希与版本三处一致", async () => {
   const root = mkRoot();
-  const code = await runGeneration({
-    root,
-    configPath: "models.yaml",
-    createClient: () => stubClient([reply(VALID_SCRIPT)]),
-    // 本文件不断言真试跑（真试跑由 `gen-cli` e2e 覆盖），这里走通过桩。
-    trial: () => ({ passed: true, stdout: "" }),
-  });
+  const workspaceDir = join(root, "ws");
+  mkdirSync(workspaceDir, { recursive: true });
+  // agent 形态的一次会话:写脚本 → evaluate → done。三步各一次模型调用。
+  //
+  // 执行器换成宿主 `bash`(`@model-war/gen/testing` 的 `withRealBash`):`runGeneration` 的第一件事是
+  // 启动自证(ADR-0033),它要真跑 bwrap,而**本文件在常跑链(unit)上**——那条链不装 bubblewrap。
+  // 不换的后果是「本机装了 bwrap 所以绿、CI 上红」,两种处方混成一条红。真隔离由
+  // `apps/cli/src/agent-real-session.test.ts`(`check:sandbox`)与 `agent-session-archive.test.ts`
+  // 的同形断言分工覆盖;这条只关心「产出的存档过得了装载校验」。
+  const code = await withRealBash(workspaceDir, () =>
+    runGeneration({
+      root,
+      configPath: "models.yaml",
+      createClient: () =>
+        stubClient([
+          reply(`\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${VALID_SCRIPT}EOF\n\`\`\``),
+          reply("```bash\nevaluate\n```"),
+          reply("```bash\ndone\n```"),
+        ]),
+      agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
+      workspaceDir,
+      // 本文件不断言真试跑（真试跑由 `gen-cli` e2e 与 `check:gen-grid` 覆盖），这里走
+      // 「形状真实」的假网格：32 行观测 + 旁挂汇总。成绩走**缺省**评分（真网格那一支：
+      // 从旁挂 `.grid.json` 读），所以这条链上的分数来源与生产同一条。
+      trial: completeGridTrial(),
+      trialPlan: () => gridPlanFixture(),
+    }),
+  );
   expect(code).toBe(0);
 
   const slugDir = join(root, "archive", "alpha");
-  const [runId] = readdirSync(slugDir);
+  const [runId] = readdirSync(slugDir).filter(
+    (name) => !name.startsWith("observed-") && !name.startsWith("failed-"),
+  );
   if (runId === undefined) {
     throw new Error("gen 没有产出存档目录");
   }
@@ -114,7 +144,10 @@ it("gen 产出的存档过 `validateArchiveMeta`:三件套齐、哈希与版本�
   if (validation.ok) {
     expect(validation.meta.model).toBe("alpha");
     expect(validation.meta.ruleset).toBe(RULESET_VERSION);
-    expect(validation.meta.protocolRounds).toBe(validation.meta.prompts.length);
-    expect(validation.meta.protocolRounds).toBe(1);
+    // v3 的公式不再成立「轮数 == prompt 条数」:轮数等于过程记录条数,prompt 恒为一条
+    // (ADR-0031「断言合并成一个公式」的两种形态各一份)。
+    expect(validation.meta.protocolRounds).toBe(3);
+    expect(validation.meta.prompts).toHaveLength(1);
+    expect(validation.meta.steps).toHaveLength(3);
   }
 });

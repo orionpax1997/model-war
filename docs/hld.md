@@ -94,11 +94,11 @@
 
 #### 2.2.6 gen 管线专属依赖(唯一允许联网的包)
 
-- prompt 模板是数据文件(`prompts/base.md`),判据文本**不复制**,真源仍是 `docs/rules-v2`。
+- 首条消息与 system 是数据文件(`prompts/agent.md` / `prompts/agent-system.md`),判据文本**不复制**,真源仍是 `docs/rules-v2`。契约正文**不进首条消息**:读契约要花几步,那是模型的策略决策(ADR-0030)。
 - 契约读入:每次运行从 `<root>/docs/rules-<RULESET_VERSION>/{rules.md,api.md}` 读盘,不嵌入副本;目录名 / 文件缺失即报错退出。
 - 模型 API 客户端:gen 内定义 `ModelClient` 接口,真实实现 = HTTP 客户端 + **四个端点族分支**(`chat-completions` / `messages` / `responses` / `generate-content`),按**线协议**分族而不是按厂商分,**不引厂商 SDK**(取舍见 ADR-0021)。
 - 模型配置(`models.yaml`)只登记本季参赛集;凭证一律走环境变量。**新模型接入只改配置,不改代码**。
-- 重试与限流参数是 gen 内部常量,**不进 `rulesets/*.json`**——那是与厂商 API 打交道的工程参数,与对局规则无关。
+- 重试与限流参数是 gen 内部常量,**不进 `rulesets/*.json`**——那是与厂商 API 打交道的工程参数,与对局规则无关。重试分三套预算(429 / 连接级抖动 / 截断)互不侵占,5xx 不重试(ADR-0036);单模型失败只收口该模型,不中止同批。
 
 #### 2.2.7 脚本分层与 CI 质量门禁
 
@@ -106,11 +106,12 @@
 
 | 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick` | 格式、lint、工具版本耦合断言、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、验收落点门禁;**零构建**,贴得住每轮编辑循环 |
+| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
 | 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
-| 按需 → 夜间 | `check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑 |
+| 按需 → 夜间 | `check:sandbox`、`check:selfproof`、`check:cross-process`、`check:limits`、`check:budget-recheck`、`test:gates`、`test:slow` | 慢门禁与契约自证;**都不进 `check`、也不进默认 `test`**,按需手工跑。`check:sandbox` 要内核能力(非特权 user namespace)与系统装的 `bubblewrap`,所以它自己一条腿:先跑隔离那四件事,再跑真 bwrap 下的一场真会话(vitest 的 `sandbox` project) |
+| 按需(本机,不进任何链) | `check:gen-grid` | **一次 `evaluate` 真跑满一张网格**:它的前提是四份钉死的陪练存档,而 `archive/` 不入库——干净克隆上跑不起来,所以它不进夜间矩阵(那会让「CI 红」与「这台机器没有本地档案」同形)。单测里的真网格判据由 `packages/gen/src/agent/host/evaluate-service.test.ts` 与 `pipeline.test.ts` 用形状真实的假试跑承担 |
 | 按需 → 夜间 | `mutate` / `mutate:<分片>` / `scan` | `mutate*` 是**棘轮**:不设绝对阈值,但低于本分片的入库基线(`stryker/baseline/`)即红(ADR-0026);`scan` 仍**只观测、不设红线** |
 | 按需(不进任何链) | `lint:diagnose` | **测试纪律规则的诊断**:把 oxlint 那几条 vitest 规则报的命中拆成形态与风险(「整条用例的断言都在守卫里」= 可能零断言执行;「部分守卫」= 盲区;循环体 = 逐元素检查),落 `reports/lint/vitest-rules.md`。规则只报位置不报风险,位置与风险不是一回事——命中数本身说明不了有没有假绿来源,这份报告把它变成可复算的判定 |
 | 按需(不进任何链) | `test:report` | **测试观测**:慢测试长尾(用例级耗时 + p50/p90/p99)与不稳定用例。同一批测试跑**两遍**、比两次状态:两次状态不同才叫不稳定。**不用 vitest 的 `retry`**——retry 会把偶发红藏起来,而仓库对假绿敏感;这里照引擎故障轨的语义(先重跑一次、再记账),跑两遍、拿两次状态对比 |
@@ -148,7 +149,7 @@
 | 覆盖率门禁 / 快照测试 | 会被 agent 刷(§2.2.4) |
 | 复杂度做成 error 门禁 | 见 §2.2.3 分层原则 |
 | mod 系统 / 多存储后端 / 多进程 | v0 单机离线,扩展面由 `rulesets/` + `maps/` 承担 |
-| Docker(主路径) | gen 只是调 API,不需要容器隔离 |
+| Docker(主路径) | gen 只是调 API,不需要容器隔离;生成期沙箱同理(ADR-0033) |
 
 ### 2.3 进程与执行模型
 
@@ -157,8 +158,31 @@
 | runner | 主进程 | 调度、聚合;不执行任何参赛代码 |
 | engine | **每个对局一个子进程** | 一个对局崩溃不污染其余对局;内存上限可在进程级施加 |
 | sandbox | 对局进程内,每方一个 QuickJS VM(同进程、串行执行) | 脚本无网络 / FS / 宿主访问;一方崩溃不影响他方 |
+| harness(生成期) | **每步一棵进程树**(PID / mount / 网络命名空间) | 模型起的后台进程活不过一步;仓库与引擎不出现;无网络(ADR-0033,威胁模型见 §2.4) |
 
 引擎每 tick 按 playerIndex 0..3 顺序串行执行四方 `loop()`——快照构建 → VM#i 执行并收集 intents → 下一方。**无并发、无到达顺序问题**:确定性天然成立,无需归位逻辑。runner 通过子进程调用 `modelwar match` 执行一个对局,两者之间只交换 `input.json` 与产物文件。
+
+### 2.4 生成期沙箱(agent harness)
+
+**两个沙箱不是一件事,名字必须分开**:§5 讲的是**对局沙箱**(每方一个 QuickJS VM,同进程内、不给能力);本节讲**生成期沙箱**(模型在生成期执行 bash 的那层进程隔离)。混称会让「对照 §5 核对威胁模型」变成核对错了靶子。执行器选型归 ADR-0033,本节只留威胁与不可破坏约束。
+
+| # | 威胁 | 防线 | 边界 |
+|---|---|---|---|
+| T1 | 模型读到引擎源码或试跑入口,自己跑一遍 | 根文件系统从空开始,只挂入库 rootfs + 薄壳 + 只读契约;仓库路径与引擎不出现 | 任何一条「沙箱内必须可读」的例外都会重新打开 T1 |
+| T2 | 绕过配额(超次调用受限工具) | 三个受限工具(`check` / `evaluate` / `done`)是薄壳,判据在宿主侧;通道只有一条且只通向宿主 | 宿主按**调用次数**计,不信请求参数。第四个候选工具 `smoke` 已在 ADR-0030 里落选(工具面就是这三个),清单真源是 `packages/schema/src/tool-channel.ts` 的 `TOOL_NAMES` |
+| T3 | 后台进程活过一步(`cmd &`) | PID 命名空间在步结束时回收整棵进程树 | 一步之内合法(`cmd & sleep 1; wait` 是正常写法) |
+| T4 | 联网(外传契约、拉取外部依赖) | 网络命名空间独立,连 loopback 都没有 | 也让通道无法走 TCP,只能走继承 fd |
+| T5 | 评测后改写交付物 | 每步全新进程树;候选在提交时由宿主快照 | 快照时点由宿主决定,不由沙箱决定 |
+| T6 | 资源耗尽(fork bomb、无限分配) | 每步 shell 包一层逐进程 `ulimit`;墙钟到点杀整棵进程树 | 逐进程额度不等于聚合额度,能拖慢而不能根除(ADR-0033 残余风险 1) |
+
+不可破坏的约束:
+
+- 执行器不可用即失败,**不降级**到宿主进程执行;降级会造出第二套威胁模型,逐条核对随之失效。
+- 隔离路径在 CI 上**必须被执行**,不许以「环境不支持就跳过」的形式存在。
+- 沙箱内不得出现仓库路径、`node_modules`、`rulesets/`、试跑入口——受限工具的实现在宿主侧,沙箱只需要 `bash` 与读文件的命令。
+- 内容物以字节钉死并受漂移门禁管辖(与 ADR-0007 对 runtime bundle 的处理同款)。
+
+**不覆盖**:内核漏洞利用(不设 seccomp,对手是模型不是提权者)、跨会话(生成期在宿主侧不留可被下个会话读到的状态)。
 
 ## 3. 系统分解
 
@@ -345,6 +369,8 @@ intent 由 processor 的统一校验裁决:属主正确、参数在界、目标�
 
 `docs/rules-v2/` 两份文档:`rules.md`(机制、结算顺序、确定性约束)与 `api.md`(API 签名与语义),**自包含**——模型仅凭它们即可写出能过校验的脚本。二者同时是 gen 管线的 prompt 输入;其表格部分由 `schema` 包与 `rulesets/*.json` 生成(§2.2.5)。契约散文可以修订而**不升版本号**(见 [ADR-0008](./adr/0008-contract-prose-revision-does-not-bump-version.md))。
 
+这个目录同时是生成期沙箱里 `/contract` 的**挂载源**(见 [ADR-0037](./adr/0037-contract-package.md)):挂载的四条与目录里的字节一一对应,含一份目录说明与一份从 `api.md` §6 逐字节抽出的最小骨架。**模型读不到代码,所以契约是代码与规则集事实的投影,不是第二套事实**——这是它不可删的理由,也是它必须由生成流程产出、由漂移门禁守着的原因。
+
 ### 6.2 静态校验规则
 
 **裁判权与编译步骤合并**:编译通过与「白名单反转」由**编译器的名字解析**承担(脚本在一个 `lib` 只含现代 ECMAScript、不含 DOM、不含任何 `@types` 的环境里编译,「找不到这个名字」即反转),其余规则由 `packages/tools` 的静态校验器承担。**静态校验器不是参赛脚本能用什么名字的唯一裁判。**
@@ -509,10 +535,17 @@ archive/<modelSlug>/<runId>/
 | 四方对等 | `modelwar map-lint` + `apps/cli/src/map-lint/map-lint.test.ts`(四重旋转对称是静态判定 + 单测,不是属性测试) |
 | 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
 | 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `check:budget`(结构门禁)+ `check:budget-recheck`(探针复核) |
+| 生成期沙箱执行器 | `check:sandbox`(真跑四件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移,外加通道两条:fd 3 能进能出、薄壳经它跑通一次 `check`;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
+| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里除三个薄壳之外每个二进制都是静态 ELF / 契约与薄壳逐字节)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
+| 宿主工具面与 fd 通道 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 沙箱伪造的「响应」只被当成请求)+ `packages/gen/src/agent/shim/shim.test.ts`(真 bash 对真序列化的往返:退出码 / 两路输出 / 形态不对就退出 2)+ `check:sandbox`(真 bwrap 下薄壳走 fd 跑通一次 `check`,真 tsc) |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
 | 评测网格与选拔复算 | `packages/runner/src/trial-plan.test.ts`(对手组合 / 座位 / 地图 / 场次与摘要覆盖)+ `packages/runner/src/selection-grid.test.ts`(逐场复算比对)+ `packages/runner/src/archive-report-v2.test.ts`(生成阶段分数与赛季口径分离) |
-| 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`(`stateHash` 断言)+ `check:no-float`(禁浮点门禁是其中一轨) |
+| 一次 `evaluate` 真跑满一张网格 | `packages/gen/src/agent/host/evaluate-service.test.ts`(提交身份 / 快照即提交 / 缺场不产候选 / 观测外置)+ `packages/gen/src/pipeline.test.ts`(候选 1..3、第 4 次被拒、胜者取末位、快照字节 == 评估时工作区字节)+ `check:gen-grid`(真子进程跑 32 场,判完整性 / 身份 / 观测外置 / 耗时量级;需要四份钉死的陪练存档,所以是独立腿而不是 `check:sandbox` 的一条) |
+| 状态与数值确定性 | `packages/replay/src/state-hash.prop.ts` + `packages/replay/src/state-hash.test.ts`（`stateHash` 断言）+ `check:no-float`（禁浮点门禁是其中一轨） |
+| 档案形状版本与旧档读兼容 | `apps/cli/src/archive-v3.test.ts`（v3 写 → 装载 → 报告往返；v1/v2 旧档 fixture 照旧读出）+ `packages/runner/src/fixtures/archive/README.md`（旧档副本的来源与改写清单） |
+| 传输韧性与限流处置 | `packages/gen/src/retry.test.ts`（三套预算互不侵占、`Retry-After` 作下限、抖动只向上、单次与累计封顶、5xx 一次即收口）+ `packages/gen/src/pipeline.test.ts`（重试不涨协议轮数、`attemptEvidence.failureKind` 留痕）+ `packages/gen/src/run.test.ts`（单模型失败不中止同批） |
+| 步级度量与受污染分层 | `packages/runner/src/archive-report-steps.test.ts`（步级 `stepMs` = `sendMs` + `harnessMs` 的 p50/p95/max 与会话中位数、每步 prompt 大小与 `input[i] − input[i−1]`（首步 null）、缓存命中率为回归哨兵的口径、`round == step` 左连接的不匹配计数、`--json` 的 `failureKind` 与受污染单列及阈值）+ `packages/runner/src/archive-report-v2.test.ts`（v2 网格档的报告口径不因步列改动漂移） |
 
 它自己有判据:`check:landings` 逐行验落点的存在性(命名脚本必在脚本清单里、`modelwar <子命令>` 必在 CLI 的 `COMMANDS` 里、文件与目录必须存在且被版本库跟踪、一行里一个都认不出即红),并顺带断言文档里以命名脚本形态出现的 token 都真的存在。判据只读这张表,**不把它变成生成物**——它的家就是这份文档。
 

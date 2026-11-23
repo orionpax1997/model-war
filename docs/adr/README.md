@@ -45,9 +45,14 @@
 | [0027](./0027-mutation-history-lives-in-the-baseline.md) | 变异分数的历史住在入库基线里,不住在产物里 | accepted | 演进 ADR-0026 的「历史归基线」判断 |
 | [0028](./0028-channel-identity-and-commandcode-migration.md) | 渠道身份进榜键:同一个 baseUrl 下档位决定能跑什么 | accepted | — |
 | [0029](./0029-bash-mini-harness-identity.md) | 自建 bash-only harness,且它的身份由行为清单而非源码定义 | accepted | 与 ADR-0028 合成四维榜键 |
-| [0030](./0030-agent-tool-surface.md) | agent 的工具面:三档、无提交动作、观测外置 | accepted | 演进 ADR-0025 的观测落点(三层不变,后两层从 stdout 移到文件) |
+| [0030](./0030-agent-tool-surface.md) | agent 的工具面：两档、无提交动作、观测外置 | accepted | 演进 ADR-0025 的观测落点(三层不变,后两层从 stdout 移到文件);原冒烟档已删,理由见正文的落选条目 |
 | [0031](./0031-agent-archive-shape.md) | agent 形态的档案形状:过程记录、候选序与形状版本 | accepted | 收窄 ADR-0029「档案不含模型原始输出」的适用范围;取代「候选恰好三个 + 阶段下标」的旧档案前提 |
 | [0032](./0032-agent-loop-shape.md) | agent loop 的形状:接缝、历史组成、动作边界与每步预算 | accepted | 落实 ADR-0029 的单会话与宿主侧配额;补上 ADR-0031 移交给 loop 侧的四项(原文落盘、截断策略、步数口径、动作解析);结账 ADR-0030 的加密推理块重评条件 |
+| [0033](./0033-sandbox-executor.md) | 生成期沙箱的执行器:bubblewrap,内容物以入库 rootfs 钉死 | accepted | 落实 ADR-0030 的「禁令落在内容物」与 ADR-0032 的薄壳通道;与 hld §2.2.11「Docker 主路径不做」同向 |
+| [0034](./0034-delivery-milestones.md) | 生成侧的交付切法:两段,按模型第一次拿到什么反馈切 | accepted | 废止 `M1`–`M4` 这套顺序记号,改称 `A1`/`A2`;钉死两段的内容、验收与依赖,以及档案形状版本与身份哈希的写入时机 |
+| [0035](./0035-agent-metrics-under-steps.md) | agent 形态下的度量与报告:证据归属、步级计时与上下文口径 | accepted | 落实 ADR-0031 的「轮号等于步号」左连接并补上步级计时落点;结清 ADR-0032「重试等待只能看轮级耗时」并把它「不压缩」的裁决收缩成可测量的数;补上 ADR-0031 移交给度量侧的结果侧键与形状版本 bump |
+| [0036](./0036-transport-failure-not-recoverable.md) | 传输失败不作为可恢复事件:三套预算、5xx 即时收口与受污染会话的报告分层 | accepted | 拆开 ADR-0032 与旧重试层共用的单一预算（429 / 连接级 / 截断各占一套）;把 5xx 从「可重试」里剔出;给 `AttemptEvidence` 补 `failureKind` 让 429 在报告侧可区分;钉住「单模型失败不中止同批」与墙钟两段记的口径 |
+| [0037](./0037-contract-package.md) | 契约包:一个目录、一个身份、一条生成链 | accepted | 收窄 ADR-0030「骨架由编译测试保证与文档一致」的表述(实测不成立,改由抽取保证);把 ADR-0008 的「版本号不锚文字」推到契约包身份上——身份是整树哈希,版本号仍只锚取值 |
 
 ## 写一份新 ADR
 

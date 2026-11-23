@@ -12,15 +12,42 @@ import { defineConfig } from "vitest/config";
  *
  * `gates-slow.test.ts` 拿的是同一张牌:它同样 spawn `check`,所以同样必须被 unit 排除
  * (SLOW_TEST 常量),只不过它多一层理由——它要 ~6 分钟,连默认 `test` 也不该带上它。
- * 那一条不变量由 `慢的那一半(slow project)不被任何常跑入口拾取` 盯着。
+ * `agent-real-session.test.ts` 拿的是第三张:它真起 bwrap,而常跑链不装 bubblewrap——
+ * 收进 `unit` 的后果是「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装
+ * bubblewrap」,两种处方混成一条红。它的入口是命名脚本 `check:sandbox`,而同一套断言在
+ * unit 里有假执行器的那一份(`apps/cli/src/agent-session-archive.test.ts`)。
+ *
+ * 三个常量都是「这里与 unit 的 exclude 引用同一份」的形状:改成字面量就会各自漂。
  */
 const GATES_TEST = "packages/tools/src/gates.test.ts";
 
 /** 门禁自测里慢的那一半:契约自证的四问与三个反例。见该文件的头注。 */
 const SLOW_TEST = "packages/tools/src/gates-slow.test.ts";
 
+/** 真 bwrap 下的真会话:要内核能力(非特权 user namespace)与系统装的 bubblewrap。 */
+const SANDBOX_TEST = "apps/cli/src/agent-real-session.test.ts";
+
+/**
+ * 真 bwrap 下的 CLI 冒烟:spawn 打好的 CLI 产物、假端点、**真沙箱**跑满一整张网格。
+ *
+ * 归 `sandbox` 而不是 `unit` 的理由与上面那条相同,只是它更晚才被抓出来:它一直以
+ * `it.skipIf(!archivePresent)` 挂在 unit 上,而 `archive/` 不入库——没有冻档的机器上它是 skip,
+ * 于是「它其实要真 bwrap」这件事既没被看到也没被挡住。内核探针(`vitest.kernel-guard.setup.ts`)
+ * 落地后第一例就是它。
+ */
+const GEN_CLI_TEST = "apps/cli/src/gen-cli.test.ts";
+
 /** 各 project 通用的排除项:`tsc -b` 会把测试一并编译进各包的 dist,产物绝不能被二次拾取。 */
 const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
+
+/**
+ * 常跑链的内核探针:把 `bwrap` 换成会拒绝的执行体(理由见该文件头注)。
+ *
+ * 只装给 `unit` 与 `property`:它们**不该**有任何用例执行真 preflight / 真 bwrap,而真 bwrap 的
+ * 那几条住在 `sandbox` project(`check:sandbox`),那里必须是真二进制。两处写同一份路径(不抽
+ * 常量):`packages/tools/src/vitest/kernel-guard.test.ts` 逐个 project 断言它,抽常量反而让那条
+ * 断言要去读常量的值。
+ */
 
 export default defineConfig({
   test: {
@@ -35,7 +62,8 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
-          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST],
+          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST, GEN_CLI_TEST],
+          setupFiles: ["./vitest.kernel-guard.setup.ts"],
         },
       },
       {
@@ -45,6 +73,7 @@ export default defineConfig({
           // 的属性(手写 schema 最容易漏的那类崩),它按同样的纪律归到这里。
           include: ["packages/*/src/**/*.prop.ts", "apps/*/src/**/*.prop.ts"],
           exclude: NEVER_TEST,
+          setupFiles: ["./vitest.kernel-guard.setup.ts"],
           testTimeout: 30_000,
         },
       },
@@ -71,6 +100,25 @@ export default defineConfig({
           exclude: NEVER_TEST,
           testTimeout: 900_000,
           hookTimeout: 900_000,
+        },
+      },
+      {
+        // 真 bwrap 下的两件事:一场**真会话**(真进程隔离、真 fd 通道、真宿主服务、真档案),
+        // 与一条**CLI 冒烟**(spawn 打好的单文件产物 + 假端点 + 真网格)。
+        //
+        // 它们不进 `unit` 的理由是**环境**而不是耗时:要非特权 user namespace 与系统装的
+        // bubblewrap,而常跑链不装(与 `check:sandbox` 同一条理由:两种处方不该混成一条红)。
+        // 入口是命名脚本 `check:sandbox`;同一套断言在 unit 里由假执行器的那一份盯住
+        // (`apps/cli/src/agent-session-archive.test.ts` / `gen-archive.test.ts`),所以移走不等于
+        // 丢掉覆盖——CLI 产物那一层的 argv 解析与退出码约定另有 `cli.test.ts` 与
+        // `packages/gen/src/run.test.ts` 在常跑链上盯着。
+        test: {
+          name: "sandbox",
+          include: [SANDBOX_TEST, GEN_CLI_TEST],
+          exclude: NEVER_TEST,
+          // 每条用例在真沙箱里走四步(含真 tsc 编译与真静态校验),给足。
+          testTimeout: 600_000,
+          hookTimeout: 600_000,
         },
       },
     ],

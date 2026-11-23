@@ -43,11 +43,14 @@ import {
 import { join } from "node:path";
 
 import {
+  ARCHIVE_SCHEMA_VERSION,
   RULESET_VERSION,
   SANDBOX_RUNTIME_HASH,
   type ArchiveMeta,
   type ArchiveOptimization,
   type ArchiveSelection,
+  type ArchiveStep,
+  type ArchiveTermination,
   type ArchiveValidation,
 } from "@model-war/schema";
 
@@ -64,13 +67,63 @@ export const sha256Hex = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 /**
+ * agent（v3）形态的写入位：过程记录 + 身份 + 终止原因 + 上下文窗口。
+ *
+ * 它们成组出现而不是逐个可选：一份 v3 档案必须同批带齐（ADR-0034 的纪律——身份从第一份
+ * agent 档起就写），拆成六个独立可选参数就会造出「只写一半」的档，而那种档没有读法。
+ */
+export type AgentArchiveInput = {
+  /** 过程记录，一步一条。条数就是协议轮数（ADR-0031 的同一个公式）。 */
+  readonly steps: readonly ArchiveStep[];
+  /**
+   * 起始 prompt：首条 `user` 消息的逐字文本。
+   *
+   * 分步形态下 `prompts` 恢复原始语义：它装「这个会话是拿哪份 prompt 起的」。起手那一条
+   * prompt 就是首条 `user`（任务、目录与三条硬约束）；`system` 是**协议**，不在这里再存一份
+   * —— 它在 `prompts/agent-system.md`，归属由 `harnessVersion` / `harnessDigest` 承担。
+   * 零步会话不写它（`prompts` 为空数组）。
+   */
+  readonly firstPrompt: string;
+  readonly contextLength: number;
+  readonly harnessVersion: string;
+  readonly harnessDigest: string;
+  readonly termination: ArchiveTermination;
+  /** 终止发生在第几步（0 = 一次模型调用都没有成功）。 */
+  readonly atStep: number;
+};
+
+/**
+ * 轮数与起始 prompt 的**唯一公式**（ADR-0031「断言合并成一个公式」）。
+ *
+ * - 协议轮数 = 一次模型调用数 = `steps.length`；
+ * - 起始 prompt 条数 = 零步为零、否则为一。
+ *
+ * 历史（one-shot）档那边它是 `prompts.length === protocolRounds`；两种形态共用本函数，
+ * 于是「两套写入口径」这件事在代码里就不存在。**刻意不提供「步数为 1 的退化分支」**：
+ * 那会变成第二套公式，而它不产生任何新信息（ADR-0031 已裁决删掉）。
+ */
+export const archiveRoundFieldsOf = (
+  input: AgentArchiveInput,
+): { readonly protocolRounds: number; readonly prompts: readonly string[] } => ({
+  protocolRounds: input.steps.length,
+  prompts: input.steps.length > 0 ? [input.firstPrompt] : [],
+});
+
+/**
  * 组装 `meta.json`(形状真源:`packages/schema/src/archive-meta.ts`,一字不改)。
  *
  * 十一项必填写死,另有可选的 `channelId` / `optimization` / `selection`。只填值:字段序即
- * schema 的书写序,`protocolRounds` 由 `prompts.length` 推得(两者相等是装载期不变量),
- * `ruleset` / `sandboxRuntimeHash` 从本仓常量填,`scriptSha256` 由调用方现场读 `script.js` 字节算出后传入。
+ * schema 的书写序,`ruleset` / `sandboxRuntimeHash` 从本仓常量填,`scriptSha256` 由调用方现场读
+ * `script.js` 字节算出后传入。
+ *
+ * 轮数与起始 prompt 两种形态各一批入参（判别联合，`steps` 就是判别键）：
+ *
+ * - one-shot（历史形态）：`prompts` 逐轮一份，`protocolRounds = prompts.length`；
+ * - agent（v3）：`steps` 一步一条，`protocolRounds = steps.length`、`prompts` 一条（零步为零条）。
+ *
+ * 两者都走 `archiveRoundFieldsOf`，所以「协议轮数等于过程记录条数」这条断言在写入侧只有一处。
  */
-export type BuildArchiveMetaInput = {
+type BuildArchiveMetaIdentity = {
   readonly model: string;
   readonly modelVersion: string;
   /**
@@ -79,7 +132,6 @@ export type BuildArchiveMetaInput = {
    */
   readonly channelId: string;
   readonly generatedAt: string;
-  readonly prompts: readonly string[];
   readonly generationLog: readonly string[];
   readonly validation: ArchiveValidation;
   readonly tscVersion: string;
@@ -88,22 +140,48 @@ export type BuildArchiveMetaInput = {
   readonly selection?: ArchiveSelection;
 };
 
-export const buildArchiveMeta = (input: BuildArchiveMetaInput): ArchiveMeta => ({
-  model: input.model,
-  modelVersion: input.modelVersion,
-  channelId: input.channelId,
-  generatedAt: input.generatedAt,
-  protocolRounds: input.prompts.length,
-  prompts: input.prompts,
-  generationLog: input.generationLog,
-  ruleset: RULESET_VERSION,
-  validation: input.validation,
-  tscVersion: input.tscVersion,
-  scriptSha256: input.scriptSha256,
-  sandboxRuntimeHash: SANDBOX_RUNTIME_HASH,
-  ...(input.optimization === undefined ? {} : { optimization: input.optimization }),
-  ...(input.selection === undefined ? {} : { selection: input.selection }),
-});
+export type BuildArchiveMetaInput = BuildArchiveMetaIdentity &
+  (
+    | { readonly prompts: readonly string[]; readonly steps?: undefined }
+    | ({ readonly prompts?: undefined } & AgentArchiveInput)
+  );
+
+export const buildArchiveMeta = (input: BuildArchiveMetaInput): ArchiveMeta => {
+  // `steps` 是判别键：有它 = agent（v3），没它 = one-shot。两边的轮数都只走 `archiveRoundFieldsOf`。
+  const rounds =
+    input.steps === undefined
+      ? { protocolRounds: input.prompts.length, prompts: input.prompts }
+      : archiveRoundFieldsOf(input);
+  const agent = input.steps === undefined ? undefined : input;
+  return {
+    // 形状版本写在第一个键上：读档按它分派，所以它也是读序列的第一格。
+    ...(agent === undefined ? {} : { archiveSchemaVersion: ARCHIVE_SCHEMA_VERSION }),
+    model: input.model,
+    modelVersion: input.modelVersion,
+    channelId: input.channelId,
+    generatedAt: input.generatedAt,
+    protocolRounds: rounds.protocolRounds,
+    prompts: rounds.prompts,
+    ...(agent === undefined ? {} : { steps: agent.steps }),
+    generationLog: input.generationLog,
+    ...(agent === undefined
+      ? {}
+      : {
+          contextLength: agent.contextLength,
+          harnessVersion: agent.harnessVersion,
+          harnessDigest: agent.harnessDigest,
+          termination: agent.termination,
+          atStep: agent.atStep,
+        }),
+    ruleset: RULESET_VERSION,
+    validation: input.validation,
+    tscVersion: input.tscVersion,
+    scriptSha256: input.scriptSha256,
+    sandboxRuntimeHash: SANDBOX_RUNTIME_HASH,
+    ...(input.optimization === undefined ? {} : { optimization: input.optimization }),
+    ...(input.selection === undefined ? {} : { selection: input.selection }),
+  };
+};
 
 /** 在 `archive/<slug>/` 下开一个同文件系统的临时组装目录,返回它的绝对路径。 */
 export const openStagingDir = (root: string, slug: string): string => {

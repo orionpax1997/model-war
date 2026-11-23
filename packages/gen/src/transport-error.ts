@@ -14,12 +14,25 @@
  * 由 `packages/gen/src/retry.ts` 的另一条分支处理。把两件事混进同一个异常会让「重试耗尽」的失败分类失真。
  */
 
+/**
+ * 传输失败的**细分**:四种,厂商无关,由 `status` / `timedOut` 判定而来。
+ *
+ * 它比 `retryable` 粗一级、比状态码粗得更多:读侧要的是「这是什么性质的事」,不是「哪个号段」。
+ * 两个字段各管一件事——`retryable` 是**事实**(重发可能成功吗),这一条是**性质**(谁的问题)。
+ * 两者不重合正是本仓库需要策略层的理由:5xx 是 `retryable: true` 但按裁决不重试(ADR-0036)。
+ */
+export type TransportFailureKind = "rate-limited" | "server" | "network" | "timeout";
+
 /** `TransportError` 的构造参数。`status` 仅在拿到了 HTTP 状态码时给(网络失败 / 超时没有)。 */
 export type TransportErrorOptions = {
   /** true = 重发同一轮可能成功(429 / 5xx / 网络失败 / 超时);false = 重发无益(其余 4xx)。 */
   readonly retryable: boolean;
   /** HTTP 状态码;网络失败与超时时缺席。 */
   readonly status?: number;
+  /** 无状态码时的细分:空闲超时(true)还是连接级失败(缺席)。有状态码时被 `status` 覆盖。 */
+  readonly timedOut?: boolean;
+  /** 服务端 `Retry-After` 换算成的毫秒数;缺席 = 服务端没给这条提示。 */
+  readonly retryAfterMs?: number;
 };
 
 /**
@@ -30,14 +43,36 @@ export type TransportErrorOptions = {
 export class TransportError extends Error {
   readonly retryable: boolean;
   readonly status?: number;
+  readonly timedOut: boolean;
+  readonly retryAfterMs?: number;
 
   constructor(message: string, options: TransportErrorOptions) {
     super(message);
     this.name = "TransportError";
     this.retryable = options.retryable;
-    // `exactOptionalPropertyTypes` 下可选属性要么缺席、要么是 number:只在真拿到状态码时挂上。
+    this.timedOut = options.timedOut === true;
+    // `exactOptionalPropertyTypes` 下可选属性要么缺席、要么是 number:只在真拿到时挂上。
     if (options.status !== undefined) {
       this.status = options.status;
     }
+    if (options.retryAfterMs !== undefined) {
+      this.retryAfterMs = options.retryAfterMs;
+    }
   }
 }
+
+/**
+ * 传输失败的细分判定:状态码能说话时听状态码,不能说话时才看 `timedOut`。
+ *
+ * 429 与 5xx **不共用**一档——前者是「服务端还好,只是现在不给你」,后者是「服务端自己坏了」;
+ * 这条界线就是 ADR-0036 里「等一等有没有意义」的判据。
+ */
+export const transportFailureKindOf = (cause: TransportError): TransportFailureKind => {
+  if (cause.status === 429) {
+    return "rate-limited";
+  }
+  if (cause.status !== undefined && cause.status >= 500) {
+    return "server";
+  }
+  return cause.timedOut ? "timeout" : "network";
+};

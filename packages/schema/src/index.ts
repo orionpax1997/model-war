@@ -44,6 +44,47 @@ export {
   SANDBOX_RUNTIME_HASH,
 } from "./sandbox-runtime.js";
 
+// 契约包身份(ADR-0037):`/contract` 四条挂载字节的整树 sha256。形状与 `SANDBOX_RUNTIME_HASH` 同款
+// ——入库常量 + 门禁证明「现算 == 入库」;算法在 `packages/tools/src/contract-tree.ts`(本包不许有依赖,
+// 而它要 `node:crypto`)。消费方是生成侧渲染的首条消息末行。
+export { CONTRACT_TREE_HASH } from "./contract-identity.js";
+
+// 入库沙箱 rootfs 的工程常量:产物路径 / 期望文件清单 / 整棵树的哈希。
+// 供 `packages/gen` 的执行器(rootfs 就是沙箱的根)与 `packages/tools` 的漂移门禁共享;
+// 形状照 ADR-0007 对 runtime bundle 的处理:产物以字节为准,哈希是手写回来的常量。
+export {
+  SANDBOX_ROOTFS_BIN_DIR,
+  SANDBOX_ROOTFS_CONTRACT_DIR,
+  SANDBOX_ROOTFS_DIR,
+  SANDBOX_ROOTFS_FILES,
+  SANDBOX_ROOTFS_SHIMS,
+  SANDBOX_ROOTFS_TREE_HASH,
+} from "./sandbox-rootfs.js";
+
+// 薄壳—宿主通道的协议体(ADR-0032「受限工具不是二进制,是宿主侧的服务」):一行 JSON 一请求
+// 一响应,跨进程交换。宿主侧的 dispatcher / 服务与 gate、单测读同一份;沙箱里那一侧是 bash,
+// 它按本模块定死的键序与转义表切字段(`packages/gen/src/agent/shim/shim.sh`)。
+export {
+  EVALUATE_CALL_LIMIT,
+  TOOL_CHANNEL_FD,
+  TOOL_NAMES,
+  TOOL_REQUEST_JSON_SCHEMA,
+  TOOL_RESPONSE_JSON_SCHEMA,
+  escapePayload,
+  parseToolRequest,
+  parseToolResponse,
+  serializeToolRequest,
+  serializeToolResponse,
+} from "./tool-channel.js";
+export type {
+  ToolName,
+  ToolRequest,
+  ToolRequestParse,
+  ToolResponse,
+  ToolResponseParse,
+  ToolResult,
+} from "./tool-channel.js";
+
 /** 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
  */

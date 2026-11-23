@@ -17,7 +17,16 @@
     "**/*.d.ts",
     "**/coverage/**",
     "packages/tools/selfproof/stub/**",
-    "packages/engine/sandbox-runtime/runtime.iife.js"
+    "packages/engine/sandbox-runtime/runtime.iife.js",
+    // 入库沙箱 rootfs(ADR-0033):bin/ 下是静态 ELF 二进制,contract/ 是 `docs/rules-v2/` 的
+    // **逐字节副本**(被 `check:sandbox-rootfs` 钉住)。两者都不是本仓库的源码:格式化器或 linter
+    // 碰它们只会让「现算 == 入库」红在一个与被检对象无关的原因上。
+    "packages/gen/sandbox-rootfs/**",
+    // 存档字节 fixture（档案形状 v3 那一票）：它们是从真实 `archive/` 抽出来的**档案副本**，
+    // 不是源码。这里排除的理由与在上面几条不同：不是躲命中，而是**文件字节本身是被测对象**
+    // （`meta.json` 里的身份摘要拿这些字节核对），格式化或改写会让测试失去它唯一的凭据。
+    // 同一份理由也写在 `.oxfmtrc.json` 与 `packages/runner/tsconfig.json` 的对应位置。
+    "packages/runner/src/fixtures/**"
   ],
   "categories": { "correctness": "error" },
   "rules": {

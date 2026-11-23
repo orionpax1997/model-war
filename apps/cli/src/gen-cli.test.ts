@@ -5,11 +5,35 @@
  * `node:http` 起的**本地假服务**(回一个过得了 tsc + 静态校验的合法脚本),`.env` 写在临时根里提供
  * 假凭证;断言退出码 0 + `archive/<slug>/<runId>/` 三件套落地。
  *
- * ── 为什么不改 `cli.test.ts` ──
+ * ── 它归 `sandbox` project,不归 `unit` ──
  *
- * 契约 §6 给 05 留的缝是「补一条 CLI 子进程冒烟」;`cli.test.ts` 的既有断言(帮助文本、未实现路径、
- * match/verify/map-lint e2e)不在本文件范围。这里新开一个文件,既不把那条 27KB 的用例集撑得更大,
- * 也让这条冒烟的可观察面(真打一次 HTTP、真编一次 tsc)单独成篇。
+ * 它是**真沙箱**的端到端冒烟:bwrap 真起、真网格 32 场真跑,那要非特权 user namespace 与系统装的
+ * bubblewrap,而常跑链(`pnpm run test`)不装。收进 `unit` 的后果与 `agent-real-session.test.ts`
+ * 完全相同:「全量门禁红了」同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」,两种处方
+ * 混成一条红。所以它和那条真会话一起归 `sandbox`(`pnpm run check:sandbox` 的 `--project sandbox`)。
+ *
+ * 这条归属是**被内核探针抓出来的**(`vitest.kernel-guard.setup.ts` 落地后的第一例):在此之前它
+ * 一直挂在 `unit` 上,而 `it.skipIf(!archivePresent)` 让它在「没有冻档的机器」上静默 skip——
+ * `archive/` 不入库,于是本机与 CI 两边都不报红,一条要内核能力的用例就这么藏住了。
+ *
+ * ── 移走不等于丢掉覆盖 ──
+ *
+ * 拆开看它断言的四样东西,各自都有快链上的那一份:
+ * - CLI 产物的 argv 与退出码约定:`cli.test.ts`(`gen --help` 列出的选项、缺 `--config` 非零退出)
+ *   与 `packages/gen/src/run.test.ts`(`generateAndFreeze` 的解析、`--model` 选取、`.env` 加载);
+ * - 「一次 evaluate 产出可装载档案 + 成功/失败两档」:`gen-archive.test.ts` 与
+ *   `agent-session-archive.test.ts` 用**同一份** `withRealBash` 替身验同一条链;
+ * - HTTP 适配器真的打了那个端点、带上了 Bearer 鉴权:`packages/gen/src/http/client.test.ts`
+ *   直接对着假端点验;
+ * - 真网格 32 场跑满:`check:gen-grid`(它要冻档,所以自己是命名脚本)。
+ * 本文件不可替代的那一样是「这四层同时在一条 CLI 进程里成立」——它仍然被验,只是在对的那条链上。
+ *
+ * ── 为什么不给子进程 CLI 注入假执行器 ──
+ *
+ * `withRealBash` 是 `import` 形态的替身,它换的是**本进程**那份 `sandbox` 对象;而本文件 spawn 的是
+ * 打好的单文件产物,替身跟着打包进 bundle 意味着在生产 CLI 上开一个测试专用开关——那正是禁止项。
+ * 另一条路是给子进程塞一个假 `bwrap`(把执行器换成 `/bin/bash` 的 shim),但那要自己重新实现
+ * rootfs 挂载面与 fd 3 语义;一旦实现得与生产不同,这条冒烟就变成在验 shim 自己的正确性。
  *
  * ── 为什么用异步 `spawn` 而不是 `spawnSync` ──
  *
@@ -53,6 +77,21 @@ const entry = fileURLToPath(new URL("./index.ts", import.meta.url));
 
 const CONTRACT_RULES = "# rules\n\n机制正文:这里是规则契约。\n";
 const CONTRACT_API = "# api\n\nAPI 正文:这里是接口契约。\n";
+/** 契约目录说明(首条消息全量内联的那一份)。 */
+const CONTRACT_INDEX = "# contract\n\n- rules.md:机制\n- api.md:接口\n";
+/**
+ * 一条「把脚本写进 /workspace」的动作块。
+ *
+ * 走 heredoc:模型在沙箱里写文件的自然写法,也是 ADR-0032 举的那一种(重定向 + heredoc)。
+ * 写成动作块而不是裸脚本正文,是 agent 形态与 one-shot 的分界线——裸正文不会被解析成任何动作。
+ */
+const writeScriptAction = (body: string): string =>
+  `\`\`\`bash\ncat > /workspace/script.ts <<'EOF'\n${body}EOF\n\`\`\``;
+
+/** 首条 `user` 的模板:两个占位符都得在,否则渲染器明确报错。 */
+const AGENT_TEMPLATE = "{{contractIndex}}\n\n任务:\n\ncontract: {{contractDigest}}\n";
+/** `system` 的模板:原样使用,不渲染。 */
+const AGENT_SYSTEM_TEMPLATE = "# 协议:每一步一个动作块\n\n恰好一个 ```bash 块。\n";
 /** 过得了 tsc 与静态校验的最简脚本:假服务的回文本。 */
 const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
 
@@ -99,20 +138,25 @@ type Captured = {
 };
 
 /**
- * 起一个本地假端点,对任何请求都回一个合法脚本(chat-completions 方言)。返回值里带上收到的请求,
- * 好让断言能钉住「CLI 真的按配置打到了这个端点、带上了鉴权头」。
- */
-/**
- * 起一个本地假端点，对任何请求都回 `scriptText`（缺省是过 tsc + 静态校验的合法脚本）。
+ * 起一个本地假端点(chat-completions 方言),按序回放 `contents`。
+ *
+ * ── 为什么是**一串**而不是一句 ──
+ *
+ * agent 形态下一次会话有多步,每步一次模型调用,而每步该回什么由**上一步的观测**决定:
+ * 先写脚本、再 `evaluate`、最后 `done`。回同一句会让会话永远停在第一步的意图上。
+ * 剧本用尽后重复最后一句(那是「模型不再有新动作」的最接近模拟)。
+ *
+ * 返回值带上收到的请求,好让断言能钉住「CLI 真的按配置打到了这个端点、带上了鉴权头」。
  */
 const startFakeEndpoint = async (
-  scriptText: string = VALID_SCRIPT,
+  contents: readonly string[] = [VALID_SCRIPT],
 ): Promise<{
   readonly baseUrl: string;
   readonly requests: readonly Captured[];
   readonly close: () => Promise<void>;
 }> => {
   const requests: Captured[] = [];
+  let call = 0;
   const server = createServer((req, res) => {
     let raw = "";
     req.setEncoding("utf8");
@@ -125,10 +169,12 @@ const startFakeEndpoint = async (
         path: req.url ?? "",
         authorization: req.headers.authorization,
       });
+      const content = contents[call] ?? contents[contents.length - 1] ?? "";
+      call += 1;
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
-          choices: [{ message: { role: "assistant", content: scriptText }, finish_reason: "stop" }],
+          choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         }),
       );
@@ -184,8 +230,12 @@ const mkRoot = (baseUrl: string): string => {
   mkdirSync(join(root, "docs", "rules-v2"), { recursive: true });
   writeFileSync(join(root, "docs", "rules-v2", "rules.md"), CONTRACT_RULES);
   writeFileSync(join(root, "docs", "rules-v2", "api.md"), CONTRACT_API);
+  // 契约目录说明:首条消息全量内联的就是它(agent 形态的契约正文不进消息,只给目录)。
+  writeFileSync(join(root, "docs", "rules-v2", "README.md"), CONTRACT_INDEX);
+  // 首条 user 与 system 的模板:agent 形态下这两份是**必读盘**的输入,缺了不静默降级。
   mkdirSync(join(root, "prompts"), { recursive: true });
-  writeFileSync(join(root, "prompts", "base.md"), "契约:\n\n{{contract}}\n");
+  writeFileSync(join(root, "prompts", "agent.md"), AGENT_TEMPLATE);
+  writeFileSync(join(root, "prompts", "agent-system.md"), AGENT_SYSTEM_TEMPLATE);
   mkdirSync(join(root, "rulesets"), { recursive: true });
   // 网格是 32 场：把 tick 上限压到 4，让端到端稳定在秒级（断言的是接线，不是对局长度）。
   const ruleset = JSON.parse(
@@ -205,7 +255,9 @@ const mkRoot = (baseUrl: string): string => {
       "    modelId: provider/alpha-1",
       `    credentialEnvVar: ${CREDENTIAL_ENV_VAR}`,
       "    channelId: gen-test-channel",
-      "    protocolRounds: 1",
+      // agent 形态的上下文守卫要窗口大小才判得了「再发一次会不会越过 80%」,
+      // 读不到就拒跑而不是静默跳过守卫(pipeline.ts 那条前置判据)。
+      "    contextLength: 100000",
       "",
     ].join("\n"),
   );
@@ -213,6 +265,10 @@ const mkRoot = (baseUrl: string): string => {
   writeFileSync(join(root, ".env"), `${CREDENTIAL_ENV_VAR}=smoke-fake-key\n`);
   return root;
 };
+
+/** 生产形态的工作区落点:`<root>/.workspaces/<slug>/<runId>/`(见 `pipeline.ts`)。 */
+const workspaceOf = (root: string, runId: string): string =>
+  join(root, ".workspaces", "alpha", runId);
 
 /** 读回试跑观测文件（`archive/<slug>/observed-<runId>.jsonl`）的每一行；形状由入口那一侧写。 */
 type ObservationRow = {
@@ -251,56 +307,122 @@ const runCli = (
   });
 
 it.skipIf(!archivePresent)(
-  "冒烟:假端点后端到端跑通 `gen`，退出 0，存档三件套落地",
+  "冒烟:假端点后端到端跑通一次会话(真网格 32 场,有候选即成功档)",
   { timeout: 120_000 },
   async () => {
-    const endpoint = await startFakeEndpoint();
+    // 一次 agent 会话三步:写脚本 → evaluate(提交并跑满整张网格) → done。
+    const endpoint = await startFakeEndpoint([
+      writeScriptAction(VALID_SCRIPT),
+      "```bash\nevaluate\n```",
+      "```bash\ndone\n```",
+    ]);
     try {
       const root = mkRoot(endpoint.baseUrl);
       const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
+      // 这条用例验的是**接线**:CLI → 真 HTTP 适配器 → 假端点 → 单会话 loop → 真网格 → 落档。
+      // 真网格接上之后,那次 evaluate 有成绩 → 有候选 → 成功档、退出 0(ADR-0030)。
       expect(result.status, result.stderr).toBe(0);
 
-      // 真打到了假端点：POST /chat/completions，带上 Bearer 鉴权头。
-      expect(endpoint.requests).toHaveLength(1);
-      expect(endpoint.requests[0]?.method).toBe("POST");
-      expect(endpoint.requests[0]?.path).toBe("/chat/completions");
-      expect(endpoint.requests[0]?.authorization).toBe("Bearer smoke-fake-key");
+      // 真打到了假端点：POST /chat/completions，带上 Bearer 鉴权头；三步各一次调用。
+      expect(endpoint.requests).toHaveLength(3);
+      for (const request of endpoint.requests) {
+        expect(request.method).toBe("POST");
+        expect(request.path).toBe("/chat/completions");
+        expect(request.authorization).toBe("Bearer smoke-fake-key");
+      }
 
-      // 三件套落地（单轮成功）。存档目录里除目录外只有那份观测文件（旁挂，不进三件套）。
+      // 有候选 → 三件套目录(不是 failed-*.json)。
       const slugDir = join(root, "archive", "alpha");
-      const entries = readdirSync(slugDir, { withFileTypes: true });
-      const runIds = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-      const sidecars = entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name);
-      expect(runIds).toHaveLength(1);
-      const runId = runIds[0] as string;
-      // 失败记录不该出现在成功路径里。
-      expect(runIds.some((name) => name.startsWith("failed-"))).toBe(false);
-      // 观测 + 网格汇总（旁挂，不进三件套）：汇总里是这次评测的整张计划。
-      expect(sidecars.sort()).toEqual([
-        `observed-${runId}.jsonl`,
-        `observed-${runId}.jsonl${TRIAL_GRID_SUMMARY_SUFFIX}`,
-      ]);
+      const names = readdirSync(slugDir);
+      expect(names.some((name) => name.startsWith("failed-"))).toBe(false);
+      const runId = names.find((name) => /^\d/u.test(name)) as string;
+      expect(runId).toBeDefined();
+      expect(existsSync(join(slugDir, runId, "script.js"))).toBe(true);
+
+      const meta = JSON.parse(readFileSync(join(slugDir, runId, "meta.json"), "utf8")) as {
+        archiveSchemaVersion: number;
+        protocolRounds: number;
+        prompts: readonly string[];
+        steps: readonly { action: { kind: string }; stdout: string }[];
+        termination: string;
+        atStep: number;
+        harnessDigest: string;
+        harnessVersion: string;
+        contextLength: number;
+        scriptSha256: string;
+        optimization: {
+          version: number;
+          candidates: readonly {
+            step: number;
+            scriptFile: string;
+            observationsFile: string;
+            scriptSha256: string;
+            score: { countedMatches: number };
+            matchCount: number;
+          }[];
+        };
+      };
+      expect(meta.archiveSchemaVersion).toBe(3);
+      // v3 的公式:轮数 = 过程记录条数;起始 prompt 恒一条(不是每步一份)。
+      expect(meta.protocolRounds).toBe(3);
+      expect(meta.steps).toHaveLength(3);
+      expect(meta.steps.map((step) => step.action.kind)).toEqual(["bash", "evaluate", "done"]);
+      expect(meta.prompts).toHaveLength(1);
+      expect(meta.termination).toBe("done");
+      expect(meta.atStep).toBe(3);
+      // 身份从第一份 agent 档起就写(ADR-0034)。
+      expect(meta.harnessDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(meta.harnessVersion).toBe("bash-mini/0.1");
+      expect(meta.contextLength).toBe(100_000);
+
+      // evaluate 那一步的 stdout 只给聚合对差表与一行路径(ADR-0030「观测外置」)。
+      const evaluateStdout = meta.steps[1]?.stdout ?? "";
+      expect(evaluateStdout).toContain("evaluate:通过");
+      expect(evaluateStdout).toContain("一、对差表");
+      expect(evaluateStdout).toContain("完整观测:/workspace/.observations/1.md");
+      expect(evaluateStdout).not.toContain("二、逐场一行");
+
+      // ── 候选:一次 evaluate 一条,无 `stage`,步号即那一步 ──
+      expect(meta.optimization.version).toBe(3);
+      expect(meta.optimization.candidates).toHaveLength(1);
+      const candidate = meta.optimization.candidates[0]!;
+      expect(candidate.step).toBe(2);
+      expect(Object.hasOwn(candidate, "stage")).toBe(false);
+      expect(candidate.observationsFile).toBe(`observed-${runId}-round-2.jsonl`);
+      expect(candidate.scriptFile).toBe(`${candidate.observationsFile}.candidate.js`);
+      expect(candidate.matchCount).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+      expect(candidate.score.countedMatches).toBe(TRIAL_MATCHES_PER_CANDIDATE);
+
+      // 快照三件套都在档案目录里(既有命名族,不新建目录)。
+      for (const name of [
+        candidate.observationsFile,
+        `${candidate.observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`,
+        candidate.scriptFile,
+        `${candidate.observationsFile}.candidate.ts`,
+      ])
+        expect(existsSync(join(slugDir, name)), name).toBe(true);
+
+      // 胜者就是末位候选(没有 selection):冻结的三件套与候选条目字节同源。
+      const candidateBytes = readFileSync(join(slugDir, candidate.scriptFile));
+      expect(meta.scriptSha256).toBe(candidate.scriptSha256);
+      expect(readFileSync(join(slugDir, runId, "script.js")).equals(candidateBytes)).toBe(true);
+      expect(readFileSync(join(slugDir, runId, "script.ts"), "utf8")).toBe(
+        readFileSync(join(slugDir, `${candidate.observationsFile}.candidate.ts`), "utf8"),
+      );
+
+      // 网格真的跑满了整张:观测原料进档案,派生视图进工作区。
       const grid = JSON.parse(
-        readFileSync(join(slugDir, `observed-${runId}.jsonl${TRIAL_GRID_SUMMARY_SUFFIX}`), "utf8"),
-      ) as { plan: { matches: readonly { map: string }[] } };
+        readFileSync(
+          join(slugDir, `${candidate.observationsFile}${TRIAL_GRID_SUMMARY_SUFFIX}`),
+          "utf8",
+        ),
+      ) as { plan: { matches: readonly { map: string }[] }; scriptSha256: string };
       expect(grid.plan.matches).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
       expect([...new Set(grid.plan.matches.map((match) => match.map))]).toEqual([
         ...TRIAL_GRID_MAP_NAMES,
       ]);
-      expect(existsSync(join(slugDir, runId, "script.ts"))).toBe(true);
-      expect(existsSync(join(slugDir, runId, "script.js"))).toBe(true);
-      expect(existsSync(join(slugDir, runId, "meta.json"))).toBe(true);
-
-      const meta = JSON.parse(readFileSync(join(slugDir, runId, "meta.json"), "utf8")) as {
-        protocolRounds: number;
-        prompts: readonly string[];
-      };
-      expect(meta.protocolRounds).toBe(1);
-      expect(meta.prompts).toHaveLength(1);
-
-      // 试跑观测落地：整张网格 32 场各一行（这个候选整局无所作为，场场命中「无得分来源」）。
-      // 这是「留痕进得去 gen 的记录」那一条的接线断言——不落盘，这条缺口就还在。
-      const observations = readObservationLines(join(slugDir, `observed-${runId}.jsonl`));
+      expect(grid.scriptSha256).toBe(candidate.scriptSha256);
+      const observations = readObservationLines(join(slugDir, candidate.observationsFile));
       expect(observations).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
       expect(observations.map((line) => line.matchIndex)).toEqual(
         Array.from({ length: TRIAL_MATCHES_PER_CANDIDATE }, (_, index) => index),
@@ -310,6 +432,13 @@ it.skipIf(!archivePresent)(
           (line) => line.noScoreSource && line.delivered === 0 && line.captures === 0,
         ),
       ).toBe(true);
+
+      // 派生视图(聚合 + 逐场 + 最差三场)留在工作区,不进档案(ADR-0030/0031)。
+      const observationsDir = join(workspaceOf(root, runId), ".observations");
+      expect(readdirSync(observationsDir)).toEqual(["1.md"]);
+      const view = readFileSync(join(observationsDir, "1.md"), "utf8");
+      expect(view).toContain("二、逐场一行");
+      expect(view).toContain("三、最差三场");
     } finally {
       await endpoint.close();
     }
@@ -323,7 +452,13 @@ it.skipIf(!archivePresent)(
   "试跑拦下惯犯:死循环脚本退出非零,失败记录分类 contract 且诊断含试跑明细",
   { timeout: 120_000 },
   async () => {
-    const endpoint = await startFakeEndpoint(HABITUAL_SCRIPT);
+    // 写惯犯脚本 → evaluate(真试跑,32 场照样判拦)。被拦下的一次不产出候选,
+    // 所以这次会话零候选 → 失败档(ADR-0030「失败 = 一个候选都没有」)。
+    const endpoint = await startFakeEndpoint([
+      writeScriptAction(HABITUAL_SCRIPT),
+      "```bash\nevaluate\n```",
+      "```bash\ndone\n```",
+    ]);
     try {
       const root = mkRoot(endpoint.baseUrl);
       const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
@@ -334,24 +469,31 @@ it.skipIf(!archivePresent)(
       const slugDir = join(root, "archive", "alpha");
       const names = readdirSync(slugDir);
       const failureName = names.find((name) => name.startsWith("failed-")) as string;
-      expect(names).toEqual(expect.arrayContaining([failureName]));
+      expect(failureName).toBeDefined();
       const record = JSON.parse(readFileSync(join(slugDir, failureName), "utf8")) as {
         runId: string;
         classification: string;
         diagnostics: readonly string[];
         message: string;
+        steps: readonly { action: { kind: string }; stdout: string; exitCode: number }[];
+        termination: string;
       };
       expect(record.classification).toBe("contract");
-      expect(record.message).toContain("试跑");
+      // v3 失败档与成功档同键集合：过程记录与终止原因都在。
+      expect(record.termination).toBe("done");
+      expect(record.steps).toHaveLength(3);
+      expect(record.steps[1]?.action.kind).toBe("evaluate");
+      // 那次 evaluate 非零退出（试跑拦下），且**明细在 stdout**（服务的正常输出，不是错误流）。
+      expect(record.steps[1]?.exitCode).not.toBe(0);
+      expect(record.message).toContain("evaluate");
+      // 诊断取自那次 evaluate 的**正常输出**(stdout):服务的 verdict 就是拦下原因。
+      // 只看 `stderr` 会把这条写成空诊断——那是失败档唯一能回答「为什么没成绩」的地方。
       const diagnostics = record.diagnostics.join("\n");
       expect(diagnostics).toContain("试跑未通过");
-      expect(diagnostics).toContain("控制流事件计数");
 
-      // 被拦下的候选同样留观测（旁证不挑结论）：runId 与失败记录同源，32 场一行不少。
-      expect(names).toContain(`observed-${record.runId}.jsonl`);
-      const observations = readObservationLines(join(slugDir, `observed-${record.runId}.jsonl`));
-      expect(observations).toHaveLength(TRIAL_MATCHES_PER_CANDIDATE);
-      expect(observations[0]?.matchIndex).toBe(0);
+      // 网格真的跑满了一张(拦下是试跑的结论,不是「没跑」)。
+      const observationsDir = join(workspaceOf(root, record.runId), ".observations");
+      expect(readdirSync(observationsDir)).toContain("1.md");
     } finally {
       await endpoint.close();
     }
