@@ -44,6 +44,11 @@ export {
   SANDBOX_RUNTIME_HASH,
 } from "./sandbox-runtime.js";
 
+// 契约包身份(ADR-0037):`/contract` 四条挂载字节的整树 sha256。形状与 `SANDBOX_RUNTIME_HASH` 同款
+// ——入库常量 + 门禁证明「现算 == 入库」;算法在 `packages/tools/src/contract-tree.ts`(本包不许有依赖,
+// 而它要 `node:crypto`)。消费方是生成侧渲染的首条消息末行。
+export { CONTRACT_TREE_HASH } from "./contract-identity.js";
+
 /** 规则集版本号。必须与 `docs/rules-vN/` 目录名、`rulesets/vN.json` 的文件名三处一致,
  * 装载期错配即拒跑,不静默降级(hld §7.1)。
  */
