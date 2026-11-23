@@ -11,7 +11,7 @@
  *
  * ── 这个哈希与契约包身份不是同一个数 ──
  * 两边口径同源(`按路径排序 → path\0bytes 串接 → sha256`),但**范围不同**:这里是
- * **整棵 rootfs**(bash + 四个 coreutils + 三个薄壳 + `contract/` 四条),契约包身份只算
+ * **整棵 rootfs**(bash + 八个 coreutils + 三个薄壳 + `contract/` 四条),契约包身份只算
  * `docs/rules-v2/` 那四条。别把两个数当同一个用:只换 bash 版本时,模型世界的哈希应该变,
  * 契约身份不应该变——合成一个数就把两种断代混成一种。
  *
@@ -37,8 +37,8 @@ export const SANDBOX_ROOTFS_DIR = "packages/gen/sandbox-rootfs";
 /**
  * 期望的文件清单(相对 rootfs 根、`/` 分隔、字典序)。
  *
- * 「多一个少一个都红」由它承担,而不是由人记:新增内容物要同时改清单、哈希与
- * `docs/adr/0033-sandbox-executor.md` 那张内容物表——三处都要改,所以它不可能悄悄长大。
+ * 「多一个少一个都红」由它承担,而不是由人记:新增内容物要同时改清单与哈希(`PROVENANCE.md`
+ * 与命令清单由生成物与门禁跟着走,ADR-0033 不再枚举清单——那边抄一份只会过期)。
  *
  * 清单里 `bin/` 之外的分组是数据而不是形状:门禁按**路径前缀**分组(`contract/` 对真源、`bin/`
  * 里除薄壳之外必须都是静态 ELF),所以这里不需要再写「哪几个是二进制」。
@@ -51,7 +51,11 @@ export const SANDBOX_ROOTFS_FILES = [
   "bin/done",
   "bin/evaluate",
   "bin/grep",
+  "bin/head",
   "bin/ls",
+  "bin/sed",
+  "bin/tail",
+  "bin/wc",
   "contract/README.md",
   "contract/api.md",
   "contract/examples/minimal.ts",
@@ -74,7 +78,7 @@ export const SANDBOX_ROOTFS_SHIMS = ["check", "done", "evaluate"] as const;
  * 门禁证明「现算 == 这里写的」。它是「模型看见的世界还是不是那份字节」的唯一判据。
  */
 export const SANDBOX_ROOTFS_TREE_HASH =
-  "8ced7782081516a5b76a344ff78cfe4665cb25a42b5c60839e83fd84fb861f79";
+  "06084237b107650177e7794ac60ef0a36bc5044ccc0dd07cd196677e2f2d6b8f";
 
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const SANDBOX_ROOTFS_BIN_DIR = "bin";

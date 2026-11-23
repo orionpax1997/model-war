@@ -106,7 +106,7 @@
 
 | 归属层 | 入口 | 归属说明 |
 |---|---|---|
-| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
+| 编辑循环(每轮) | `check:quick` | 格式(`fmt`)、lint、工具版本耦合断言(`coupling` / `coupling:quickjs`)、禁浮点门禁、预算结构门禁、散文禁抄取值门禁、契约包清单门禁(`check:contract`)、首条消息命令清单门禁(`check:prompt-commands`)、验收落点门禁(`check:landings`)、入库 rootfs 漂移门禁(`check:sandbox-rootfs`);**零构建**,贴得住每轮编辑循环。清单真源是 `package.json` 的 `check:quick` |
 | 默认快速收口 | `verify:fast` | `check:quick` + 默认 `test`(unit + property);实现与收口的唯一默认入口 |
 | 主流水线(PR 与合入) | `lint:types` | `tsc -b` + `oxlint --type-aware`:类型检查本身是绿的,被拦住的违规全来自类型感知规则,所以挂的是带规则的这条脚本,不是 `tsc`。**只归这条链、不进 `verify:fast`**(理由见下注) |
 | 提交前全量 | `check` | 类型 + 默认测试 + 依赖巡航 + 声明即依赖 + 末尾复核组(漂移 / 基准 / runtime) |
@@ -535,8 +535,9 @@ archive/<modelSlug>/<runId>/
 | 四方对等 | `modelwar map-lint` + `apps/cli/src/map-lint/map-lint.test.ts`(四重旋转对称是静态判定 + 单测,不是属性测试) |
 | 只读隔离 | `packages/engine/src/snapshot/read-only-isolation.test.ts` |
 | 沙箱与预算 | `packages/engine/src/sandbox.test.ts`(真沙箱路径的裁决)+ `packages/engine/src/budget-mismatch.test.ts`(计数轨 / 内存轨的失配双向断言)+ `check:budget`(结构门禁)+ `check:budget-recheck`(探针复核) |
-| 生成期沙箱执行器 | `check:sandbox`(真跑四件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移,外加通道两条:fd 3 能进能出、薄壳经它跑通一次 `check`;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
-| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里除三个薄壳之外每个二进制都是静态 ELF / 契约与薄壳逐字节)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
+| 生成期沙箱执行器 | `check:sandbox`(真跑四件事:可用性 preflight / 沙箱内出不了网 / `cmd &` 不残留 / rootfs 漂移,外加通道两条:fd 3 能进能出、薄壳经它跑通一次 `check`,与 coreutils 五条最小调用;nightly 硬腿,不 skip)+ `packages/gen/src/agent/sandbox/preflight.ts`(失败即抛、不降级,报错带三种已知成因) |
+| 沙箱内容物可钉 | `check:sandbox-rootfs`(现算 == 入库:整棵树哈希 / 文件集双向逐项比对 / `bin/` 里除三个薄壳之外每个二进制都是静态 ELF / 契约与薄壳逐字节 / `PROVENANCE.md` 的来路表与入库字节的 sha256 一一相符)+ `packages/gen/sandbox-rootfs/PROVENANCE.md`(每个二进制的来源、sha256 与构建命令) |
+| 模型知道自己有什么命令 | `check:prompt-commands`(首条消息里的命令清单与 `SANDBOX_ROOTFS_FILES` 推出的集合**逐项相等**,两组分开判;缺项 `awk` / `sleep` 与替代写法在场)+ `packages/tools/src/prompt-commands.test.ts`(两个方向 / 分组 / 每项一句用途)+ `check:sandbox`(真 bwrap 里 `sed -n` / `sed -i` / `head -c` / `tail -n` / `wc -l` 各一条最小调用,断言输出字节) |
 | 宿主工具面与 fd 通道 | `packages/gen/src/agent/host/dispatcher.test.ts`(白名单 / `evaluate` 第 4 次被拒且执行函数零调用 / 会话墙钟即点即拒 / 沙箱伪造的「响应」只被当成请求)+ `packages/gen/src/agent/shim/shim.test.ts`(真 bash 对真序列化的往返:退出码 / 两路输出 / 形态不对就退出 2)+ `check:sandbox`(真 bwrap 下薄壳走 fd 跑通一次 `check`,真 tsc) |
 | 契约可读性 | `benchmarks/` 下模型仅凭契约盲写的基准脚本 + `check:selfproof` |
 | 可追溯与复算 | `apps/cli/src/validator.test.ts`(存档元数据读入端校验)+ `packages/runner/src/scheduler.test.ts`(对局输入物化与断点续跑)+ `packages/runner/src/archive-report.test.ts`(报告双轨) |
