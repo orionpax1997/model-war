@@ -37,8 +37,16 @@ import type {
 /** 失败记录文件名的前缀:`failed-<runId>.json` 与存档目录 `<runId>/` 在同一父目录下并列。 */
 export const FAILURE_RECORD_PREFIX = "failed-";
 
-/** 失败分类:`tsc`(编译没过)/ `contract`(静态校验没过)/ `transport`(传输重试耗尽)/ `selection`(三阶段后的选拔未完成)。 */
-export type FailureClassification = "tsc" | "contract" | "transport" | "selection";
+/**
+ * 失败分类:
+ *
+ * - `tsc`:编译没过。
+ * - `contract`:静态校验没过,或会话以其它非预算原因收尾(协议不服从、上下文守卫等)。
+ * - `budget`:**会话预算耗尽**(步数或墙钟用完)。它不是「模型违反契约」,只是这一场没跑完。
+ * - `transport`:传输重试耗尽。
+ * - `selection`:三阶段后的选拔未完成。
+ */
+export type FailureClassification = "tsc" | "contract" | "budget" | "transport" | "selection";
 
 /**
  * 失败记录的**身份字段**(哪个模型 / 哪一版 / 哪一跑 / 何时,渠道身份见 `FailureRecord.channelId`):生成侧 `buildFailureRecord` 与
@@ -76,7 +84,7 @@ export type FailureRecord = FailureIdentity & {
   readonly channelId?: string;
   /** 生成时所用的规则集版本(本仓常量)。 */
   readonly ruleset: string;
-  /** 失败分类:`tsc` / `contract` / `transport`。 */
+  /** 失败分类:`tsc` / `contract` / `budget` / `transport` / `selection`;`budget` 是会话预算耗尽,不是模型违反契约。 */
   readonly classification: FailureClassification;
   /** 已收敛的协议轮数,恒等于 `prompts.length`(镜像 `meta.json` 的轮数不变量)。 */
   readonly protocolRounds: number /** 逐轮**完整发出**的 prompt 链(键与含义同 `ModelFailure.prompts`)。 */;

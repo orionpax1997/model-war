@@ -261,6 +261,8 @@ it("步数耗尽:max-steps,步号等于上限,协议轮数等于步数", async (
   expect(outcome.agent.atStep).toBe(2);
   expect(outcome.agent.steps).toHaveLength(2);
   expect(model.calls).toHaveLength(2);
+  // 步数用完是**预算**耗尽,不是模型违反契约:读的人不必靠 `termination` 反推。
+  expect(outcome.failure.classification).toBe("budget");
 });
 
 it("动作解析失败三次即停:每一步都是非零退出码,一条命令都没跑", async () => {
@@ -280,6 +282,8 @@ it("动作解析失败三次即停:每一步都是非零退出码,一条命令�
   expect(outcome.agent.termination).toBe("action-parse");
   expect(outcome.agent.atStep).toBe(3);
   expect(commands).toHaveLength(0);
+  // 协议不服从是模型违反契约那一格,不因新增 `budget` 档而改写。
+  expect(outcome.failure.classification).toBe("contract");
   for (const step of outcome.agent.steps) {
     expect(step.action).toEqual({ kind: "none" });
     expect(step.exitCode).toBe(ACTION_REJECT_EXIT_CODE);
@@ -467,6 +471,8 @@ it("总墙钟耗尽:已跑完的步留着,不判失败(终止与落档正交)", 
   expect(outcome.agent.termination).toBe("wall-clock");
   // 走完的那几步仍在过程记录里。
   expect(outcome.agent.steps.length).toBeGreaterThan(0);
+  // 墙钟用完与步数用完同一格:会话预算耗尽。
+  expect(outcome.failure.classification).toBe("budget");
 });
 
 it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 wall-clock", async () => {
@@ -511,6 +517,8 @@ it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 
   // 半截响应不进过程记录、不进协议轮数(ADR-0031):它没有被执行的任何动作。
   expect(outcome.agent.steps).toEqual([]);
   expect(outcome.agent.atStep).toBe(0);
+  // 调用进行中被打断也只是「预算用完」,不是传输运气不好。
+  expect(outcome.failure.classification).toBe("budget");
   // 但**日志行仍在**:那一行的形状是传输末行(`responseConverged: false`),不是「静默丢掉」。
   const lines = outcome.failure.generationLog.map(
     (line) => JSON.parse(line) as Record<string, unknown>,
