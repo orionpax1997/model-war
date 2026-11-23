@@ -64,6 +64,11 @@ export {
 // (票 03):现在这里只剩这个数,理由与「为什么没跟着通道一起删」写在那个文件头注里。
 export { EVALUATE_CALL_LIMIT } from "./tool-channel.js";
 
+// 探针(`probe`)的三个数:覆盖几场 / 贴边阈值 / 会话上限。两个读者在两个包里(gen 执行与记录,
+// apps/cli 的入口与文案),所以只能住在这里——形状照 `EVALUATE_CALL_LIMIT` 的先例,理由写在
+// 那个文件头注里。
+export { PROBE_CALL_LIMIT, PROBE_MATCH_LIMIT, PROBE_NEAR_LIMIT_RATIO } from "./probe-limits.js";
+
 // 宿主工具的一次结果(dispatcher 交回、两个服务产出、执行器读)。它以前是那条通道的响应体,
 // 现在是一个宿主内的对象——不序列化,所以也没有键序与转义表要守。
 export type { ToolOutcome } from "./tool-outcome.js";

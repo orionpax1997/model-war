@@ -105,6 +105,8 @@ import {
   HOST_BRIDGE_SET_SNAPSHOT,
   type ActionTickFacts,
   type Observation,
+  type PeakUsage,
+  type RunnerOutput,
   type SeatRunner,
 } from "./index.js";
 
@@ -588,7 +590,27 @@ export const createQuickJsRunner = async (
   const runner: SeatRunner = {
     setSnapshot: session.setSnapshot,
     drainIntents: () => {
-      // 计数与墙钟:本 tick 进入时归零并 arm、记下墙钟起点,`loop()` + 排空之后 disarm。
+      // 事件计数只在装了计数回调时才有读数(`createSandboxVmWithCounter`:三条计数轨任一条启用
+      // 才装它)。全不启用时 `counter.eventCount` 恒为 0，那不是「用了 0」，是「没在数」。
+      const countsEvents =
+        eventTickLimit !== undefined ||
+        wallClockSoftLimit !== undefined ||
+        options.wallClockHardTimeout !== undefined;
+      /** 本 tick 的占用读数:采到了才写，没采到就缺席(补零会把「没量」写成「用了 0」)。 */
+      const usageOf = (
+        tick: TickReadings,
+        extra: { readonly apiCalls?: number; readonly memoryBytes?: number },
+      ): PeakUsage => ({
+        ...(countsEvents ? { eventCount: tick.eventCount } : {}),
+        ...(extra.apiCalls === undefined ? {} : { apiCalls: extra.apiCalls }),
+        ...(extra.memoryBytes === undefined ? {} : { memoryBytes: extra.memoryBytes }),
+      });
+
+      /** 给返回载荷带上本 tick 的读数;一条都没采到就原样返回(缺席 ≠ 零)。 */
+      const carrying = (output: Omit<RunnerOutput, "peakUsage">, usage: PeakUsage): RunnerOutput =>
+        Object.keys(usage).length === 0 ? output : { ...output, peakUsage: usage };
+
+      // 计数与墙钟:本 tick 进入时归零并 arm、记下墙钟起点，`loop()` + 排空之后 disarm。
       // 回调只能在构造时装,计数状态住宿主闭包;这里只开合闸门与读回读数。
       session.beginTick();
       let readings: TickReadings;
@@ -612,7 +634,13 @@ export const createQuickJsRunner = async (
       if (readings.hardTimedOut) {
         // 墙钟硬超时:**作废而非判罚**。中断本 tick、交回故障位;不产观测、不累加异常。
         // VM 不重建(hld §5.2 的注脚);本场由 `runMatch` 标 `uncertain-timeout` 后作废。
-        return { intents: [], observations: [], fault: "uncertain-timeout" };
+        //
+        // 占用读数照带:整场随后被作废,但「作废前用了多少」仍是这一跑唯一学得到的东西。
+        // 本 tick 没排 drain(API 数无从得知)、没跑 GC(存活堆口径不在),所以只带事件计数。
+        return carrying(
+          { intents: [], observations: [], fault: "uncertain-timeout" },
+          usageOf(readings, {}),
+        );
       }
       if (readings.eventTripped) {
         if (eventTickLimit === undefined) {
@@ -620,17 +648,23 @@ export const createQuickJsRunner = async (
           throw new Error("事件计数被截停但本轨未启用——引擎故障");
         }
         // 事件计数截停:本 tick 该座位意图全部作废(单位原地待命),不排 drain。VM 续用、记忆保留。
-        return {
-          intents: [],
-          observations: [
-            {
-              kind: "tripped",
-              track: EVENT_TRACK,
-              value: readings.eventCount,
-              limit: eventTickLimit,
-            },
-          ],
-        };
+        //
+        // 这条早退路径**正是探针最想看的场景**:越线那一 tick 的 `eventCount` 就是它要的读数。
+        // 所以占用读数必须在 `return` 之前带上,而不是只在正常返回那条路上填。
+        return carrying(
+          {
+            intents: [],
+            observations: [
+              {
+                kind: "tripped",
+                track: EVENT_TRACK,
+                value: readings.eventCount,
+                limit: eventTickLimit,
+              },
+            ],
+          },
+          usageOf(readings, {}),
+        );
       }
       if (uncaught) {
         // guest 未吞掉的异常:本 tick 该座位 intents 全部作废(单位原地待命),计一次异常。
@@ -638,12 +672,16 @@ export const createQuickJsRunner = async (
         // (事件轨同样早退;内存与 API 两条只在脚本正常返回时才可能同 tick 各计一次)。
         // VM 续用、模块级记忆保留(不重建),下一 tick 从原处继续(本 tick 的部分 intent 由下一
         // tick 的 `__setSnapshot` 清空,故不会跨 tick 残留)。
-        return {
-          intents: [],
-          observations: [
-            { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1, errorName },
-          ],
-        };
+        // 同上:早退也要带本 tick 的占用读数(不排 drain、不跑 GC,故只有事件计数)。
+        return carrying(
+          {
+            intents: [],
+            observations: [
+              { kind: "tripped", track: UNCAUGHT_EXCEPTION_TRACK, value: 1, limit: 1, errorName },
+            ],
+          },
+          usageOf(readings, {}),
+        );
       }
       const observations: Observation[] = [];
       // 墙钟软限:只披露、不罚。读数落成整数毫秒(观测不参与判罚,取整不改变任何结论)。
@@ -655,12 +693,18 @@ export const createQuickJsRunner = async (
           limit: wallClockSoftLimit,
         });
       }
+      /** 本 tick 末的存活堆读数(bytes);内存轨未启用时缺席(没跑 GC 的读数不可比)。 */
+      let liveHeap: number | undefined;
       if (ceiling !== undefined && softThreshold !== undefined) {
         // 读数取在「本 tick 的脚本执行结束处」:排空到不动点之后、`__drainIntents()` 之前,
         // 且必须先强制回收——读的是**存活堆**(`mallocSize`),与分配上限同一记账口径。
         // tick 内瞬时借满后已释放的分配在这里已不可达,因此不判(已接受的残余,不是漏判)。
+        //
+        // 这一次读数**同供两处**:判限(下面两条观测)与只披露的占用读数(`peakUsage`)。
+        // 不为后者再跑一次 `runGC()`——那会让探针每 tick 多付一次强制回收,而拿到的是同一个数。
         session.runGC();
         const value = session.memoryUsage().mallocSize;
+        liveHeap = value;
         if (value >= ceiling) {
           observations.push({ kind: "tripped", track: MEMORY_TRACK, value, limit: ceiling });
         } else if (value >= softThreshold) {
@@ -673,6 +717,11 @@ export const createQuickJsRunner = async (
         }
       }
       const drained = session.drainIntents();
+      // 两条返回路径共用同一份本 tick 读数(API 数来自这一次 drain,存活堆只有内存轨启用时在场)。
+      const usage = usageOf(readings, {
+        apiCalls: drained.apiCalls,
+        ...(liveHeap === undefined ? {} : { memoryBytes: liveHeap }),
+      });
       if (apiCallTickLimit !== undefined && drained.apiCalls >= apiCallTickLimit) {
         // API 轰炸:超限只作废该座位本 tick 的意图(单位原地待命),不中断其它三方与引擎。
         // guest 吞不吞异常都一样——计数是宿主 authored 的普通整数,guest 改不了。
@@ -682,9 +731,12 @@ export const createQuickJsRunner = async (
           value: drained.apiCalls,
           limit: apiCallTickLimit,
         });
-        return { intents: [], observations, actionFacts: drained.actionFacts };
+        return carrying({ intents: [], observations, actionFacts: drained.actionFacts }, usage);
       }
-      return { intents: drained.intents, observations, actionFacts: drained.actionFacts };
+      return carrying(
+        { intents: drained.intents, observations, actionFacts: drained.actionFacts },
+        usage,
+      );
     },
   };
   return { runner, dispose: session.dispose };

@@ -81,6 +81,41 @@ export type ActionTickFacts = {
 };
 
 /**
+ * 一个 tick 的**占用读数**:控制流事件计数、API 调用计数、存活堆字节数。
+ *
+ * ── 为什么它不在 `Observation` 里(这是本类型的全部存在理由) ──
+ *
+ * `Observation` 的语义是「**有事要报**」(`tripped` / `wall-clock-soft` / `memory-pressure`),
+ * 而 `observations` 是空数组就是「本 tick 没有预算事实」——**既有各测试都靠它**。
+ * 把正常读数塞进去,「观测为空 = 本 tick 无事」当场失真:一个只用了 24% 预算的 tick
+ * 也会带一条观测,于是「有观测」不再意味着「有事情」。
+ *
+ * 所以这是**另一条通道**,与观测并列而不相交:它只披露,不参与任何判据
+ * (`verdictOfTrips` 的零容忍规则一个字不改)。语义上与 `wall-clock-soft` /
+ * `memory-pressure` 同类(只披露),但**载体**不同:那两条是「发生了某个可报告的事实」,
+ * 它回答的是「用了多少」。
+ *
+ * ── 三个字段各自可选,而不是一个三元的必填组 ──
+ *
+ * 缺席 = **这一条本 tick 没采到**,不是 0:
+ * - `eventCount`:计数回调没装(三条计数轨全没启用)时,事件计数根本就不在跑;
+ * - `apiCalls`:早退路径(墙钟硬超时 / 事件轨截停 / 未吞异常)不排 `__drainIntents()`,
+ *   本 tick 的调用数因此无从得知;
+ * - `memoryBytes`:只有内存轨启用时才有这一次强制回收,读数取在它之后(`mallocSize`,
+ *   存活堆口径)。没跑 GC 的 `mallocSize` 是**未回收堆**,与判罚口径不可比,所以它缺席。
+ *
+ * 补 0 会把「没量」写成「用了 0」——那是这一整条通道唯一能造成的静默错误。
+ */
+export type PeakUsage = {
+  /** 本 tick 的控制流事件计数读数(计数回调每次 +一个粒度,见 `quickjs.ts`)。 */
+  readonly eventCount?: number;
+  /** 本 tick 的 API 调用数(宿主 authored 的整数,随 `__drainIntents()` 交回)。 */
+  readonly apiCalls?: number;
+  /** 本 tick 末的存活堆读数(bytes);仅内存轨启用时在场(强制回收之后取)。 */
+  readonly memoryBytes?: number;
+};
+
+/**
  * `drainIntents()` 的返回载荷:**intents 加观测**,再加一个可选的故障位。
  *
  * 这不新增中间表示、也不新增桥调用——ADR-0005 的「缝就是那两次宿主桥调用」原样成立,
@@ -97,6 +132,13 @@ export type RunnerOutput = {
   readonly observations: readonly Observation[];
   /** 已采到的行动事实；截停或未吞异常时缺席，不补零。 */
   readonly actionFacts?: ActionTickFacts;
+  /**
+   * 本 tick 的**占用读数**(只披露、不判罚,见 `PeakUsage`)。
+   *
+   * 每 tick 报的是**这一 tick 自己的**读数;整场/整张网格的峰值由调用方逐 tick 取更坏值
+   * (`apps/cli/src/trial/match-run.ts` 的记录器)。缺席 = 本 tick 一条读数都没采到。
+   */
+  readonly peakUsage?: PeakUsage;
   /** 故障位。缺席即本 tick 正常;`uncertain-timeout` 即墙钟硬超时,整场作废(不判罚)。 */
   readonly fault?: RunnerFault;
 };

@@ -30,6 +30,13 @@ export type SplitArgs = {
   readonly observationsPath: string | undefined;
   /** `--expected-plan` 的值(预期试跑计划文件)。只由试跑入口读;其余子命令摘到也不生效。 */
   readonly expectedPlanPath: string | undefined;
+  /**
+   * `--match-limit` 的值(只跑计划的前 N 场)。只由试跑入口的**探针模式**读。
+   *
+   * 值原样是**字符串**:解析与"是不是正整数"的判据归入口(它才是知道自己要不要这个数的那一侧),
+   * 这里只摘。
+   */
+  readonly matchLimit: string | undefined;
   /** `--plan` 出现即 true(试跑入口:只造计划并打印,不跑对局)。 */
   readonly planMode: boolean;
   readonly positional: readonly string[];
@@ -41,6 +48,7 @@ const VALUED_FLAGS = {
   "--model": "model",
   "--observations": "observationsPath",
   "--expected-plan": "expectedPlanPath",
+  "--match-limit": "matchLimit",
 } as const satisfies Record<string, keyof SplitArgs>;
 
 /** 不带值的 flag 清单:出现即 true(没有值要摘,也不会吃掉后面的位置参数)。 */
@@ -81,6 +89,7 @@ export const splitArgs = (args: readonly string[]): SplitArgs => {
     model: flags.get("model"),
     observationsPath: flags.get("observationsPath"),
     expectedPlanPath: flags.get("expectedPlanPath"),
+    matchLimit: flags.get("matchLimit"),
     planMode,
     positional,
   };

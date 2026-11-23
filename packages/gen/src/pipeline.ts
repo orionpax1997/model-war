@@ -102,10 +102,17 @@ import {
   discardCandidateArtifacts,
 } from "./agent/host/evaluate-service.js";
 import { createSessionTools } from "./agent/host/dispatcher.js";
+import { createProbeService } from "./agent/host/probe-service.js";
 import type { AgentExecRequest, AgentExecResult, AgentExecutor } from "./agent/types.js";
 import { retryTransport, type RetrySleep } from "./retry.js";
 import type { GenerationRequest } from "./run.js";
-import { prepareTrialPlan, runTrialScript, type TrialProbe } from "./trial.js";
+import {
+  prepareTrialPlan,
+  runTrialProbeScript,
+  runTrialScript,
+  type TrialProbe,
+  type TrialProbeScript,
+} from "./trial.js";
 import { gridSummaryPathOf, readTrialGridSummary } from "./trial-grid.js";
 import { scriptSizeLimit, validateScript } from "./validate.js";
 
@@ -330,6 +337,7 @@ const observeServices = (options: {
   readonly model: string;
   readonly runId: string;
   readonly trial: TrialProbe;
+  readonly probeScript: TrialProbeScript;
   readonly plan: () => TrialPlan;
   readonly facts: StepFacts;
 }) => {
@@ -341,7 +349,16 @@ const observeServices = (options: {
     plan: options.plan,
     trial: options.trial,
   });
+  // 探针与 evaluate 拿**同一个** `plan` 闭包:于是"这张网格是什么"在第一次 evaluate 之前就被
+  // 验证过一次(搬不出来时模型在一次便宜的探针里就知道,而不是赔一次 74 s 的评测)。
+  const probe = createProbeService({
+    root: options.root,
+    model: options.model,
+    plan: options.plan,
+    probe: options.probeScript,
+  });
   return {
+    probe,
     check: async (request: { readonly workspaceDir: string }) => {
       const response = await check(request);
       // 结果侧证据只在这一步的槽里;`result` 缺席 = 没有可归纳的东西(与服务自己的口径一致)。
@@ -659,6 +676,7 @@ export const generateOneModel = async (
     plan: planOf,
     // 缺省走真试跑子进程(与 one-shot 时代同一个入口):`evaluate` 因此是真网格。
     trial: request.trial ?? runTrialScript,
+    probeScript: request.probeScript ?? runTrialProbeScript,
     facts: facts.current,
   });
   const tools = createSessionTools({
@@ -666,6 +684,7 @@ export const generateOneModel = async (
     deadlineAtMs: startedAt + totalWallClockMs,
     check: services.check,
     evaluate: services.evaluate,
+    probe: services.probe,
     // 会话墙钟与 loop 用**同一个**钟。不传的话 dispatcher 默认走真实 `Date.now()`,
     // 而 `deadlineAtMs` 是从 `request.now()` 算出来的——两个钟一混,在注入了时钟的测试里
     // deadline 恒已过期(而生产上恰好看不出来,因为两者都是真实时间)。

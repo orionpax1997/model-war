@@ -9,6 +9,7 @@
  *   deadlineAtMs: sessionStartedAt + sessionBudgetMs, // 会话墙钟的绝对到点时刻
  *   check: createCheckService({ root }),
  *   evaluate: createEvaluateService({ root, model, runId, plan: () => plan, trial }),
+ *   probe: createProbeService({ root, model, plan: () => plan, probe: runTrialProbeScript }),
  * });
  *
  * // `bash` 由执行器交给沙箱;其余四个由宿主受理。
@@ -19,8 +20,9 @@
  * if (tools.finishRequested()) break;                  // 模型调过 `finish`:本步结束后收工
  * ```
  *
- * 三件事在这一层就位:**工具分派**(带配额与会话墙钟)、**两个服务**(check / evaluate)、
- * **收工信号**(`finish` 调用)。沙箱仍然只有 `sandbox.run` 一个动作,而且它只跑 `bash`。
+ * 三件事在这一层就位:**工具分派**(带配额与会话墙钟)、**三个服务**(check / probe /
+ * evaluate)、**收工信号**(`finish` 调用)。沙箱仍然只有 `sandbox.run` 一个动作,而且它只跑
+ * `bash`。
  *
  * ── 为什么这个目录叫 `host` ──
  * 它与 `agent/sandbox`(执行器)是两个位置,不是两份实现:判据全在宿主(本目录),隔离只在
@@ -31,6 +33,7 @@
 
 export {
   createSessionTools,
+  PROBE_QUOTA_EXHAUSTED_MESSAGE,
   PROTOCOL_EXIT_CODE,
   QUOTA_EXHAUSTED_MESSAGE,
   REFUSAL_EXIT_CODE,
@@ -54,6 +57,12 @@ export {
   type CompileFn,
   type ValidateFn,
 } from "./check-service.js";
+export {
+  createProbeService,
+  type ProbeRequest,
+  type ProbeService,
+  type ProbeServiceDeps,
+} from "./probe-service.js";
 export {
   OBSERVATIONS_DIR_NAME,
   OBSERVATIONS_DIR_PATH,

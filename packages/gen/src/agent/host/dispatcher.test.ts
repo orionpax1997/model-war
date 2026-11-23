@@ -21,11 +21,14 @@
 
 import { describe, expect, it } from "vitest";
 
+import { PROBE_CALL_LIMIT } from "@model-war/schema";
+
 import { harnessManifest } from "../identity.js";
 import type { ToolCall } from "../tools.js";
 import type { CheckService } from "./check-service.js";
 import {
   createSessionTools,
+  PROBE_QUOTA_EXHAUSTED_MESSAGE,
   PROTOCOL_EXIT_CODE,
   QUOTA_EXHAUSTED_MESSAGE,
   REFUSAL_EXIT_CODE,
@@ -34,6 +37,7 @@ import {
   type SessionTools,
 } from "./dispatcher.js";
 import type { EvaluateService } from "./evaluate-service.js";
+import type { ProbeService } from "./probe-service.js";
 
 type Recorder = {
   calls: number;
@@ -66,6 +70,19 @@ const okEvaluate =
     };
   };
 
+/** 探针服务的桩：记调用次数，回一段三档文案里的"充裕"（形状与真服务一致）。 */
+const okProbe =
+  (rec: Recorder): ProbeService =>
+  async (request) => {
+    rec.calls += 1;
+    rec.requests.push({ workspaceDir: request.workspaceDir });
+    return {
+      exitCode: 0,
+      stdout: "probe：前 8 场跑完。最坏读数：事件 120/500（24%）。\n",
+      stderr: "",
+    };
+  };
+
 /** 一次工具调用。四个不收参数的工具都用空对象——与动作层放行的形状一致。 */
 const callOf = (name: string, argumentsJson = "{}"): ToolCall => ({ name, argumentsJson });
 
@@ -79,22 +96,27 @@ const session = (
   options: {
     readonly check?: CheckService;
     readonly evaluate?: EvaluateService;
+    readonly probe?: ProbeService;
     readonly deadlineAtMs?: number;
     readonly now?: () => number;
     readonly evaluateLimit?: number;
+    readonly probeLimit?: number;
   } = {},
 ) => {
   const check = recorder();
   const evaluate = recorder();
+  const probe = recorder();
   const tools = createSessionTools({
     workspaceDir: "/tmp/ws",
     deadlineAtMs: options.deadlineAtMs ?? 1_000_000,
     check: options.check ?? okCheck(check),
     evaluate: options.evaluate ?? okEvaluate(evaluate),
+    probe: options.probe ?? okProbe(probe),
     now: options.now ?? (() => 0),
     ...(options.evaluateLimit === undefined ? {} : { evaluateLimit: options.evaluateLimit }),
+    ...(options.probeLimit === undefined ? {} : { probeLimit: options.probeLimit }),
   });
-  return { tools, check, evaluate };
+  return { tools, check, evaluate, probe };
 };
 
 describe("参数:不接受,也不吃配额", () => {
@@ -109,6 +131,17 @@ describe("参数:不接受,也不吃配额", () => {
     expect(outcome.stderr).toContain("不接受参数");
     expect(evaluate.calls).toBe(0);
     expect(tools.evaluateCalls()).toBe(0);
+  });
+
+  it("`probe` 带参数也只回用法:不执行、不扣探针额度、标成 isError", async () => {
+    const { tools, probe } = session();
+    const outcome = await ask(tools, callOf("probe", '{"matchLimit":4}'));
+    expect(outcome.exitCode).toBe(PROTOCOL_EXIT_CODE);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.stderr).toContain("用法:probe");
+    expect(outcome.stderr).toContain("不接受参数");
+    expect(probe.calls).toBe(0);
+    expect(tools.probeCalls()).toBe(0);
   });
 
   it("`check` 侧同理:参数被拒,执行函数零调用", async () => {
@@ -197,14 +230,23 @@ describe("白名单", () => {
     expect(outcome.isError).toBe(true);
   });
 
-  it("`probe` 声明了但执行体还没接上:fail-closed 拒掉,不冒充 `finish`", async () => {
-    // 票 03 的边界:`probe` 的 case 归票 08(它要自己的计数器与计划源)。在那之前它必须
-    // **被拒**而不是被当成收工——静默收工看起来完全正常,而模型那一步其实什么都没做。
-    const { tools } = session();
-    const outcome = await ask(tools, callOf("probe"));
+  it("`probe` 没接上执行体时 fail-closed 拒掉,不冒充 `finish`(跨包那条桥的形状)", async () => {
+    // 跨包的字面量桥(`packages/tools/src/sandbox-rootfs/executor-bridge.ts`)造工具面时不传
+    // `probe`。那条路上它必须**被拒**而不是被当成收工——静默收工看起来完全正常,而模型
+    // 那一步其实什么都没做。
+    const bare = createSessionTools({
+      workspaceDir: "/tmp/ws",
+      deadlineAtMs: 1_000_000,
+      check: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      evaluate: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      now: () => 0,
+    });
+    const outcome = await ask(bare, callOf("probe"));
     expect(outcome.exitCode).toBe(REFUSAL_EXIT_CODE);
     expect(outcome.isError).toBe(true);
-    expect(tools.finishRequested()).toBe(false);
+    expect(bare.finishRequested()).toBe(false);
+    // 被拒的那一次不是一次调用:计数不涨。
+    expect(bare.probeCalls()).toBe(0);
   });
 
   it("`check` 没有配额:连叫五次五次都真跑,而且都不是 `isError`", async () => {
@@ -277,10 +319,13 @@ describe("evaluate 的会话级配额", () => {
 
 describe("会话墙钟", () => {
   it("到点即拒:四个工具都零执行,`evaluate` 的计数也不消耗,`finish` 也不置位", async () => {
-    const { tools, check, evaluate } = session({ deadlineAtMs: 1_000, now: () => 1_000 });
+    const { tools, check, evaluate, probe } = session({
+      deadlineAtMs: 1_000,
+      now: () => 1_000,
+    });
     expect(tools.expired()).toBe(true);
     expect(tools.remainingMs()).toBe(0);
-    for (const tool of ["check", "evaluate", "finish"]) {
+    for (const tool of ["check", "probe", "evaluate", "finish"]) {
       const outcome = await ask(tools, callOf(tool));
       expect(outcome.exitCode).toBe(REFUSAL_EXIT_CODE);
       expect(outcome.isError).toBe(true);
@@ -288,7 +333,9 @@ describe("会话墙钟", () => {
     }
     expect(check.calls).toBe(0);
     expect(evaluate.calls).toBe(0);
+    expect(probe.calls).toBe(0);
     expect(tools.evaluateCalls()).toBe(0);
+    expect(tools.probeCalls()).toBe(0);
     // 到点的会话里调 `finish` 不是收工:它没被受理。
     expect(tools.finishRequested()).toBe(false);
   });
@@ -344,5 +391,81 @@ describe("finish 与异常", () => {
     const { tools } = session();
     for (let i = 0; i < 3; i += 1) await ask(tools, callOf("evaluate"));
     expect((await ask(tools, callOf("evaluate"))).stderr).toBe(`${QUOTA_EXHAUSTED_MESSAGE}\n`);
+  });
+});
+
+// ── probe 的额度与「互不侵占」(票 08 判据 4) ─────────────────────────────────
+//
+// 两条额度各记各的:探针不产出候选、不占 `evaluate` 那三次里的任何一次,反之亦然。
+// 计数同样发生在调用**之前**(理由与 evaluate 逐字相同)。
+
+describe("probe 的会话级配额", () => {
+  // 身份清单的 `quotas.probe` 那格归票 06(`harnessManifest()` 的形状与 `HARNESS_DIGEST` 是
+  // 入库常量,本票不动它)。所以这里判的是**dispatcher 执行的那个常量**本身:两处不许各写一个数。
+  it("第 N+1 次被拒的那个 N 就是 PROBE_CALL_LIMIT(执行的那个数)", async () => {
+    const { tools, probe } = session();
+    const quota = PROBE_CALL_LIMIT;
+    for (let index = 0; index < quota; index += 1) {
+      expect((await ask(tools, callOf("probe"))).exitCode).toBe(0);
+    }
+    const refused = await ask(tools, callOf("probe"));
+    expect(refused.exitCode).toBe(REFUSAL_EXIT_CODE);
+    expect(refused.isError).toBe(true);
+    expect(refused.stderr).toContain("探针额度已用完");
+    expect(tools.probeCalls()).toBe(quota);
+    // 被拒的那一次执行函数零调用。
+    expect(probe.calls).toBe(quota);
+  });
+
+  it("第 6 次 probe 被拒且**服务未被调用**(不是「拒了但先跑完了」)", async () => {
+    const { tools, probe } = session();
+    for (let index = 0; index < 5; index += 1) {
+      expect((await ask(tools, callOf("probe"))).exitCode).toBe(0);
+    }
+    const before = probe.calls;
+    const refused = await ask(tools, callOf("probe"));
+    expect(refused.exitCode).toBe(REFUSAL_EXIT_CODE);
+    expect(refused.isError).toBe(true);
+    expect(refused.stdout).toBe("");
+    expect(probe.calls - before).toBe(0);
+    expect(tools.probeCalls()).toBe(5);
+    // 文案与导出的常量逐字相同(它是给模型读的,不许在别处另写一份)。
+    expect(refused.stderr).toBe(`${PROBE_QUOTA_EXHAUSTED_MESSAGE}\n`);
+  });
+
+  it("连续 5 次 probe 之后 evaluateCalls 仍是 0(互不侵占", async () => {
+    const { tools, evaluate } = session();
+    for (let index = 0; index < 5; index += 1) await ask(tools, callOf("probe"));
+    expect(tools.probeCalls()).toBe(5);
+    expect(tools.evaluateCalls()).toBe(0);
+    expect(evaluate.calls).toBe(0);
+    // 三次真评测照样可用满。
+    for (let index = 0; index < 3; index += 1) {
+      expect((await ask(tools, callOf("evaluate"))).exitCode).toBe(0);
+    }
+    expect(tools.evaluateCalls()).toBe(3);
+  });
+
+  it("连续 3 次 evaluate 之后 probeCalls 仍是 0(反方向同样不侵占)", async () => {
+    const { tools } = session();
+    for (let index = 0; index < 3; index += 1) await ask(tools, callOf("evaluate"));
+    expect(tools.evaluateCalls()).toBe(3);
+    expect(tools.probeCalls()).toBe(0);
+    for (let index = 0; index < 5; index += 1) {
+      expect((await ask(tools, callOf("probe"))).exitCode).toBe(0);
+    }
+    expect(tools.probeCalls()).toBe(5);
+  });
+
+  it("服务抛错的那一次也算用掉了探针额度", async () => {
+    const failing: ProbeService = async () => {
+      throw new Error("网格起不来");
+    };
+    const { tools } = session({ probe: failing });
+    const outcome = await ask(tools, callOf("probe"));
+    expect(outcome.exitCode).toBe(REFUSAL_EXIT_CODE);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.stderr).toContain("网格起不来");
+    expect(tools.probeCalls()).toBe(1);
   });
 });

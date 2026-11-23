@@ -8,6 +8,9 @@
  *   → 同样由仓库现状造计划，**按计划跑满计划里的每一场**，stdout 打面向模型的反馈文本，
  *   退出码回答结论；给了 `--expected-plan` 就必须与现场重建的计划逐字段相等
  *   （不等即 infra，退出 2——那是"计划被换过"或"安装面变了"，不是候选的错）。
+ * - `node run-trial-script.js <候选产物.js> --root <安装根> --model <模型 slug> --match-limit <N>`
+ *   → **探针模式**：同一份完整计划，只跑**前 N 场**，stdout 打三档占用读数文本，退出码 `0`
+ *   （前 N 场没越线）/ `1`（已越线）。**不写观测、不落汇总、不比对计划**（见下节）。
  *
  * ── `--model` 用来解析在位陪练，不是对手参数 ──
  *
@@ -41,6 +44,22 @@
  * 网格的观测同时是反馈与分数的原料，所以 32 场一场不少地跑：触限之后仍要跑完并写全部观测，
  * 只是退出码变成 1（拦截）。判定本身仍是零容忍（`verdictOfTrips`），没有软化。
  *
+ * ── 探针模式：同一份完整计划的前缀，不是另一条执行路径 ──
+ *
+ * `--match-limit N` 只收窄**循环范围**（`runTrialGridSubset`），计划对象逐字节不动：
+ * `match.matchIndex` / `match.candidateSeat` 仍取自完整计划，于是判座位用的是完整计划
+ * （`candidateSeatOfPlan`，缺项即抛，不 `?? 0`）。先 `slice` 计划再走整张网格那条路会静默假绿
+ * ——见 `grid.ts` 与 `trial.ts` 的头注。
+ *
+ * 三件事在这一模式下**不做**，每一件都有理由：
+ *
+ * - **不写观测、不落汇总**：探针不产出候选，写半张网格的观测会让「跑过几场」在读侧变成一件
+ *   要靠文件名猜的事；`buildTrialGridSummary` 也拒缺场（它要整份 32 场）。
+ * - **不比对 `--expected-plan`**：探针只读前缀、不产出任何证据，计划身份不是它的判据；
+ *   真要比对，那 32 场的完整身份已经在 `evaluate` 那条路上逐字段比过一次。
+ * - **不早停**（`stopOnFirstTrip: false`）：探针要的是跑完前缀的峰值，中途停下就拿不到
+ *   「第 6 场才贴边」这种情况。
+ *
  * ── 预算与组装复用 `assemble.ts` 的三处 ──
  *
  * 上限（`budgetOf`）、执行器映射（`budgetTracksOf`）、meta 头（`headForMap`）都从
@@ -61,10 +80,12 @@ import {
   type BuildTrialPlanInput,
 } from "@model-war/runner";
 
+import { budgetOf } from "../match/assemble.js";
 import { splitArgs } from "../args.js";
 import {
   gridSummaryPathOf,
   runTrialGrid,
+  runTrialGridSubset,
   summaryOfGrid,
   trialScriptSha256,
   writeTrialGridSummary,
@@ -73,14 +94,18 @@ import { loadTrialGrid, loadTrialGridInputs, trialPlanFactsOf, type LoadedTrial 
 import { trialObservationLines, writeTrialObservations } from "./observations.js";
 import {
   WATCHED_TRACKS,
+  candidateSeatOfPlan,
+  probeReportOf,
   renderTrialFeedback,
   verdictOfTrips,
-  type CandidateSeatOf,
+  type ProbeLimits,
 } from "./trial.js";
 
 const USAGE =
   "用法: node run-trial-script.js <候选产物.js> --root <安装根> --model <模型 slug> " +
   "[--observations <观测文件路径>] [--expected-plan <计划文件>]\n" +
+  "      node run-trial-script.js <候选产物.js> --root <安装根> --model <模型 slug> " +
+  "--match-limit <场数>   （探针模式:只跑前 N 场,只回占用读数,不写观测）\n" +
   "      node run-trial-script.js --plan --root <安装根> --model <模型 slug>";
 
 /** 试跑自己的退出码（见文件头：不是 CLI 全局表）。 */
@@ -123,12 +148,57 @@ const checkExpectedPlan = (path: string, plan: TrialPlan): void => {
   if (mismatch !== null) throw new Error(`预期试跑计划与现场事实不符:${mismatch}`);
 };
 
+/** 探针要报的三条轨的上限（取自规则集里**已启用**的预算键；缺一条就不显示那一条）。 */
+const probeLimitsOf = (loaded: LoadedTrial): ProbeLimits => {
+  const budget = budgetOf(loaded.ruleset);
+  return {
+    ...(budget.eventTickLimit === undefined ? {} : { eventTickLimit: budget.eventTickLimit }),
+    ...(budget.apiCallTickLimit === undefined ? {} : { apiCallTickLimit: budget.apiCallTickLimit }),
+    ...(budget.memoryTickCeiling === undefined
+      ? {}
+      : { memoryTickCeiling: budget.memoryTickCeiling }),
+  };
+};
+
+/**
+ * 探针模式：跑完整计划的**前 `matchLimit` 场**，回三档占用读数文案。
+ *
+ * 退出码沿用试跑入口那套私有协议：`0` = 前 N 场没越线（含"贴边"与"充裕"两档），`1` = 已越线，
+ * `2` = infra。**它不是一个新的判据**：判定还是 `verdictOfTrips` 的零容忍规则，判座位用的是
+ * **完整计划**（`candidateSeatOfPlan`），与 `evaluate` 那条路同一个函数。
+ */
+const runProbe = async (
+  loaded: LoadedTrial,
+  plan: TrialPlan,
+  matchLimit: number,
+): Promise<number> => {
+  let ran: Awaited<ReturnType<typeof runTrialGridSubset>>;
+  try {
+    // `stopOnFirstTrip: false`——探针要跑完前缀的峰值（理由见文件头注《探针模式》）。
+    ran = await runTrialGridSubset(loaded, plan, matchLimit, false);
+  } catch (cause) {
+    process.stderr.write(`探针执行失败:${reasonOf(cause)}\n`);
+    return TRIAL_INFRA;
+  }
+  const report = probeReportOf({
+    plan,
+    // 跑了几场由执行侧回答（早停与否都以此为准），不按入参假定。
+    matchCount: ran.matchesRun,
+    trips: ran.trips,
+    ...(ran.peakUsage === undefined ? {} : { peakUsage: ran.peakUsage }),
+    limits: probeLimitsOf(loaded),
+  });
+  process.stdout.write(`${report.text}\n`);
+  return report.verdict.passed ? TRIAL_PASSED : TRIAL_BLOCKED;
+};
+
 const main = async (argv: readonly string[]): Promise<number> => {
   const {
     root: rootArg,
     model,
     observationsPath,
     expectedPlanPath,
+    matchLimit,
     planMode,
     positional,
   } = splitArgs(argv);
@@ -156,6 +226,35 @@ const main = async (argv: readonly string[]): Promise<number> => {
     return TRIAL_INFRA;
   }
 
+  // ── 探针模式 ──
+  //
+  // 在装载之后、跑整张网格之前分出去:探针读的是**同一份**现场重建的完整计划(上一步刚造出来),
+  // 只是执行时少跑几场。它不写观测、不落汇总、不比对 `--expected-plan`(理由见文件头注)。
+  if (matchLimit !== undefined) {
+    const requested = Number(matchLimit);
+    if (!Number.isSafeInteger(requested) || requested < 1) {
+      process.stderr.write(`--match-limit 必须是正整数(收到 ${String(matchLimit)})。\n${USAGE}\n`);
+      return TRIAL_INFRA;
+    }
+    if (observationsPath !== undefined) {
+      process.stderr.write(
+        "试跑注：探针模式不写观测（它跑的是计划的前缀，写半张观测会让「跑过几场」变成猜的）。\n",
+      );
+    }
+    if (expectedPlanPath !== undefined) {
+      process.stderr.write(
+        "试跑注：探针模式不比对 --expected-plan（它不产出证据，计划身份不是它的判据）。\n",
+      );
+    }
+    const limit = Math.min(requested, plan.matches.length);
+    if (limit !== requested) {
+      process.stderr.write(
+        `试跑注：--match-limit ${String(requested)} 超过计划场数 ${String(plan.matches.length)}，按整张跑。\n`,
+      );
+    }
+    return await runProbe(loaded, plan, limit);
+  }
+
   let ran: Awaited<ReturnType<typeof runTrialGrid>>;
   try {
     ran = await runTrialGrid(loaded, plan);
@@ -164,8 +263,9 @@ const main = async (argv: readonly string[]): Promise<number> => {
     return TRIAL_INFRA;
   }
   const { trips, readings } = ran;
-  const candidateSeatOf: CandidateSeatOf = (matchIndex) =>
-    plan.matches[matchIndex]?.candidateSeat ?? 0;
+  // 座位按**完整计划**查：`?? 0` 那个兜底会把"计划被裁短"读成"候选坐 0 号位"，
+  // 于是一条座位 3 的触限对不上、整张网格判成通过（细节见 `trial.ts` 的 `candidateSeatOfPlan`）。
+  const candidateSeatOf = candidateSeatOfPlan(plan);
 
   // 证据落盘在**结论之外**：整张网格跑完之后才写，一次 invocation 内部不允许半截。
   // 网格中途 infra（两场作废等）时这一轮一个字都不写，上一次**跑完**的证据留在盘上。

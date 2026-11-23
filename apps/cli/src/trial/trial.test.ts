@@ -14,9 +14,18 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 import { buildTrialPlan, type BuildTrialPlanInput } from "@model-war/runner";
-import { TRIAL_CANDIDATE_ID, TRIAL_GRID_MAP_NAMES, TRIAL_GRID_SEED_BASE } from "@model-war/schema";
+import {
+  PROBE_CALL_LIMIT,
+  PROBE_MATCH_LIMIT,
+  PROBE_NEAR_LIMIT_RATIO,
+  TRIAL_CANDIDATE_ID,
+  TRIAL_GRID_MAP_NAMES,
+  TRIAL_GRID_SEED_BASE,
+} from "@model-war/schema";
 
 import {
+  candidateSeatOfPlan,
+  probeReportOf,
   renderScoreSourceObservation,
   renderTrialFeedback,
   verdictOfTrips,
@@ -206,4 +215,171 @@ it("无得分来源观测：命中给留痕文案（写明第几场、注明不�
   expect(
     renderScoreSourceObservation(0, { delivered: 0, captures: 1, noScoreSource: false }),
   ).toBeNull();
+});
+
+// ── 探针的三档文案(判据 1 / 2 / 3) ───────────────────────────────────────────
+//
+// 票面引的那两个夹具**都不存在**(`budget-mismatch.test.ts` 全仓无;`minimax` 那份
+// `observed-*-round-21.jsonl.candidate.ts` 也没有 —— 那一跑三次 evaluate 全被预算拦下,
+// 没有产出候选)。所以判据 2 与判据 3 的夹具在这里**按形状构造**:一份"会越线"的 trips 与一份
+// "前 8 场不越线、后 24 场才越线"的 trips。判定与文案都不需要 VM,故它们属于这一格。
+
+/** 探针的上限:计划里那三条轨都启用着(与 `budgetOf(ruleset)` 同一形状)。 */
+const PROBE_LIMITS = { eventTickLimit: 50000, apiCallTickLimit: 800, memoryTickCeiling: 524288 };
+
+it("N=8 与 80% 这两个常量的来历在 schema 里,且与文案用的数一致", () => {
+  expect(PROBE_MATCH_LIMIT).toBe(8);
+  expect(PROBE_NEAR_LIMIT_RATIO).toBe(0.8);
+  expect(PROBE_CALL_LIMIT).toBe(5);
+});
+
+it("判据 1（地基）：只用约 60% 预算 → 「充裕」档，三条轨的读数都报出来且非零", () => {
+  const report = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips: [],
+    peakUsage: { eventCount: 30000, apiCalls: 480, memoryBytes: 300000 },
+    limits: PROBE_LIMITS,
+  });
+  expect(report.verdict.passed).toBe(true);
+  expect(report.nearLimit).toBe(false);
+  const text = report.text;
+  // 前 8 场 = 1 个组合 × 4 个座位 × 2 张地图（形状取自计划，不手写）。
+  // 充裕档按票面模板只说"前 8 场"；形状那句话在贴边档（见下一条用例）。
+  expect(text).toContain("前 8 场");
+  expect(text).toContain("最坏读数");
+  // 三条轨的最坏读数都在，且带占用比例。
+  expect(text).toContain("事件 30000/50000（60%）");
+  expect(text).toContain("API 480/800（60%）");
+  expect(text).toContain("内存 0.3/0.5 MB（57%）");
+  // 读数非零（这一条是整张票的地基：二值时代这里什么数都没有）。
+  expect(text).not.toContain("事件 0/");
+  expect(text).not.toContain("API 0/");
+  // 充裕档必须自带两句免责。
+  expect(text).toContain("这不等于整张 32 场通过");
+  expect(text).toContain("漏检率：真档四例预算触限发生在第 1、8、25、11 场");
+  expect(text).toContain("2/4");
+});
+
+it("判据 2（已越线）：一位候选在第 1 场某 tick 越线 → 「已越线」+ evaluate 的同一段话术", () => {
+  // 夹具按形状构造：候选在第 1 场（matchIndex 0）坐在计划给的座位上。
+  const seat = candidateSeatOfPlan(plan)(0);
+  const trips: readonly RecordedTrip[] = [
+    { matchIndex: 0, tick: 102, seat, track: "eventTickLimit", value: 61234, limit: 50000 },
+  ];
+  const report = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips,
+    peakUsage: { eventCount: 61234, apiCalls: 120 },
+    limits: PROBE_LIMITS,
+  });
+  expect(report.verdict.passed).toBe(false);
+  expect(report.nearLimit).toBe(true);
+  const text = report.text;
+  expect(text).toContain("已经越线");
+  // 票面要求的那句：文案含「单 tick 控制流事件计数」（与 evaluate 逐字同源）。
+  expect(text).toContain("单 tick 控制流事件计数");
+  expect(text).toContain("第 1 场");
+  expect(text).toContain("第 102 tick");
+  // 逐字复用：越线档里那一段与 evaluate 拦下时的文案**完全一致**（只换场数那句话）。
+  if (report.verdict.passed) return;
+  expect(text).toContain(renderTrialFeedback(report.verdict, plan));
+});
+
+it("判据 3（假绿反例，不许删）：前 8 场不越线、第 25 场越线 → 「充裕」/「贴边」+ 两句免责", () => {
+  // 这一份就是真档漏检的那一例：触限发生在第 25 场（matchIndex 24），前 8 场抓不到。
+  const seat = candidateSeatOfPlan(plan)(24);
+  const trips: readonly RecordedTrip[] = [
+    { matchIndex: 24, tick: 73, seat, track: "apiCallTickLimit", value: 900, limit: 800 },
+  ];
+  const report = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips,
+    peakUsage: { eventCount: 12000, apiCalls: 200 },
+    limits: PROBE_LIMITS,
+  });
+  // 探针只看前 8 场 → 那一条不在窗口里，判"没越线"。
+  expect(report.verdict.passed).toBe(true);
+  // 但文案必须写出「这不等于整张 32 场通过」，否则模型会把绿色读成"整张过了"。
+  expect(report.text).toContain("这不等于整张 32 场通过");
+  expect(report.text).toContain("另 24 场若越线");
+});
+
+it("判据 3 的另一半：候选座位判据用的是**完整计划**（裁剪计划这条会挂）", () => {
+  // 第 25 场的候选坐哪个座位由计划给（网格里逐场轮转，不恒 0）。
+  const seatOf25 = candidateSeatOfPlan(plan)(24);
+  const trip25: RecordedTrip = {
+    matchIndex: 24,
+    tick: 73,
+    seat: seatOf25,
+    track: "apiCallTickLimit",
+    value: 900,
+    limit: 800,
+  };
+
+  // ① 完整计划 + 全部 trips：拦下（真判定）。
+  expect(verdictOfTrips([trip25], candidateSeatOfPlan(plan)).passed).toBe(false);
+
+  // ② 这一份 trips 在**裁剪过的计划**下会静默假绿：`matches[24]` 缺席 → 兜底座位 0 →
+  //    座位 `seatOf25` 的触限对不上 → 判成通过。这正是坑①，一句断言钉住它。
+  const cropped: typeof plan = {
+    ...plan,
+    matches: plan.matches.slice(0, PROBE_MATCH_LIMIT),
+    matchesPerCandidate: PROBE_MATCH_LIMIT,
+  };
+  const lenient = verdictOfTrips([trip25], (index) => cropped.matches[index]?.candidateSeat ?? 0);
+  // 只有候选真的不坐 0 号位时这条反例才「绿成假的」。
+  if (seatOf25 !== 0) {
+    expect(lenient.passed).toBe(true);
+  }
+  // ③ 而按完整计划查座位**不会**给出那个兜底：它要么是计划里的座位，要么大声失败。
+  expect(candidateSeatOfPlan(plan)(24)).toBe(seatOf25);
+  expect(() => candidateSeatOfPlan(cropped)(24)).toThrow(/计划里没有第 24 场/);
+});
+
+it("贴边档：任一条轨 ≥ 80% 即切档，且带「已经贴边」与那句改法提示", () => {
+  const report = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips: [],
+    peakUsage: { eventCount: 48000, apiCalls: 100, memoryBytes: 200000 },
+    limits: PROBE_LIMITS,
+  });
+  expect(report.verdict.passed).toBe(true);
+  expect(report.nearLimit).toBe(true);
+  expect(report.text).toContain("已经贴边");
+  expect(report.text).toContain("48000/50000（96%）");
+  // 贴边档报出这一轮的覆盖形状（1 组组合 × 4 座位 × 2 地图 = 前 8 场，由计划派生）。
+  expect(report.text).toContain("1 组组合 × 4 座位 × 2 地图");
+  // 充裕档的那句"最坏读数全表"不出现（贴边档只点贴边的那几条）。
+  expect(report.text).not.toContain("API 100/800");
+  // 免责两句照样在：贴边也不是"整张通过"。
+  expect(report.text).toContain("这不等于整张 32 场通过");
+});
+
+it("没采到读数时不假装全 0：缺席就写「没采到」，不写 0/50000", () => {
+  const report = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips: [],
+    limits: PROBE_LIMITS,
+  });
+  expect(report.text).toContain("没采到任何占用读数");
+  expect(report.text).not.toContain("0/");
+  expect(report.text).toContain("这不等于整张 32 场通过");
+});
+
+it("未启用的轨不显示（预算键缺席 → 那一栏不出现，而不是 `0/0`）", () => {
+  const report = probeReportOf({
+    plan,
+    matchCount: PROBE_MATCH_LIMIT,
+    trips: [],
+    peakUsage: { eventCount: 1000, apiCalls: 20, memoryBytes: 100000 },
+    limits: { eventTickLimit: 50000 },
+  });
+  expect(report.text).toContain("事件 1000/50000");
+  expect(report.text).not.toContain("API");
+  expect(report.text).not.toContain("内存");
 });
