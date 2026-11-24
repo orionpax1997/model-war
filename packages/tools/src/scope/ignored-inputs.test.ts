@@ -10,7 +10,8 @@
  * ── 这一份盯的是什么 ──
  * 1. **两类不许一刀切**:派生必须放行,本机状态必须红。
  * 2. **反方向**:把 `archive` 塞进派生白名单 → `swallowedLocalState` 点名;往命中里塞一条
- *    没有登记的忽略路径 → `uncovered` 点名;**空登记表不许当全过**。
+ *    没有登记的忽略路径 → `uncovered` 点名;**空登记表不许当全过**(表空时命中自己红,而
+ *    且「没有路径要问」不许交给 `git check-ignore`——空 stdin 是 128,不是「没命中」)。
  * 3. **登记表口径**:幽灵条目(行号漂了 / 字面量不在 / 文件没了)、过期条目(不再覆盖任何命中)、
  *    空理由,三种都红。
  * 4. **入库事实**:真实 map + 真实登记表 + 真实 git 判下来是干净的;派生白名单非空、每条探针
@@ -207,29 +208,60 @@ describe("定位判据(末段字面量)", () => {
   });
 });
 
-describe("入库事实:真实 map + 真实登记表 + 真实 git", () => {
-  /**
-   * 真实的一次 `git check-ignore --stdin --no-index`。退出码 0/1 是判据,其它一律抛:
-   * 折算成「没被忽略」会让这条断言在最该红的地方变绿。
-   */
-  const gitIgnored = (paths: readonly string[]): ReadonlySet<string> => {
-    const result = spawnSync("git", ["check-ignore", "--stdin", "--no-index"], {
-      cwd: repoRoot,
-      input: `${paths.join("\n")}\n`,
-      encoding: "utf8",
-    });
-    if (result.error !== undefined) throw result.error;
-    if (result.status !== 0 && result.status !== 1) {
-      throw new Error(`git check-ignore 退出码 ${String(result.status)}:${result.stderr}`);
-    }
-    return new Set(
-      result.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line !== ""),
-    );
-  };
+/** `git check-ignore` 的一次调用:注入着,「空路径集不 spawn」才断言得了。 */
+type GitSpawn = (
+  command: string,
+  args: readonly string[],
+  options: { readonly cwd: string; readonly input: string; readonly encoding: "utf8" },
+) => {
+  readonly error?: Error | undefined;
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+};
 
+const defaultGitSpawn: GitSpawn = (command, args, options) => {
+  const result = spawnSync(command, [...args], { ...options });
+  return {
+    error: result.error,
+    status: result.status,
+    stdout: String(result.stdout),
+    stderr: String(result.stderr),
+  };
+};
+
+/**
+ * 真实的一次 `git check-ignore --stdin --no-index`。退出码 0/1 是判据,其它一律抛:
+ * 折算成「没被忽略」会让这条断言在最该红的地方变绿。
+ *
+ * **空路径集不 spawn**:`git check-ignore --stdin` 收到空 stdin 会以 128 退出
+ * (`fatal: empty string is not a valid pathspec`),而「没有路径要问」的正确答案就是空集。
+ * 门禁入口 `run-ignored-inputs-gate.ts` 的 `gitIgnored` 一直有这条短路,这里补上同一份:
+ * 两侧跑的是同一份判据,不该有两种行为。
+ */
+const gitIgnored = (
+  paths: readonly string[],
+  spawn: GitSpawn = defaultGitSpawn,
+): ReadonlySet<string> => {
+  if (paths.length === 0) return new Set();
+  const result = spawn("git", ["check-ignore", "--stdin", "--no-index"], {
+    cwd: repoRoot,
+    input: `${paths.join("\n")}\n`,
+    encoding: "utf8",
+  });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`git check-ignore 退出码 ${String(result.status)}:${result.stderr}`);
+  }
+  return new Set(
+    result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== ""),
+  );
+};
+
+describe("入库事实:真实 map + 真实登记表 + 真实 git", () => {
   const observed = observedInputs(loadInputsMap(repoRoot));
   const candidates = [
     ...new Set(observed.filter((hit) => !isDerived(hit.path)).map((hit) => hit.path)),
@@ -261,6 +293,32 @@ describe("入库事实:真实 map + 真实登记表 + 真实 git", () => {
         (problem) => `${problem.kind}:${problem.entry.test}:${String(problem.entry.line)}`,
       ),
     ).toEqual([]);
+  });
+
+  it("空登记表不许当全过:表空时,命中一条都不许被放行", () => {
+    // 表空时这条判据唯一能给出的结论是「命中自己红」。真实 map 在干净现场里也许没有命中,
+    // 那样这条断言就是同义反复——所以掺一条构造命中一起过,让它在任何现场都咬得住。
+    const probe: readonly Hit[] = [
+      ...hits,
+      { test: "packages/x/src/a.test.ts", path: "archive/zz-probe/script.js" },
+    ];
+    const judgment = judgeIgnoredInputs({ hits: probe, registry: [], sourceLine: realSourceLine });
+    expect(judgment.uncovered, "空登记表把命中放过去了").toEqual(probe);
+    expect(judgment.problems).toEqual([]);
+    // 真实 map 的命中也一样:表空 = 一条都不被覆盖。
+    expect(
+      judgeIgnoredInputs({ hits, registry: [], sourceLine: realSourceLine }).uncovered,
+    ).toEqual(hits);
+  });
+
+  it("空路径集不 spawn git(空 stdin 会让 git 以 128 退出)", () => {
+    let calls = 0;
+    const empty = gitIgnored([], (command, args, options) => {
+      calls += 1;
+      return defaultGitSpawn(command, args, options);
+    });
+    expect(empty.size).toBe(0);
+    expect(calls, "空路径集仍然交给了 git:没有路径要问的答案是空集,不是一条红").toBe(0);
   });
 
   it("每条登记的路径今天仍然真的被 git 忽略(否则豁免在替一条已入库的路径开洞)", () => {
