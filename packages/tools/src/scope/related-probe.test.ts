@@ -7,8 +7,14 @@
  * 2. **真探针**(8–10):`spawnSync` 跑真的 `vitest related`。它们是这套判据唯一的证据来源——
  *    报告格式、`passWithNoTests` 的行为都是 vitest 的事实,不是我们能推出来的。
  *
- * 成本诚实记在这里:一次真探针约 2 秒(零候选)到 ~25 秒(有候选,要真跑那些测试),所以这三条
- * 用例的 `timeout` 是显式给的,不靠默认的 5 秒。
+ * 成本诚实记在这里:一条真探针的耗时几乎全是 vitest 自己的启动(零候选也要 ~3.3 秒),所以这
+ * 三条用例的 `timeout` 是显式给的,不靠默认的 5 秒。
+ *
+ * **靶子故意小。** 这两条“有候选”的用例早先用的是 `packages/engine/src/runner/quickjs.ts`:
+ * 它拉进 7 个文件 / 89 条用例,单次 ~23 秒。它们归在 `unit`——编辑循环里反复跑的那一档——
+ * 于是默认 `test` 从 26s 涨到了 69s,每次业务改动多付 43s。判据要的是“真 spawn + 报告可解析 +
+ * 确实选中了行为测试”,不是“靶子有多大”;大靶子的形态由 `test:related` 在真实改动上覆盖。
+ * 换成 `scope/plan.ts` 后相关集合只有 3 个文件 / 91 条用例,整条文件回到个位数秒。
  */
 
 import { spawnSync } from "node:child_process";
@@ -16,7 +22,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   STRUCTURAL_TESTS,
   classify,
@@ -24,6 +30,7 @@ import {
   messageOf,
   parseReport,
   probeRelated,
+  type ProbeOutcome,
   type ProbeReport,
 } from "./related-probe.ts";
 
@@ -41,6 +48,54 @@ const report = (files: readonly string[], counts: Partial<ProbeReport> = {}): Pr
 /** `git status --short` 的快照:用于断言"探针不在仓库里留东西"。 */
 const gitStatus = (): string =>
   spawnSync("git", ["status", "--short"], { cwd: repoRoot, encoding: "utf8" }).stdout;
+
+/**
+ * 真探针的靶子:小、稳、相关集合只包含引用它自己的那几个测试文件。
+ *
+ * 为什么不拿 `runner/quickjs.ts` 当靶子:这里要证的是"探针能问出候选并把报告读回来",
+ * 与靶子的体量无关,而那个靶子会把 89 条用例拉进 `unit`(编辑循环那一档),代价见文件头注。
+ */
+const SMALL_TARGET = "packages/tools/src/scope/plan.ts";
+
+/**
+ * 全文件共用**一次**小靶子真探针。
+ *
+ * 两条"有候选"的用例看的是同一次运行:一次 spawn 里绝大部分是 vitest 自己的启动(~3.3 秒,
+ * 零候选时也一样),起两遍等于白付一倍。报告落点显式给出,好让"用完即删"那条能指着同一文件说话;
+ * `statusBefore` 在探针**开始前**取,所以"仓库里不留文件"仍是这条运行的断言。
+ */
+let smallProbe: {
+  readonly outcome: ProbeOutcome;
+  readonly dir: string;
+  readonly reportPath: string;
+  readonly statusBefore: string;
+};
+
+let smallProbeDir: string | undefined;
+
+const runSmallProbe = (): typeof smallProbe => {
+  smallProbe ??= (() => {
+    const statusBefore = gitStatus();
+    const dir = mkdtempSync(join(tmpdir(), "modelwar-related-probe-assert-"));
+    smallProbeDir = dir;
+    const reportPath = join(dir, "report.json");
+    const outcome = probeRelated({
+      repoRoot,
+      paths: [SMALL_TARGET],
+      project: "all",
+      reportPath,
+    });
+    return { outcome, dir, reportPath, statusBefore };
+  })();
+  return smallProbe;
+};
+
+/** 共用的临时目录不能留到下一次运行里(探针自己要删的只是那份报告)。 */
+afterAll(() => {
+  if (smallProbeDir !== undefined) {
+    rmSync(smallProbeDir, { recursive: true, force: true });
+  }
+});
 
 describe("parseReport:报告的计数与文件列表", () => {
   it("正常报告 → 文件列表仓库相对化、去重升序,计数照抄", () => {
@@ -167,46 +222,31 @@ describe("真探针:报告是唯一的判据", () => {
     expect(existsSync(orphan)).toBe(false);
   });
 
-  it("集成:已知有候选的文件(quickjs.ts)→ ran,且行为测试文件 ≥ 1", { timeout: 240_000 }, () => {
-    const outcome = probeRelated({
-      repoRoot,
-      paths: ["packages/engine/src/runner/quickjs.ts"],
-      project: "all",
-    });
+  it("集成:已知有候选的文件(plan.ts)→ ran,且行为测试文件 ≥ 1", { timeout: 240_000 }, () => {
+    const { outcome } = runSmallProbe();
 
     expect(outcome.kind).toBe("ran");
     if (outcome.kind !== "ran") return;
     expect(outcome.behavior.length).toBeGreaterThanOrEqual(1);
-    expect(outcome.behavior).toContain("packages/engine/src/runner/quickjs.test.ts");
+    expect(outcome.behavior).toContain("packages/tools/src/scope/plan.test.ts");
     // 报告里确实跑了用例:这是"有候选"的唯一硬证据。
     expect(outcome.tests).toBeGreaterThan(0);
   });
 
   it("报告落在 tmpdir 下、用完即删;仓库里不留文件", { timeout: 240_000 }, () => {
-    const before = gitStatus();
-    const dir = mkdtempSync(join(tmpdir(), "modelwar-related-probe-assert-"));
-    const reportPath = join(dir, "report.json");
-    try {
-      expect(reportPath.startsWith(tmpdir())).toBe(true);
-      const outcome = probeRelated({
-        repoRoot,
-        paths: ["packages/engine/src/runner/quickjs.ts"],
-        project: "all",
-        reportPath,
-      });
-      expect(outcome.kind).toBe("ran");
-      // 用完即删:连报告带目录一起不留。
-      expect(existsSync(reportPath)).toBe(false);
-      expect(readdirSync(dir)).toEqual([]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-    expect(gitStatus()).toBe(before);
+    const { outcome, dir, reportPath, statusBefore } = runSmallProbe();
+
+    expect(reportPath.startsWith(tmpdir())).toBe(true);
+    expect(outcome.kind).toBe("ran");
+    // 用完即删:连报告带目录一起不留。
+    expect(existsSync(reportPath)).toBe(false);
+    expect(readdirSync(dir)).toEqual([]);
+    expect(gitStatus()).toBe(statusBefore);
     // 报告落点不在 tmpdir 下一律拒绝:探针不许往仓库里写文件。
     expect(() =>
       probeRelated({
         repoRoot,
-        paths: ["packages/engine/src/runner/quickjs.ts"],
+        paths: [SMALL_TARGET],
         project: "all",
         reportPath: join(repoRoot, "related-probe-report.json"),
       }),
