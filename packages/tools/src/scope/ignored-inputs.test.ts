@@ -85,7 +85,13 @@ describe("反方向:白名单会红", () => {
   it("把 archive 塞进派生白名单 → 点名(白名单不能被用来让本机状态过门)", () => {
     const widened: readonly DerivedRule[] = [
       ...DERIVED_RULES,
-      { kind: "segment", value: "archive", probe: "archive/probe.js", why: "反例:不该成立" },
+      {
+        kind: "segment",
+        value: "archive",
+        probe: "archive/probe.js",
+        why: "反例:不该成立",
+        observation: "excluded",
+      },
     ];
     const swallowed = swallowedLocalState(widened);
     expect(swallowed, "把 archive 加进白名单之后一条都没点名:这道反例不成立").not.toEqual([]);
