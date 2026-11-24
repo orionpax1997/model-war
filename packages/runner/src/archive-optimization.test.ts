@@ -7,11 +7,11 @@
  * ── 为什么 v1 也要有用例 ──
  *
  * `archive/` 里已冻结的档不改写、不迁移。任何「顺手收紧一下老档」的改动都会让历史档读不进来，
- * 所以 v1 有一条**真实档**（本地存在才跑）与一条合成档两条断言，v2 的每条新判据也各有反例。
+ * 所以 v1 有一条**真档形状的入库副本**（`fixtures/archive/legacy-v1-selection/`）与一条合成档两条
+ * 断言，v2 的每条新判据也各有反例。副本而不是本机 `archive/`：后者不入库，按它守卫的用例等于不存在。
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
@@ -19,7 +19,6 @@ import { expect, it } from "vitest";
 import { optimizationMetaOf, validateArchiveCandidateRelations } from "./archive-optimization.js";
 import { trialGridPlanFixture } from "./trial-grid.fixture.js";
 
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const plan = trialGridPlanFixture();
 const sha = (seed: string): string => seed.repeat(64);
 
@@ -256,19 +255,23 @@ it("v1 档（合成）：三场试跑形状仍照原判据通过，不要求计�
   expect(() => optimizationMetaOf(reversed)).toThrow(/优化候选阶段、协议轮或独占文件关系不合法/);
 });
 
-const realV1 = join(
-  repoRoot,
-  "archive",
-  "claude-opus-5-5",
-  "2026-10-16T08-40-12-578Z",
-  "meta.json",
+/**
+ * v1 历史档的入库副本：`fixtures/archive/legacy-v1-selection/` 来自
+ * `archive/claude-haiku-5-5/2026-10-13T13-48-45-710Z`（来源与改写清单见那里的 README）。
+ *
+ * 读的是**副本**而不是本机 `archive/`：`archive/` 不入库，按它守卫就只能 skip——那条用例在 CI 上
+ * 从来没跑过。副本把「老档的形状仍过 v2 判据」这件事变成每次都被查一遍。
+ */
+const v1FixtureMeta = fileURLToPath(
+  new URL(
+    "./fixtures/archive/legacy-v1-selection/archive/fixture-v1-selection/2026-01-01T00-00-00-001Z/meta.json",
+    import.meta.url,
+  ),
 );
-it.skipIf(!existsSync(realV1))(
-  "真实 archive（本地有才断言）：v1 历史档仍可读，不因 v2 判据收严被拒",
-  () => {
-    const meta = optimizationMetaOf(JSON.parse(readFileSync(realV1, "utf8")));
-    expect(meta?.optimization?.version).toBe(1);
-    expect(meta?.optimization).not.toHaveProperty("plan");
-    expect(meta?.optimization?.candidates).toHaveLength(3);
-  },
-);
+
+it("v1 历史档（入库副本）：仍可读，不因 v2 判据收严被拒", () => {
+  const meta = optimizationMetaOf(JSON.parse(readFileSync(v1FixtureMeta, "utf8")));
+  expect(meta?.optimization?.version).toBe(1);
+  expect(meta?.optimization).not.toHaveProperty("plan");
+  expect(meta?.optimization?.candidates).toHaveLength(3);
+});

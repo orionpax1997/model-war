@@ -3,7 +3,7 @@
  *
  * 断言对象都是**外部可观察的行为**：交回的四份是什么（id/role/source/摘要）、拒绝理由里
  * 点了谁的名、在位落到哪一份存档。全部用临时夹具根，不把「本地存在真实 archive」当硬前提；
- * 对真实 `archive/` 的核对放在最后一例，本地没有那几份存档时整例跳过。
+ * 对钉死身份的核对放在最后一例，读的是入库副本 `fixtures/archive/sparring-ladder/`，同样不用本机档案。
  */
 
 import { createHash } from "node:crypto";
@@ -21,7 +21,6 @@ import {
 
 import { latestArchiveRunId, loadSparringPool, sparringPoolScriptsOf } from "./sparring-pool.js";
 
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-sparring-pool-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -230,72 +229,65 @@ it("该模型一份存档都没有：在位以代位档顶替并标注 #substitu
   expect(result.pool.notes.join("\n")).toContain("顶替");
 });
 
-const realTop = TRIAL_SPARRING_LADDER[0];
-const realArchivePresent = existsSync(
-  join(repoRoot, "archive", realTop.id, realTop.runId, "script.js"),
+/**
+ * 钉死身份对着**入库副本**验，不对着本机 `archive/`：`fixtures/archive/sparring-ladder/` 是从真实
+ * `archive/` 里逐字节裁出来的 `script.js`（来源与裁剪清单见那里 README）。`archive/` 不入库，按它
+ * 守卫只会让这一例在干净克隆上沉默地 skip——而「钉死的摘要与盘上字节一致」正是它唯一要证的事。
+ *
+ * 副本里同时保住了 `latestArchiveRunId` 要分辨的目录结构：同一个 `<slug>/` 下既有真存档目录，
+ * 也有一条 `feedback-<runId>-<hash>` 旁挂目录（它也带 `script.js`，名字排在所有 `20…` 之后）。
+ */
+const LADDER_FIXTURE_ROOT = fileURLToPath(
+  new URL("./fixtures/archive/sparring-ladder", import.meta.url),
 );
 
-it.skipIf(!realArchivePresent)(
-  "真实 archive（本地有才断言）：钉死的三份摘要与盘上字节一致，在位落到该模型最近一次存档",
-  () => {
-    const result = loadSparringPool({ root: repoRoot, model: "gpt-6.1-sol" });
-    expect(result.ok, result.ok ? "" : result.reason).toBe(true);
-    if (!result.ok) return;
-    expect(result.pool.scripts.slice(0, 3).map((entry) => entry.script)).toEqual(
-      TRIAL_SPARRING_LADDER.map((identity) => ({
-        id: `${identity.role}:${identity.id}`,
-        role: identity.role,
-        source: `archive:${identity.id}/${identity.runId}`,
-        scriptSha256: identity.scriptSha256,
-      })),
+/** 旁挂目录：`'f' > '2'`，按名字排序取最大就会挑中它而不是真存档。 */
+const SIDECAR = "feedback-2026-10-12T06-44-23-721Z-8477e747";
+
+it("钉死的三份摘要与入库副本的字节一致，在位落到该模型最近一次存档", () => {
+  const result = loadSparringPool({ root: LADDER_FIXTURE_ROOT, model: "gpt-6.1-sol" });
+  expect(result.ok, result.ok ? "" : result.reason).toBe(true);
+  if (!result.ok) return;
+  expect(result.pool.scripts.slice(0, 3).map((entry) => entry.script)).toEqual(
+    TRIAL_SPARRING_LADDER.map((identity) => ({
+      id: `${identity.role}:${identity.id}`,
+      role: identity.role,
+      source: `archive:${identity.id}/${identity.runId}`,
+      scriptSha256: identity.scriptSha256,
+    })),
+  );
+  const incumbent = result.pool.scripts[3]!;
+  // 副本里 `gpt-6.1-sol` 有两档：取时间上最新那一档，不是字典序最大（两者在这批数据上恰好都
+  // 指向它，真正的分辨点在同层那条 `feedback-…` 目录上，见下）。
+  const latest = latestArchiveRunId(LADDER_FIXTURE_ROOT, "gpt-6.1-sol");
+  expect(latest).toBe("2026-10-13T14-27-39-119Z");
+  expect(incumbent.script.id).toBe("incumbent:gpt-6.1-sol");
+  expect(incumbent.script.source).toBe(`archive:gpt-6.1-sol/${latest ?? ""}`);
+  // 摘要 = 盘上字节的 sha256（复算认编译产物），与在位选中的是哪一档无关地逐字节核。
+  expect(incumbent.script.scriptSha256).toBe(
+    createHash("sha256")
+      .update(readFileSync(join(LADDER_FIXTURE_ROOT, incumbent.path)))
+      .digest("hex"),
+  );
+  // 与存档同级的旁挂目录（`feedback-<runId>-<hash>`，也带 `script.js`）：不入选。
+  const picked = latestArchiveRunId(LADDER_FIXTURE_ROOT, "deepseek-v4.1-flash");
+  expect(picked).toBe("2026-10-12T05-24-53-183Z");
+  if (picked === undefined) return;
+  // 名字排序取最大会挑中旁挂目录——这就是不能那么取的理由。
+  expect(SIDECAR.localeCompare(picked)).toBeGreaterThan(0);
+  // 选中的那一档是真存档（`script.js` 在位），不是旁的目录。
+  expect(
+    existsSync(join(LADDER_FIXTURE_ROOT, "archive", "deepseek-v4.1-flash", picked, "script.js")),
+  ).toBe(true);
+  // 代位档：该模型一份存档都没有时顶上，摘要同样对得上钉死值。
+  const substitute = loadSparringPool({
+    root: LADDER_FIXTURE_ROOT,
+    model: "never-generated-model",
+  });
+  expect(substitute.ok).toBe(true);
+  if (substitute.ok) {
+    expect(substitute.pool.scripts[3]!.script.scriptSha256).toBe(
+      TRIAL_SPARRING_SUBSTITUTE.scriptSha256,
     );
-    const incumbent = result.pool.scripts[3]!;
-    const latest = latestArchiveRunId(repoRoot, "gpt-6.1-sol");
-    expect(incumbent.script.id).toBe("incumbent:gpt-6.1-sol");
-    expect(incumbent.script.source).toBe(`archive:gpt-6.1-sol/${latest ?? ""}`);
-    // 摘要 = 盘上字节的 sha256（复算认编译产物）。
-    expect(incumbent.script.scriptSha256).toBe(
-      createHash("sha256")
-        .update(readFileSync(join(repoRoot, incumbent.path)))
-        .digest("hex"),
-    );
-    // 真实数据里那条「不能取字典序最大」的旁挂目录：`feedback-<runId>-<hash>` 与存档同级、
-    // 也带 `script.js`，而名字排在所有 `20…` 之后。断言只钉「旁挂目录不入选、选中的是真存档」，
-    // **不钉具体日期**：`archive/` 不进版本库，每跑一次真实生成都会让钉死的 runId 过期。
-    const sidecar = "feedback-2026-10-12T06-44-23-721Z-8477e747";
-    if (existsSync(join(repoRoot, "archive", "deepseek-v4.1-flash", sidecar, "script.js"))) {
-      const picked = latestArchiveRunId(repoRoot, "deepseek-v4.1-flash");
-      expect(picked).toBeDefined();
-      if (picked === undefined) return;
-      // 名字排序取最大会挑中旁挂目录——这就是不能那么取的理由。
-      expect(sidecar.localeCompare(picked)).toBeGreaterThan(0);
-      // 选中的那一档是真存档（`script.js` 在位），不是旁的目录。
-      expect(
-        existsSync(join(repoRoot, "archive", "deepseek-v4.1-flash", picked, "script.js")),
-      ).toBe(true);
-    }
-    // 代位档的那份存档也在库里时，摘要同样对得上钉死值。
-    if (
-      existsSync(
-        join(
-          repoRoot,
-          "archive",
-          TRIAL_SPARRING_SUBSTITUTE.id,
-          TRIAL_SPARRING_SUBSTITUTE.runId,
-          "script.js",
-        ),
-      )
-    ) {
-      const substitute = loadSparringPool({
-        root: repoRoot,
-        model: "never-generated-model",
-      });
-      expect(substitute.ok).toBe(true);
-      if (substitute.ok) {
-        expect(substitute.pool.scripts[3]!.script.scriptSha256).toBe(
-          TRIAL_SPARRING_SUBSTITUTE.scriptSha256,
-        );
-      }
-    }
-  },
-);
+  }
+});
