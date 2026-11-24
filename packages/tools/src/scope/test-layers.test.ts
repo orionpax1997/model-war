@@ -27,8 +27,9 @@ import {
   UnregisteredPathError,
   decide,
 } from "./change-radius.js";
-import { runsFor } from "./check.js";
-import { isInputPath, loadInputsMap } from "./test-inputs.js";
+import { runsFor, snapshotStaleMessage, unobservedGap } from "./check.js";
+import { STRUCTURAL_TESTS } from "./related-probe.js";
+import { currentFingerprint, isInputPath, loadInputsMap } from "./test-inputs.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const workspaces = workspacesOf(repoRoot);
@@ -296,6 +297,71 @@ describe("观测 map:它自己也要有判据", () => {
     expect(config, "worker 的 execArgv 没接上 recorder").toContain("execArgv: RECORD_EXEC_ARGV");
     expect(config, "recorder 的装载位置不在 config 里").toContain("RECORD_SETUP");
     expect(config, "收口那次跑(all)必须带录制开关").toContain("RECORD_EXEC_ARGV");
+  });
+
+  /**
+   * **快照过期即红**(票 T6)。指纹对不上时不许继续拿旧 map 判"有没有观测":旧 map 的
+   * 失效方向是少记,而少记读出来就是"没人看这块"——两个完全不同的红混成一条。
+   *
+   * 第一条断言同时是**入库快照的新鲜度门禁**:改了 recorder / setup / `vitest.config.ts`
+   * 就必须重录,不重录这里就红(并且消息里直接给出两条命令)。
+   *
+   * 它唯一不跑的情形是**正在录制**(`observe:inputs` 自己跑的那趟 `test:all`):那一刻正在
+   * 被写的就是它要断言的那份快照。这不是把红改成跳过——录制结束后同一条断言在 `test`、
+   * `check` 上照样跑,而"没重录"的后果仍会以上面那两条命令的形式回来。
+   */
+  it("快照过期即红:消息里有两个指纹与两条重录命令", () => {
+    const current = currentFingerprint(repoRoot);
+    if (process.env["MODELWAR_TEST_INPUTS_FILE"] === undefined) {
+      expect(
+        snapshotStaleMessage({ map, fingerprint: current }),
+        `入库快照与现在的观测仪器对不上:重录 \`node --run observe:inputs:accept\``,
+      ).toBeUndefined();
+    }
+    const stale = snapshotStaleMessage({ map, fingerprint: "deadbeefdeadbeef" }) ?? "";
+    expect(stale).toContain("deadbeefdeadbeef");
+    expect(stale).toContain(map.fingerprint);
+    expect(stale).toContain("node --run observe:inputs:accept");
+    expect(stale).toContain("node --run observe:inputs");
+    // 空指纹(旧快照)一样过期:"没说清"不许被当成"大概没事"。
+    expect(
+      snapshotStaleMessage({ map: { ...map, fingerprint: "" }, fingerprint: current }),
+      "空指纹被当成新鲜快照了",
+    ).toBeDefined();
+  });
+});
+
+/**
+ * **结构测试不是行为证据**(票 T6)。
+ *
+ * `dependency-boundary.test.ts` 这类测试读 `dist`、spawn depcruise,断言的是**别的文件的
+ * 形状**(依赖方向、文档归属、版本边界)。在"这个改动的测试候选里有没有人看着行为"这个问题
+ * 上它们不算数:记成"有候选"等于用一张图纸证明一栋楼。
+ *
+ * 这里盯的是 `check.ts` 的**判定表**(`unobservedGap`——它直接跑上红线):结构测试那一条
+ * 必须给出"只有结构测试被选中"并点名缘由,而且不能有任何一种红悄悄返回 `undefined`、从
+ * 而在 `main` 里变成绿。
+ */
+describe("结构测试不算行为证据", () => {
+  it("只有结构测试被选中 → 上红线,消息点名那是别的文件的形状", () => {
+    const structural = STRUCTURAL_TESTS[0] ?? "";
+    const gap = unobservedGap("packages/engine/src/runner/quickjs.ts", {
+      kind: "structural-only",
+      structural: [structural],
+    });
+    expect(gap).toBeDefined();
+    expect(gap?.why).toContain("只有结构测试被选中");
+    expect(gap?.why).toContain("别的文件的形状");
+    // 点名是哪一个:不点名的话读的人只看到一条抽象的红。
+    expect(gap?.why).toContain(structural);
+  });
+
+  it("真跑过就不登记;确知为零 / 全 skip 都算红(只有 `ran` 是绿)", () => {
+    expect(
+      unobservedGap("x.ts", { kind: "ran", behavior: ["a.test.ts"], structural: [], tests: 3 }),
+    ).toBeUndefined();
+    expect(unobservedGap("x.ts", { kind: "no-tests" })).toBeDefined();
+    expect(unobservedGap("x.ts", { kind: "all-skipped", files: ["a.test.ts"] })).toBeDefined();
   });
 });
 
