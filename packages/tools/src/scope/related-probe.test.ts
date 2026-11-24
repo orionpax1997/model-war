@@ -10,11 +10,17 @@
  * 成本诚实记在这里:一条真探针的耗时几乎全是 vitest 自己的启动(零候选也要 ~3.3 秒),所以这
  * 三条用例的 `timeout` 是显式给的,不靠默认的 5 秒。
  *
- * **靶子故意小。** 这两条“有候选”的用例早先用的是 `packages/engine/src/runner/quickjs.ts`:
- * 它拉进 7 个文件 / 89 条用例,单次 ~23 秒。它们归在 `unit`——编辑循环里反复跑的那一档——
- * 于是默认 `test` 从 26s 涨到了 69s,每次业务改动多付 43s。判据要的是“真 spawn + 报告可解析 +
- * 确实选中了行为测试”,不是“靶子有多大”;大靶子的形态由 `test:related` 在真实改动上覆盖。
- * 换成 `scope/plan.ts` 后相关集合只有 3 个文件 / 91 条用例,整条文件回到个位数秒。
+ * **靶子故意小,更要稳。** 这两条“有候选”的用例早先用的是
+ * `packages/engine/src/runner/quickjs.ts`:它拉进 7 个文件 / 89 条用例,单次 ~23 秒。它们归在
+ * `unit`——编辑循环里反复跑的那一档——于是默认 `test` 从 26s 涨到了 69s,每次业务改动多付
+ * 43s。判据要的是“真 spawn + 报告可解析 + 确实选中了行为测试”,不是“靶子有多大”;大靶子的
+ * 形态由 `test:related` 在真实改动上覆盖。
+ *
+ * 但“小”不够。中途换成 `scope/plan.ts` 时相关集合确实缩到了 3 个文件,可其中一个是
+ * `test-layers.test.ts`——**它断言的是仓库事实**(某些路径在不在盘上),在开发者机器上绿、
+ * 在干净克隆上红。于是探针如实报 `failed`,而这两条用例期望 `ran`:级联的根因是靶子不稳,
+ * 而判据挑在受环境影响的文件上就已经错了。现在靶子是 `fixtures/probe-target.ts`,纯函数夹具,
+ * 唯一候选是它自己的测试文件。
  */
 
 import { spawnSync } from "node:child_process";
@@ -45,17 +51,43 @@ const report = (files: readonly string[], counts: Partial<ProbeReport> = {}): Pr
   ...counts,
 });
 
-/** `git status --short` 的快照:用于断言"探针不在仓库里留东西"。 */
-const gitStatus = (): string =>
-  spawnSync("git", ["status", "--short"], { cwd: repoRoot, encoding: "utf8" }).stdout;
+/**
+ * 孤儿目标文件名(`集成:临时新建一个无人 import 的源文件 → no-tests` 自己造的临时靶子)。
+ *
+ * 为什么要单独拿出来:全量入口与编辑循环入口跑的是**同一个**测试文件(`unit` 与 `all` 两个
+ * project 的拾取范围重叠),于是两个 worker 在同时跑:一个拍 `git status` 快照时,另一个的孤儿
+ * 文件可能正好在盘上。那不是“探针留了文件”,所以两边都把这类行剔掉再比。
+ * 孤儿自己的生死由那条用例的 `finally` 与末尾的 `existsSync` 断言管。
+ */
+const ORPHAN_PATTERN = /tmp-related-probe-orphan-/u;
 
 /**
- * 真探针的靶子:小、稳、相关集合只包含引用它自己的那几个测试文件。
+ * `git status --short` 的快照:用于断言“探针不在仓库里留东西”。
  *
- * 为什么不拿 `runner/quickjs.ts` 当靶子:这里要证的是"探针能问出候选并把报告读回来",
- * 与靶子的体量无关,而那个靶子会把 89 条用例拉进 `unit`(编辑循环那一档),代价见文件头注。
+ * 只剔掉并行 worker 的孤儿文件:除此之外的任何一个字节变化都算探针留了东西。
  */
-const SMALL_TARGET = "packages/tools/src/scope/plan.ts";
+const gitStatus = (): string =>
+  spawnSync("git", ["status", "--short", "--untracked-files=all"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  })
+    .stdout.split("\n")
+    .filter((line) => !ORPHAN_PATTERN.test(line))
+    .join("\n");
+
+/**
+ * 真探针的靶子:**测试专用夹具**,纯函数,相关集合只有它自己的那个测试文件。
+ *
+ * 为什么不拿 `runner/quickjs.ts` 当靶子:这里要证的是“探针能问出候选并把报告读回来”,
+ * 与靶子的体量无关,而那个靶子会把 89 条用例拉进 `unit`(编辑循环那一档),代价见文件头注。
+ *
+ * 为什么不拿 `scope/plan.ts`:它的相关集合里带着 `test-layers.test.ts`,那一条断言的是仓库
+ * 事实(本机忽略目录在不在盘上),于是这两条用例在 CI 上会红在一个与探针无关的原因上。
+ *
+ * 路径写成**字符串**而不是 `import` 进来的值:import 会把本文件自己变成这个靶子的候选,
+ * 于是“相关集合只有它自己的测试”这条性质当场破掉。
+ */
+const SMALL_TARGET = "packages/tools/src/scope/fixtures/probe-target.ts";
 
 /**
  * 全文件共用**一次**小靶子真探针。
@@ -222,16 +254,21 @@ describe("真探针:报告是唯一的判据", () => {
     expect(existsSync(orphan)).toBe(false);
   });
 
-  it("集成:已知有候选的文件(plan.ts)→ ran,且行为测试文件 ≥ 1", { timeout: 240_000 }, () => {
-    const { outcome } = runSmallProbe();
+  it(
+    "集成:已知有候选的文件(夹具 probe-target.ts)→ ran,且行为测试文件 ≥ 1",
+    { timeout: 240_000 },
+    () => {
+      const { outcome } = runSmallProbe();
 
-    expect(outcome.kind).toBe("ran");
-    if (outcome.kind !== "ran") return;
-    expect(outcome.behavior.length).toBeGreaterThanOrEqual(1);
-    expect(outcome.behavior).toContain("packages/tools/src/scope/plan.test.ts");
-    // 报告里确实跑了用例:这是"有候选"的唯一硬证据。
-    expect(outcome.tests).toBeGreaterThan(0);
-  });
+      expect(outcome.kind).toBe("ran");
+      if (outcome.kind !== "ran") return;
+      // **只有它自己一个候选**——这正是靶子“稳”的定义。多出一个(比如又选进了某个读仓库事实的
+      // 文件),这条用例就会在干净克隆上红在与探针无关的原因上,所以这里钉住相等而不是“至少一个”。
+      expect(outcome.behavior).toEqual(["packages/tools/src/scope/fixtures/probe-target.test.ts"]);
+      // 报告里确实跑了用例:这是"有候选"的唯一硬证据。
+      expect(outcome.tests).toBeGreaterThan(0);
+    },
+  );
 
   it("报告落在 tmpdir 下、用完即删;仓库里不留文件", { timeout: 240_000 }, () => {
     const { outcome, dir, reportPath, statusBefore } = runSmallProbe();
