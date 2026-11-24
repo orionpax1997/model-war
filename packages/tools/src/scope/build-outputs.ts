@@ -107,3 +107,38 @@ export const buildOutputsOf = (
   }
   return [];
 };
+
+/**
+ * 产物 → 源码。`buildOutputsOf` 的反向。
+ *
+ * 为什么要反向:测试真的会读 `dist/`(`apps/cli/dist/match/assemble.js` 这类被当作产物字节
+ * 校验),于是观测 map 里会出现产物路径。它对选择器不是"第四类输入"——它就是某个源码文件的
+ * 下一跳。没有这条反向映射,判据会把它们一律判成"无法解释",而正确的结论是"可解释,且要跟着
+ * 源码一起递给图"。
+ */
+export const sourceOf = (path: string, workspaces: readonly Workspace[]): string | undefined => {
+  for (const workspace of workspaces) {
+    const prefix = `${workspace.dir}/${workspace.outDir}/`;
+    if (!path.startsWith(prefix)) continue;
+    const rest = path
+      .slice(prefix.length)
+      .replace(/\.d\.ts$/, "")
+      .replace(/\.(js|jsx|mjs|cjs)$/, "");
+    if (rest === path.slice(prefix.length)) continue;
+    return `${workspace.dir}/${workspace.rootDir}/${rest}.ts`;
+  }
+  return undefined;
+};
+
+/**
+ * 是不是某个包的源码文件(含手写的 `.d.ts`)。
+ *
+ * `.d.ts` 也要算:它没有对应的 `dist/*.js`(`buildOutputsOf` 给它的是空),但它是**被测对象**
+ * ——`packages/engine/src/webassembly.d.ts` 被测试读到时,选择器必须能把它递给图,而不是判成
+ * "无法解释"。
+ */
+export const isSourceFile = (path: string, workspaces: readonly Workspace[]): boolean =>
+  workspaces.some(
+    (workspace) =>
+      path.startsWith(`${workspace.dir}/${workspace.rootDir}/`) && path.endsWith(".ts"),
+  );

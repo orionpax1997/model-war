@@ -24,7 +24,7 @@
  *    改动每次得到同样的序列,日志可比。
  */
 
-import { buildOutputsOf, type Workspace } from "./build-outputs.ts";
+import { buildOutputsOf, isSourceFile, sourceOf, type Workspace } from "./build-outputs.ts";
 
 /** 任何改动都要跑的两步:格式化/静态检查(输入在编辑面上)、入库事实漂移(1s 级)。 */
 export const ALWAYS: readonly string[] = ["quick", "gate:static"];
@@ -63,9 +63,29 @@ export const RADIUS: readonly Radius[] = [
     why: "基准脚本同时被 VM 组当执行体、被 e2e 组当 CLI 夹具",
   },
   {
+    area: "packages/runner/src/fixtures",
+    suites: ["test"],
+    why: "单测的夹具(黄金档等),被读成文本而不是 import——图对它没有边",
+  },
+  {
+    area: "packages/schema/script-api",
+    suites: ["test:vm"],
+    why: "入库的 guest 侧声明:被读进 wasm VM 当契约,不是模块 import",
+  },
+  {
+    area: "packages/engine/sandbox-runtime",
+    suites: ["test:vm"],
+    why: "入库的 runtime IIFE 产物:被读成字节塞进 wasm VM,不是 import——图对它没有边",
+  },
+  {
     area: "packages/gen/sandbox-rootfs",
     suites: [],
     why: "生成期沙箱的入库 rootfs;漂移由 gate:static 里的 gate:rootfs 盯,不牵扯对局",
+  },
+  {
+    area: "test-inputs",
+    suites: [],
+    why: "观测 map 本身(由 `observe:inputs:accept` 生成);改它不需要跑任何测试,但改动要被看见",
   },
   {
     area: "docs",
@@ -161,6 +181,11 @@ export const RADIUS: readonly Radius[] = [
     area: "vitest.global-setup.ts",
     suites: ["test:all"],
     why: "它在任何模块加载前跑 `tsc -b`,而选择器依赖产物存在",
+  },
+  {
+    area: "vitest.record-inputs.setup.ts",
+    suites: ["test"],
+    why: "观测器的装载位置;它一错,输入 map 会静默变空,而空 map 只表现为少跑",
   },
   {
     area: "vitest.kernel-guard.setup.ts",
@@ -264,6 +289,18 @@ export interface DecisionInput {
  *
  * 抛 `UnregisteredPathError` 的条件**只有一个**:既映射不到产物、也没有表规则。
  */
+/**
+ * 任何层级的 `package.json` 与锁文件都是**仓库事实**:改它可能换掉一整棵依赖树。
+ *
+ * 顶层那两条在表里(带 why);嵌套包的那份由这里兜——`apps/cli/package.json` 会被测试读到,
+ * 而它既不在 `src/` 下(映射不出产物),也不该被当成"无法解释"。
+ */
+const isManifest = (path: string): boolean =>
+  path === "package.json" ||
+  path.endsWith("/package.json") ||
+  path === "pnpm-lock.yaml" ||
+  path.endsWith("/pnpm-lock.yaml");
+
 export const decide = (input: DecisionInput): Decision => {
   const hits: Radius[] = [];
   const chosen = new Set<string>();
@@ -271,18 +308,28 @@ export const decide = (input: DecisionInput): Decision => {
   const notBuilt = new Set<string>();
 
   for (const path of input.paths) {
-    const outputs = buildOutputsOf(path, input.workspaces);
     const rule = RADIUS.find(
       (candidate) => path === candidate.area || path.startsWith(`${candidate.area}/`),
     );
-    if (outputs.length === 0 && rule === undefined) {
+    // 产物路径先反查源码:测试会读 `dist/`,那不是第四类输入,是源码的下一跳。
+    const source =
+      buildOutputsOf(path, input.workspaces).length > 0 ? path : sourceOf(path, input.workspaces);
+    const outputs = source === undefined ? [] : buildOutputsOf(source, input.workspaces);
+    // 手写的 `.d.ts` 产出为空(`buildOutputsOf` 给它空),但它是代码,不是"无法解释"。
+    const inSource = isSourceFile(path, input.workspaces);
+    const explainable = outputs.length > 0 || inSource || source !== undefined;
+    if (isManifest(path) && rule === undefined && !explainable) {
+      // 嵌套包的 `package.json` 不在表里,但它换掉的是整棵依赖树。
+      chosen.add("test:all");
+    } else if (!explainable && rule === undefined) {
       throw new UnregisteredPathError(path);
     }
     if (rule !== undefined && !hits.includes(rule)) hits.push(rule);
     for (const script of rule?.suites ?? []) chosen.add(script);
-    if (outputs.length === 0) continue;
+    if (outputs.length === 0 || source === undefined) continue;
 
     // 源码与产物**都**交给图:源码问出包内的测试,产物问出跨包依赖它的测试,两者并集才完整。
+    graphFiles.add(source);
     graphFiles.add(path);
     for (const output of outputs) {
       graphFiles.add(output);

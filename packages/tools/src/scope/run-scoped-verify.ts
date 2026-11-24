@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOutputsOf, workspacesOf } from "./build-outputs.ts";
 import { UnregisteredPathError, decide } from "./change-radius.ts";
+import { invert, loadInputsMap } from "./test-inputs.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -85,6 +86,18 @@ const main = (): number => {
     throw error;
   }
 
+  /**
+   * 观测量到的那一半:某个改动被哪些测试文件**读到**过。
+   *
+   * 这是依赖图看不见的那一类——`rulesets/*.json`、`maps/*.yaml`、wasm、入库的 runtime 产物。
+   * 它们由图的话,改一条规则取值只会选中"import 了这个 JSON 的模块",而那通常是零个测试。
+   */
+  const observedByInput = invert(loadInputsMap(repoRoot));
+  const observedTests = new Set<string>();
+  for (const path of files) {
+    for (const test of observedByInput.get(path) ?? []) observedTests.add(test);
+  }
+
   const manifest = JSON.parse(
     readFileSync(new URL("../../../../package.json", import.meta.url), "utf8"),
   ) as { scripts: Record<string, string> };
@@ -107,9 +120,9 @@ const main = (): number => {
     return `  ${path}\n    → ${suites.length === 0 ? "无测试依赖(静态门禁覆盖)" : suites.join(", ")}`;
   });
 
-  const total =
-    decision.scripts.length +
-    (decision.graphFiles.length > 0 && !decision.scripts.includes("test:all") ? 1 : 0);
+  const runGraph = !decision.scripts.includes("test:all");
+  const graphArgs = [...decision.graphFiles, ...[...observedTests].sort()];
+  const total = decision.scripts.length + (runGraph && graphArgs.length > 0 ? 1 : 0);
   process.stdout.write(
     `改动半径(对比 ${options.since},${String(files.length)} 个文件,${String(total)} 步):\n` +
       `${evidence.join("\n")}\n` +
@@ -141,13 +154,12 @@ const main = (): number => {
   }
 
   // 全量已经跑过时不再问图:那是它的子集。
-  if (decision.graphFiles.length > 0 && !decision.scripts.includes("test:all")) {
+  if (runGraph && graphArgs.length > 0) {
     process.stdout.write(`\n=== test:related ===\n`);
-    const result = spawnSync(
-      process.execPath,
-      ["--run", "test:related", "--", ...decision.graphFiles],
-      { cwd: repoRoot, stdio: "inherit" },
-    );
+    const result = spawnSync(process.execPath, ["--run", "test:related", "--", ...graphArgs], {
+      cwd: repoRoot,
+      stdio: "inherit",
+    });
     if (result.status !== 0) {
       process.stderr.write(
         `\n依赖图没有选中任何测试,或选中的测试红了(退出码 ${String(result.status)})。\n` +

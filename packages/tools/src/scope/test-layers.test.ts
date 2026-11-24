@@ -25,6 +25,7 @@ import {
   UnregisteredPathError,
   decide,
 } from "./change-radius.js";
+import { isInputPath, loadInputsMap } from "./test-inputs.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const workspaces = workspacesOf(repoRoot);
@@ -34,6 +35,8 @@ const manifest = (): { scripts: Record<string, string> } =>
   JSON.parse(readFileSync(new URL("../../../../package.json", import.meta.url), "utf8")) as {
     scripts: Record<string, string>;
   };
+
+const unexplainable = (paths: readonly string[]): string => `\n  ${paths.join("\n  ")}`;
 
 const decideOn = (paths: readonly string[]) => decide({ paths, workspaces, exists: built });
 
@@ -237,5 +240,55 @@ describe("链的组成:编辑循环窄,收口宽", () => {
       );
       expect(covered, `没有任何 test*/verify* 脚本会跑 project ${project}`).toBe(true);
     }
+  });
+});
+
+/**
+ * 观测 map(ADR-0038 第三条)自己的判据。
+ *
+ * 它盯的是这个机制**还活着**,以及它记下的东西**都能被解释**。后一条比它看起来重要:map 是
+ * 判据的输入,一条无法解释的输入意味着选择器对它是瞎的——而"瞎"的表现是少跑,不是报错。
+ * 换句话说,这条断言把「我没想到的第四类输入」从"不可能发现"变成"下一次录就红"。
+ */
+describe("观测 map:它自己也要有判据", () => {
+  const map = loadInputsMap(repoRoot);
+  const inputs = [...new Set(Object.values(map.files).flat())];
+
+  it("map 非空,且键都是仓库里真实存在的测试文件(空 map 等于观测没接上)", () => {
+    const keys = Object.keys(map.files);
+    expect(
+      keys.length,
+      "观测 map 是空的:recorder 没装上,或 execArgv 没接进 worker",
+    ).toBeGreaterThan(20);
+    expect(inputs.length, "一条输入都没记到,观测没有实际作用").toBeGreaterThan(50);
+    const missing = keys.filter((key) => !existsSync(join(repoRoot, key)));
+    expect(missing, `这些键不是真实的测试文件:${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("每个被观测到的输入都能被选择器解释(没有第四类输入)", () => {
+    const unexplained: string[] = [];
+    for (const input of inputs) {
+      try {
+        decide({ paths: [input], workspaces, exists: built });
+      } catch {
+        unexplained.push(input);
+      }
+    }
+    expect(
+      unexplained,
+      "这些输入被读到过,但选择器对它们没有说法——加一条 RADIUS 规则或让它能被映射:" +
+        unexplainable(unexplained),
+    ).toEqual([]);
+  });
+
+  it("map 里没有混进产物路径(报告与对局产物不是输入)", () => {
+    expect(inputs.filter((input) => !isInputPath(input))).toEqual([]);
+  });
+
+  it("recorder 挂在 worker 的 execArgv 上(拆掉它 map 会静默变空)", () => {
+    const config = configText();
+    expect(config).toContain("poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } }");
+    expect(config, "recorder 的装载位置不在 config 里").toContain("RECORD_SETUP");
+    expect(config, "收口那次跑(all)必须带录制开关").toContain("RECORD_EXEC_ARGV");
   });
 });

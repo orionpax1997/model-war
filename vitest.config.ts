@@ -1,3 +1,4 @@
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { defineConfig } from "vitest/config";
 
 /**
@@ -79,6 +80,32 @@ const VM_TESTS = [
 
 /** 各 project 通用的排除项:`tsc -b` 会把测试一并编译进各包的 dist,产物绝不能被二次拾取。 */
 const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
+/**
+ * 观测器的标签来源(ADR-0038):把「这段 I/O 属于哪个测试文件」写进环境变量。
+ *
+ * 它平时是 no-op(只有 `MODELWAR_TEST_INPUTS_FILE` 存在时动手),所以装在常跑的 project 上
+ * 不需要额外的开关;反过来说,不装它,`observe:inputs` 录到的就是一堆无主数据。
+ */
+const RECORD_SETUP = "./vitest.record-inputs.setup.ts";
+
+/**
+ * worker 进程的启动参数:录制时把观测器 `--import` 进去。
+ *
+ * 为什么不能只靠 `NODE_OPTIONS`:vitest 给 worker 的 env 里会剔掉它(自己要用)。为什么不能只靠
+ * 在 setup 文件里装:`import { readFileSync } from "node:fs"` 的绑定在**模块链接时**就固定了,
+ * setup 跑起来时测试模块已经链接完,补丁改不到它(实测:补丁装上了,一条记录都没有)。
+ * `execArgv` 是 worker 进程自己的 argv,加载任何应用模块之前就生效——这是唯一能同时满足
+ * 「早于链接」与「在测试进程里」的位置。
+ */
+const RECORD_EXEC_ARGV =
+  process.env["MODELWAR_TEST_INPUTS_FILE"] === undefined
+    ? []
+    : [
+        "--import",
+        pathToFileURL(
+          fileURLToPath(new URL("./packages/tools/src/scope/recorder.ts", import.meta.url)),
+        ).href,
+      ];
 
 /**
  * 常跑链的内核探针:把 `bwrap` 换成会拒绝的执行体(理由见该文件头注)。
@@ -97,6 +124,8 @@ export default defineConfig({
     globalSetup: ["./vitest.global-setup.ts"],
     // 两个 project 的 include 都限定在源码目录:`tsc -b` 会把测试一并编译进各包的 dist,
     // 编译产物绝不能被二次拾取(hld §2.2.4 的禁令同样适用于测试范围)。
+    // 观测器的标签来源(ADR-0038):把「这段 I/O 属于哪个测试文件」写进环境变量。
+    // 只在 `MODELWAR_TEST_INPUTS_FILE` 存在时生效,平时的运行里它是 no-op。
     projects: [
       {
         // 收口用的**单池**全量:与 `unit` 同一批文件,但**不**排除 e2e / vm。
@@ -113,7 +142,8 @@ export default defineConfig({
           name: "all",
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
           exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST, GEN_CLI_TEST],
-          setupFiles: ["./vitest.kernel-guard.setup.ts"],
+          setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
+          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
         },
       },
       {
@@ -129,7 +159,8 @@ export default defineConfig({
             ...E2E_TESTS,
             ...VM_TESTS,
           ],
-          setupFiles: ["./vitest.kernel-guard.setup.ts"],
+          setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
+          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
         },
       },
       {
@@ -139,7 +170,8 @@ export default defineConfig({
           // 的属性(手写 schema 最容易漏的那类崩),它按同样的纪律归到这里。
           include: ["packages/*/src/**/*.prop.ts", "apps/*/src/**/*.prop.ts"],
           exclude: NEVER_TEST,
-          setupFiles: ["./vitest.kernel-guard.setup.ts"],
+          setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
+          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
           testTimeout: 30_000,
         },
       },
@@ -177,7 +209,8 @@ export default defineConfig({
           // 一条用例要 spawn 子进程跑满 600 tick,赛季那条要跑 4 局;给足,别让"跑不完"报成"失败"。
           testTimeout: 300_000,
           hookTimeout: 300_000,
-          setupFiles: ["./vitest.kernel-guard.setup.ts"],
+          setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
+          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
         },
       },
       {
@@ -188,7 +221,8 @@ export default defineConfig({
           exclude: NEVER_TEST,
           testTimeout: 300_000,
           hookTimeout: 300_000,
-          setupFiles: ["./vitest.kernel-guard.setup.ts"],
+          setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
+          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
         },
       },
       {
