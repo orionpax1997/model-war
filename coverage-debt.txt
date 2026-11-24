@@ -6,3 +6,8 @@
 #
 # 什么时候该登记:改了行为、确实没有便宜的办法测,而且你有意不做。
 # 什么时候不该登记:只是还没写用例——那就去写,这张表不是它的替代品。
+
+# `sandbox` 族(`test:kernel`)没有登记进 `SUITES`:它要真 bwrap + 非特权 user namespace,
+# 拉进选择器等于让「门禁红了」同时意味着「这台机器没装 bubblewrap」。代价是它自己的用例文件
+# 改起来无人可选——`vitest related` 对「自己就是测试文件」答不出候选,于是这里只能登记。
+apps/cli/src/gen-cli.test.ts  # sandbox project(真 bwrap、真网格 32 场)里的 CLI 冒烟,选择器没有这条族可拉;它的判据由 `verify:kernel`(`test:kernel`)与 `gate:gen-grid` 验,不在 `check` 的半径内

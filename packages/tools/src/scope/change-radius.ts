@@ -114,6 +114,11 @@ export const RADIUS: readonly Radius[] = [
     why: "单测的夹具(黄金档等),被读成文本而不是 import——图对它没有边",
   },
   {
+    area: "apps/cli/src/fixtures",
+    suites: ["test:e2e"],
+    why: "陪练档 fixture(四份 `script.js` 的逐字节副本):由子进程经 `--root` 读成字节,不是 import——图对它没有边;读它的两条 `--plan` / `--expected-plan` 用例在 e2e 族(`gen-cli` 冒烟也读它,但那是 `sandbox` project,按仓库纪律不由选择器拉进来)",
+  },
+  {
     area: "packages/engine/src/fixtures/guest",
     mustObserve: true,
     suites: ["test:vm"],

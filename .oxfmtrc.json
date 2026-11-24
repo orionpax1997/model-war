@@ -22,6 +22,7 @@
     "packages/tools/selfproof/stub/**",
     "packages/engine/sandbox-runtime/runtime.iife.js",
     "packages/gen/sandbox-rootfs/**",
-    "packages/runner/src/fixtures/**"
+    "packages/runner/src/fixtures/**",
+    "apps/cli/src/fixtures/**"
   ]
 }
