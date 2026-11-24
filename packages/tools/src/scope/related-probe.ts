@@ -118,10 +118,7 @@ export const messageOf = (outcome: ProbeOutcome): string => {
  * 不在 `repoRoot` 下的路径原样保留(而不是 `../` 拼出来):探针只关心"哪些测试文件参与了",
  * 把外部路径伪装成仓库内的相对路径会让 `STRUCTURAL_TESTS` 的比对悄悄错位。
  */
-export const parseReport = (
-  json: string,
-  repoRoot: string,
-): ProbeReport | undefined => {
+export const parseReport = (json: string, repoRoot: string): ProbeReport | undefined => {
   const prefix = `${repoRoot.replace(/\/+$/, "")}/`;
   let parsed: unknown;
   try {
@@ -138,15 +135,12 @@ export const parseReport = (
   };
   // `testResults` 缺失按"这份报告不是 json reporter 的东西"处理:形状不对就是读不出来。
   if (!Array.isArray(report.testResults)) return undefined;
-  const count = (value: unknown): number =>
-    typeof value === "number" ? value : 0;
-  const names = (report.testResults as readonly { name?: unknown }[]).flatMap(
-    (result) => {
-      const name = typeof result.name === "string" ? result.name : "";
-      if (name === "") return [];
-      return [name.startsWith(prefix) ? name.slice(prefix.length) : name];
-    },
-  );
+  const count = (value: unknown): number => (typeof value === "number" ? value : 0);
+  const names = (report.testResults as readonly { name?: unknown }[]).flatMap((result) => {
+    const name = typeof result.name === "string" ? result.name : "";
+    if (name === "") return [];
+    return [name.startsWith(prefix) ? name.slice(prefix.length) : name];
+  });
   return {
     files: [...new Set(names)].sort(),
     tests: count(report.numTotalTests),
@@ -179,14 +173,10 @@ export const classify = (
   if (report.failed > 0 || exit !== 0) {
     return { kind: "failed", files: report.files, failed: report.failed };
   }
-  if (report.pending === report.tests)
-    return { kind: "all-skipped", files: report.files };
-  const structuralFiles = report.files.filter((path) =>
-    structural.includes(path),
-  );
+  if (report.pending === report.tests) return { kind: "all-skipped", files: report.files };
+  const structuralFiles = report.files.filter((path) => structural.includes(path));
   const behavior = report.files.filter((path) => !structural.includes(path));
-  if (behavior.length === 0)
-    return { kind: "structural-only", structural: structuralFiles };
+  if (behavior.length === 0) return { kind: "structural-only", structural: structuralFiles };
   return {
     kind: "ran",
     behavior,
@@ -265,8 +255,7 @@ export const probeRelated = (input: ProbeInput): ProbeOutcome => {
       // 报告没写出来(目录不可写、进程没跑起来、报告器没装):交给 classify 判 no-report。
       json = undefined;
     }
-    const report =
-      json === undefined ? undefined : parseReport(json, input.repoRoot);
+    const report = json === undefined ? undefined : parseReport(json, input.repoRoot);
     return classify(report, STRUCTURAL_TESTS, result.status);
   } finally {
     rmSync(reportPath, { force: true });
