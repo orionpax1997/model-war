@@ -26,7 +26,11 @@
     // 不是源码。这里排除的理由与在上面几条不同：不是躲命中，而是**文件字节本身是被测对象**
     // （`meta.json` 里的身份摘要拿这些字节核对），格式化或改写会让测试失去它唯一的凭据。
     // 同一份理由也写在 `.oxfmtrc.json` 与 `packages/runner/tsconfig.json` 的对应位置。
-    "packages/runner/src/fixtures/**"
+    "packages/runner/src/fixtures/**",
+    // `apps/cli` 的陪练档 fixture：四份 `script.js` 的**逐字节副本**，`loadSparringPool` 拿
+    // `TRIAL_SPARRING_*` 里钉死的 `scriptSha256` 与这些字节现算的值逐字比。同一个理由：字节
+    // 本身是被检对象，格式化器碰它会让用例红在一个与被检对象无关的原因上。
+    "apps/cli/src/fixtures/**"
   ],
   "categories": { "correctness": "error" },
   "rules": {
