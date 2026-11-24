@@ -4,7 +4,9 @@
  * 为什么选择器需要判据:漏一条规则的后果是「那部分代码改了却没人跑它的测试」,而它**不会**
  * 以报错的形式自己显形——恰恰相反,它会给出一个绿。所以这里用几条断言把两端都钉住:
  *
- * - 表里的规则必须**指向真实存在的路径**(写了一条没人命中的规则 = 你脑补了一个目录);
+ * - 表里的规则必须**指向一个真实存在的路径**(写了一条没人命中的规则 = 你脑补了一个目录);
+ *   “存在”有两种:在盘上,或被 `.gitignore` 覆盖——后者是本机才有的输入(`archive/`、
+ *   `reports/`、`models.yaml`),干净克隆里本来就没有,而规则**必须**收它们;
  * - 仓库顶层与每个包都必须在某一端的覆盖下(新增包、新增顶层目录即红);
  * - 源码改动必须能映射到产物(映射不出来就等于图看不见它,静默少选);
  * - 产物不在盘上时必须退回全量,而不是照旧少选。
@@ -12,6 +14,7 @@
  * 这些全是静态读文件或纯函数调用,0.4s 级——便宜是因为它读的是**入库事实**,不是跑一遍。
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, matchesGlob, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -49,6 +52,39 @@ const unexplainable = (paths: readonly string[]): string => `\n  ${paths.join("\
 
 const decideOn = (paths: readonly string[]) => decide({ paths, workspaces, exists: built });
 
+/**
+ * 这个路径是否被 `.gitignore` **规则**命中(本机才会有的输入)。
+ *
+ * 为什么要这一半:`RADIUS` 里有一批**不入库**的输入(`archive/`、`reports/`、`runs/`、
+ * `models.yaml`、`season.yaml`)。它们在开发者机器上存在、在干净克隆(CI)上不存在,于是一句
+ * “每条规则指向的路径都必须 `existsSync`”就成了“本机有没有那份产物”的测量仪:本地永远绿、
+ * CI 永远红。而删掉这些规则又会让本地输入不进选择(ADR-0038:表要让本地输入也进半径)。
+ *
+ * 判据因此分两档成立:在盘上,或者**被忽略规则覆盖**;两档都不是才是“脑补了一个目录”。
+ * 第二种成立方式必须能证明——`archives/` 这种拼错的名字过不了这一关。
+ *
+ * `--no-index`:断言的是规则本身,不看索引状态(否则一个已被跟踪的占位符会永远“看起来没被
+ * 忽略”)。退出码 0 = 命中,1 = 未命中;其它退出码(比如 git 本身跑不起来)一律抛错——**不静默
+ * 折算成“未命中”**,那种折算正是让判据在 CI 上红的东西。同一份小小的判定在
+ * `../version-control-boundary.test.ts` 里也有一份,那里断言的是“这些本地产物不入库”本身。
+ *
+ * 为什么还要试一次带尾斜线的写法:`.gitignore` 里的 `/archive/`、`reports/` 是**目录规则**,
+ * 而一条不存在的路径在 git 眼里"不知道是不是目录"——`git check-ignore -- archive` 退出 1,
+ * `-- archive/` 才命中。清克隆里恰好就是那条路径不存在的形状,不补这一次它照样会红。
+ */
+const ignoredByGit = (path: string): boolean => checkIgnore(path) || checkIgnore(`${path}/`);
+
+/** 单次 `git check-ignore`:0 = 命中,1 = 未命中,其它一律抛错(不静默折算成“未命中”)。 */
+const checkIgnore = (path: string): boolean => {
+  const result = spawnSync("git", ["check-ignore", "--no-index", "-q", "--", path], {
+    cwd: repoRoot,
+  });
+  if (result.error !== undefined) throw result.error;
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error(`git check-ignore 意外退出码 ${String(result.status)}:${String(result.stderr)}`);
+};
+
 const configText = (): string =>
   readFileSync(fileURLToPath(new URL("../../../../vitest.config.ts", import.meta.url)), "utf8");
 
@@ -69,10 +105,27 @@ describe("表:引用的脚本与路径都真实存在", () => {
     }
   });
 
-  it("每条规则指向的路径真实存在(写了一条没人命中的规则 = 脑补了一个目录)", () => {
-    for (const rule of RADIUS) {
-      expect(existsSync(join(repoRoot, rule.area)), `${rule.area} 在仓库里不存在`).toBe(true);
-    }
+  it("每条规则指向的路径真实存在,或是一个被 .gitignore 覆盖的本机输入(拼错即红)", () => {
+    const bogus = RADIUS.map((rule) => rule.area).filter(
+      (area) => !existsSync(join(repoRoot, area)) && !ignoredByGit(area),
+    );
+    expect(
+      bogus,
+      `这些路径既不在盘上,也没被 .gitignore 覆盖——表里写了一个从来就不存在的地方:` +
+        `\n  ${bogus.join("\n  ")}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * 上面那条判据自己也要能红:一个“永远成立”的判据等于没写。
+   *
+   * 它同时把两向都钉住——盘上有的、被忽略规则覆盖的算存在;凭空写的名字不算。
+   */
+  it("判据本身分得出三档:盘上有的、被忽略覆盖的、凭空写的名字", () => {
+    expect(ignoredByGit("no-such-area-from-nowhere")).toBe(false);
+    expect(existsSync(join(repoRoot, "packages/tools/src/scope"))).toBe(true);
+    // `archive/` 在干净克隆里不存在(CI 就是这个形状),但它是被规则覆盖的本机输入。
+    expect(ignoredByGit("archive") || existsSync(join(repoRoot, "archive"))).toBe(true);
   });
 
   it("每条规则都写了 why(读的人不必翻代码就能判断它该不该改)", () => {
