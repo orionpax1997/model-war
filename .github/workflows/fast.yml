@@ -31,8 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # fetch-depth: 0 —— 不是「多下点历史更保险」,是判据的前提。
+      # `check` 以 `main` 与 HEAD 的共同祖先为基准;默认的 `fetch-depth: 1` 只有一条截断的历史,
+      # 算不出共同祖先(`check` 会以 MergeBaseError 红在第一步)。
+      # 另:`pull_request` 上检的是 detached 的 merge ref,本地没有 `main`(只有 `origin/main`),
+      # 而远端分支也得靠全量 fetch 才会落成 `origin/*`。
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # pnpm 必须先上 PATH:下面 setup-node 的 cache: pnpm 会 shell out 跑 `pnpm store path`,
       # 顺序反了直接失败。省略 version → 读 package.json 的 packageManager(pnpm@12.8.1)。
