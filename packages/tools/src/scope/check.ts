@@ -408,7 +408,11 @@ const main = (argv: readonly string[]): number => {
 
   if (options.full) {
     const covered = chainProjects(scripts, FULL_CHAIN);
-    const deduped = runs.filter((item) => !plan.extras.includes(item));
+    // 按**标签**比,不按对象同一性:`extras` 与 `runs` 里的条目是两批对象,`includes(item)`
+    // 判的是引用。一旦 `fullPlan` 换成"构造新对象"的写法(它现在恰好直接过滤原数组),
+    // 每一行都会显示成"已覆盖因而去重",而实际上一件事都没去重。
+    const extraLabels = new Set(plan.extras.map(labelOf));
+    const deduped = runs.filter((item) => !extraLabels.has(labelOf(item)));
     process.stdout.write(
       `\n收口计划(与 CI 同一条定义):${FULL_CHAIN.join(" + ")}\n` +
         `  链覆盖的 project:${covered.size === 0 ? "无(展开不出 project)" : [...covered].sort().join(", ")}\n` +
@@ -521,7 +525,10 @@ const reportUnobserved = (
       : "这是行为输入,没有 import 边可问——观测为空就是真的没有测试读过它。\n" +
         "(若它其实被读到了,说明 map 过期:重录一遍比对,node --run observe:inputs。)";
   process.stderr.write(
-    `\n改动没有被任何测试观测到(computed 与 observed 都是空的):\n` +
+    // 这句要对**两类缺口**都成立:`input`(观测为空)与 `code`(零候选 / 只有结构测试 / 全 skip)。
+    // 旧的说法是"computed 与 observed 都是空的",而结构测试那一条的 computed 恰恰**不**空——
+    // 它选出了一批文件,只是那些文件证的不是这块代码的行为。措辞比判据宽就会把人引错方向。
+    `\n没有测试候选能证明这些改动的行为:\n` +
       `${gaps.map((gap) => `  ${gap.path}\n    ${gap.why}`).join("\n")}\n\n` +
       `${tail}\n选中的验证族没给这块改动留下任何候选;两条出路,选一条:\n` +
       `  1. 补一个用例,让它真的执行到这块;\n` +
