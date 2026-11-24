@@ -609,7 +609,7 @@ it("生成物漂移检查:工作树里有与生成物无关的未提交内容时
 
 it("生成物漂移检查挂在全量门禁末尾,且不进快门禁", () => {
   // 挂在末尾而不是中间:前面几道各自独立,末尾那几道是「提交内容对不对」的复核(清单见上)。
-  expect(tailSteps(), "漂移检查不在全量门禁末尾那一组复核里").toContain("pnpm run gate:drift");
+  expect(tailSteps(), "漂移检查不在全量门禁末尾那一组复核里").toContain("node --run gate:drift");
 
   // 不进快门禁的理由是它需要一次 `tsc -b`,而快门禁的零构建性质不能破(ADR-0003 的混合传输)。
   // 「零构建」没法直接断言,能断言的是它没被挂进快门禁这条链里。
@@ -1422,7 +1422,7 @@ it("工具清单门禁挂在 gate:static(紧跟命令清单门禁),且没被挪�
   );
   // 位置:它紧跟在命令清单判据之后——两条判的是同一条首条消息的两节,排一起才读得懂报告。
   expect(scripts["gate:static"] ?? "", "工具清单判据没跟在命令清单判据之后").toContain(
-    "gate:prompt:commands && pnpm run gate:prompt:tools",
+    "gate:prompt:commands && node --run gate:prompt:tools",
   );
   // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
   expect(scripts["gate:selfproof"] ?? "", "工具清单判据被挪进了按需门禁").not.toContain(
@@ -1902,7 +1902,9 @@ it("基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原
 
 it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
   // 与漂移检查同一位置纪律:提交内容对不对的那几道复核都在末尾(清单见上)。
-  expect(tailSteps(), "基准产物门禁不在全量门禁末尾那一组复核里").toContain("pnpm run gate:bench");
+  expect(tailSteps(), "基准产物门禁不在全量门禁末尾那一组复核里").toContain(
+    "node --run gate:bench",
+  );
 
   // 它要 spawn 一次 tsc,与快门禁的零构建性质不相容(理由同 gate:drift)。
   expect(manifest().scripts["quick"]).not.toContain("gate:bench");
@@ -1943,7 +1945,7 @@ it("runtime bundle 门禁:手改入库产物一个字节 → 红,按字节还原
 it("runtime bundle 门禁挂在全量门禁末尾,且不进快门禁", () => {
   // 与漂移检查、基准产物门禁同一位置纪律:提交内容对不对的那几道复核都在末尾。
   expect(tailSteps(), "runtime bundle 门禁不在全量门禁末尾那一组复核里").toContain(
-    "pnpm run gate:runtime",
+    "node --run gate:runtime",
   );
 
   // 它要 spawn 一次 esbuild,与快门禁的零构建性质不相容(理由同 gate:drift)。
@@ -2037,7 +2039,7 @@ it("契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆�
     expect(scripts[entry] ?? "", `慢门禁被放进快速入口 ${entry}`).not.toContain("gate:selfproof");
   }
   // 与基准产物门禁同侧:末尾那一组仍然全是「提交内容对不对」的复核。
-  expect(tailSteps(), "基准产物门禁被挤出了末尾那一组").toContain("pnpm run gate:bench");
+  expect(tailSteps(), "基准产物门禁被挤出了末尾那一组").toContain("node --run gate:bench");
 });
 
 // ── 三条按需门禁的位置纪律(跨进程一致性 / 单局墙钟与快照回放 / 标定复算)──────────
@@ -2124,7 +2126,7 @@ it("真 bwrap 的用例不在常跑入口上(sandbox project)", () => {
   expect(
     manifest().scripts["verify:kernel"] ?? "",
     "真 bwrap 的会话用例没有落进可手工调用的命名脚本",
-  ).toContain("pnpm run test:kernel");
+  ).toContain("node --run test:kernel");
   expect(
     manifest().scripts["test:kernel"] ?? "",
     "`test:kernel` 不再指向 sandbox project",
