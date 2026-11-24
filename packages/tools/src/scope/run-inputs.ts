@@ -11,6 +11,10 @@
  *
  * 漂移意味着**某段代码的副作用面变了**——那本身值得被看见,不该悄悄过去。这条与 `gate:rootfs`
  * 同一个形状:入库产物只能被显式重写,不能被链路顺手刷新。
+ *
+ * map 还带一枚**内容指纹**(`recorder.ts` + setup + `vitest.config.ts` 的内容哈希)。它管的是
+ * 比漂移更早的一件事:这份 map 还是不是同一台"仪器"录的。仪器变了(改了 hook、改了 project
+ * 划分),逐条差异就没意义了——所以这里先报过期、再谈差异。
  */
 
 import { spawnSync } from "node:child_process";
@@ -18,7 +22,15 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregate, diffInputs, isClean, loadInputsMap, writeInputsMap } from "./test-inputs.ts";
+import {
+  aggregate,
+  currentFingerprint,
+  diffInputs,
+  isClean,
+  isSnapshotCurrent,
+  loadInputsMap,
+  writeInputsMap,
+} from "./test-inputs.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -26,6 +38,10 @@ const main = (): number => {
   const accept = process.argv.includes("--accept");
   const scratch = mkdtempSync(join(tmpdir(), "modelwar-inputs-"));
   const jsonl = join(scratch, "inputs.jsonl");
+
+  // 指纹在**录制开始前**取:那次跑的就是这版 recorder / setup / project 划分。跑完再取等于把
+  // "录制期间有人改了 config" 藏起来——而那正是这张 map 与那次运行对不上的原因。
+  const fingerprint = currentFingerprint(repoRoot);
 
   // 先跑一遍全量,边跑边记。观测器由 vitest 的 worker `execArgv` 装上(见 vitest.config.ts),
   // 子进程靠 spawn 包装显式注入——所以打好的 CLI 产物里的读盘同样进这张 map。
@@ -46,7 +62,9 @@ const main = (): number => {
     return run.status ?? 1;
   }
 
-  const recorded = aggregate(readFileSync(jsonl, "utf8"), repoRoot);
+  // 指纹在**录制开始时**取:那次跑的就是这版 recorder / setup / project 划分。跑完再取会把
+  // "录制期间有人改了 config" 这回事藏起来。
+  const recorded = aggregate(readFileSync(jsonl, "utf8"), repoRoot, fingerprint);
   rmSync(scratch, { recursive: true, force: true });
 
   const testCount = Object.keys(recorded.files).length;
@@ -62,9 +80,23 @@ const main = (): number => {
   if (accept) {
     writeInputsMap(repoRoot, recorded);
     process.stdout.write(
-      `已写回 ${String(testCount)} 个测试文件的输入(此前 ${String(Object.keys(before.files).length)} 个)。\n`,
+      `已写回 ${String(testCount)} 个测试文件的输入(此前 ${String(Object.keys(before.files).length)} 个),` +
+        `指纹 ${fingerprint}。\n`,
     );
     return 0;
+  }
+
+  // 指纹对不上时,map 的逐条差异没有意义:两份不是同一个仪器录的。先把这件事说出来,
+  // 再把人引到重录命令上——否则读的人会去逐个看差异,而看懂了也修不了。
+  if (!isSnapshotCurrent({ map: before, fingerprint })) {
+    process.stderr.write(
+      `观测快照过期:入库指纹 ${before.fingerprint === "" ? "(空:旧快照)" : before.fingerprint},` +
+        `现在是 ${fingerprint}。\n` +
+        '指纹覆盖 recorder / setup / vitest.config.ts:观测仪器变了,旧 map 里"谁读什么"不再是' +
+        "同一回事,逐条差异已无意义。\n" +
+        "重录:`node --run observe:inputs:accept`(约 85s),然后 `node --run observe:inputs` 复核。\n",
+    );
+    return 1;
   }
 
   const drift = diffInputs(before, recorded);

@@ -5,7 +5,11 @@
  * 的 map:
  *
  * ```json
- * { "version": 1, "files": { "packages/engine/src/sandbox.test.ts": ["rulesets/basic.json", …] } }
+ * {
+ *   "version": 2,
+ *   "fingerprint": "…",
+ *   "files": { "packages/engine/src/sandbox.test.ts": ["rulesets/basic.json", …] }
+ * }
  * ```
  *
  * 为什么按文件归并、不按用例:选中的单位是文件(vitest 的并行单位也是文件)。用例级的粒度
@@ -13,17 +17,87 @@
  *
  * 为什么要入库:判据随仓库走。与 ADR-0027 让变异基线随仓库走是同一条理由——CI 产物 14 天
  * 就过期,而"哪段代码读哪个文件"是一年都不会变的事实。
+ *
+ * ── 快照的有效性(票 T5)──
+ *
+ * "入库"这条理由有一个副作用:map 会比产出它的机器活得久。recorder 换了 hook、`vitest.config.ts`
+ * 换了 project 划分、schema 加了字段之后,旧 map 仍然是一份自洽的 JSON——于是它继续被当判据,
+ * 而它错的方向恰好是**少记**(少记 = 少跑 = 绿)。所以 map 带一枚**内容指纹**:录制时把产出它
+ * 的那几个文件的内容一起哈希进去,读的时候比一次。对不上就**当作过期**,不许假定"也许还对"。
+ *
+ * 指纹只哈希内容,不掺时间、不掺机器、不掺提交 sha:同一份输入在任何地方重录都得到同一枚指纹,
+ * 于是漂移只会来自真的改动。
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const INPUTS_MAP_PATH = "test-inputs/inputs.json";
 
+/**
+ * 落盘格式的版本。它同时被哈希进指纹里(见 `fingerprintOf`):schema 变了 = 旧 map 读出来的东西
+ * 不再是同一件事,即便那三个文件一个字没改。
+ */
+export const INPUTS_SCHEMA = 2;
+
+/**
+ * **产出 map 的那几个文件**。改它们等于换了一台观测仪器,而不是换了被测代码。
+ *
+ * - `recorder.ts`:决定哪些 API 被 hook。改它,map 的边界就变了(可能变窄)。
+ * - `vitest.record-inputs.setup.ts`:把"当前是哪个测试文件"贴成记录标签。标签一错,map 归错档。
+ * - `vitest.config.ts`:决定哪个文件属于哪个 project。project 划分变了,`test:all` 的池子就变了,
+ *   map 里"谁读什么"的集合也就不再是同一批测试跑出来的。
+ *
+ * 代价是有意接受的:改这三个文件就要重录一次(约 85s),漂移检查本来也只在 nightly 上。
+ */
+export const WATCHED_FILES: readonly string[] = [
+  "packages/tools/src/scope/recorder.ts",
+  "vitest.record-inputs.setup.ts",
+  "vitest.config.ts",
+];
+
+/** 被监视的文件不见了也**进指纹**:删掉它,map 同样不再是它当初是的那份东西。 */
+export const MISSING_FILE = "<missing>";
+
 export interface InputsMap {
-  readonly version: 1;
+  readonly version: number;
+  /** 录制时的 `currentFingerprint`;空串 = 旧快照(见 `isSnapshotCurrent`)。 */
+  readonly fingerprint: string;
   readonly files: Record<string, readonly string[]>;
 }
+
+/**
+ * 一组文本的内容指纹(sha256 截断到 16 个十六进制字符)。
+ *
+ * 每段前面写长度:否则 `["ab", "c"]` 与 `["a", "bc"]` 会撞在一起,而这两者是不同的输入。
+ * 开头写 schema 号同理——它也是"这份 map 由什么产出"的一部分。
+ */
+export const fingerprintOf = (parts: readonly string[]): string => {
+  const hash = createHash("sha256");
+  hash.update(`inputs-schema:${String(INPUTS_SCHEMA)}\n`);
+  for (const part of parts) hash.update(`${String(part.length)}\n${part}\n`);
+  return hash.digest("hex").slice(0, 16);
+};
+
+/** 仓库里**现在**该有的指纹;与入库 map 的 `fingerprint` 不等即过期。 */
+export const currentFingerprint = (repoRoot: string): string =>
+  fingerprintOf(
+    WATCHED_FILES.map((file) => {
+      const path = join(repoRoot, file);
+      return existsSync(path) ? readFileSync(path, "utf8") : MISSING_FILE;
+    }),
+  );
+
+/**
+ * 快照还能当判据吗?**只有一种情况能**:录制时留下的指纹非空,且与现在的一致。
+ *
+ * 空指纹一律判过期:旧快照(无指纹)与"没说清"是同一件事,而没说不许被当成"大概没事"。
+ */
+export const isSnapshotCurrent = (input: {
+  readonly map: InputsMap;
+  readonly fingerprint: string;
+}): boolean => input.map.fingerprint !== "" && input.map.fingerprint === input.fingerprint;
 
 /**
  * 这些前缀下的路径是**产物**,不是输入:测试写它们、报告落它们。记进来会让 map 把"我刚写的
@@ -70,7 +144,7 @@ const parseLines = (jsonl: string): readonly Line[] =>
  * 写进 map,键就与 `git diff` 给的相对路径对不上——选择器永远匹配不到,而且匹配不到是静默的
  * (只是少跑)。同一台机器上它还带着 home 目录,换个 clone 位置 map 就全废。
  */
-export const aggregate = (jsonl: string, repoRoot: string): InputsMap => {
+export const aggregate = (jsonl: string, repoRoot: string, fingerprint: string): InputsMap => {
   const prefix = `${repoRoot.replace(/\/+$/, "")}/`;
   const relative = (path: string): string =>
     path.startsWith(prefix) ? path.slice(prefix.length) : path;
@@ -86,14 +160,23 @@ export const aggregate = (jsonl: string, repoRoot: string): InputsMap => {
   for (const file of [...byFile.keys()].sort()) {
     files[file] = [...(byFile.get(file) ?? [])].sort();
   }
-  return { version: 1, files };
+  return { version: INPUTS_SCHEMA, fingerprint, files };
 };
 
+/**
+ * 读入库 map。**刻意对旧格式宽容**:旧快照(没有 `fingerprint`)读得出来,只是指纹为空串,
+ * 由 `isSnapshotCurrent` 判为过期。读的时候不炸、判的时候炸——这样红的发生在"拿它当判据"那一刻,
+ * 消息才能指向重录命令,而不是变成一条解析错误。
+ */
 export const loadInputsMap = (repoRoot: string): InputsMap => {
   const path = join(repoRoot, INPUTS_MAP_PATH);
-  if (!existsSync(path)) return { version: 1, files: {} };
+  if (!existsSync(path)) return { version: INPUTS_SCHEMA, fingerprint: "", files: {} };
   const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<InputsMap>;
-  return { version: 1, files: parsed.files ?? {} };
+  return {
+    version: INPUTS_SCHEMA,
+    fingerprint: typeof parsed.fingerprint === "string" ? parsed.fingerprint : "",
+    files: parsed.files ?? {},
+  };
 };
 
 export const writeInputsMap = (repoRoot: string, map: InputsMap): void => {
@@ -101,7 +184,10 @@ export const writeInputsMap = (repoRoot: string, map: InputsMap): void => {
   mkdirSync(dirname(path), { recursive: true });
   const files: Record<string, readonly string[]> = {};
   for (const file of Object.keys(map.files).sort()) files[file] = map.files[file] ?? [];
-  writeFileSync(path, `${JSON.stringify({ version: 1, files }, null, 2)}\n`);
+  writeFileSync(
+    path,
+    `${JSON.stringify({ version: INPUTS_SCHEMA, fingerprint: map.fingerprint, files }, null, 2)}\n`,
+  );
 };
 
 export interface Drift {
