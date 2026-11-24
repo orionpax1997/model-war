@@ -52,6 +52,14 @@ export interface Radius {
   readonly mustObserve?: boolean;
   /** 为什么是这几条,或者为什么一条都不需要。 */
   readonly why: string;
+  /**
+   * 这条规则是**兜底**:它收的是"表里没有专门规则的工具包文件"。
+   *
+   * 兜底不对**测试文件本身**负责——测试文件的判据就是它自己,依赖图把它选得出来;例外是
+   * `GRAPH_BLIND_TESTS`(图看不见的那几个,仍由兜底补)。没有这条豁免,改一行 `ci.test.ts`
+   * (选择器自己的 CI 判据)就要重跑 89 条 / 166s 的门禁自测。
+   */
+  readonly fallback?: boolean;
 }
 
 export const RADIUS: readonly Radius[] = [
@@ -80,7 +88,8 @@ export const RADIUS: readonly Radius[] = [
   {
     area: "packages/tools",
     suites: ["test:gates"],
-    why: "门禁自测住在独立的 `gates` project 里,不在 `all` 的池子里——图选不到它,只能由表补;命中具体门禁文件时由 `GATES_CASES` 缩成 `-t` 子集",
+    fallback: true,
+    why: "门禁自测住在独立的 `gates` project 里,不在 `all` 的池子里——图选不到它,只能由表补;命中具体门禁文件时由 `GATES_CASES` 缩成 `-t` 子集;测试文件本身另有豁免(见 `GRAPH_BLIND_TESTS`)",
   },
   {
     area: "benchmarks",
@@ -291,6 +300,36 @@ export const RADIUS: readonly Radius[] = [
 export const ruleFor = (path: string): Radius | undefined =>
   RADIUS.find((candidate) => path === candidate.area || path.startsWith(`${candidate.area}/`));
 
+/** 测试文件(用例本身):`*.test.ts` / `*.prop.ts`。 */
+const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(path);
+
+/**
+ * **依赖图看不见的测试文件。**
+ *
+ * "改测试文件就交给依赖图"这句话有个前提:图看得见它。改一个测试文件时,`vitest related` 会
+ * 把它自己选出来(实测:`ci.test.ts` → 1 个文件 / 17 条 / 1.06s);但这几个文件被 `all` 显式
+ * 排除(`gates` / `slow` project),或者压根不在 `all` 的 include 里(`.prop.ts` 归 `property`)
+ * ——改它们的时候图会一条都不选,所以仍由兜底规则补整族。
+ *
+ * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 `all` 块重新
+ * 推导一遍再对账——谁单方面改了都会红。
+ */
+export const GRAPH_BLIND_TESTS: readonly string[] = [
+  "packages/tools/src/gates.test.ts",
+  "packages/tools/src/gates-slow.test.ts",
+  "packages/tools/src/rules/no-float.prop.ts",
+];
+
+/** 一条路径该补哪些族。选择与 `--print` 的依据行共用这一份,两处不各算一次。 */
+export const suitesFor = (path: string): readonly string[] => {
+  const rule = ruleFor(path);
+  if (rule === undefined) return [];
+  // 兜底不对测试文件本身负责:它的判据是它自己(依赖图选得出来),而门禁自测是另一件事。
+  if (rule.fallback === true && isTestCaseFile(path) && !GRAPH_BLIND_TESTS.includes(path))
+    return [];
+  return rule.suites;
+};
+
 /** 顶层里**允许不登记**的条目:仓库元数据与产物,改了不影响任何判据。 */
 export const IGNORED_AREAS: readonly string[] = [
   ".git",
@@ -319,6 +358,9 @@ export const IGNORED_AREAS: readonly string[] = [
  * 2. **空了就整族。** 表里查不到 = 不知道影响哪几条 = 全跑。多跑几秒比"少跑了没人管"便宜。
  * 3. **模式必须真的命中。** 模式是名字过滤,改了用例名的措辞它就会静默失效——`test-layers.test.ts`
  *    拿每个模式去 `gates.test.ts` 的 `it("…")` 上数一遍,0 命中即红。
+ *
+ * 另外这张表只能收**会被兜底选中**的文件:测试文件本身另有豁免(见 `GRAPH_BLIND_TESTS`),
+ * 给它们写映射就是死条目——`test-layers.test.ts` 一并盯这条(每条都要真的选中 `test:gates`)。
  */
 export const GATES_CASES: Readonly<Record<string, readonly string[]>> = {
   "packages/tools/src/gate/budget-gate.ts": ["预算结构门禁"],
@@ -331,7 +373,8 @@ export const GATES_CASES: Readonly<Record<string, readonly string[]>> = {
   "packages/tools/src/gate/run-prompt-commands-gate.ts": ["命令清单门禁"],
   "packages/tools/src/gate/run-prompt-tools-gate.ts": ["工具清单门禁"],
   "packages/tools/src/gate/run-quickjs-coupling-gate.ts": ["quickjs-wasi 版本耦合断言"],
-  "packages/tools/src/gate/quickjs-coupling.test.ts": ["quickjs-wasi 版本耦合断言"],
+  // `gate/*.test.ts` 不在表里:测试文件本身由豁免交给依赖图(改它就是跑它),
+  // 只有它们的**被测试物**上面那几行才需要 `-t`。
   // `scan` 不是门禁而是一条观测(ADR-0010):用例名也写成了观测的样子,两处都得跟上。
   "packages/tools/src/gate/scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
   "packages/tools/src/gate/run-scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
@@ -432,8 +475,9 @@ export const decide = (input: DecisionInput): Decision => {
       throw new UnregisteredPathError(path);
     }
     if (rule !== undefined && !hits.includes(rule)) hits.push(rule);
-    if (rule?.suites.includes("test:gates") === true) gatesFiles.add(path);
-    for (const script of rule?.suites ?? []) chosen.add(script);
+    const suites = suitesFor(path);
+    if (suites.includes("test:gates")) gatesFiles.add(path);
+    for (const script of suites) chosen.add(script);
     if (outputs.length === 0 || source === undefined) continue;
 
     // 源码与产物**都**交给图:源码问出包内的测试,产物问出跨包依赖它的测试,两者并集才完整。

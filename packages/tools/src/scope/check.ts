@@ -51,6 +51,7 @@ import {
   decide,
   mustObserve,
   ruleFor,
+  suitesFor,
   type Decision,
 } from "./change-radius.ts";
 import {
@@ -314,12 +315,15 @@ const main = (argv: readonly string[]): number => {
     const observedText =
       observed === 0 ? "observed: 没有测试读过它" : `observed: ${String(observed)} 个测试文件读过`;
     const rule = ruleFor(path);
+    const suites = suitesFor(path);
     const staticText =
       rule === undefined
         ? "static: 无表规则"
-        : rule.suites.length === 0
-          ? `static: ${rule.area} → 无测试族(静态门禁或本就不进判据)`
-          : `static: ${rule.area} → ${rule.suites.join(", ")}`;
+        : rule.fallback === true && suites.length === 0
+          ? `static: ${rule.area} → 豁免(测试文件本身,交依赖图)`
+          : suites.length === 0
+            ? `static: ${rule.area} → 无测试族(静态门禁或本就不进判据)`
+            : `static: ${rule.area} → ${suites.join(", ")}`;
     return `  ${path}\n    ${computed} · ${observedText} · ${staticText}`;
   });
 

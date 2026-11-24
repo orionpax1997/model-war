@@ -13,13 +13,14 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, matchesGlob, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildOutputsOf, workspacesOf } from "./build-outputs.js";
 import {
   ALWAYS,
   GATES_CASES,
+  GRAPH_BLIND_TESTS,
   IGNORED_AREAS,
   RADIUS,
   SUITES,
@@ -429,5 +430,108 @@ describe("门禁自测的粒度:按文件缩到 -t 子集", () => {
       "packages/tools/src/gate/budget-gate.ts",
     ]);
     expect(decision.gatesPatterns).toEqual(["禁浮点门禁", "预算结构门禁"]);
+  });
+});
+
+/**
+ * **测试文件的归属:配置说了算,不是目录说了算。**
+ *
+ * 兜底规则(`packages/tools` → `test:gates`)曾经连测试文件一起吞:改一行 `ci.test.ts`——
+ * 它 import 的是 `./scope/check.ts`,是**选择器自己的 CI 判据**——就要重跑 89 条 / 166s 的
+ * 门禁自测。而这类文件的判据就是它自己:`vitest related` 会把它选出来(实测 `ci.test.ts` →
+ * 1 个文件 / 17 条 / 1.06s)。
+ *
+ * 判据不在目录名里,在 `vitest.config.ts` 的 project 划分里。所以这里的对账**从配置推导**:
+ * 哪些测试文件被 `all` project 拾取(→ 图看得见,兜底豁免),哪些没有(→ 图看不见,仍由兜底
+ * 补整族)。手写的那份清单(`GRAPH_BLIND_TESTS`)是输入,不是判据。
+ *
+ * 为什么**不**用 `packages/tools/src/*.test.ts` 这种前缀通配一把扫:`gates.test.ts` 与
+ * `gates-slow.test.ts` 恰好也在这个前缀下,它们分别属于 `gates` / `slow` project,被 `all`
+ * 显式排除。一网打尽的后果是改门禁自测自己时一条都不跑——那是**少跑**,比多跑坏得多。
+ */
+describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
+  type ProjectConfig = {
+    readonly name: string;
+    readonly include: readonly string[];
+    readonly exclude: readonly string[];
+  };
+
+  /**
+   * `vitest.config.ts` 的 project 表。**import 它而不是抄它的文本**:`include` / `exclude` 里的
+   * 常量(`GATES_TEST`、`E2E_TESTS`…)在这一步已经求值,抄文本就是抄第二份判据。
+   */
+  const projectsOf = async (): Promise<readonly ProjectConfig[]> => {
+    // specifier 放在变量里:根配置不在 `packages/tools` 这个编译单元里(rootDir 不含仓库根),
+    // 而运行时的 Node 类型擦除直接执行它——仓库本来就是这么跑 `check.ts` 的。
+    const specifier = pathToFileURL(join(repoRoot, "vitest.config.ts")).href;
+    const loaded = (await import(specifier)) as {
+      default: { test: { projects: readonly { test: ProjectConfig }[] } };
+    };
+    return loaded.default.test.projects.map((project) => project.test);
+  };
+
+  /** 配置说这个 project 拾取这个文件吗(include 命中且 exclude 不命中)。 */
+  const picks = (project: ProjectConfig, file: string): boolean =>
+    project.include.some((glob) => matchesGlob(file, glob)) &&
+    !project.exclude.some((glob) => matchesGlob(file, glob));
+
+  /** `packages/tools/src` 下所有测试文件(仓库相对、POSIX 分隔、已排序)。 */
+  const toolsTestFiles = (): readonly string[] =>
+    readdirSync(join(repoRoot, "packages/tools/src"), { recursive: true, encoding: "utf8" })
+      .map((name) => name.split(sep).join("/"))
+      .filter((name) => /\.(?:test|prop)\.ts$/u.test(name))
+      .map((name) => `packages/tools/src/${name}`)
+      .sort();
+
+  const allProject = async (): Promise<ProjectConfig> => {
+    const project = (await projectsOf()).find((candidate) => candidate.name === "all");
+    expect(project, "vitest.config.ts 里没有 all project:这条断言的上游变了").toBeDefined();
+    return project as ProjectConfig;
+  };
+
+  it("图看不见的测试文件清单,与 `all` project 的 include/exclude 一致(清单会腐烂,所以对账)", async () => {
+    const all = await allProject();
+    const derived = toolsTestFiles().filter((file) => !picks(all, file));
+    expect(derived.length, "一个都没推出来:下面的对账会静默成立").toBeGreaterThan(0);
+    expect(
+      [...GRAPH_BLIND_TESTS].sort(),
+      "GRAPH_BLIND_TESTS 与 `all` project 的拾取结果不一致(改 project 划分就得跟)",
+    ).toEqual(derived);
+  });
+
+  it("图看得见的测试文件一律不走兜底(改它只跑它自己,不拖 89 条门禁自测)", async () => {
+    const all = await allProject();
+    const visible = toolsTestFiles().filter((file) => picks(all, file));
+    expect(visible.length, "一个测试文件都没数到:这条断言会静默成立").toBeGreaterThan(20);
+    // 反例本身就是本票的起因:`ci.test.ts` 是选择器的 CI 判据,却在兜底里。
+    expect(visible, "ci.test.ts 不在 `all` 的拾取范围里了:归属判据要重新看").toContain(
+      "packages/tools/src/ci.test.ts",
+    );
+    const dragging = visible.filter((file) => decideOn([file]).scripts.includes("test:gates"));
+    expect(
+      dragging,
+      `这些测试文件还在拖门禁自测(它们自己的判据就是自己):${dragging.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("反方向:图看不见的测试文件仍由兜底补门禁自测(豁免不能漏成少跑)", () => {
+    const missing = GRAPH_BLIND_TESTS.filter(
+      (file) => !decideOn([file]).scripts.includes("test:gates"),
+    );
+    expect(missing, `这些文件改了就没人跑了:${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("`decide([packages/tools/src/ci.test.ts])` 不含 test:gates(本票的起因)", () => {
+    const decision = decideOn(["packages/tools/src/ci.test.ts"]);
+    expect(decision.scripts).not.toContain("test:gates");
+    // 归属是"交图",不是"什么都不跑":它的产物要递过去。
+    expect(decision.graphFiles).toContain("packages/tools/src/ci.test.ts");
+  });
+
+  it("GATES_CASES 的每条都还活着(给测试文件写的映射是死条目,红)", () => {
+    const dead = Object.keys(GATES_CASES).filter(
+      (file) => !decideOn([file]).scripts.includes("test:gates"),
+    );
+    expect(dead, `这些映射永远不会生效(文件已被豁免或不再走兜底):${dead.join(", ")}`).toEqual([]);
   });
 });
