@@ -145,11 +145,12 @@ it("`check --full` 是默认计划的超集:默认要门禁自测时,收口一�
 
   const scripts = manifest().scripts;
   const workspaces = workspacesOf(repoRoot);
-  // 实测过的洞:改选择器自身让默认 `check` 选中 `test:gates`(166s),而它不在 `FULL_CHAIN` 里。
+  // 实测过的洞:改 `packages/tools`(图选不到的那一块)让默认 `check` 选中 `test:gates`(166s),
+  // 而它不在 `FULL_CHAIN` 里。这里取一个映射不出 `-t` 模式的文件,收口补的必须是**整族**。
   const runs = runsFor({
     scripts,
     decision: decide({
-      paths: ["packages/tools/src/scope/check.ts"],
+      paths: ["packages/tools/src/gates-harness.ts"],
       workspaces,
       exists: () => true,
     }),

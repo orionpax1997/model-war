@@ -19,12 +19,14 @@ import { describe, expect, it } from "vitest";
 import { buildOutputsOf, workspacesOf } from "./build-outputs.js";
 import {
   ALWAYS,
+  GATES_CASES,
   IGNORED_AREAS,
   RADIUS,
   SUITES,
   UnregisteredPathError,
   decide,
 } from "./change-radius.js";
+import { runsFor } from "./check.js";
 import { isInputPath, loadInputsMap } from "./test-inputs.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -141,7 +143,7 @@ describe("decide:图与表各管半边", () => {
   });
 
   it("改 tools 时额外跑门禁自测(它住在独立 project 里,图选不到)", () => {
-    const decision = decideOn(["packages/tools/src/scope/build-outputs.ts"]);
+    const decision = decideOn(["packages/tools/src/index.ts"]);
     expect(decision.scripts).toContain("test:gates");
     expect(decision.graphFiles.length).toBeGreaterThan(0);
   });
@@ -336,5 +338,96 @@ describe("未覆盖红线:红要有出路", () => {
     expect(scripts["check"], "check 是 agent 唯一入口").toBeDefined();
     expect(scripts["check:full"], "档位不该以脚本形式存在(--full 才是收口)").toBeUndefined();
     expect(scripts["verify:scoped"], "旧名字仍在:agent 会看到两个入口").toBeUndefined();
+  });
+});
+
+/**
+ * 门禁自测的**粒度**。
+ *
+ * `gates` project 只含一个文件(`gates.test.ts`,89 条 / 实测 166s),所以"改了什么 → 跑哪几族"
+ * 在 project 层面是 0/1,真正的粒度只能来自**用例名过滤**(`-t`)。用例名以门禁名开头,于是
+ * 「改哪个实现文件 → 哪一批用例」是一条可数的对应关系(`GATES_CASES`)。这组断言盯三件:
+ *
+ * - **选择器自身不进 gates**:它的判据(`test-layers` / `plan` / `change-set`)住在 `unit` 池子里,
+ *   依赖图能选中它。补上 166s 不是"更稳",是把"改判据"变成"不敢改判据"。
+ * - **改某道门禁只跑它的那几条**:实测 `-t "禁浮点门禁"` = 2 条 / 6.79s。
+ * - **模式必须真的命中**:`-t` 是名字过滤,改了用例名的措辞,模式就静默失效——而失效的表现是
+ *   **少跑**。所以这里拿每个模式去数一遍真实的 `it("…")`,0 命中即红。
+ */
+describe("门禁自测的粒度:按文件缩到 -t 子集", () => {
+  const GATES_TEST = "packages/tools/src/gates.test.ts";
+
+  /**
+   * `gates.test.ts` 里的用例名。只认**行首**的 `it("…")`:文件里还嵌着一批探针源码字符串
+   * (例如测试纪律那几条的假用例),它们不是本文件的用例,数进来会让死模式混过去。
+   */
+  const caseNames = (): readonly string[] =>
+    [...readFileSync(join(repoRoot, GATES_TEST), "utf8").matchAll(/^it\("([^"]*)"/gmu)].map(
+      (match) => match[1] ?? "",
+    );
+
+  it("改选择器自身完全不进 gates(判据在 unit 池子里,图能选中)", () => {
+    const decision = decideOn(["packages/tools/src/scope/check.ts"]);
+    expect(decision.scripts).not.toContain("test:gates");
+    expect(decision.gatesPatterns).toEqual([]);
+  });
+
+  it("改某道门禁只跑它的 -t 子集(实测 2 passed | 87 skipped,整族 89 条)", () => {
+    const decision = decideOn(["packages/tools/src/gate/no-float-gate.ts"]);
+    expect(decision.scripts).toContain("test:gates");
+    expect(decision.gatesPatterns).toEqual(["禁浮点门禁"]);
+  });
+
+  it("公共基础设施映射不出模式 → 整族(不知道影响哪几条,就一条不少地跑)", () => {
+    const decision = decideOn(["packages/tools/src/gates-harness.ts"]);
+    expect(decision.scripts).toContain("test:gates");
+    expect(decision.gatesPatterns).toEqual([]);
+  });
+
+  it("GATES_CASES 的每条路径真实存在,且每条都给了至少一个模式", () => {
+    const entries = Object.entries(GATES_CASES);
+    expect(entries.length, "GATES_CASES 空了:门禁自测又退回整族").toBeGreaterThan(0);
+    const missing = entries
+      .map(([path]) => path)
+      .filter((path) => !existsSync(join(repoRoot, path)));
+    expect(missing, `GATES_CASES 指向了不存在的文件:${missing.join(", ")}`).toEqual([]);
+    const empty = entries.filter(([, patterns]) => patterns.length === 0).map(([path]) => path);
+    expect(empty, `这些文件映射到了空模式(空 = 整族,等于白写):${empty.join(", ")}`).toEqual([]);
+  });
+
+  it("每个模式都真的命中 gates.test.ts 的用例,且不是命中全部(0 命中 = 静默少跑)", () => {
+    const names = caseNames();
+    // 抽不出名字时下面两条会"空数组相等"地静默成立,所以先钉住样本量。
+    expect(names.length, `没从 ${GATES_TEST} 抽出用例名`).toBeGreaterThan(50);
+    const patterns = [...new Set(Object.values(GATES_CASES).flat())].sort();
+    const dead = patterns
+      .filter((pattern) => !names.some((name) => new RegExp(pattern, "u").test(name)))
+      .map((pattern) => `死模式(0 命中):${pattern}`);
+    expect(dead, dead.join("; ")).toEqual([]);
+    // 一个命中全部用例的模式等于没缩:它只会让人以为"缩过了"。
+    const broad = patterns
+      .filter((pattern) => names.every((name) => new RegExp(pattern, "u").test(name)))
+      .map((pattern) => `命中全部用例的模式:${pattern}`);
+    expect(broad, broad.join("; ")).toEqual([]);
+  });
+
+  it("计划里真的带上了模式(runsFor 把它填进 RunItem,执行时才变成 -t)", () => {
+    const scripts = manifest().scripts;
+    const gatesOf = (paths: readonly string[]) =>
+      runsFor({ scripts, decision: decideOn(paths) }).filter((item) => item.kind === "gates");
+    expect(gatesOf(["packages/tools/src/gate/no-float-gate.ts"])).toEqual([
+      { kind: "gates", patterns: ["禁浮点门禁"] },
+    ]);
+    expect(gatesOf(["packages/tools/src/gates-harness.ts"])).toEqual([
+      { kind: "gates", patterns: [] },
+    ]);
+  });
+
+  it("多道门禁同时命中时取模式并集(并集 ⊇ 每一条,不会比单文件少跑)", () => {
+    const decision = decideOn([
+      "packages/tools/src/gate/no-float-gate.ts",
+      "packages/tools/src/gate/budget-gate.ts",
+    ]);
+    expect(decision.gatesPatterns).toEqual(["禁浮点门禁", "预算结构门禁"]);
   });
 });

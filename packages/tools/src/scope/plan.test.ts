@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { workspacesOf } from "./build-outputs.ts";
-import { decide } from "./change-radius.ts";
+import { GATES_CASES, decide } from "./change-radius.ts";
 import { FULL_CHAIN, labelOf, runsFor } from "./check.ts";
 import {
   PROJECT_CONTAINS,
@@ -197,7 +197,7 @@ describe("fullPlan:只补差集,不重复执行", () => {
   });
 
   it("extras 与去重后的 run 恰好切分 runs(既不丢也不重复)", () => {
-    const runs = runsFor({ scripts, decision: decideOn(["packages/tools/src/scope/check.ts"]) });
+    const runs = runsFor({ scripts, decision: decideOn(["packages/tools/src/gates-harness.ts"]) });
     const plan = fullPlan({ scripts, chain: FULL_CHAIN, runs });
     const deduped = runs.filter((run) => !plan.extras.includes(run));
     expect(deduped.length + plan.extras.length).toBe(runs.length);
@@ -212,8 +212,8 @@ describe("fullPlan:只补差集,不重复执行", () => {
  * 本票最重要的判据:`D ⊆ F`。
  *
  * 默认计划的每一步,在收口计划(链 + extras)跑完之后都必须已经有人执行过。五个代表性改动覆盖
- * 三源的每一条腿:源码走图、数据文件走表、选择器自身与门禁实现走"表 + 独立 project"、根
- * `package.json` 走全量。
+ * 三源的每一条腿:源码走图、数据文件与仓库事实走表、门禁实现走"表 + 独立 project(`-t` 子集)"。
+ * 选择器自身也走图(T4:`packages/tools/src/scope` 不再拖门禁自测)。
  *
  * 为什么用**真实** `decide()` 而不是手搓 decision:坑恰恰出在两者之间——单看 `plan.ts` 都是对的,
  * 组合起来才漏(`gates` 不在链里)。手搓的 decision 会把这条漏掉。
@@ -223,6 +223,12 @@ describe("fullPlan:只补差集,不重复执行", () => {
  * 1. 只靠链时,差集**恰为已知的那个洞**(`test:gates`;engine 源码 / 规则取值 / 根 package.json
  *    三处为空)。它证明"洞是真的",也证明补差集不是把所有东西都往 extras 里塞。
  * 2. 链 + extras 之后**一条不剩**:`D ⊆ F` 成立。
+ *
+ * T4 之后,这个洞的形状变了两处,断言跟着变——两处都不是"放宽",而是**预期变小**:
+ *
+ * - 选择器自身的改动**不再**进 gates(`src/scope` 交依赖图),所以它的差集是空的;
+ * - 具体门禁实现的差集仍是 `test:gates`,但标签带着 `-t` 子集(模式引自 `GATES_CASES`,
+ *   在这里不拄一份):收口计划补上的是那一批用例,不是整族。
  */
 describe("五个代表性改动:D ⊆ F", () => {
   const cases: readonly {
@@ -244,12 +250,16 @@ describe("五个代表性改动:D ⊆ F", () => {
     {
       label: "选择器自身 packages/tools/src/scope/check.ts",
       path: "packages/tools/src/scope/check.ts",
-      chainGap: ["test:gates"],
+      // T4:`src/scope` 的判据在 unit 池子里(图能选中),不再额外拖门禁自测。
+      chainGap: [],
     },
     {
       label: "具体门禁实现 packages/tools/src/gate/no-float-gate.ts",
       path: "packages/tools/src/gate/no-float-gate.ts",
-      chainGap: ["test:gates"],
+      // 差集仍是 gates 那一族,但收尾到那一道门禁的 `-t` 子集(模式引自 `GATES_CASES`)。
+      chainGap: [
+        `test:gates -t ${(GATES_CASES["packages/tools/src/gate/no-float-gate.ts"] ?? []).join("|")}`,
+      ],
     },
     {
       label: "根 package.json",

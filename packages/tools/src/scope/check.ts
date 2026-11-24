@@ -32,6 +32,10 @@
  * 每一步"——也就是 `D ⊆ F`。`--full` 不用另写一条链,它跑 `fullPlan({chain: FULL_CHAIN, runs})`:
  * 先跑链,再补链没覆盖的 extras,并打印哪些因去重被跳过(`plan.ts` 的头注说明了判据)。
  *
+ * 门禁自测那一条带不带 `-t` 也是算出来的:改动落在哪几个门禁实现文件上,由 `GATES_CASES`
+ * 翻成 `-t` 模式;映射不出就是整族(`runsFor` 只是把 `decision.gatesPatterns` 搬进 `RunItem`,
+ * `runItem` 负责把它变成命令行上的 `-t`)。
+ *
  * 一句话:**这里算的是"该跑什么",不是"行为已经被验证"**。选中的是测试候选;它断言了什么,
  * 只有它自己的失败/通过能说。
  */
@@ -46,6 +50,7 @@ import {
   UnregisteredPathError,
   decide,
   mustObserve,
+  ruleFor,
   type Decision,
 } from "./change-radius.ts";
 import {
@@ -119,6 +124,9 @@ const loadDebt = (): ReadonlyMap<string, string> => {
  *
  * `observed` 是观测 map 命中的测试文件:它们进不了依赖图的图,只能作为文件路径递给
  * `vitest related`——那正是三源合流第二条腿的落点。
+ *
+ * `test:gates` 的 `-t` 模式原样取自 `decision.gatesPatterns`(空 = 整族)。这一层不再判断
+ * "该不该缩":那是表的事,判断只在 `change-radius.ts` 里做一次。
  */
 export const runsFor = (input: {
   readonly scripts: Scripts;
@@ -126,7 +134,9 @@ export const runsFor = (input: {
   readonly observed?: readonly string[];
 }): readonly RunItem[] => {
   const runs: RunItem[] = input.decision.scripts.map((script) =>
-    script === "test:gates" ? { kind: "gates", patterns: [] } : { kind: "script", script },
+    script === "test:gates"
+      ? { kind: "gates", patterns: [...input.decision.gatesPatterns] }
+      : { kind: "script", script },
   );
   // `test:all` 一旦被选中,依赖图要跑的文件本来就在它的池子里:再单独问一次是把同一批文件
   // 跑第二遍(`test:all` 67.7s,related 另算)。子集收掉由 `change-radius.ts` 负责,这里只管
@@ -293,6 +303,7 @@ const main = (argv: readonly string[]): number => {
   }
 
   // 依据行:每个改动一条,**算出来的**、**看出来的**与**表里的**分开写(ADR-0038 §四)。
+  // "表里的"取 `ruleFor`——与选择用的是**同一份**归属,否则依据行会与决定对不上。
   const evidenceLines = files.map((path) => {
     const outputs = buildOutputsOf(path, workspaces);
     const computed =
@@ -302,7 +313,7 @@ const main = (argv: readonly string[]): number => {
     const observed = observedByInput.get(path)?.size ?? 0;
     const observedText =
       observed === 0 ? "observed: 没有测试读过它" : `observed: ${String(observed)} 个测试文件读过`;
-    const rule = decision.hits.find((hit) => path === hit.area || path.startsWith(`${hit.area}/`));
+    const rule = ruleFor(path);
     const staticText =
       rule === undefined
         ? "static: 无表规则"
@@ -314,12 +325,24 @@ const main = (argv: readonly string[]): number => {
 
   const always = decision.scripts.filter((script) => ALWAYS.includes(script));
   const radius = decision.scripts.filter((script) => !ALWAYS.includes(script));
+  /**
+   * 门禁自测这一行的意义:让人一眼看出 166s 的那一族这次被缩到了哪几条。
+   * 不写这一行的话,`-t` 只存在于最终命令里,而 `--print` 不打印命令。
+   */
+  const gatesLine = decision.scripts.includes("test:gates")
+    ? `  gates:    ${
+        decision.gatesPatterns.length === 0
+          ? "整族(没有文件级 -t 模式)"
+          : `-t ${decision.gatesPatterns.join("|")}`
+      }\n`
+    : "";
   process.stdout.write(
     `\n选中(三源:computed 依赖图 / observed 观测 map / static 仓库事实):\n` +
       `  always:   ${always.join(", ")}\n` +
       `  radius:   ${radius.join(", ") || "—"}\n` +
       `  computed: ${String(decision.graphFiles.length)} 个文件交给依赖图\n` +
       `  observed: ${String(observedTests.size)} 个测试文件命中\n` +
+      gatesLine +
       `${evidenceLines.join("\n")}\n`,
   );
   if (decision.notBuilt.length > 0) {
