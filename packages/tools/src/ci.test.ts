@@ -21,6 +21,7 @@ import { expect, it } from "vitest";
 
 import {
   artifactNameViolations,
+  extractRunCommands,
   hardGateScripts,
   matrixLegs,
   namedScripts,
@@ -122,8 +123,44 @@ it("正例:一份只调命名脚本的最小 workflow 判绿", () => {
 
 it("主链成员 = `check --full` 一条", () => {
   expect(sorted(namedScripts(fast))).toEqual(sorted(FAST_MEMBERS));
+  // 成员清单本身也钉住:往 FAST_MEMBERS 里加一条腿,CI 就与本地分叉(收口只有一条命令)。
+  expect([...FAST_MEMBERS]).toEqual(["check"]);
   // 档位不靠 yaml 展开:收口与"改完就跑"是同一条命令的两个 flag。
   expect(fast).toContain("pnpm run check -- --full");
+});
+
+it("主链只有一个执行步,且它就是 `pnpm run check -- --full`", () => {
+  // 装依赖那步不算"执行项目代码":除此之外,跑什么全部由那一条命名脚本决定。
+  // 两个 step 的实际作用是「一眼看出哪类挂了」,代价却是链定义在 yaml 里再展开一份
+  // (ADR-0010:CI 失败等价于命名脚本失败;ADR-0038:一条命令,没有档位)。
+  const steps = extractRunCommands(fast).filter((command) => !command.startsWith("pnpm install"));
+  expect(steps).toEqual(["pnpm run check -- --full"]);
+});
+
+it("`check --full` 是默认计划的超集:默认要门禁自测时,收口一定补上它", async () => {
+  const { FULL_CHAIN, runsFor } = await import("./scope/check.ts");
+  const { decide } = await import("./scope/change-radius.ts");
+  const { fullPlan } = await import("./scope/plan.ts");
+  const { workspacesOf } = await import("./scope/build-outputs.ts");
+
+  const scripts = manifest().scripts;
+  const workspaces = workspacesOf(repoRoot);
+  // 实测过的洞:改选择器自身让默认 `check` 选中 `test:gates`(166s),而它不在 `FULL_CHAIN` 里。
+  const runs = runsFor({
+    scripts,
+    decision: decide({
+      paths: ["packages/tools/src/scope/check.ts"],
+      workspaces,
+      exists: () => true,
+    }),
+  });
+  expect(runs.map((item) => item.kind)).toContain("gates");
+
+  const plan = fullPlan({ scripts, chain: FULL_CHAIN, runs });
+  expect(plan.chain).toEqual([...FULL_CHAIN]);
+  // 收口比默认更严格的前提:链漏掉的那一族必须进 extras,而不是被静默丢掉。
+  expect(plan.extras.length).toBeGreaterThan(0);
+  expect(plan.extras).toContainEqual({ kind: "gates", patterns: [] });
 });
 
 it("`check --full` 的收口链就是主流水线那一串,且每个名字都真实存在", async () => {

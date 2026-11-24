@@ -5,7 +5,7 @@
  *
  * ```
  * pnpm run check            # 改完就跑:按改动半径选,只跑与这次改动有关的东西
- * pnpm run check -- --full  # 收口:与 CI 同一条定义(`FULL_CHAIN`)
+ * pnpm run check -- --full  # 收口:与 CI 同一条定义(`FULL_CHAIN`),再补齐默认计划里链没覆盖的部分
  * ```
  *
  * 三源合流由 ADR-0038 定下,优先级从硬到软:
@@ -16,21 +16,47 @@
  *    的 runtime 产物被读,不被 import,图对它们没有边。
  * 3. **仓库事实交给表**(`RADIUS`),表只在这个范围内是判据。
  *
- * 三条红得方向明确,都是「错要红,不能沉默」的形状:
+ * 四条红得方向明确,都是「错要红,不能沉默」的形状:
  *
  * - 说不清:既映射不到产物也没有表规则的路径 → 红(它的默认表现是少跑)。
- * - 少跑:选择了 `test:all` 就不再单独跑它的子集;产物不在盘上则退回全量。
- * - 无人观测:改完没有任何测试被选中、观测也为空 → 红,并给出两条出路(补用例,或登记
+ * - 少跑:`test:all` 被选中就不再单独跑它的子集;产物不在盘上则先增量构建,仍缺才退回全量。
+ * - 无人观测:改完没有任何测试候选、观测也为空 → 红,并给出两条出路(补用例,或登记
  *   `coverage-debt.txt`)。这是 agent 最大的盲区,而原来的系统在它改完之后什么都不说。
+ * - 问不出用例数:探针报告缺失 / 不可解析 → 红。**未知不是绿**,而且本仓库的 vitest 配置带
+ *   `passWithNoTests: true`,只看退出码会把"一条没选中"读成"通过"。
+ *
+ * ── 计划只有一处构造 ──
+ *
+ * `runsFor({scripts, decision})` 是**唯一**的计划构造函数,`main` 只负责执行与打印。好处不是
+ * 好看:计划于是可以在测试里对真实改动(`decide()`)算出来,再断言"收口计划收下了默认计划的
+ * 每一步"——也就是 `D ⊆ F`。`--full` 不用另写一条链,它跑 `fullPlan({chain: FULL_CHAIN, runs})`:
+ * 先跑链,再补链没覆盖的 extras,并打印哪些因去重被跳过(`plan.ts` 的头注说明了判据)。
+ *
+ * 一句话:**这里算的是"该跑什么",不是"行为已经被验证"**。选中的是测试候选;它断言了什么,
+ * 只有它自己的失败/通过能说。
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOutputsOf, isSourceFile, workspacesOf } from "./build-outputs.ts";
-import { UnregisteredPathError, decide, mustObserve } from "./change-radius.ts";
+import {
+  ALWAYS,
+  UnregisteredPathError,
+  decide,
+  mustObserve,
+  type Decision,
+} from "./change-radius.ts";
+import {
+  GitError,
+  MergeBaseError,
+  computeChangeSet,
+  describeChangeSet,
+  gitRunIn,
+} from "./change-set.ts";
+import { chainProjects, fullPlan, scriptProjects, type RunItem, type Scripts } from "./plan.ts";
+import { probeRelated } from "./related-probe.ts";
 import { invert, loadInputsMap } from "./test-inputs.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -56,28 +82,13 @@ const parseArgs = (argv: readonly string[]): Options => {
   };
 };
 
-const git = (args: readonly string[]): string => {
-  const result = spawnSync("git", [...args], { cwd: repoRoot, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(" ")} 失败:\n${result.stderr}`);
-  }
-  return result.stdout;
-};
-
-/**
- * 改动的文件:已提交的差异 + 工作区差异 + **未跟踪**的文件。
- *
- * 未跟踪也要算:新加一个文件落在没登记的目录里,正是这张表最该红的那种情况。
- */
-const changedFiles = (since: string): readonly string[] => {
-  const tracked = git(["diff", "--name-only", "--no-renames", since]);
-  const untracked = git(["ls-files", "--others", "--exclude-standard"]);
-  const all = `${tracked}\n${untracked}`
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-  return [...new Set(all)];
-};
+/** `package.json` 的脚本表。计划代数(`plan.ts`)以它为唯一输入,所以这里只负责读。 */
+const readScripts = (): Scripts =>
+  (
+    JSON.parse(readFileSync(new URL("../../../../package.json", import.meta.url), "utf8")) as {
+      scripts: Scripts;
+    }
+  ).scripts;
 
 /**
  * 未覆盖登记。格式:`<路径>  # <为什么现在不测>`,空行与 `#` 开头为注释。
@@ -101,27 +112,59 @@ const loadDebt = (): ReadonlyMap<string, string> => {
 };
 
 /**
- * 一次探针的 JSON 报告写进**临时目录**,用完即删:仓库里不留文件,也不依赖「默认报告路径」那种
- * 隐式事实——那条路径只有在报告器恰好被配置时才存在,而它不存在时判据会静默变绿。
+ * **唯一的计划构造函数**:一份改动半径 → 一串要执行的条目。
+ *
+ * 纯函数(脚本表从参数进来,不读文件、不起进程),所以测试可以对真实 `decide()` 的结果算一遍
+ * 计划,再断言收口计划收下了它(`plan.test.ts` 的组合断言)。
+ *
+ * `observed` 是观测 map 命中的测试文件:它们进不了依赖图的图,只能作为文件路径递给
+ * `vitest related`——那正是三源合流第二条腿的落点。
  */
-const withReportPath = <T>(use: (reportPath: string) => T): T => {
-  const dir = mkdtempSync(join(tmpdir(), "mw-related-"));
-  try {
-    return use(join(dir, "report.json"));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+export const runsFor = (input: {
+  readonly scripts: Scripts;
+  readonly decision: Decision;
+  readonly observed?: readonly string[];
+}): readonly RunItem[] => {
+  const runs: RunItem[] = input.decision.scripts.map((script) =>
+    script === "test:gates" ? { kind: "gates", patterns: [] } : { kind: "script", script },
+  );
+  // `test:all` 一旦被选中,依赖图要跑的文件本来就在它的池子里:再单独问一次是把同一批文件
+  // 跑第二遍(`test:all` 67.7s,related 另算)。子集收掉由 `change-radius.ts` 负责,这里只管
+  // "全量已选中就不要再多一条 related"。
+  const runGraph = !input.decision.scripts.includes("test:all");
+  const files = [...new Set([...input.decision.graphFiles, ...(input.observed ?? [])])].sort();
+  if (runGraph && files.length > 0) {
+    // project 集取自 `test:related` 自己的定义,而不是在这里写死 `["all"]`:脚本改了,
+    // 覆盖判断要跟着改;写死就会出现"计划以为跑了 all,实际跑的是别的"。空集 = 不知道 =
+    // 收口时会被当作没覆盖(多跑一次,不会少跑)。
+    runs.push({
+      kind: "related",
+      projects: [...scriptProjects(input.scripts, "test:related")],
+      files,
+    });
+  }
+  return runs;
+};
+
+/** 给日志与断言用的一句话名字。 */
+export const labelOf = (item: RunItem): string => {
+  switch (item.kind) {
+    case "script":
+      return item.script;
+    case "related":
+      return `test:related(${String(item.files.length)} 个文件)`;
+    case "gates":
+      return item.patterns.length === 0 ? "test:gates" : `test:gates -t ${item.patterns.join("|")}`;
   }
 };
 
-/** 报告里真的跑了多少条用例。读不到就当未知——而未知不是绿。 */
-const countOf = (reportPath: string): number | undefined => {
-  try {
-    const report = JSON.parse(readFileSync(reportPath, "utf8")) as { numTotalTests?: number };
-    return report.numTotalTests;
-  } catch {
-    return undefined;
-  }
+const runCommand = (label: string, args: readonly string[]): number => {
+  process.stdout.write(`\n=== ${label} ===\n`);
+  const result = spawnSync(process.execPath, args, { cwd: repoRoot, stdio: "inherit" });
+  return result.status ?? 1;
 };
+
+const runScript = (script: string): number => runCommand(script, ["--run", script]);
 
 /** 把改动递给依赖图;失败的两种含义不同,红的时候要分开说。 */
 const runRelated = (args: readonly string[]): number => {
@@ -133,55 +176,50 @@ const runRelated = (args: readonly string[]): number => {
   if (result.status === 0) return 0;
   process.stderr.write(
     `\n依赖图没有选中任何测试,或选中的测试红了(退出码 ${String(result.status)})。\n` +
-      "「没有测试观测到这些改动」与「测试红了」不是一回事:前者说明这块代码没有判据。\n",
+      "「没有选中测试候选」与「测试红了」不是一回事:前者说明这块代码没有判据。\n",
   );
   return result.status ?? 1;
 };
 
-/** 构建那一步的输出只关心成败,成功时不刷屏(它平时是静默的)。 */
-const runScriptVerbose = (script: string): number => {
-  const result = spawnSync(process.execPath, ["--run", script], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
-  if ((result.status ?? 1) !== 0) return result.status ?? 1;
-  return 0;
-};
-
-const runScript = (script: string): number => {
-  process.stdout.write(`\n=== ${script} ===\n`);
-  const result = spawnSync(process.execPath, ["--run", script], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
-  return result.status ?? 1;
+const runItem = (item: RunItem): number => {
+  switch (item.kind) {
+    case "script":
+      return runScript(item.script);
+    case "related":
+      return runRelated(item.files);
+    case "gates":
+      // 门禁自测的子集:`-t` 是 vitest 的 testNamePattern,模式为空表示整族。
+      return item.patterns.length === 0
+        ? runScript("test:gates")
+        : runCommand(`test:gates -t ${item.patterns.join("|")}`, [
+            "--run",
+            "test:gates",
+            "--",
+            "-t",
+            item.patterns.join("|"),
+          ]);
+  }
 };
 
 const main = (argv: readonly string[]): number => {
   const options = parseArgs(argv);
-  const manifest = JSON.parse(
-    readFileSync(new URL("../../../../package.json", import.meta.url), "utf8"),
-  ) as { scripts: Record<string, string> };
-
-  // ── 收口:一条命令,与 CI 同一条定义 ──
-  if (options.full) {
-    process.stdout.write(`收口(与 CI 同一条定义):${FULL_CHAIN.join(" + ")}\n`);
-    for (const script of FULL_CHAIN) {
-      if (manifest.scripts[script] === undefined) {
-        process.stderr.write(`收口链里有不存在的脚本:${script}\n`);
-        return 1;
-      }
-      const status = runScript(script);
-      if (status !== 0) {
-        process.stderr.write(`\n${script} 失败(退出码 ${String(status)})\n`);
-        return status;
-      }
-    }
-    return 0;
-  }
-
-  const files = changedFiles(options.since);
+  const scripts = readScripts();
   const workspaces = workspacesOf(repoRoot);
+
+  // ── 改了什么:一份规范 ChangeSet(merge-base 基准,两端都留,失败显式) ──
+  let changeSet: ReturnType<typeof computeChangeSet>;
+  try {
+    changeSet = computeChangeSet({ run: gitRunIn(repoRoot), sinceRef: options.since });
+  } catch (error) {
+    // `MergeBaseError` 与 `GitError` 的消息里都写了修法;其余异常照旧抛出去。
+    if (error instanceof MergeBaseError || error instanceof GitError) {
+      process.stderr.write(`\n${error.message}\n`);
+      return 1;
+    }
+    throw error;
+  }
+  const files = changeSet.files;
+  process.stdout.write(`${describeChangeSet(changeSet)}\n`);
 
   const decideNow = (): ReturnType<typeof decide> =>
     decide({
@@ -202,9 +240,9 @@ const main = (argv: readonly string[]): number => {
      */
     if (decision.notBuilt.length > 0) {
       process.stdout.write(
-        `产物不在盘上(${String(decision.notBuilt.length)} 个),先增量构建再算:pnpm run build\n`,
+        `产物不在盘上(${String(decision.notBuilt.length)} 个),先增量构建再算:build\n`,
       );
-      const status = runScriptVerbose("build");
+      const status = runScript("build");
       if (status !== 0) return status;
       decision = decideNow();
     }
@@ -228,51 +266,101 @@ const main = (argv: readonly string[]): number => {
     for (const test of observedByInput.get(path) ?? []) observedTests.add(test);
   }
 
+  // ── 计划:唯一构造函数在 `runsFor`,收口计划在 `fullPlan` ──
+  const runs = runsFor({ scripts, decision, observed: [...observedTests] });
+  const plan = options.full
+    ? fullPlan({ scripts, chain: FULL_CHAIN, runs })
+    : { chain: [] as readonly string[], extras: runs };
+
   // 名字先验一遍:拼错的名字在这里红,而不是等 spawn 时报「Unknown script」。
-  for (const script of [...decision.scripts, "test:related"]) {
-    if (manifest.scripts[script] === undefined) {
-      process.stderr.write(`改动半径指向了不存在的脚本:${script}\n`);
+  for (const item of runs) {
+    const name =
+      item.kind === "script"
+        ? item.script
+        : item.kind === "related"
+          ? "test:related"
+          : "test:gates";
+    if (scripts[name] === undefined) {
+      process.stderr.write(`改动半径指向了不存在的脚本:${name}\n`);
+      return 1;
+    }
+  }
+  for (const name of options.full ? FULL_CHAIN : []) {
+    if (scripts[name] === undefined) {
+      process.stderr.write(`收口链里有不存在的脚本:${name}\n`);
       return 1;
     }
   }
 
-  // 依据行:每个改动一条,**算出来的**与**看出来的**分开写(ADR-0038 §四)。
-  const evidence = files.map((path) => {
-    const observed = observedByInput.get(path)?.size ?? 0;
-    const observedText = observed === 0 ? "" : `,观测命中 ${String(observed)} 个测试文件`;
+  // 依据行:每个改动一条,**算出来的**、**看出来的**与**表里的**分开写(ADR-0038 §四)。
+  const evidenceLines = files.map((path) => {
     const outputs = buildOutputsOf(path, workspaces);
-    if (outputs.length > 0 || isSourceFile(path, workspaces)) {
-      return `  ${path}\n    → 依赖图(computed: 源码 + ${String(outputs.length)} 个产物${observedText})`;
-    }
+    const computed =
+      outputs.length > 0 || isSourceFile(path, workspaces)
+        ? `computed: 源码 + ${String(outputs.length)} 个产物交依赖图`
+        : "computed: 图没有边(不是源码,也映射不出产物)";
+    const observed = observedByInput.get(path)?.size ?? 0;
+    const observedText =
+      observed === 0 ? "observed: 没有测试读过它" : `observed: ${String(observed)} 个测试文件读过`;
     const rule = decision.hits.find((hit) => path === hit.area || path.startsWith(`${hit.area}/`));
-    const suites = rule?.suites ?? [];
-    const tail =
-      suites.length === 0 ? "无测试依赖(static: 门禁覆盖)" : `suites: ${suites.join(", ")}`;
-    return `  ${path}\n    → ${tail}${observedText}`;
+    const staticText =
+      rule === undefined
+        ? "static: 无表规则"
+        : rule.suites.length === 0
+          ? `static: ${rule.area} → 无测试族(静态门禁或本就不进判据)`
+          : `static: ${rule.area} → ${rule.suites.join(", ")}`;
+    return `  ${path}\n    ${computed} · ${observedText} · ${staticText}`;
   });
 
-  const runGraph = !decision.scripts.includes("test:all");
-  const graphArgs = [...decision.graphFiles, ...[...observedTests].sort()];
-  const total = decision.scripts.length + (runGraph && graphArgs.length > 0 ? 1 : 0);
+  const always = decision.scripts.filter((script) => ALWAYS.includes(script));
+  const radius = decision.scripts.filter((script) => !ALWAYS.includes(script));
   process.stdout.write(
-    `改动半径(对比 ${options.since},${String(files.length)} 个文件,${String(total)} 步):\n` +
-      `${evidence.join("\n")}\n` +
-      decision.scripts.map((script) => `  ⇒ ${script}\n`).join(""),
+    `\n选中(三源:computed 依赖图 / observed 观测 map / static 仓库事实):\n` +
+      `  always:   ${always.join(", ")}\n` +
+      `  radius:   ${radius.join(", ") || "—"}\n` +
+      `  computed: ${String(decision.graphFiles.length)} 个文件交给依赖图\n` +
+      `  observed: ${String(observedTests.size)} 个测试文件命中\n` +
+      `${evidenceLines.join("\n")}\n`,
   );
   if (decision.notBuilt.length > 0) {
     process.stdout.write(
-      `  ! 产物不在盘上(${decision.notBuilt.slice(0, 3).join(", ")}${decision.notBuilt.length > 3 ? " …" : ""}),` +
-        "静态映射失效,已退回全量\n",
+      `  ! 产物不在盘上(${decision.notBuilt.slice(0, 3).join(", ")}` +
+        `${decision.notBuilt.length > 3 ? " …" : ""}),静态映射失效,已退回全量\n`,
     );
   }
-  if (runGraph && graphArgs.length > 0) {
+
+  if (options.full) {
+    const covered = chainProjects(scripts, FULL_CHAIN);
+    const deduped = runs.filter((item) => !plan.extras.includes(item));
     process.stdout.write(
-      `  ⇒ test:related(computed: ${String(decision.graphFiles.length)} 个文件交给依赖图 + ` +
-        `observed: ${String(observedTests.size)} 个测试文件)\n`,
+      `\n收口计划(与 CI 同一条定义):${FULL_CHAIN.join(" + ")}\n` +
+        `  链覆盖的 project:${covered.size === 0 ? "无(展开不出 project)" : [...covered].sort().join(", ")}\n` +
+        `  链没覆盖的(先跑链,再补这些):${plan.extras.length === 0 ? "无" : plan.extras.map(labelOf).join(", ")}\n` +
+        `  已覆盖因而去重:${deduped.length === 0 ? "无" : deduped.map(labelOf).join(", ")}\n` +
+        `  执行:${[...plan.chain, ...plan.extras.map(labelOf)].join(" → ") || "无"}\n`,
     );
-    process.stdout.write(`  (产物路径交给图是为了跨包的边;源码路径交给图是为了包内)\n`);
+  } else {
+    process.stdout.write(
+      `\n执行计划(默认):${runs.map(labelOf).join(" → ") || "无"}\n` +
+        `  (选中的是测试**候选**;它断言了什么,只有它自己的失败/通过能说)\n`,
+    );
   }
   if (options.print) return 0;
+
+  for (const name of plan.chain) {
+    const status = runScript(name);
+    if (status !== 0) {
+      process.stderr.write(`\n${name} 失败(退出码 ${String(status)})\n`);
+      return status;
+    }
+  }
+  for (const item of plan.extras) {
+    const status = runItem(item);
+    if (status !== 0) {
+      process.stderr.write(`\n${labelOf(item)} 失败(退出码 ${String(status)})\n`);
+      return status;
+    }
+  }
 
   const debt = loadDebt();
   /**
@@ -287,53 +375,65 @@ const main = (argv: readonly string[]): number => {
       !debt.has(path) &&
       mustObserve({ path, workspaces }),
   );
-  const unobservedInputs = unobserved.filter((path) => !isSourceFile(path, workspaces));
-
-  for (const script of decision.scripts) {
-    const status = runScript(script);
-    if (status !== 0) {
-      process.stderr.write(`\n${script} 失败(退出码 ${String(status)})\n`);
-      return status;
-    }
-  }
+  const unobservedInputs = unobserved
+    .filter((path) => !isSourceFile(path, workspaces))
+    .map((path) => ({ path, why: "它是行为输入,而观测 map 里没有任何测试读过它" }));
 
   // 行为输入没有 import 边,图对它是瞎的:观测为空就是没有判据,不必等图。
   if (unobservedInputs.length > 0) return reportUnobserved(unobservedInputs, "input");
-
-  if (runGraph && graphArgs.length > 0) {
-    const status = runRelated(graphArgs);
-    if (status !== 0) return status;
-  }
 
   /**
    * 代码的答案必须**逐个问**,不能拿整条链的结论代答。
    *
    * 「`test:all` 跑过了」不等于「有人看着这个文件」:全量跑的是既有用例,一个没人 import 的新
-   * 模块在它里面照样是零覆盖。这一步就是 ADR-0038 §六 那条红线的落点,代价是每个未观测文件
-   * 一次 `test:related`(约 2 秒),而"未观测文件"本来就该是少数。
+   * 模块在它里面照样是零候选。这一步就是 ADR-0038 §六那条红线的落点。
+   *
+   * 代价是每个未观测文件一次 `test:related`(实测:零候选约 2s,有候选要真跑那些测试,最坏
+   * ~24s)。所以先把成本说在前面——不说的话,agent 会以为进程卡死然后去杀它。
    */
   const blindCode = unobserved.filter((path) => isSourceFile(path, workspaces));
-  const gaps: string[] = [];
+  if (blindCode.length > 0) {
+    process.stdout.write(
+      `\n要逐个探 ${String(blindCode.length)} 个文件有没有测试候选:典型的每次约 3s,最坏 24s。\n`,
+    );
+  }
+  const gaps: { readonly path: string; readonly why: string }[] = [];
   for (const path of blindCode) {
     const outputs = buildOutputsOf(path, workspaces);
-    const ran = withReportPath((reportPath) => {
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--run",
-          "test:related",
-          "--",
-          "--reporter=json",
-          `--outputFile=${reportPath}`,
-          path,
-          ...outputs.filter((output) => existsSync(join(repoRoot, output))),
-        ],
-        { cwd: repoRoot, stdio: "ignore" },
-      );
-      return { count: countOf(reportPath), status: result.status };
+    const outcome = probeRelated({
+      repoRoot,
+      paths: [path, ...outputs.filter((output) => existsSync(join(repoRoot, output)))],
+      project: "all",
     });
-    // 读不到报告 → 红:未知不是绿。这里不拿退出码当唯一判据,但退出码非零仍然算红。
-    if (ran.count === undefined || ran.count === 0 || ran.status !== 0) gaps.push(path);
+    switch (outcome.kind) {
+      case "ran":
+        break;
+      case "no-tests":
+        gaps.push({ path, why: "依赖图一条用例都没选中:确知为零" });
+        break;
+      case "structural-only":
+        gaps.push({
+          path,
+          why: `只选中了结构测试(${outcome.structural.join(", ")}):那是别的文件的形状`,
+        });
+        break;
+      case "all-skipped":
+        gaps.push({ path, why: `选中的 ${String(outcome.files.length)} 个测试文件全部 skip` });
+        break;
+      case "failed":
+        // 候选红了不是"没有判据",是"判据在喊":先修它,别把两种红混成一条。
+        process.stderr.write(
+          `\n${path} 的测试候选红了(${String(outcome.failed)} 条失败):先修它,再谈判据。\n`,
+        );
+        return 1;
+      case "no-report":
+        process.stderr.write(
+          `\n问不出用例数:${path} 的探针没有产出可解析的 JSON 报告(退出码 ${
+            outcome.exit === null ? "无" : String(outcome.exit)
+          })。\n未知不是绿:这条判据只承认「确知为零」与「确知跑过」。\n`,
+        );
+        return 1;
+    }
   }
   if (gaps.length > 0) return reportUnobserved(gaps, "code");
 
@@ -341,19 +441,22 @@ const main = (argv: readonly string[]): number => {
   return 0;
 };
 
-const reportUnobserved = (paths: readonly string[], kind: "code" | "input"): number => {
+const reportUnobserved = (
+  gaps: readonly { readonly path: string; readonly why: string }[],
+  kind: "code" | "input",
+): number => {
   const tail =
     kind === "code"
-      ? `这是 agent 最大的盲区:代码改了、判据没动。`
-      : `这是行为输入,没有 import 边可问——观测为空就是真的没有测试读过它。\n` +
-        `（若它其实被读到了,说明 map 过期:重录一遍比对,pnpm run observe:inputs。）`;
+      ? "这是 agent 最大的盲区:代码改了、判据没动。"
+      : "这是行为输入,没有 import 边可问——观测为空就是真的没有测试读过它。\n" +
+        "(若它其实被读到了,说明 map 过期:重录一遍比对,node --run observe:inputs。)";
   process.stderr.write(
     `\n改动没有被任何测试观测到(computed 与 observed 都是空的):\n` +
-      `${paths.map((path) => `  ${path}`).join("\n")}\n\n` +
+      `${gaps.map((gap) => `  ${gap.path}\n    ${gap.why}`).join("\n")}\n\n` +
       `${tail}\n两条出路,选一条:\n` +
       `  1. 补一个用例,让它真的执行到这块;\n` +
       `  2. 在 ${DEBT_PATH} 里登记一行并写清为什么现在不测:\n` +
-      `     ${paths[0] ?? "<路径>"}  # 为什么现在不测\n`,
+      `     ${gaps[0]?.path ?? "<路径>"}  # 为什么现在不测\n`,
   );
   return 1;
 };
@@ -361,9 +464,10 @@ const reportUnobserved = (paths: readonly string[], kind: "code" | "input"): num
 /**
  * 薄壳:只有「自己被当成命令跑」时才执行,被 import 时**无副作用**(ADR-0038 长期约束一)。
  *
- * 这条守卫不是形式主义:`ci.test.ts` 会 `import` 本文件去读 `FULL_CHAIN`,没有它,一次 import
- * 就等于在这个进程里跑一遍整条链——而那条链里又有 import 本文件的测试,于是无限递归。
- * 用 `argv[1]` 比路径,不用 `import.meta.main`(Node 22 上是 `undefined`,CI 用的是 22)。
+ * 这条守卫不是形式主义:`ci.test.ts` 会 `import` 本文件去读 `FULL_CHAIN` 与 `runsFor`,
+ * 没有它,一次 import 就等于在这个进程里跑一遍整条链——而那条链里又有 import 本文件的测试,
+ * 于是无限递归。用 `argv[1]` 比路径,不用 `import.meta.main`(Node 22 上是 `undefined`,
+ * CI 用的是 22)。
  */
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) {
   process.exitCode = main(process.argv.slice(2));
