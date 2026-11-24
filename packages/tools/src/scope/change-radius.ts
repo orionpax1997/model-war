@@ -315,7 +315,10 @@ const isManifest = (path: string): boolean =>
   path === "package.json" ||
   path.endsWith("/package.json") ||
   path === "pnpm-lock.yaml" ||
-  path.endsWith("/pnpm-lock.yaml");
+  path.endsWith("/pnpm-lock.yaml") ||
+  // 嵌套包的 `tsconfig.json` 同属仓库事实:`rootDir` / `outDir` 是选择器映射的**唯一真源**
+  // (`build-outputs.ts` 靠读它算产物路径),改了它等于换了所有包的产物位置。根那份在表里。
+  path.endsWith("/tsconfig.json");
 
 export const decide = (input: DecisionInput): Decision => {
   const hits: Radius[] = [];
