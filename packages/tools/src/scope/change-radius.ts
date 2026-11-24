@@ -558,6 +558,22 @@ export class UnregisteredPathError extends Error {
  *
  * 两类:代码(能映射出产物的源码),以及表里开了 `mustObserve` 的行为输入。判据是"改了行为却
  * 没有判据"这件事必须有声音——散文、`package.json`、`docs/` 不在其中,它们有静态门禁读。
+ *
+ * ── 新输入文件的保守回退靠的就是这一条 ──
+ *
+ * 观测 map 是历史快照——它只认识**录制那天存在**的输入文件。往 `rulesets/` 里新加一个文件,
+ * map 里没有它,`invert()` 自然查不到任何测试,于是选择器对它的判断是"没人读它",一分钱不花
+ * 就绿了。这是 map 唯一的失效方向:**少记 = 少跑 = 绿**。
+ *
+ * 挡住它的不是第二张清单,而是两个已有机制合起来:`RADIUS` 的区域前缀规则给出"这个区域该跑
+ * 哪几族"(`suites`),`mustObserve` 给出"没人读它就必须有声音"。新文件(map 里没有)照样被
+ * 前缀规则选中保守的那一族;而若那条规则的 `suites` 是空的,它会在 `check` 里直接红——
+ * "空回退"因此不是一个可以静默存在的状态。
+ *
+ * 这条性质过去由一个导出 `INPUT_ROOTS`(把 `mustObserve` 规则投影一遍)承担,而它**没有任何
+ * 生产消费者**:唯一用处是拿它对着 `RADIUS` 自证一遍——看起来接好了,其实没接线。那种形状比
+ * 没有更坏,所以删掉了。现在由 `test-inputs.test.ts` 对**行为**断言:未观测的新文件仍选中
+ * 该区域的 suites,已删除的文件(仍在 ChangeSet 里)也仍选中。
  */
 export const mustObserve = (input: {
   readonly path: string;
@@ -567,36 +583,3 @@ export const mustObserve = (input: {
   if (rule?.mustObserve === true) return true;
   return isSourceFile(input.path, input.workspaces);
 };
-
-/**
- * **Input Root**:观测快照的盲区边界(票 T5)。
- *
- * 观测 map 是历史快照——它只认识**录制那天存在**的输入文件。往 `rulesets/` 里新加一个文件,
- * map 里没有它,`invert()` 自然查不到任何测试,于是选择器对它的判断是"没人读它",一分钱不花
- * 就绿了。这是 map 唯一的失效方向:**少记 = 少跑 = 绿**。
- *
- * 所以一个区域一旦被声明为"它的内容必须被观测到"(`mustObserve`),它同时就声明了另一半:
- * **这个区域里新出现的输入文件,退回该区域的 `suites`**——还没被观测到的东西按多跑处理。
- *
- * ── 与 `mustObserve` 不是同一件事 ──
- *
- * - `mustObserve`(输入侧,即"已有的关键输入有没有人看"):关键输入必须有观测记录,没有就红。
- *   它回答「**这条路**改了会不会没人看」。
- * - `INPUT_ROOTS`(覆盖侧,即"这个区域的新文件往哪退"):该区域的新输入文件必须有保守回退,
- *   没有回退就报错。它回答「**这类新文件**进来时先跑什么」。
- *
- * 一条规则同时给出两者,是因为它们是同一句话的两面("这个区域的内容必须有人看着");
- * 但判据各用各的:前者在 `check.ts` 的未观测红线上,后者在快照过期与 Input Root 回退上。
- *
- * 由 `RADIUS` 推导而不是另写一张表:两份手写清单必然腐烂成不一样的边界(ADR-0038)。
- */
-export interface InputRoot {
-  /** 区域前缀,语义同 `Radius.area`。 */
-  readonly area: string;
-  /** 该区域新输入文件的保守回退(非空:空集合等于"回退到什么都不跑",那是静默少选)。 */
-  readonly suites: readonly string[];
-}
-
-export const INPUT_ROOTS: readonly InputRoot[] = RADIUS.filter(
-  (rule) => rule.mustObserve === true,
-).map((rule) => ({ area: rule.area, suites: rule.suites }));
