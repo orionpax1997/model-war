@@ -21,7 +21,9 @@ import { expect, it } from "vitest";
 
 import {
   artifactNameViolations,
+  checkStepArgs,
   checkoutFetchDepth,
+  evaluateSinceExpression,
   extractRunCommands,
   hardGateScripts,
   matrixLegs,
@@ -130,12 +132,60 @@ it("主链成员 = `check --full` 一条", () => {
   expect(fast).toContain("pnpm run check -- --full");
 });
 
-it("主链只有一个执行步,且它就是 `pnpm run check -- --full`", () => {
+it("主链只有一个执行步,且它就是 `pnpm run check -- --full <基准>`", () => {
   // 装依赖那步不算"执行项目代码":除此之外,跑什么全部由那一条命名脚本决定。
   // 两个 step 的实际作用是「一眼看出哪类挂了」,代价却是链定义在 yaml 里再展开一份
   // (ADR-0010:CI 失败等价于命名脚本失败;ADR-0038:一条命令,没有档位)。
+  // 尾部那个 `$SINCE` 是同一 step 的 env(见下面的"基线比哪个对象"),不是第二个档位。
   const steps = extractRunCommands(fast).filter((command) => !command.startsWith("pnpm install"));
-  expect(steps).toEqual(["pnpm run check -- --full"]);
+  expect(steps).toEqual(["pnpm run check -- --full $SINCE"]);
+});
+
+// ── 基准比的是哪个对象:PR 对着它的 base 分支 ────────────────────────────────
+
+/**
+ * **PR 上的改动半径必须对着 base 分支算,而不是对着 `main`。**
+ *
+ * 这一条盯的是一个没有红信号的东西:基准比错了仍然会跑、仍然会绿或红,但红在的地方与本 PR
+ * 无关。实测过一次:base 分支比 `main` 多 41 个提交,那些"已经合过的历史"被算成这个 PR 的改动,
+ * 半径从两族变成 `test:gates, test:slow, test:all`(239s),并红在一条只在 nightly 跑的门禁上。
+ *
+ * 所以断言的不是 yaml 的写法,而是**实参**:把那个事件代进去,看 `check` 真的收到什么。
+ * 基线来自 `github.base_ref`——换一个 base 分支,实参跟着变;写死某个分支名就解不出实参。
+ */
+it("PR 上 check 收到 `--since=origin/<base>`;push 上不传,退回脚本里的默认值", () => {
+  expect(
+    checkStepArgs({ yaml: fast, event: "pull_request", baseRef: "feature/script-naming" }),
+  ).toEqual(["--full", "--since=origin/feature/script-naming"]);
+  // 基线是算出来的,不是写死的:换一个 base_ref,实参逐字跟着换。
+  expect(checkStepArgs({ yaml: fast, event: "pull_request", baseRef: "main" })).toEqual([
+    "--full",
+    "--since=origin/main",
+  ]);
+  // 合入 `main` 时没有 base_ref:空值是一个**消失的词**,不是一个空参数——`check` 退回默认值。
+  expect(checkStepArgs({ yaml: fast, event: "push", baseRef: "main" })).toEqual(["--full"]);
+});
+
+it("反例:把 base 写死成某个分支名,表达式就认不出来(红而不是静默用错基准)", () => {
+  const hardcoded = fast.replace(
+    "format('--since=origin/{0}', github.base_ref)",
+    "'--since=origin/main'",
+  );
+  expect(hardcoded, "替换没命中:fast.yml 的表达式被改写了").not.toBe(fast);
+  expect(
+    checkStepArgs({ yaml: hardcoded, event: "pull_request", baseRef: "feature/x" }),
+    "写死分支名的表达式居然解出了实参",
+  ).toBeUndefined();
+  // 纯函数层的反例:认不出的形态给 `undefined`,认得出的非 PR 事件给空串(两者不同)。
+  expect(
+    evaluateSinceExpression("${{ github.base_ref }}", { event: "pull_request", baseRef: "x" }),
+  ).toBeUndefined();
+});
+
+it("反例:`$SINCE` 没在同一步的 env 里声明 → 解不出实参(那一截会静默消失)", () => {
+  const dropped = fast.replace(/^\s*env:\n\s*SINCE: .*\n/mu, "");
+  expect(dropped, "替换没命中:env 块被改写了").not.toBe(fast);
+  expect(checkStepArgs({ yaml: dropped, event: "pull_request", baseRef: "main" })).toBeUndefined();
 });
 
 // ── Checkout 深度:`check` 的基准能不能算出来的前提 ──────────────────────────
