@@ -48,13 +48,23 @@ export const INPUTS_SCHEMA = 2;
  * - `vitest.record-inputs.setup.ts`:把"当前是哪个测试文件"贴成记录标签。标签一错,map 归错档。
  * - `vitest.config.ts`:决定哪个文件属于哪个 project。project 划分变了,`test:all` 的池子就变了,
  *   map 里"谁读什么"的集合也就不再是同一批测试跑出来的。
+ * - 本文件(`test-inputs.ts`):聚合口径本身——`isInputPath` / `OUTPUT_PREFIXES` 决定哪些路径
+ *   算输入、怎么归并成键。它一宽松,map 就**静默变窄**(少记 = 少跑),而指纹不变的话
+ *   没人会发现那是新口径录出来的。
+ * - `run-inputs.ts`:录的是哪条命令、什么时候取指纹。录制口径一变(比如改成只跑一部分
+ *   project),旧 map 照样"自洽",但它已经不是同一台仪器录的那份东西。
  *
- * 代价是有意接受的:改这三个文件就要重录一次(约 85s),漂移检查本来也只在 nightly 上。
+ * 后两条是本轮补的:它们**同样能只让 map 变窄**,而原来的指纹看不见它们——保护一个口径,
+ * 却漏掉定义这个口径的两个装配点,那枚指纹就只保护了一半。
+ *
+ * 代价是有意接受的:改这五个文件就要重录一次(实测约 110s),漂移检查本来也只在 nightly 上。
  */
 export const WATCHED_FILES: readonly string[] = [
   "packages/tools/src/scope/recorder.ts",
   "vitest.record-inputs.setup.ts",
   "vitest.config.ts",
+  "packages/tools/src/scope/test-inputs.ts",
+  "packages/tools/src/scope/run-inputs.ts",
 ];
 
 /** 被监视的文件不见了也**进指纹**:删掉它,map 同样不再是它当初是的那份东西。 */
@@ -98,6 +108,37 @@ export const isSnapshotCurrent = (input: {
   readonly map: InputsMap;
   readonly fingerprint: string;
 }): boolean => input.map.fingerprint !== "" && input.map.fingerprint === input.fingerprint;
+
+/**
+ * 快照过期时的红消息。**过期即红**:`undefined` = 还能当判据。
+ *
+ * 为什么不是"警告一句然后照旧用":旧 map 的失效方向是**少记**——recorder 换了 hook、project
+ * 划分变了之后,它会安静地少几条观测,于是选择器少选一批测试,而少选不报错。既然"用过期的
+ * 判据"与"没有判据"是同一件事,就必须在**拿它当判据之前**停下。
+ *
+ * 消息里三个要素缺一不可:两个指纹(谁跟谁对不上)、"为什么指纹能决定这件事"、两条命令
+ * (`observe:inputs:accept` 重录、`observe:inputs` 复核,后者是防止重录把变窄写进仓库)。
+ *
+ * **它只存在一处**:录制的比对(`run-inputs.ts`)与 `check` 的红线都直接调这里。两处各写一段
+ * 近似文本的时候,两段会各自漂——一边说清了"仪器变了",另一边还在说"逐条差异"。
+ */
+export const snapshotStaleMessage = (input: {
+  readonly map: InputsMap;
+  readonly fingerprint: string;
+}): string | undefined => {
+  if (isSnapshotCurrent(input)) return undefined;
+  const recorded = input.map.fingerprint === "" ? "(空:旧快照没有指纹)" : input.map.fingerprint;
+  const watched = WATCHED_FILES.map((file) => `    ${file}`).join("\n");
+  return (
+    `观测快照过期:入库指纹 ${recorded},现在是 ${input.fingerprint}。\n` +
+    `指纹覆盖产出这张 map 的 ${String(WATCHED_FILES.length)} 个装配点:\n` +
+    `${watched}\n` +
+    "仪器变了,旧 map 里「谁读什么」不再是同一回事,逐条差异也已无意义。\n" +
+    "拿它判「有没有测试观测到」只会少跑,所以这里直接红。\n" +
+    "重录:`node --run observe:inputs:accept`(约 110s);复核:`node --run observe:inputs`\n" +
+    "(重录变窄等于少跑,复核就是在拦这件事)。\n"
+  );
+};
 
 /**
  * 这些前缀下的路径是**产物**,不是输入:测试写它们、报告落它们。记进来会让 map 把"我刚写的

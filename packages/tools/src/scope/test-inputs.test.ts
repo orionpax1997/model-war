@@ -14,7 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { INPUT_ROOTS, RADIUS } from "./change-radius.js";
+import { workspacesOf } from "./build-outputs.js";
+import { RADIUS, decide, mustObserve, suitesFor } from "./change-radius.js";
 import {
   INPUTS_SCHEMA,
   type InputsMap,
@@ -23,6 +24,7 @@ import {
   aggregate,
   currentFingerprint,
   fingerprintOf,
+  invert,
   isSnapshotCurrent,
   loadInputsMap,
   writeInputsMap,
@@ -30,8 +32,14 @@ import {
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
-/** 三个被监视文件的路径;测试里用它们当临时仓库的键,不写字面量。 */
+/** 前三个被监视文件的路径;测试里用它们当临时仓库的键,不写字面量。 */
 const [RECORDER = "", SETUP = "", CONFIG = ""] = WATCHED_FILES;
+
+/** 一份"所有被监视文件都不存在"的指纹,用来验删除也进指纹。 */
+const allMissing = (contentOfFirst: string): readonly string[] => [
+  contentOfFirst,
+  ...WATCHED_FILES.slice(1).map(() => MISSING_FILE),
+];
 
 const dirs: string[] = [];
 
@@ -81,9 +89,8 @@ describe("内容指纹:同一份输入在任何地方都是同一枚", () => {
     });
     const missing = openRepo({ [RECORDER]: "recorder" });
     expect(currentFingerprint(missing)).not.toBe(currentFingerprint(complete));
-    expect(currentFingerprint(missing)).toBe(
-      fingerprintOf(["recorder", MISSING_FILE, MISSING_FILE]),
-    );
+    // 期望值从 `WATCHED_FILES` 的长度推出来:监视名单增减时,这里跟着走而不是写死条数。
+    expect(currentFingerprint(missing)).toBe(fingerprintOf(allMissing("recorder")));
   });
 });
 
@@ -154,24 +161,52 @@ describe("聚合与落盘:指纹跟着 map 走完一个来回", () => {
   });
 });
 
-describe("Input Root:新输入文件有地方可退", () => {
-  it("非空:没有任何区域声明「内容必须被观测到」,这张表就无从推导", () => {
-    expect(INPUT_ROOTS.length).toBeGreaterThan(0);
-  });
+/**
+ * 新输入文件的保守回退(票 T5)。
+ *
+ * 这里曾经有一张导出叫 `INPUT_ROOTS`(把 `mustObserve` 规则投影成 `{area, suites}`),而它
+ * **没有任何生产消费者**——唯一用处就是拿它对着 `RADIUS` 自证。那种断言恒真:两边都由
+ * `RADIUS` 算出来,它红了只能说明投影函数写错。
+ *
+ * 真正要保的性质是**行为**:一个观测 map 里没有的文件,照样被选中保守的那一族;而若那条
+ * 规则的回退是空的,"新文件没人看"就真的无处可退。于是这里不投影、不比对表,直接问选择器。
+ */
+describe("Input Root:新输入文件有地方可退(问行为,不问表)", () => {
+  const workspaces = workspacesOf(repoRoot);
 
-  it("每个成员都能在 RADIUS 里找到对应的 mustObserve 规则,且 `suites` 非空", () => {
-    for (const root of INPUT_ROOTS) {
-      const rule = RADIUS.find((candidate) => candidate.area === root.area);
-      expect(rule, `${root.area} 在 RADIUS 里没有规则`).toBeDefined();
-      expect(rule?.mustObserve, `${root.area} 不是 mustObserve 规则`).toBe(true);
-      // `suites` 空 = "新文件退回什么都不跑" = 静默少选,正是这张表要防的那件事。
-      expect(root.suites.length, `${root.area} 的保守回退是空的`).toBeGreaterThan(0);
-      expect(root.suites).toEqual(rule?.suites);
+  it("每条 mustObserve 规则的回退非空(空 = 新文件退回什么都不跑)", () => {
+    const rules = RADIUS.filter((rule) => rule.mustObserve === true);
+    expect(rules.length, "没有 mustObserve 规则:这张表已经没什么可保护的").toBeGreaterThan(0);
+    for (const rule of rules) {
+      // `suites` 空 = "新文件退回什么都不跑" = 静默少选,正是这组断言要防的那件事。
+      expect(rule.suites.length, `${rule.area} 的保守回退是空的`).toBeGreaterThan(0);
     }
   });
 
-  it("反过来也成立:`mustObserve` 的每条规则都在表里(推导不会漏)", () => {
-    const observed = RADIUS.filter((rule) => rule.mustObserve === true).map((rule) => rule.area);
-    expect(INPUT_ROOTS.map((root) => root.area)).toEqual(observed);
+  it("未观测的新文件:map 里没有它,仍选中该区域的 suites,且 mustObserve 为真", () => {
+    const file = "rulesets/zz-unrecorded.json";
+    // 前提钉住:它真的不在盘上、真的不在 map 里。否则下面验的就是另一件事。
+    expect(existsSync(join(repoRoot, file)), "这条断言要一个盘上不存在的新文件").toBe(false);
+    expect(invert(loadInputsMap(repoRoot)).get(file), "map 里居然有它").toBeUndefined();
+
+    const decision = decide({
+      paths: [file],
+      workspaces,
+      // 盘上有什么全不影响这条判据:回退是表的性质,不是磁盘的性质。
+      exists: () => false,
+    });
+    expect(decision.scripts).toContain("test:vm");
+    expect(decision.graphFiles, "数据文件进不了图,这条腿为空才是正常的").toEqual([]);
+    // 没人观测到它 → 未观测红线的条件成立。它红得起来,是因为回退给了候选;
+    // 回退为空时这里同样成立却没有候选——那才是要防的静默少选。
+    expect(mustObserve({ path: file, workspaces })).toBe(true);
+  });
+
+  it("已删除的文件仍选中 test:vm(旧路径仍在 ChangeSet 里,盘上已经没了)", () => {
+    const file = "rulesets/zz-deleted.json";
+    expect(existsSync(join(repoRoot, file)), "这条断言要一个已被删除的路径").toBe(false);
+    // 删除走的是同一套前缀规则:判据不读磁盘,只读路径。
+    expect(suitesFor(file)).toEqual(["test:vm"]);
+    expect(decide({ paths: [file], workspaces, exists: () => false }).scripts).toContain("test:vm");
   });
 });

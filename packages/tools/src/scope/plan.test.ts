@@ -17,9 +17,9 @@
  * 全部是静态读文件与纯函数调用,不起进程、不跑测试。
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, matchesGlob, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { workspacesOf } from "./build-outputs.ts";
 import { GATES_CASES, decide } from "./change-radius.ts";
@@ -29,6 +29,7 @@ import {
   chainScriptNames,
   chainProjects,
   fullPlan,
+  isCovered,
   leavesOf,
   projectsIn,
   runProjects,
@@ -50,7 +51,56 @@ const workspaces = workspacesOf(repoRoot);
 /** 产物当作都在盘上:组合断言要验的是计划代数,不是"没 build 就退回全量"那条分支。 */
 const decideOn = (paths: readonly string[]) => decide({ paths, workspaces, exists: () => true });
 
-const configText = (): string => readFileSync(join(repoRoot, "vitest.config.ts"), "utf8");
+type ProjectConfig = {
+  readonly name: string;
+  readonly include: readonly string[];
+  readonly exclude: readonly string[];
+};
+
+/**
+ * `vitest.config.ts` 的 project 表。**import 它求值**,不拿正则切文本。
+ *
+ * 这里曾经是 `configText().indexOf('name: "all"')` 切一刀再断言切片里没有 `VM_TESTS`:
+ * 它看着像在核对"all 包含 vm",实际只核对"这两行之间的文本长什么样"。配置换个换行、
+ * 把常量展开成字面量、把 `exclude` 改成 `include` 的写法,切片就切到别处——而**切错位不会红**,
+ * 它只会让那两条 `not.toContain` 安静地成立。
+ *
+ * 求值之后 `include` / `exclude` 里的常量(`E2E_TESTS`、`VM_TESTS`…)已经是数组,于是可以直接
+ * 问"这个 project 拾取这个文件吗"。同一份写法在 `test-layers.test.ts` 里已经跑着。
+ */
+const projectsOf = async (): Promise<readonly ProjectConfig[]> => {
+  // specifier 放在变量里:根配置不在 `packages/tools` 这个编译单元里(rootDir 不含仓库根),
+  // 而运行时的 Node 类型擦除直接执行它。
+  const specifier = pathToFileURL(join(repoRoot, "vitest.config.ts")).href;
+  const loaded = (await import(specifier)) as {
+    default: { test: { projects: readonly { test: ProjectConfig }[] } };
+  };
+  return loaded.default.test.projects.map((project) => project.test);
+};
+
+/** 配置说这个 project 拾取这个文件吗(include 命中且 exclude 不命中)。 */
+const picks = (project: ProjectConfig, file: string): boolean =>
+  project.include.some((glob) => matchesGlob(file, glob)) &&
+  !project.exclude.some((glob) => matchesGlob(file, glob));
+
+/**
+ * `apps/*` 与 `packages/*` 下的所有测试文件(仓库相对、POSIX 分隔、已排序)。
+ *
+ * 样本来自**磁盘**而不是配置的 include:拿 include 里的 glob 去当样本,`picks` 与它同源,
+ * 包含关系会变成一句恒真的自证。
+ */
+const repoTestFiles = (): readonly string[] =>
+  ["apps", "packages"]
+    .flatMap((parent) =>
+      readdirSync(join(repoRoot, parent), { recursive: true, encoding: "utf8" }).map((name) =>
+        [parent, name.split(sep).join("/")].join("/"),
+      ),
+    )
+    .filter(
+      (file) =>
+        file.endsWith(".test.ts") && !file.includes("/dist/") && !file.includes("/node_modules/"),
+    )
+    .sort();
 
 describe("展开:`node --run` 跟到底,环引用不死循环", () => {
   it("leavesOf 把 verify 展开成叶子:test:all 的命令体在里面,引用本身不在", () => {
@@ -106,26 +156,54 @@ describe("覆盖的两个来源:脚本名与 project 集", () => {
     expect(names.has("test:gates")).toBe(false);
   });
 
-  it("PROJECT_CONTAINS 与 vitest.config.ts 对得上,且 gates 不在任何父池子里", () => {
-    const config = configText();
-    const names = new Set(
-      [...config.matchAll(/name: "([a-z0-9]+)"/gu)].map((match) => match[1] ?? ""),
-    );
+  it("PROJECT_CONTAINS 与 vitest.config.ts 对得上,且 gates 不在任何父池子里", async () => {
+    const projects = await projectsOf();
+    const byName = new Map(projects.map((project) => [project.name, project]));
     for (const [parent, children] of Object.entries(PROJECT_CONTAINS)) {
-      expect(names.has(parent), `vitest.config.ts 里没有 project ${parent}`).toBe(true);
+      expect(byName.has(parent), `vitest.config.ts 里没有 project ${parent}`).toBe(true);
       for (const child of children) {
-        expect(names.has(child), `vitest.config.ts 里没有 project ${child}`).toBe(true);
+        expect(byName.has(child), `vitest.config.ts 里没有 project ${child}`).toBe(true);
       }
     }
     // 包含关系的**内容**也是事实:`all` 的 include 就是 unit ∪ e2e ∪ vm 那一批文件,
     // 它排除的只有 gates / slow / sandbox / gen-cli —— 所以 `gates` 永远不会被吞掉。
     expect(Object.values(PROJECT_CONTAINS).flat()).not.toContain("gates");
-    const start = config.indexOf('name: "all"');
-    const block = config.slice(start, config.indexOf('name: "unit"', start));
-    expect(block).not.toContain("E2E_TESTS");
-    expect(block).not.toContain("VM_TESTS");
-    // 而 unit 才是排掉 e2e/vm 的那一个:反过来验证一下切片没错位。
-    expect(configText().slice(configText().indexOf('name: "unit"'))).toContain("VM_TESTS");
+
+    const files = repoTestFiles();
+    expect(files.length, "一个测试文件都没数到:下面三条会静默成立").toBeGreaterThan(40);
+    const pickedBy = (name: string): readonly string[] => {
+      const project = byName.get(name);
+      expect(project, `vitest.config.ts 里没有 project ${name}`).toBeDefined();
+      return files.filter((file) => picks(project as ProjectConfig, file));
+    };
+
+    // 子集方向:每个子 project 拾取的文件,父 project 也拾取。这才能拿 `all` 当重量。
+    for (const [parent, children] of Object.entries(PROJECT_CONTAINS)) {
+      const parentFiles = new Set(pickedBy(parent));
+      for (const child of children) {
+        const leaked = pickedBy(child).filter((file) => !parentFiles.has(file));
+        expect(leaked, `这些文件被 ${child} 拾取、${parent} 却没拾取:${leaked.join(", ")}`).toEqual(
+          [],
+        );
+      }
+    }
+
+    // 反方向:不在任何子 project 里、却被 `all` 拾取的文件 = 被声明为"包含"却真的没人跑。
+    const childFiles = new Set(Object.values(PROJECT_CONTAINS).flat().flatMap(pickedBy));
+    const orphan = pickedBy("all").filter((file) => !childFiles.has(file));
+    expect(
+      orphan,
+      `这些文件只在 all 里:收口跑了它,分档设定里却没有任何族对它负责:${orphan.join(", ")}`,
+    ).toEqual([]);
+
+    // `gates` 确实在父池子之外——这一条从配置推导,不是从 `PROJECT_CONTAINS` 抄。
+    const covered = new Set([...childFiles, ...pickedBy("all")]);
+    const gatesFiles = pickedBy("gates");
+    expect(gatesFiles.length, "gates project 没拾取任何文件:这条断言会静默成立").toBeGreaterThan(0);
+    expect(
+      gatesFiles.filter((file) => covered.has(file)),
+      "gates 的文件被某个父池子收进去了:于是收口会把它当已覆盖,实际没跑",
+    ).toEqual([]);
   });
 });
 
@@ -199,12 +277,14 @@ describe("fullPlan:只补差集,不重复执行", () => {
   it("extras 与去重后的 run 恰好切分 runs(既不丢也不重复)", () => {
     const runs = runsFor({ scripts, decision: decideOn(["packages/tools/src/gates-harness.ts"]) });
     const plan = fullPlan({ scripts, chain: FULL_CHAIN, runs });
-    const deduped = runs.filter((run) => !plan.extras.includes(run));
+    // 按**标签**分,不按对象同一性:`includes(item)` 判引用,构造一变就会静默把两边算错。
+    const extras = plan.extras.map(labelOf);
+    const deduped = runs.filter((run) => !extras.includes(labelOf(run)));
     expect(deduped.length + plan.extras.length).toBe(runs.length);
-    // 逐条对得上:同一个 RunItem 不会既在链侧又在 extras 侧。
-    for (const item of plan.extras) expect(deduped).not.toContain(item);
-    // 结论:门禁自测是链唯一漏掉的一族。
-    expect(plan.extras.map(labelOf)).toEqual(["test:gates"]);
+    // 逐条对得上:同一条 run 不会既在链侧又在 extras 侧。
+    for (const label of extras) expect(deduped.map(labelOf)).not.toContain(label);
+    // 结论:门禁自测是链唯一漏掉的那一族。
+    expect(extras).toEqual(["test:gates"]);
   });
 });
 
@@ -222,7 +302,8 @@ describe("fullPlan:只补差集,不重复执行", () => {
  *
  * 1. 只靠链时,差集**恰为已知的那个洞**(`test:gates`;engine 源码 / 规则取值 / 根 package.json
  *    三处为空)。它证明"洞是真的",也证明补差集不是把所有东西都往 extras 里塞。
- * 2. 链 + extras 之后**一条不剩**:`D ⊆ F` 成立。
+ * 2. `runs` 被「链已覆盖」与 `extras` **划分**:每一条要么已在链跑过,要么被 extras 补上;
+ *    两边不重叠(重叠 = 同一批文件跑第二遍),也不遗漏(遗漏 = `D ⊄ F`)。
  *
  * T4 之后,这个洞的形状变了两处,断言跟着变——两处都不是"放宽",而是**预期变小**:
  *
@@ -273,15 +354,33 @@ describe("五个代表性改动:D ⊆ F", () => {
     const decision = decideOn([path]);
     const runs = runsFor({ scripts, decision });
     const plan = fullPlan({ scripts, chain: FULL_CHAIN, runs });
+    const extras = plan.extras.map(labelOf);
 
     // 第一问:链漏掉的恰好是 `chainGap`(不是"全都漏"也不是"一条不漏")。
     expect(uncoveredRuns({ scripts, chain: FULL_CHAIN, runs }).map(labelOf)).toEqual([...chainGap]);
-    expect(plan.extras.map(labelOf)).toEqual([...chainGap]);
+    expect(extras).toEqual([...chainGap]);
 
-    // 第二问:链 + extras 之后一条不剩 —— 这就是 `D ⊆ F` 的机器表达。
+    // 第二问:`runs` 被「链已覆盖」与「extras」划成两个不相交的集合,两侧合起来恰好是全体。
+    //
+    // 这里曾经是 `uncoveredRuns({..., extras})` 为空——那句是**恒真式**:`extras` 的定义就是
+    // `fullPlan` 算出的没覆盖项,把它传回去当然一条不剩。它对任何实现都成立,所以那里真出
+    // 问题也看不出来。下面三条换成可错的形状:
+    const covered = chainProjects(scripts, FULL_CHAIN);
+    const coveredScripts = chainScriptNames(scripts, FULL_CHAIN);
+    const byChain = runs.filter((run) => isCovered(scripts, run, covered, coveredScripts));
+    const byExtras = runs.filter((run) => extras.includes(labelOf(run)));
+
+    // (a) 不遗漏:`D ⊆ F` —— 每一条要么链跑过了,要么 extras 补上了。
     expect(
-      uncoveredRuns({ scripts, chain: FULL_CHAIN, runs, extras: plan.extras }),
+      runs.filter((run) => !byChain.includes(run) && !byExtras.includes(run)).map(labelOf),
       `${path} 的默认计划里有一步收口计划不执行:更严格的验证反而少跑了`,
     ).toEqual([]);
+    // (b) 不重复:已被链覆盖的 run 不在 extras 里(否则同一批文件跑第二遍)。
+    expect(
+      plan.extras.filter((run) => isCovered(scripts, run, covered, coveredScripts)).map(labelOf),
+      "extras 里有链已经跑过的项:收口会把同一批文件执行两次",
+    ).toEqual([]);
+    // (c) 划分完整:`runs` 一条不多一条不少地落在两侧。
+    expect(byChain.length + byExtras.length).toBe(runs.length);
   });
 });
