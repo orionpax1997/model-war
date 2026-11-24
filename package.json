@@ -9,8 +9,8 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "quick": "pnpm run fmt && pnpm run lint && pnpm run gate:toolchain && pnpm run gate:toolchain:quickjs && pnpm run gate:no-float && pnpm run gate:budget && pnpm run gate:prose && pnpm run gate:contract && pnpm run gate:prompt:commands && pnpm run gate:prompt:tools && pnpm run gate:rootfs",
-    "verify": "pnpm run quick && pnpm run test",
+    "quick": "pnpm run fmt && pnpm run lint && pnpm run gate:no-float && pnpm run gate:budget",
+    "verify": "pnpm run quick && pnpm run gate:static && pnpm run test",
     "verify:wide": "pnpm run verify && pnpm run gate:types && pnpm run gate:deps && pnpm run gate:declared-deps && pnpm run gate:drift && pnpm run gate:bench && pnpm run gate:runtime",
     "verify:kernel": "pnpm run build && pnpm run gate:sandbox && pnpm run test:kernel",
     "nightly": "pnpm run verify:wide && pnpm run test:gates && pnpm run test:slow && pnpm run gate:selfproof && pnpm run gate:cross-process && pnpm run gate:limits && pnpm run gate:budget:recheck && pnpm run verify:kernel && pnpm run mutate:engine:processor",
@@ -70,7 +70,8 @@
     "mutate:replay": "pnpm run build && stryker run stryker/replay.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=replay",
     "mutate:runner": "pnpm run build && stryker run stryker/runner.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=runner",
     "mutate:tools": "pnpm run build && stryker run stryker/tools.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=tools",
-    "mutate:baseline": "node packages/tools/src/mutation/accept-baseline.ts"
+    "mutate:baseline": "node packages/tools/src/mutation/accept-baseline.ts",
+    "gate:static": "pnpm run gate:toolchain && pnpm run gate:toolchain:quickjs && pnpm run gate:prose && pnpm run gate:contract && pnpm run gate:prompt:commands && pnpm run gate:prompt:tools && pnpm run gate:rootfs"
   },
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",

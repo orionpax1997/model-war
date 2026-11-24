@@ -13,7 +13,7 @@ This repository uses Matt Pocock's engineering skills (installed under `.pi/skil
 - code-review skill:Standards 与 Spec 两个子代理都用 `Review`(`.pi/agents/review.md`)派发。
 - research 任务：调研与探索一律派给 `Explore` 子代理，主线程只下指令和聚合结论，不自己读文件爬代码。派发时必须在 prompt 里写明「用 codegraph 查」,探索子代理优先调用 codegraph MCP 工具（见下节）,grep/find/read 只作补充。
 - 探索子代理的产出是结论 + 关键文件：行号引用，不是文件转储；不要让它整段贴源码回来。
-- 实现与修复期间运行 `pnpm run quick` 和相关测试；完成 review 修复后，由主线程运行 `pnpm run verify`。`verify` 是 `quick`（格式、lint、轻量门禁）加默认快速 `test`（unit + property）的唯一收口命令；Vitest 会为工作区依赖做增量构建。`verify:wide` 全量门禁、`test:gates`、`test:slow`、`gate:selfproof`、变异测试等专项质量检查仅在验收明确要求或改动直接影响其覆盖范围时运行，并说明原因。
+- 实现与修复期间运行 `pnpm run quick` 和相关测试；完成 review 修复后，由主线程运行 `pnpm run verify`。`verify` 是 `quick`（格式、lint、禁浮点、预算结构——输入都在编辑面上）加 `gate:static`（工具版本耦合、散文禁抄取值、契约包清单、首条消息命令与宿主工具清单、rootfs 漂移——输入是入库事实）加默认快速 `test`（unit + property）的唯一收口命令。**改了 `prompts/`、`docs/`、`rulesets/`、依赖版本或 `sandbox-rootfs/` 之后跑 `quick` 是绿的，因为那些门禁不在 `quick` 里**：要么跑 `verify`，要么单跑对应的 `gate:*`；Vitest 会为工作区依赖做增量构建。`verify:wide` 全量门禁、`test:gates`、`test:slow`、`gate:selfproof`、变异测试等专项质量检查仅在验收明确要求或改动直接影响其覆盖范围时运行，并说明原因。
 
 ### 门禁纪律
 
@@ -28,12 +28,12 @@ This repository uses Matt Pocock's engineering skills (installed under `.pi/skil
 
 `.pi/skills/implement-spec/SKILL.md` 保持原样；以下三节覆盖该技能中分支、提交、合并、清理四步。
 
-| 分支 | 切自 | 生命期 |
-|---|---|---|
-| `main` | — | 恒绿；只接 hotfix 与收尾提交 |
-| `feature/<slug>` | `main` | 一个变更流；可作为 draft PR 基点；合回即删 |
-| `wt/<slug>-<NN>` | 当前变更流分支 | 一个本地工作区；合回即删 |
-| `exp/<slug>` | `main` | 长期对照实验（换规则版本、换运行时），不混进交付分支 |
+| 分支             | 切自           | 生命期                                               |
+| ---------------- | -------------- | ---------------------------------------------------- |
+| `main`           | —              | 恒绿；只接 hotfix 与收尾提交                         |
+| `feature/<slug>` | `main`         | 一个变更流；可作为 draft PR 基点；合回即删           |
+| `wt/<slug>-<NN>` | 当前变更流分支 | 一个本地工作区；合回即删                             |
+| `exp/<slug>`     | `main`         | 长期对照实验（换规则版本、换运行时），不混进交付分支 |
 
 hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 
@@ -62,14 +62,14 @@ hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 
 每个事实只有一个家。写或改文档时，先看它归谁：
 
-| 文档 | 唯一拥有 | 不写（留指针） |
-|---|---|---|
-| CONTEXT.md | 领域词汇与容易误用的概念 | 规则、架构、决策 |
-| docs/vision.md | 定位、服务对象、核心差异、非目标与产品取舍、长期风险 | 规则机制、工程方案、验收条款 |
-| docs/gdd.md | 玩法设计意图、不可从代码推导的约束、规则侧决策记录 | 精确规则与结算顺序、参数取值、工程实现 |
-| docs/hld.md | 架构与包拓扑、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 | 玩法规则、参数取值、需求条目 |
-| docs/adr/ | 决策记录：问题 / 方案 / 被否方案 / 长期约束 / 重评条件 | 当前实现、当前取值（会过期） |
-| docs/rules-v2/ | 面向模型的契约（生成物） | 私有实现细节 |
+| 文档           | 唯一拥有                                                             | 不写（留指针）                         |
+| -------------- | -------------------------------------------------------------------- | -------------------------------------- |
+| CONTEXT.md     | 领域词汇与容易误用的概念                                             | 规则、架构、决策                       |
+| docs/vision.md | 定位、服务对象、核心差异、非目标与产品取舍、长期风险                 | 规则机制、工程方案、验收条款           |
+| docs/gdd.md    | 玩法设计意图、不可从代码推导的约束、规则侧决策记录                   | 精确规则与结算顺序、参数取值、工程实现 |
+| docs/hld.md    | 架构与包拓扑、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 | 玩法规则、参数取值、需求条目           |
+| docs/adr/      | 决策记录：问题 / 方案 / 被否方案 / 长期约束 / 重评条件               | 当前实现、当前取值（会过期）           |
+| docs/rules-v2/ | 面向模型的契约（生成物）                                             | 私有实现细节                           |
 
 - 参数取值真源是 `rulesets/*.json`;`docs/rules-vN` 的数值表由它生成，文档里不复制取值。
 - **代码是真源，但契约不可删**：`docs/rules-vN/` 是模型唯一能读到的规则输入（相当于公开 API 文档），由代码、schema 与 `rulesets/` 生成，由漂移门禁保证不漂移。

@@ -1093,10 +1093,10 @@ it("散文禁抄取值门禁:抽不出参数名时按失败处理(空转反例)"
   expect(broken.output, broken.output).toContain("0 个键清单参数名");
 });
 
-it("散文禁抄取值门禁挂在 quick,且没被挪进按需 / 慢链", () => {
+it("散文禁抄取值门禁挂在 gate:static,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它必须挂在默认的快门禁上,否则散文里抄取值时没人拦。
-  expect(scripts["quick"] ?? "", "散文判据不在快门禁里").toContain("gate:prose");
+  expect(scripts["gate:static"] ?? "", "散文判据不在 gate:static 里").toContain("gate:prose");
   // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
   expect(scripts["gate:selfproof"] ?? "", "散文判据被挪进了按需门禁").not.toContain("gate:prose");
   expect(scripts["test:slow"] ?? "", "散文判据被挪进了慢链").not.toContain("gate:prose");
@@ -1174,10 +1174,12 @@ it("契约挂载门禁:目录说明里出现可写面时变红", () => {
   expect(script("gate:contract").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("契约挂载门禁挂在 quick,且没被挪进按需 / 慢链", () => {
+it("契约挂载门禁挂在 gate:static,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它守的那份生成物没有生成头注释,而日常入口是 `verify`——抓不到等于没有。
-  expect(scripts["quick"] ?? "", "契约挂载判据不在快门禁里").toContain("gate:contract");
+  expect(scripts["gate:static"] ?? "", "契约挂载判据不在 gate:static 里").toContain(
+    "gate:contract",
+  );
   // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
   expect(scripts["gate:selfproof"] ?? "", "契约判据被挪进了按需门禁").not.toContain(
     "gate:contract",
@@ -1264,10 +1266,12 @@ it("命令清单门禁:二进制那一节的标题换词时红在标题上(不�
   expect(script("gate:prompt:commands").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("命令清单门禁挂在 quick,且没被挪进按需 / 慢链", () => {
+it("命令清单门禁挂在 gate:static,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它零构建(读两份文本、比两个集合),而日常入口是 `verify`——抓不到等于没有。
-  expect(scripts["quick"] ?? "", "命令清单判据不在快门禁里").toContain("gate:prompt:commands");
+  expect(scripts["gate:static"] ?? "", "命令清单判据不在 gate:static 里").toContain(
+    "gate:prompt:commands",
+  );
   // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
   expect(scripts["gate:selfproof"] ?? "", "命令清单判据被挪进了按需门禁").not.toContain(
     "gate:prompt:commands",
@@ -1410,12 +1414,14 @@ it("工具清单门禁:抽不出探针场数常量时按失败处理(空转反�
   expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("工具清单门禁挂在 quick(紧跟命令清单门禁),且没被挪进按需 / 慢链", () => {
+it("工具清单门禁挂在 gate:static(紧跟命令清单门禁),且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它零构建(读三份文本、比三个集合),而日常入口是 `verify`——抓不到等于没有。
-  expect(scripts["quick"] ?? "", "工具清单判据不在快门禁里").toContain("gate:prompt:tools");
+  expect(scripts["gate:static"] ?? "", "工具清单判据不在 gate:static 里").toContain(
+    "gate:prompt:tools",
+  );
   // 位置:它紧跟在命令清单判据之后——两条判的是同一条首条消息的两节,排一起才读得懂报告。
-  expect(scripts["quick"] ?? "", "工具清单判据没跟在命令清单判据之后").toContain(
+  expect(scripts["gate:static"] ?? "", "工具清单判据没跟在命令清单判据之后").toContain(
     "gate:prompt:commands && pnpm run gate:prompt:tools",
   );
   // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
