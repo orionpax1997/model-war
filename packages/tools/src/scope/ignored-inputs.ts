@@ -36,9 +36,11 @@
  * `ignored-inputs.test.ts` 里那条「空清单不许当全过」)。
  *
  * ── 测试自己造的产物为什么不用登记 ──
- * `reports/`、`runs/`、`.scratch/`、`.vitest/` 这些落点在录制层就被 `isInputPath` 排除了
- * (`test-inputs.ts` 的 `OUTPUT_PREFIXES`):测试写它们、报告落它们,记进 map 只会让「我刚写的
- * 报告」变成「我依赖的输入」。它们在 map 里根本不出现,所以本门禁看不见它们,也就不需要豁免。
+ * `reports/`、`runs/`、`.scratch/` 这些**落点**(测试写它们、报告落它们)在录制层就被
+ * `classifyInput` 排除了(`test-inputs.ts` 的 `OUTPUT_ROOTS`);派生形状(`node_modules/`、
+ * `*.tsbuildinfo`、`.vitest/`、`.stryker-tmp/`,以及背后没有源码的 `dist/` 产物)同样排除——
+ * 两者用**同一张派生形状表**,就是本文件的 `DERIVED_RULES`(`observation` 字段说明观测口径
+ * 拿它怎么办)。它们在 map 里根本不出现,所以本门禁看不见它们,也就不需要豁免。
  *
  * ── 已知盲区:未 hook ≠ 没读 ──
  * 判据的输入是观测 map,map 的盲区一处都不假装没有:
@@ -69,6 +71,21 @@ export type DerivedRule = {
   readonly probe: string;
   /** 为什么它算「能从入库源码重算」。 */
   readonly why: string;
+  /**
+   * **观测口径**(`test-inputs.ts` 的 `classifyInput`)拿这条形状怎么办。
+   *
+   * “派生”与“不是输入”不是同一件事,二者在这张表里分开声明:
+   *
+   * - `"excluded"`:它只说明「这台机器装过 / 跑过」,选择器对它没有下一跳,
+   *   记进输入 map 只会把机器状态写成依赖。
+   * - `"source-backed"`:它 **是源码的产物**。有源码在背后时它就是那个源码文件的下一跳,
+   *   **算输入**(改那个源码,得能顺着产物找到读它的测试);背后没有源码时,它只能是
+   *   打包器额外塞进来的东西(标准链 `tsc -b` 不产出它),丢掉。
+   *
+   * 写在这张表里而不写在 `test-inputs.ts` 里,是翻工之后的结论:口径散成两份时,一边加了一种
+   * 形状、另一边还是旧样子,map 会静默变窄。派生形状只有**这一处**真源。
+   */
+  readonly observation: "excluded" | "source-backed";
 };
 
 /**
@@ -76,6 +93,10 @@ export type DerivedRule = {
  *
  * 每一条都回答同一个问题:**删掉它、在一台干净机器上跑 `pnpm install && tsc -b`,它回不回来?**
  * 回得来才在这里。`reports/` / `archive/` 这类回不来的,一条都不许进来(下一条清单盯着这件事)。
+ *
+ * `coverage/` 不在这里:这个仓库里没有任何工具往它落东西、`.gitignore` 也没忽略它。往里加一条
+ * 形状要能过 `probe`(下面第三条断言要求探针真的被 `git check-ignore` 命中),而一条不存在
+ * 的形状只能靠伪造探针混进来——那正是白名单变宽的输法。
  */
 export const DERIVED_RULES: readonly DerivedRule[] = [
   {
@@ -83,30 +104,35 @@ export const DERIVED_RULES: readonly DerivedRule[] = [
     value: "node_modules",
     probe: "model-war-probe-nm/node_modules/probe/index.js",
     why: "依赖树:由 pnpm-lock.yaml 重算",
+    observation: "excluded",
   },
   {
     kind: "segment",
     value: "dist",
     probe: "packages/model-war-probe/dist/index.js",
-    why: "tsc -b 的产物:由入库源码重算",
+    why: "tsc -b 的产物:由入库源码重算(有源码在背后才算输入)",
+    observation: "source-backed",
   },
   {
     kind: "suffix",
     value: ".tsbuildinfo",
     probe: "packages/model-war-probe/tsconfig.tsbuildinfo",
     why: "tsc -b 的增量状态:删掉只会变慢,不影响结果",
+    observation: "excluded",
   },
   {
     kind: "segment",
     value: ".vitest",
     probe: ".vitest/probe.json",
     why: "vitest 的缓存与报告落点:每次运行现造",
+    observation: "excluded",
   },
   {
     kind: "segment",
     value: ".stryker-tmp",
     probe: ".stryker-tmp/probe/index.js",
     why: "变异测试的沙箱副本:由 mutate:* 现造",
+    observation: "excluded",
   },
 ];
 

@@ -35,8 +35,9 @@ import {
 import { describeDeleted, probeTargets, runsFor, unobservedGap } from "./check.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
 import {
+  classifyInput,
   currentFingerprint,
-  isInputPath,
+  inputScopeOf,
   loadInputsMap,
   snapshotStaleMessage,
 } from "./test-inputs.js";
@@ -394,8 +395,34 @@ describe("观测 map:它自己也要有判据", () => {
     ).toEqual([]);
   });
 
-  it("map 里没有混进产物路径(报告与对局产物不是输入)", () => {
-    expect(inputs.filter((input) => !isInputPath(input))).toEqual([]);
+  /**
+   * 入库 map 与**现在的**观测口径必须一致。口径一变(比如这次把 `…/dist/` 从「一律算输入」
+   * 改成按「背后有没有源码」判),这条就在这里红:map 里还留着现在不算输入的路径。
+   * 判据只有一处(`classifyInput`),这里拿它过一遍入库数据——不是另写一份形状清单。
+   *
+   * 与「快照过期即红」同一条例外:**正在录制**时不比。那一刻盘上还是旧 map,而口径刚刚换过,
+   * 比下去就是"必须先重录、可重录又必须先过这一条"。录制结束后同一条断言在 `test` / `check`
+   * 上照样跑,口径与快照对不上的后果仍会回来。
+   */
+  it("map 里没有混进产物或派生路径(落点产物、node_modules、无源码的 dist 产物都不是输入)", () => {
+    const scope = inputScopeOf(repoRoot);
+    const stale = inputs
+      .map((input) => ({ input, verdict: classifyInput({ path: input, ...scope }) }))
+      .filter(({ verdict }) => verdict.kind === "excluded");
+    if (process.env["MODELWAR_TEST_INPUTS_FILE"] === undefined) {
+      expect(
+        stale,
+        "这些路径现在不算输入,但还留在入库 map 里(重录:`node --run observe:inputs:accept`):" +
+          unexplainable(stale.map(({ input }) => input)),
+      ).toEqual([]);
+    } else {
+      // 录制里也要留一条不恒真的:口径本身必须仍能把「派生的产物」判出来,否则上面那段
+      // 在录制外的断言就成了"一份没人能生成的清单"。
+      expect(
+        classifyInput({ path: "apps/cli/dist/modelwar.mjs", ...scope }).kind,
+        "口径认不出打包器的额外产物",
+      ).toBe("excluded");
+    }
   });
 
   it("recorder 挂在 worker 的 execArgv 上(拆掉它 map 会静默变空)", () => {

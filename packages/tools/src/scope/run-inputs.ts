@@ -65,8 +65,30 @@ const main = (): number => {
 
   // 指纹在**录制开始时**取:那次跑的就是这版 recorder / setup / project 划分。跑完再取会把
   // "录制期间有人改了 config" 这回事藏起来。
-  const recorded = aggregate(readFileSync(jsonl, "utf8"), repoRoot, fingerprint);
+  //
+  // 被排除的路径在这里**点名**:排除是口径在做判断,而不只是"没记下来"。它们不打出来的时候,
+  // 口径变宽(少记 = 少跑 = 绿)没有任何声音——最典型的是一次「本机 build 过」多出来的产物。
+  const excluded = new Map<string, string>();
+  const recorded = aggregate(
+    readFileSync(jsonl, "utf8"),
+    repoRoot,
+    fingerprint,
+    (path, verdict) => {
+      excluded.set(path, verdict.why);
+    },
+  );
   rmSync(scratch, { recursive: true, force: true });
+
+  if (excluded.size > 0) {
+    const sample = [...excluded.keys()].sort().slice(0, 10);
+    process.stdout.write(
+      `\n排除 ${String(excluded.size)} 条不算输入的路径(落点产物与派生形状;排除可见才不会被静默变宽):\n` +
+        sample.map((path) => `  ${path}  ← ${excluded.get(path) ?? ""}\n`).join("") +
+        (excluded.size > sample.length
+          ? `  … 另有 ${String(excluded.size - sample.length)} 条\n`
+          : ""),
+    );
+  }
 
   const testCount = Object.keys(recorded.files).length;
   if (testCount === 0) {

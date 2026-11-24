@@ -32,6 +32,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { sourceOf, workspacesOf } from "./build-outputs.ts";
+import { DERIVED_RULES, matchesDerivedRule } from "./ignored-inputs.ts";
 
 export const INPUTS_MAP_PATH = "test-inputs/inputs.json";
 
@@ -48,16 +50,20 @@ export const INPUTS_SCHEMA = 2;
  * - `vitest.record-inputs.setup.ts`:把"当前是哪个测试文件"贴成记录标签。标签一错,map 归错档。
  * - `vitest.config.ts`:决定哪个文件属于哪个 project。project 划分变了,`test:all` 的池子就变了,
  *   map 里"谁读什么"的集合也就不再是同一批测试跑出来的。
- * - 本文件(`test-inputs.ts`):聚合口径本身——`isInputPath` / `OUTPUT_PREFIXES` 决定哪些路径
+ * - 本文件(`test-inputs.ts`):聚合口径本身——`classifyInput` / `OUTPUT_ROOTS` 决定哪些路径
  *   算输入、怎么归并成键。它一宽松,map 就**静默变窄**(少记 = 少跑),而指纹不变的话
  *   没人会发现那是新口径录出来的。
  * - `run-inputs.ts`:录的是哪条命令、什么时候取指纹。录制口径一变(比如改成只跑一部分
  *   project),旧 map 照样"自洽",但它已经不是同一台仪器录的那份东西。
+ * - `ignored-inputs.ts`:派生/本机状态两类形状的**唯一**定义(`DERIVED_RULES`)。观测口径
+ *   直接吃这张表(见 `classifyInput`),于是「哪些算派生」只有一处真源。
+ * - `build-outputs.ts`:产物 → 源码的唯一映射(`sourceOf`)。观测口径用它判断 `dist/` 底下
+ *   一个产物背后有没有源码——没有源码的那类(打包器的额外产物)不算输入。
  *
- * 后两条是本轮补的:它们**同样能只让 map 变窄**,而原来的指纹看不见它们——保护一个口径,
- * 却漏掉定义这个口径的两个装配点,那枚指纹就只保护了一半。
+ * 后四条是本轮补的:它们**同样能只让 map 变窄**,而原来的指纹看不见它们——保护一个口径,
+ * 却漏掉定义这个口径的几个装配点,那枚指纹就只保护了一半。
  *
- * 代价是有意接受的:改这五个文件就要重录一次(实测约 110s),漂移检查本来也只在 nightly 上。
+ * 代价是有意接受的:改这七个文件就要重录一次(实测约 110s),漂移检查本来也只在 nightly 上。
  */
 export const WATCHED_FILES: readonly string[] = [
   "packages/tools/src/scope/recorder.ts",
@@ -65,6 +71,8 @@ export const WATCHED_FILES: readonly string[] = [
   "vitest.config.ts",
   "packages/tools/src/scope/test-inputs.ts",
   "packages/tools/src/scope/run-inputs.ts",
+  "packages/tools/src/scope/ignored-inputs.ts",
+  "packages/tools/src/scope/build-outputs.ts",
 ];
 
 /** 被监视的文件不见了也**进指纹**:删掉它,map 同样不再是它当初是的那份东西。 */
@@ -141,22 +149,88 @@ export const snapshotStaleMessage = (input: {
 };
 
 /**
- * 这些前缀下的路径是**产物**,不是输入:测试写它们、报告落它们。记进来会让 map 把"我刚写的
- * 报告"当成"我依赖的输入",于是改一个报告路径就触发一批无关用例。
+ * **落点**:测试写它们、报告落它们。它们不是「派生」(删掉重算不回来),只是**不是输入**:
+ * 记进来会让 map 把"我刚写的报告"当成"我依赖的输入",于是改一个报告路径就触发一批无关用例。
+ *
+ * 按**顶层**前缀判定是刻意的:这几条在 `.gitignore` 里就是顶层锚定的(`reports/`、`runs/**`、
+ * `.scratch/` …),不会出现在包目录里面。而**会在任意深度出现**的那几种(`node_modules/`、
+ * `.vitest/`、`*.tsbuildinfo`、`dist/`)不在这里——它们在 `ignored-inputs.ts` 的
+ * `DERIVED_RULES` 里按「整段」匹配,观测口径与门禁白名单共用那一张表。
  */
-const OUTPUT_PREFIXES: readonly string[] = [
-  "reports/",
-  "runs/",
-  ".vitest/",
-  ".stryker-tmp/",
-  ".scratch/",
-  ".workspaces/",
-  "node_modules/",
-  ".git/",
-];
+const OUTPUT_ROOTS: readonly string[] = ["reports/", "runs/", ".scratch/", ".workspaces/", ".git/"];
 
-export const isInputPath = (path: string): boolean =>
-  path !== "" && !OUTPUT_PREFIXES.some((prefix) => path.startsWith(prefix));
+/**
+ * 一条观测路径该不该进 map。**排除也带理由**:`aggregate` 会把它们交给调用方(见
+ * `onExcluded`),排除因此是**看得见**的,不是静默丢弃。
+ *
+ * 三类的分工:
+ *
+ * - `input`:真输入,进 map;
+ * - `output`:落点产物(`reports/`、`runs/` …),永远不是输入;
+ * - `derived`:派生形状(`DERIVED_RULES`),一般不进来——测试读到它只说明「这台机器装过 /
+ *   跑过」,而选择器对它没有下一跳。**唯一例外是 `dist/`**:它是源码的产物,
+ *   `apps/cli/dist/match/assemble.js` 就是 `apps/cli/src/match/assemble.ts` 的下一跳,
+ *   选择器靠这条反向映射(`build-outputs.ts` 的 `sourceOf`)把源码改动递到读它的测试上,
+ *   所以我们希望它**在** map 里。判据不是「在不在 dist 下」,而是「背后有没有源码」:
+ *   没有源码的 dist 产物只能是打包器额外塞进来的(`apps/cli/dist/modelwar.mjs` 由
+ *   `esbuild` 出,标准链 `tsc -b` 不产出它),它的存在取决于本机跑过哪条命令——
+ *   记进 map 就是让 map 随机器变:手工 build 过的机器多两条观测,干净机器没有,
+ *   `observe:inputs` 于是红在一句「你构建过」上。而它**不可能**被任何源码改动产出,
+ *   拿它当问法永远查不到东西,所以丢掉它不丢边。
+ */
+export type InputVerdict =
+  | { readonly kind: "input" }
+  | {
+      readonly kind: "excluded";
+      /** `output` = 落点产物;`derived` = 派生形状(含无源码可指的 `dist/` 产物)。 */
+      readonly reason: "output" | "derived";
+      /** 给审计看的一句话:被哪条规则、为什么排除。 */
+      readonly why: string;
+    };
+
+/**
+ * 口径需要的外部事实。只有一个,而且注入着:`dist/` 后面有没有源码是**盘上的事**,
+ * 塞进纯函数里就没法在测试里演「有 / 没有」两种情形了。
+ */
+export interface InputScope {
+  /** 这个产物路径背后有没有入库源码(`<ws>/dist/x.js` → `<ws>/src/x.ts` 存在)。 */
+  readonly backedArtifact: (path: string) => boolean;
+}
+
+/** 一条观测路径的判定(`isInputPath` 是它的布尔投影)。 */
+export const classifyInput = (input: { readonly path: string } & InputScope): InputVerdict => {
+  const path = input.path;
+  if (path === "") return { kind: "excluded", reason: "output", why: "空路径:没有可归并的键" };
+  const root = OUTPUT_ROOTS.find((prefix) => path.startsWith(prefix));
+  if (root !== undefined) return { kind: "excluded", reason: "output", why: `落点产物:${root}` };
+  const rule = DERIVED_RULES.find((candidate) => matchesDerivedRule(candidate, path));
+  if (rule === undefined) return { kind: "input" };
+  if (rule.observation === "source-backed" && input.backedArtifact(path)) return { kind: "input" };
+  if (rule.observation === "source-backed")
+    return {
+      kind: "excluded",
+      reason: "derived",
+      why: `${rule.value}:背后没有入库源码(标准链 \`tsc -b\` 产不出它,只能是打包器的额外产物)`,
+    };
+  return { kind: "excluded", reason: "derived", why: `${rule.value}:${rule.why}` };
+};
+
+export const isInputPath = (input: { readonly path: string } & InputScope): boolean =>
+  classifyInput(input).kind === "input";
+
+/**
+ * 绑定到一棵具体的树的口径。`aggregate` 与 `test-layers` 对入库 map 的自检共用它:
+ * 两处各拼一份的时候,「按哪棵树判有没有源码」就会有一处是错的,而错的哪一处只会少记。
+ */
+export const inputScopeOf = (repoRoot: string): InputScope => {
+  const workspaces = workspacesOf(repoRoot);
+  return {
+    backedArtifact: (path) => {
+      const source = sourceOf(path, workspaces);
+      return source !== undefined && existsSync(join(repoRoot, source));
+    },
+  };
+};
 
 interface Line {
   /** `<测试文件>::<用例名>`,setup 文件贴的标签。 */
@@ -184,15 +258,33 @@ const parseLines = (jsonl: string): readonly Line[] =>
  * 归一化这一步不能省:标签来自 `expect.getState().testPath`,它是**绝对路径**。直接把绝对路径
  * 写进 map,键就与 `git diff` 给的相对路径对不上——选择器永远匹配不到,而且匹配不到是静默的
  * (只是少跑)。同一台机器上它还带着 home 目录,换个 clone 位置 map 就全废。
+ *
+ * ── 排除必须看得见(`onExcluded`)──
+ *
+ * 被口径丢掉的路径不是"没发生":漏掉的是"这次录到了、但被我判成不算输入"。如果排除只表现为
+ * 「map 里没有它」,口径一变宽(少记 = 少跑 = 绿)就没人看得见。所以这里把每一条被丢掉的路径
+ * 连判定理由一起交给调用方,录制入口(`run-inputs.ts`)把它打进日志——每次录制都能对着这份
+ * 清单问一句「这些真的都不该是输入吗」。
  */
-export const aggregate = (jsonl: string, repoRoot: string, fingerprint: string): InputsMap => {
+export const aggregate = (
+  jsonl: string,
+  repoRoot: string,
+  fingerprint: string,
+  onExcluded?: (path: string, verdict: Extract<InputVerdict, { kind: "excluded" }>) => void,
+): InputsMap => {
   const prefix = `${repoRoot.replace(/\/+$/, "")}/`;
   const relative = (path: string): string =>
     path.startsWith(prefix) ? path.slice(prefix.length) : path;
+  const scope = inputScopeOf(repoRoot);
   const byFile = new Map<string, Set<string>>();
   for (const line of parseLines(jsonl)) {
     const file = relative(line.t.split("::")[0] ?? "");
-    if (file === "" || !isInputPath(line.p)) continue;
+    if (file === "") continue;
+    const verdict = classifyInput({ path: line.p, ...scope });
+    if (verdict.kind === "excluded") {
+      onExcluded?.(line.p, verdict);
+      continue;
+    }
     const set = byFile.get(file) ?? new Set<string>();
     set.add(line.p);
     byFile.set(file, set);
