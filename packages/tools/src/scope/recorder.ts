@@ -25,6 +25,19 @@
  * - **只记 `open` 与 `spawn`**:`stat` / `access` 报告的是"探测",不是"输入"。
  * - **每条记录立刻落盘**:缓冲到 `exit` 时一次写,在 worker 里等不到那个事件(实测没有
  *   一次 flush 发生),而丢记录的方向是"少跑"。
+ *
+ * ── 一条边界:嵌套的测试运行不继承观测器 ──
+ *
+ * `spawn` 注入的本意是让**打好的 CLI 产物**里的读盘也进 map。但逐文件探针
+ * (`related-probe.ts`)在一个用例里 spawn `vitest related …`——那是**整套测试的又一次运行**。
+ * 把观测器递进去,里面那批测试的读盘会被记到**外层那个用例**头上(标签是继承来的),map 里于
+ * 是出现"探针测试读了 651 个文件",进而"改任意源码都选中探针自身"。归错档比不记更坏:它造出
+ * 一条不存在的边,而那条边还很贵。所以对 `vitest` 这个执行体,不注入也不继承观测变量。
+ *
+ * 未观测 ≠ 没读:模块**加载期**的读盘(在 `beforeAll` 贴标签之前)落不下来——对照物是
+ * `packages/engine/src/sandbox.test.ts`,它在模块顶层读了 `rulesets/v1.json` 与
+ * `fixtures/guest/*.js`,而 map 里根本没有这一项。补齐需要另开一笔:标签来自
+ * `expect.getState()`,加载期还没有它。
  */
 
 import { createRequire } from "node:module";
@@ -47,6 +60,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const RECORDER_URL = pathToFileURL(
   fileURLToPath(new URL("./recorder.ts", import.meta.url)),
 ).href;
+
+/** 观测链路的三个环境变量:递进子进程时要带,遇到嵌套测试运行时要剥。 */
+const OBSERVER_ENV: readonly string[] = [
+  "MODELWAR_TEST_INPUTS_FILE",
+  "MODELWAR_REPO_ROOT",
+  "MODELWAR_TEST_ID",
+];
+
+/**
+ * 嵌套的测试执行体(`node_modules/vitest/vitest.mjs`)。命中的 spawn 不继承观测器——理由
+ * 见文件头注的最后一段。
+ */
+const NESTED_RUNNER = /(^|[\\/])vitest(?:\.mjs)?$/;
 
 const target = (): string | undefined => process.env["MODELWAR_TEST_INPUTS_FILE"];
 
@@ -152,13 +178,20 @@ export const installRecorder = (): boolean => {
           ? { ...(existing as Record<string, unknown>) }
           : {};
       const env = { ...((options["env"] as Record<string, string> | undefined) ?? process.env) };
-      const already = env["NODE_OPTIONS"] ?? "";
-      if (!already.includes(RECORDER_URL)) {
-        env["NODE_OPTIONS"] = `${already} --import=${RECORDER_URL}`.trim();
-      }
-      for (const key of ["MODELWAR_TEST_INPUTS_FILE", "MODELWAR_REPO_ROOT", "MODELWAR_TEST_ID"]) {
-        const value = process.env[key];
-        if (value !== undefined) env[key] = value;
+      if (script !== undefined && NESTED_RUNNER.test(script)) {
+        // 嵌套的测试运行:观测器不进这一层。环境变量也得剥干净——`vitest.config.ts` 的
+        // `RECORD_EXEC_ARGV` 只看 `MODELWAR_TEST_INPUTS_FILE`,留着它,子进程的 worker 会
+        // 自己把观测器装上(而 `NODE_OPTIONS` 那条路已经被 vitest 剔掉了)。
+        for (const key of OBSERVER_ENV) delete env[key];
+      } else {
+        const already = env["NODE_OPTIONS"] ?? "";
+        if (!already.includes(RECORDER_URL)) {
+          env["NODE_OPTIONS"] = `${already} --import=${RECORDER_URL}`.trim();
+        }
+        for (const key of OBSERVER_ENV) {
+          const value = process.env[key];
+          if (value !== undefined) env[key] = value;
+        }
       }
       options["env"] = env;
       if (optionsIndex === 1) {
