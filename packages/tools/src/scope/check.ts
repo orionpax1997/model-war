@@ -363,6 +363,9 @@ const main = (argv: readonly string[]): number => {
       paths: files,
       workspaces,
       exists: (path) => existsSync(join(repoRoot, path)),
+      // 删除的路径**没有产物可言**:它们不进 `notBuilt`(否则删一个源码文件就把计划退回全量)。
+      // 口径只有一份——就在 `probeTargets` 里,这里递过去而不另算。
+      deleted: targets.deleted,
     });
 
   let decision: ReturnType<typeof decide>;

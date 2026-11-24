@@ -247,6 +247,52 @@ describe("decide:图与表各管半边", () => {
     expect(decision.scripts).toEqual([...ALWAYS, "test:all"]);
   });
 
+  /**
+   * **删除的文件没有产物可言。**
+   *
+   * `notBuilt` 问的是"还在的文件跟上构建了吗",而删除的文件的产物永远不会出现——拿它去
+   * 触发退回全量,得到的是一个没有事实支撑的 `test:all`(本分支删掉三份 `landing-gate` 时实测:
+   * `radius: test:all`)。它与 `总会问"有没有测试候选"` 是同一个根因的两面:**删除不是改动**。
+   *
+   * 三条断言盯三个方向:删除不进 `notBuilt`;`M` / `A` 的产物缺失**仍然**进(不能把"没构建"
+   * 整类放过);删了又建不算删除(它仍有行为,产物照旧必须存在)。
+   */
+  it("删除的条目不进 `notBuilt`(删一个源码文件不该把计划退回全量)", () => {
+    const gone = "packages/engine/src/runner/quickjs.ts";
+    const decision = decide({ paths: [gone], workspaces, exists: () => false, deleted: [gone] });
+    expect(decision.notBuilt).toEqual([]);
+    expect(decision.scripts).not.toContain("test:all");
+  });
+
+  it("反方向:`M` / `A` 的产物缺失仍然进 `notBuilt`(「没构建」整类不能被放过)", () => {
+    const live = "packages/engine/src/runner/quickjs.ts";
+    // 不传 `deleted` = 路径还在(修改/新增两种状态的形状相同:文件存在、产物缺失)。
+    const decision = decide({ paths: [live], workspaces, exists: () => false });
+    expect(decision.notBuilt.length).toBe(2);
+    expect(decision.scripts).toContain("test:all");
+  });
+
+  it("删了又建不算删除:它仍有行为,产物照旧必须存在", () => {
+    const rewritten = "packages/engine/src/runner/quickjs.ts";
+    // 口径只有一份:删除集合由 `probeTargets` 算,这里递过去而不是另写一条过滤。
+    const targets = probeTargets({
+      entries: [
+        { status: "D", path: rewritten },
+        { status: "A", path: rewritten },
+      ],
+      files: [rewritten],
+    });
+    expect(targets.deleted).toEqual([]);
+    const decision = decide({
+      paths: [rewritten],
+      workspaces,
+      exists: () => false,
+      deleted: targets.deleted,
+    });
+    expect(decision.notBuilt.length).toBe(2);
+    expect(decision.scripts).toContain("test:all");
+  });
+
   it("没登记的路径**抛错**而不是跳过(静默跳过等于假绿)", () => {
     expect(() => decideOn(["future-pkg/src/index.ts"])).toThrow(UnregisteredPathError);
   });
