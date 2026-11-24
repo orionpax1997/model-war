@@ -114,6 +114,12 @@ export const RADIUS: readonly Radius[] = [
     why: "单测的夹具(黄金档等),被读成文本而不是 import——图对它没有边",
   },
   {
+    area: "packages/engine/src/fixtures/guest",
+    mustObserve: true,
+    suites: ["test:vm"],
+    why: "guest 侧夹具脚本:被 `readFileSync` 读成文本塞进 VM,不是 import——图对它没有边;读它的两条用例(`sandbox` / `quickjs`)都在 vm 族。模块加载期读盘(票 T6 修好了归属)才让它被观测到,而没规则的输入会让选择器抛错",
+  },
+  {
     area: "packages/schema/script-api",
     mustObserve: true,
     suites: ["test:vm"],

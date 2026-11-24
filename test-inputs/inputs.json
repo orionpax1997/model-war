@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "fingerprint": "66879d8f4f752fc8",
+  "fingerprint": "ff18ce3733928acd",
   "files": {
     "apps/cli/src/agent-session-archive.test.ts": [
       "packages/tools/src/ast.ts",
@@ -95,6 +95,13 @@
       "maps/corridor-split.json",
       "maps/fortress-core.json",
       "maps/open-clash.json"
+    ],
+    "apps/cli/src/map-lint/pool-lint.test.ts": [
+      "maps/corridor-split.json",
+      "maps/open-clash.json"
+    ],
+    "apps/cli/src/ruleset-file.test.ts": [
+      "rulesets/v2.json"
     ],
     "apps/cli/src/selection/grid-selection.test.ts": [
       "apps/cli/dist/exit-codes.js",
@@ -312,6 +319,10 @@
       "packages/engine/sandbox-runtime/runtime.iife.js",
       "rulesets/v2.json"
     ],
+    "apps/cli/src/trial/match-run.test.ts": [
+      "maps/corridor-split.json",
+      "rulesets/v2.json"
+    ],
     "apps/cli/src/trial/run-trial-script.test.ts": [
       "apps/cli/dist/args.js",
       "apps/cli/dist/exit-codes.js",
@@ -427,14 +438,16 @@
       "rulesets/v2.json"
     ],
     "packages/engine/src/action-effects.test.ts": [
-      "packages/engine/sandbox-runtime/runtime.iife.js"
+      "packages/engine/sandbox-runtime/runtime.iife.js",
+      "rulesets/v2.json"
     ],
     "packages/engine/src/budget-mismatch.test.ts": [
       "benchmarks/cell-a-melee-pressure/script.js",
       "benchmarks/cell-b-expansion-economy/script.js",
       "benchmarks/cell-c-claim-no-harvest/script.js",
       "maps/open-clash.json",
-      "packages/engine/sandbox-runtime/runtime.iife.js"
+      "packages/engine/sandbox-runtime/runtime.iife.js",
+      "rulesets/v1.json"
     ],
     "packages/engine/src/dependency-boundary.test.ts": [
       ".dependency-cruiser.js",
@@ -815,10 +828,22 @@
       "packages/schema/dist/usage-evidence.js",
       "packages/schema/package.json"
     ],
+    "packages/engine/src/determinism.test.ts": [
+      "maps/open-clash.json",
+      "rulesets/v1.json"
+    ],
+    "packages/engine/src/driver/random.test.ts": [
+      "maps/open-clash.json"
+    ],
     "packages/engine/src/fixtures/fixtures.test.ts": [
       "maps/corridor-split.json",
       "maps/fortress-core.json",
-      "maps/open-clash.json"
+      "maps/open-clash.json",
+      "rulesets/v1.json"
+    ],
+    "packages/engine/src/observation-channel.test.ts": [
+      "maps/open-clash.json",
+      "rulesets/v1.json"
     ],
     "packages/engine/src/processor/production.test.ts": [
       "packages/schema/src/script-surface.ts"
@@ -843,17 +868,51 @@
       "packages/engine/src/processor/steps/step6-emit.ts",
       "packages/engine/src/processor/steps/step7-loop-guard.ts"
     ],
+    "packages/engine/src/processor/steps/step5-exception-event.test.ts": [
+      "rulesets/v1.json"
+    ],
+    "packages/engine/src/run-match.test.ts": [
+      "maps/open-clash.json",
+      "rulesets/v1.json"
+    ],
     "packages/engine/src/runner/probe-harness.test.ts": [
       "benchmarks/cell-a-melee-pressure/script.js",
+      "benchmarks/cell-b-expansion-economy/script.js",
+      "benchmarks/cell-c-claim-no-harvest/script.js",
       "maps/open-clash.json",
-      "packages/engine/sandbox-runtime/runtime.iife.js"
+      "packages/engine/sandbox-runtime/runtime.iife.js",
+      "rulesets/v1.json"
+    ],
+    "packages/engine/src/runner/quickjs.test.ts": [
+      "packages/engine/src/fixtures/guest/api-flood.js",
+      "packages/engine/src/fixtures/guest/event-spin.js",
+      "packages/engine/src/fixtures/guest/memory-hoard.js",
+      "packages/engine/src/fixtures/guest/memory-swallow.js",
+      "packages/engine/src/fixtures/guest/memory-transient.js"
+    ],
+    "packages/engine/src/sandbox-runtime/api-surface.test.ts": [
+      "benchmarks/cell-a-melee-pressure/script.js",
+      "maps/open-clash.json",
+      "rulesets/v1.json"
     ],
     "packages/engine/src/sandbox-runtime/artifact.test.ts": [
       "packages/engine/sandbox-runtime/runtime.iife.js"
     ],
+    "packages/engine/src/sandbox.test.ts": [
+      "maps/open-clash.json",
+      "packages/engine/src/fixtures/guest/march.js",
+      "packages/engine/src/fixtures/guest/random-march.js",
+      "rulesets/v1.json"
+    ],
     "packages/engine/src/snapshot/traversal-independence.test.ts": [
       "packages/engine/src/snapshot/snapshot.ts",
       "packages/replay/src/index.ts"
+    ],
+    "packages/engine/src/world/initial-state.test.ts": [
+      "maps/corridor-split.json",
+      "maps/fortress-core.json",
+      "maps/open-clash.json",
+      "rulesets/v1.json"
     ],
     "packages/gen/src/agent-prompt.test.ts": [
       "docs/rules-v2/README.md",
@@ -1451,6 +1510,8 @@
       "benchmarks/cell-c-claim-no-harvest/script.ts"
     ],
     "packages/tools/src/ci.test.ts": [
+      ".github/workflows/fast.yml",
+      ".github/workflows/nightly.yml",
       "apps/cli/tsconfig.json",
       "package.json",
       "packages/engine/tsconfig.json",
@@ -1467,7 +1528,8 @@
       "docs/rules-v2/README.md",
       "docs/rules-v2/api.md",
       "docs/rules-v2/examples/minimal.ts",
-      "docs/rules-v2/rules.md"
+      "docs/rules-v2/rules.md",
+      "packages/schema/src/contract-identity.ts"
     ],
     "packages/tools/src/doc-homes.test.ts": [
       "CONTEXT.md",
@@ -1475,6 +1537,160 @@
       "docs/hld.md",
       "docs/rules-v2/api.md",
       "docs/vision.md"
+    ],
+    "packages/tools/src/gate/vacuous.test.ts": [
+      "packages/tools/src/allowlist.ts",
+      "packages/tools/src/api-doc.test.ts",
+      "packages/tools/src/api-example-compile.test.ts",
+      "packages/tools/src/ast.ts",
+      "packages/tools/src/benchmarks.test.ts",
+      "packages/tools/src/benchmarks/build-benchmarks.ts",
+      "packages/tools/src/benchmarks/compile.ts",
+      "packages/tools/src/benchmarks/run-benchmarks-gate.ts",
+      "packages/tools/src/budget-recheck/run-budget-recheck-gate.ts",
+      "packages/tools/src/ci-workflows.ts",
+      "packages/tools/src/ci.test.ts",
+      "packages/tools/src/contract-package.test.ts",
+      "packages/tools/src/contract-package.ts",
+      "packages/tools/src/contract-tree.test.ts",
+      "packages/tools/src/contract-tree.ts",
+      "packages/tools/src/cross-process/run-cross-process-gate.ts",
+      "packages/tools/src/doc-homes.test.ts",
+      "packages/tools/src/gate/budget-gate.ts",
+      "packages/tools/src/gate/declared-deps-gate.ts",
+      "packages/tools/src/gate/no-float-gate.ts",
+      "packages/tools/src/gate/quickjs-coupling.test.ts",
+      "packages/tools/src/gate/run-budget-gate.ts",
+      "packages/tools/src/gate/run-contract-gate.ts",
+      "packages/tools/src/gate/run-declared-deps-gate.ts",
+      "packages/tools/src/gate/run-no-float-gate.ts",
+      "packages/tools/src/gate/run-prompt-commands-gate.ts",
+      "packages/tools/src/gate/run-prompt-tools-gate.ts",
+      "packages/tools/src/gate/run-quickjs-coupling-gate.ts",
+      "packages/tools/src/gate/run-scan-gate.ts",
+      "packages/tools/src/gate/scan-gate.test.ts",
+      "packages/tools/src/gate/scan-gate.ts",
+      "packages/tools/src/gate/source-tree.ts",
+      "packages/tools/src/gate/vacuous.test.ts",
+      "packages/tools/src/gate/vacuous.ts",
+      "packages/tools/src/gates-harness.ts",
+      "packages/tools/src/gates-slow.test.ts",
+      "packages/tools/src/gates.test.ts",
+      "packages/tools/src/gen-grid/run-gen-grid-gate.ts",
+      "packages/tools/src/generate/api-surface.ts",
+      "packages/tools/src/generate/artifact.ts",
+      "packages/tools/src/generate/builtin-globals.ts",
+      "packages/tools/src/generate/emit.ts",
+      "packages/tools/src/generate/minimal-skeleton.ts",
+      "packages/tools/src/generate/registry.ts",
+      "packages/tools/src/generate/rules-value-table.ts",
+      "packages/tools/src/generate/run-drift-gate.ts",
+      "packages/tools/src/generate/run-generate.ts",
+      "packages/tools/src/generate/script-surface.ts",
+      "packages/tools/src/generate/section.ts",
+      "packages/tools/src/generated/builtin-globals.ts",
+      "packages/tools/src/generated/script-surface.ts",
+      "packages/tools/src/index.ts",
+      "packages/tools/src/limits/run-limits-gate.ts",
+      "packages/tools/src/mutation/accept-baseline.ts",
+      "packages/tools/src/mutation/diagnose-html.test.ts",
+      "packages/tools/src/mutation/diagnose-html.ts",
+      "packages/tools/src/mutation/diagnose-markdown.ts",
+      "packages/tools/src/mutation/diagnose.test.ts",
+      "packages/tools/src/mutation/diagnose.ts",
+      "packages/tools/src/mutation/history.test.ts",
+      "packages/tools/src/mutation/history.ts",
+      "packages/tools/src/mutation/ratchet.test.ts",
+      "packages/tools/src/mutation/ratchet.ts",
+      "packages/tools/src/mutation/run-mutation-diagnose.ts",
+      "packages/tools/src/mutation/run-mutation-history.ts",
+      "packages/tools/src/mutation/run-mutation-ratchet-gate.ts",
+      "packages/tools/src/mutation/shards.ts",
+      "packages/tools/src/mutation/structural-attribution.ts",
+      "packages/tools/src/parse-source.test.ts",
+      "packages/tools/src/parse-source.ts",
+      "packages/tools/src/prompt-commands.test.ts",
+      "packages/tools/src/prompt-commands.ts",
+      "packages/tools/src/prompt-tools.test.ts",
+      "packages/tools/src/prompt-tools.ts",
+      "packages/tools/src/rules-doc-prose.test.ts",
+      "packages/tools/src/rules-doc-prose.ts",
+      "packages/tools/src/rules/declared-deps.test.ts",
+      "packages/tools/src/rules/declared-deps.ts",
+      "packages/tools/src/rules/forbidden-globals.test.ts",
+      "packages/tools/src/rules/forbidden-globals.ts",
+      "packages/tools/src/rules/host-bridge.test.ts",
+      "packages/tools/src/rules/host-bridge.ts",
+      "packages/tools/src/rules/identifier-chain.ts",
+      "packages/tools/src/rules/module-system.test.ts",
+      "packages/tools/src/rules/module-system.ts",
+      "packages/tools/src/rules/no-float.prop.ts",
+      "packages/tools/src/rules/no-float.test.ts",
+      "packages/tools/src/rules/no-float.ts",
+      "packages/tools/src/rules/run-prose-gate.ts",
+      "packages/tools/src/rules/script-entry.test.ts",
+      "packages/tools/src/rules/script-entry.ts",
+      "packages/tools/src/rules/script-lint.ts",
+      "packages/tools/src/rules/script-size.test.ts",
+      "packages/tools/src/rules/script-size.ts",
+      "packages/tools/src/sandbox-probes/constants.ts",
+      "packages/tools/src/sandbox-probes/lib.ts",
+      "packages/tools/src/sandbox-probes/run-probes.ts",
+      "packages/tools/src/sandbox-probes/webassembly.d.ts",
+      "packages/tools/src/sandbox-rootfs/build-rootfs.ts",
+      "packages/tools/src/sandbox-rootfs/executor-bridge.ts",
+      "packages/tools/src/sandbox-rootfs/rootfs-check.ts",
+      "packages/tools/src/sandbox-rootfs/rootfs-drift.test.ts",
+      "packages/tools/src/sandbox-rootfs/rootfs-drift.ts",
+      "packages/tools/src/sandbox-rootfs/rootfs-tree.test.ts",
+      "packages/tools/src/sandbox-rootfs/rootfs-tree.ts",
+      "packages/tools/src/sandbox-rootfs/run-rootfs-drift-gate.ts",
+      "packages/tools/src/sandbox-rootfs/run-sandbox-gate.ts",
+      "packages/tools/src/sandbox-runtime/build-runtime.ts",
+      "packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts",
+      "packages/tools/src/scope/build-outputs.ts",
+      "packages/tools/src/scope/change-radius.ts",
+      "packages/tools/src/scope/change-set.test.ts",
+      "packages/tools/src/scope/change-set.ts",
+      "packages/tools/src/scope/check.ts",
+      "packages/tools/src/scope/plan.test.ts",
+      "packages/tools/src/scope/plan.ts",
+      "packages/tools/src/scope/record-inputs-setup.test.ts",
+      "packages/tools/src/scope/recorder.test.ts",
+      "packages/tools/src/scope/recorder.ts",
+      "packages/tools/src/scope/related-probe.test.ts",
+      "packages/tools/src/scope/related-probe.ts",
+      "packages/tools/src/scope/run-inputs.ts",
+      "packages/tools/src/scope/test-inputs.test.ts",
+      "packages/tools/src/scope/test-inputs.ts",
+      "packages/tools/src/scope/test-layers.test.ts",
+      "packages/tools/src/script-api-type-surface.test.ts",
+      "packages/tools/src/script-api/declarations.ts",
+      "packages/tools/src/script-compile-config.test.ts",
+      "packages/tools/src/script-surface.test.ts",
+      "packages/tools/src/script-surface.ts",
+      "packages/tools/src/selfproof/contract-compat.ts",
+      "packages/tools/src/selfproof/questions.ts",
+      "packages/tools/src/selfproof/run-selfproof-gate.ts",
+      "packages/tools/src/selfproof/stub-maps.test.ts",
+      "packages/tools/src/toolchain-coupling.ts",
+      "packages/tools/src/validate/module-system-in-chain.test.ts",
+      "packages/tools/src/validate/pipeline.test.ts",
+      "packages/tools/src/validate/pipeline.ts",
+      "packages/tools/src/validate/render-violations.test.ts",
+      "packages/tools/src/validate/render-violations.ts",
+      "packages/tools/src/validate/run-validate-script.test.ts",
+      "packages/tools/src/validate/run-validate-script.ts",
+      "packages/tools/src/version-control-boundary.test.ts",
+      "packages/tools/src/vitest/conditional-expect.test.ts",
+      "packages/tools/src/vitest/conditional-expect.ts",
+      "packages/tools/src/vitest/diagnose-vitest-rules-markdown.ts",
+      "packages/tools/src/vitest/diagnose-vitest-rules.ts",
+      "packages/tools/src/vitest/kernel-guard.test.ts",
+      "packages/tools/src/vitest/run-test-report.ts",
+      "packages/tools/src/vitest/run-vitest-rules-diagnose.ts",
+      "packages/tools/src/vitest/test-report.test.ts",
+      "packages/tools/src/vitest/test-report.ts"
     ],
     "packages/tools/src/rules-doc-prose.test.ts": [
       "CONTEXT.md",
@@ -1524,7 +1740,8 @@
       "docs/rules-v2/README.md",
       "docs/rules-v2/api.md",
       "docs/rules-v2/rules.md",
-      "docs/vision.md"
+      "docs/vision.md",
+      "packages/schema/src/ruleset-keys.ts"
     ],
     "packages/tools/src/sandbox-rootfs/rootfs-drift.test.ts": [
       "docs/rules-v2/README.md",
@@ -1560,6 +1777,14 @@
       "packages/schema/src/sandbox-rootfs.ts"
     ],
     "packages/tools/src/scope/plan.test.ts": [
+      "apps/cli/tsconfig.json",
+      "package.json",
+      "packages/engine/tsconfig.json",
+      "packages/gen/tsconfig.json",
+      "packages/replay/tsconfig.json",
+      "packages/runner/tsconfig.json",
+      "packages/schema/tsconfig.json",
+      "packages/tools/tsconfig.json",
       "vitest.config.ts"
     ],
     "packages/tools/src/scope/test-inputs.test.ts": [
@@ -1568,11 +1793,20 @@
       "vitest.record-inputs.setup.ts"
     ],
     "packages/tools/src/scope/test-layers.test.ts": [
+      "apps/cli/tsconfig.json",
       "coverage-debt.txt",
       "package.json",
+      "packages/engine/tsconfig.json",
+      "packages/gen/tsconfig.json",
+      "packages/replay/tsconfig.json",
+      "packages/runner/tsconfig.json",
+      "packages/schema/tsconfig.json",
       "packages/tools/src/gates.test.ts",
+      "packages/tools/src/scope/recorder.ts",
+      "packages/tools/tsconfig.json",
       "test-inputs/inputs.json",
-      "vitest.config.ts"
+      "vitest.config.ts",
+      "vitest.record-inputs.setup.ts"
     ],
     "packages/tools/src/script-api-type-surface.test.ts": [
       "packages/schema/script-api/index.d.ts"
@@ -1618,6 +1852,7 @@
       "packages/tools/src/validate/run-validate-script.ts"
     ],
     "packages/tools/src/vitest/kernel-guard.test.ts": [
+      "vitest.config.ts",
       "vitest.kernel-guard.setup.ts"
     ]
   }

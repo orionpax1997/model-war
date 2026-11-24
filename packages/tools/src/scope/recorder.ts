@@ -34,10 +34,44 @@
  * 是出现"探针测试读了 651 个文件",进而"改任意源码都选中探针自身"。归错档比不记更坏:它造出
  * 一条不存在的边,而那条边还很贵。所以对 `vitest` 这个执行体,不注入也不继承观测变量。
  *
- * 未观测 ≠ 没读:模块**加载期**的读盘(在 `beforeAll` 贴标签之前)落不下来——对照物是
- * `packages/engine/src/sandbox.test.ts`,它在模块顶层读了 `rulesets/v1.json` 与
- * `fixtures/guest/*.js`,而 map 里根本没有这一项。补齐需要另开一笔:标签来自
- * `expect.getState()`,加载期还没有它。
+ * ── 审计过一遍:哪些读盘它**看不见**(未 hook ≠ 没读) ──
+ *
+ * 这份清单是拿 `grep` 在本仓的 `packages` / `apps` 上逐条查出来的,**不是**"为了完整而 hook
+ * 所有 Node API"。结论分三类:
+ *
+ * 1. **真的在用、且读仓库文件的:已全部 hook。** 今天真被调用到的只有两处——
+ *    `readFileSync`(几乎全部读盘)与 `spawnSync` / `spawn`(子进程读的文件靠递进去的观测器
+ *    追)。hook 里另外那几个(`openSync` / `createReadStream` / `promises.readFile` /
+ *    `promises.open` / `execFileSync`)今天一处都没用:包它们是零成本的兜底,不是判据。
+ *    `fs.readFile`(回调形态)在本仓只出现在 `packages/gen/src/contract.ts` 的**同名局部函数**
+ *    里,它包的是 `readFileSync`,已在 hook 内;`fs.open` / `execFile` / `exec` / `fork` 一处
+ *    都不在运行时路径上,所以没补。**将来若真有人用回调形态,它会落不进 map**——这一点靠本段
+ *    而不是靠“顺手都包上”:包得越多,越容易以为自己看上去全了。
+ * 2. **元数据读:有意不 hook。** `readdir` / `stat` / `access` / `existsSync` 报告的是“有什么”
+ *    “多大”,不是内容。把它们记成输入会把“探了一下这个目录”写成“依赖这个目录”,于是改任意
+ *    文件都要跑一批无关用例。**代价是已知的**:`state-invariants.test.ts` 用
+ *    `readdirSync(steps/)` 枚举八步文件,如果某天**新加**一个 step 文件,那个枚举的结论变了
+ *    而它自己的输入没变——方向仍是少跑。缓解是那些文件随后会被逐个 `readFileSync` 读到,
+ *    于是已有文件都在 map 里;真正没被记的只有“目录里多了个没人读的文件”。
+ * 3. **结构上观测不到的:只能靠表(ADR-0038 第三条的第三腿)。**
+ *    - **原生子进程内部**:`git`、`tsc`、`bwrap`、`stryker` 这些非 Node 执行体读的文件不进
+ *      map(能记的只有"spawn 了哪个脚本")。`spawn` 到 node 的那部分靠 `NODE_OPTIONS` 注入,
+ *      而 `NODE_OPTIONS` 一旦被执行体忽略(非 Node 二进制)就断了。
+ *    - **wasm / VM 内部**:guest 脚本在 QuickJS 里只能看见宿主递进去的字节,它在 VM 里"读了
+ *      什么"没有系统调用可截;那批输入(`rulesets/`、`maps/`、runtime 产物)靠**宿主侧**的
+ *      `readFileSync` 记录,也就是说 map 记的是"宿主读了什么交给 VM"。
+ *    - **`import` 与 `require` 的模块解析**:那是依赖图的活,重复记一遍只会把 map 淹掉。
+ *
+ * 一句话:**“map 里没有它” ≠ “没有测试读过它”。** 未观测的方向永远是少跑,所以
+ * `change-radius.ts` 的 `RADIUS` 仍要给读盘的输入开规则(`mustObserve`),不能拿“观测为空”
+ * 当成“没人依赖”。
+ *
+ * ── 一个已经补上的盲区:模块加载期的读盘(票 T6)──
+ *
+ * 标签来自 `vitest.record-inputs.setup.ts`,而它现在在**模块作用域**就贴上文件级标签(不再等
+ * `beforeAll`)。所以模块顶层的 `readFileSync(“rulesets/v1.json”)` 也落得下来——对照物是
+ * `packages/engine/src/sandbox.test.ts` 与 `packages/engine/src/runner/quickjs.test.ts`:
+ * 它们曾经完全不在 map 里,现在连同 `fixtures/guest/*.js` 一起在。
  */
 
 import { createRequire } from "node:module";
