@@ -6,7 +6,8 @@
  * 用内存假件测出来的只是"我以为 git 会这么回答"。所以这里只替换 `cwd`(每个用例一个
  * `mkdtempSync` 仓库),被测代码一行不改。
  *
- * 每个 `it` 对应票里的一条断言,顺序与票一致。
+ * 每个 `it` 对应票里的一条断言,顺序与票一致;11、12 是 CI 上真实红过的那两类(ref 名字没落成本地
+ * 分支 / 三个名字都不存在),它们排在同一条 `--since` 语义的后半段,所以接着往后编号。
  *
  * 临时仓库的两处必要设置:
  * - `-c user.name/-c user.email`:CI 与全新机器上未必有全局身份,没有它 `git commit` 直接失败,
@@ -25,6 +26,7 @@ import {
   GitError,
   MergeBaseError,
   computeChangeSetIn,
+  describeChangeSet,
   filesOf,
   parseNameStatus,
 } from "./change-set.js";
@@ -98,6 +100,7 @@ describe("ChangeSet", () => {
 
     const changeSet = repo.changeSet("main");
 
+    expect(changeSet.resolvedRef, "本地有 main 时不许被改写成 origin/main").toBe("main");
     expect(changeSet.baseSha, "基准必须是共同祖先,而不是 main 的尖端").toBe(baseSha);
     expect(changeSet.files).toContain("topic.ts");
     expect(changeSet.files, "main 独有的改动不属于这次改动").not.toContain("main-only.ts");
@@ -285,5 +288,59 @@ describe("ChangeSet", () => {
       "untracked file.ts",
     ]);
     expect(parseNameStatus("")).toEqual([]);
+  });
+
+  it("11. 只有 `origin/main`、没有本地 `main` 时,`--since=main` 仍能算出集合(PR 上的形状)", () => {
+    const repo = openRepo();
+    repo.write("base.txt", "base\n");
+    const baseSha = repo.commit("base");
+
+    // 这就是 `actions/checkout` 在 `pull_request` 上的形状:检到 detached 的 merge ref,
+    // 本地没有 `main`,远端跟踪分支倒是有一个。
+    repo.git("update-ref", "refs/remotes/origin/main", baseSha);
+    repo.git("checkout", "-q", "--detach");
+    repo.git("branch", "-D", "main");
+    repo.write("topic.ts", "export const topic = 1;\n");
+    repo.commit("分支自己的改动");
+
+    // 前提先立起:本地真的没有 `main`。否则这条用例测的是另一回事。
+    expect(
+      () => repo.git("rev-parse", "--verify", "main^{commit}"),
+      "临时仓库里不许还有本地 main",
+    ).toThrow(/git rev-parse --verify main\^\{commit\} 失败/u);
+
+    const changeSet = computeChangeSetIn(repo.dir, "main");
+
+    expect(changeSet.resolvedRef, "`main` 应落到 `origin/main`").toBe("origin/main");
+    expect(changeSet.sinceRef, "调用方写的名字原样回显,不许被改掉").toBe("main");
+    expect(changeSet.baseSha, "共同祖先仍是 origin/main 与 HEAD 那个").toBe(baseSha);
+    expect(changeSet.files).toEqual(["topic.ts"]);
+    // 报告里要看得见解析到了哪个名字:不让人猜基准到底是哪个 main。
+    expect(describeChangeSet(changeSet)).toContain("`main` → `origin/main`");
+  });
+
+  it("12. 三个名字都不存在 → MergeBaseError,且列出试过的名字", () => {
+    const repo = openRepo();
+    repo.write("base.txt", "base\n");
+    repo.commit("base");
+
+    let caught: unknown;
+    try {
+      repo.changeSet("no-such-branch");
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(MergeBaseError);
+    const message = caught instanceof MergeBaseError ? caught.message : "";
+    // 只报"main 不存在"会让人以为分支名写错;这里要把试过的三种写法都摆出来。
+    for (const tried of [
+      "`no-such-branch`",
+      "`origin/no-such-branch`",
+      "`refs/remotes/origin/no-such-branch`",
+    ]) {
+      expect(message, `报错里必须列出试过的名字:${tried}`).toContain(tried);
+    }
+    expect(message).toMatch(/git fetch/);
   });
 });

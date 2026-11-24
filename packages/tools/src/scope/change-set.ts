@@ -26,11 +26,24 @@
  * 若把 `staged` 算成"索引对共同祖先",那么分支上所有已提交的文件都会显示成 staged,
  * 那份计数就不再是"暂存区里有什么",而是"相对分叉点改了什么"——与集合重复,失去诊断价值。
  *
+ * ── ref 名字有几种写法,但它们指向同一个分支 ──
+ *
+ * 调用方写的是分支名(`main`),而这个分支在不同 checkout 形态下落成不同的全名:本地分支 `main`、
+ * 远端跟踪分支 `origin/main`、或完整的 `refs/remotes/origin/main`。`actions/checkout` 在
+ * `pull_request` 上检的是 detached 的 merge ref,**本地没有 `main`**,只有 `origin/main`——于是
+ * `git merge-base main HEAD` 以「Not a valid object name main」失败。这不是"这个分支不存在",
+ * 而是"它没落成本地分支"。所以 `sinceRef` 先解析成实际存在的名字(`resolveSinceRef`),再拿这个
+ * 名字去算共同祖先:依次试 `main` / `origin/main` / `refs/remotes/origin/main`,三种都是**同一个
+ * 分支的写法**,不是另一套语义——**不许**因为本地没有 `main` 就退回到两点比较。
+ *
  * ── 失败必须显式 ──
  *
- * 拿不到 merge-base(ref 不存在、shallow clone 太浅、两个历史没有公共祖先)时抛
+ * 拿不到 merge-base(三个名字都不存在、shallow clone 太浅、两个历史没有公共祖先)时抛
  * `MergeBaseError`,**不退回**两点比较:退回是一种静默的语义降级,而它的表现是多算或少算,
  * 两种都不报错。宁可红在"算不出基准"上,也不要绿在一个错的基准上。
+ *
+ * 两类失败分开报:名字一个都不存在(`rev-parse --verify` 全落空)与名字存在但没有公共历史
+ * (git 在浅克隆下也只有这一句可说)是不同的问题,修法也不同——前者 `git fetch`,后者加深 clone。
  */
 
 import { spawnSync } from "node:child_process";
@@ -49,6 +62,11 @@ export interface ChangeEntry {
 export interface ChangeSet {
   /** 调用方给的那个 ref(未做规范化,输出里原样回显)。 */
   readonly sinceRef: string;
+  /**
+   * `sinceRef` 实际认出来的 git 名字。本地分支不存在时会落到 `origin/<ref>`。
+   * 算基准用的一直是它:输出里回显,读报的人不必猜"基准到底是哪个 main"。
+   */
+  readonly resolvedRef: string;
   /** 共同祖先。一切比较的基准;`sinceRef === "HEAD"` 时它就是 HEAD。 */
   readonly baseSha: string;
   readonly headSha: string;
@@ -115,6 +133,47 @@ export const gitRunIn =
 /** 统一成 POSIX 分隔的仓库相对路径(`git` 在 Windows 上也给 `/`,这里只是防御)。 */
 export const normalizePath = (path: string): string =>
   path.replace(/\\/g, "/").replace(/^\.\//, "");
+
+/**
+ * `sinceRef` 的候选写法:本地分支 → 远端跟踪分支 → 完整的 remote ref。
+ *
+ * 去重是为了报错可读:调用方已经写成 `origin/main` 时,不必再去试一遍 `origin/origin/main`,
+ * 因为「试过哪些名字」这条清单是要给人照着查的。
+ */
+export const sinceRefCandidates = (sinceRef: string): readonly string[] => [
+  ...new Set([sinceRef, `origin/${sinceRef}`, `refs/remotes/origin/${sinceRef}`]),
+];
+
+/** `sinceRef` 解析的结果:实际存在的那个名字,以及它指向的 commit。 */
+export interface ResolvedRef {
+  readonly name: string;
+  readonly sha: string;
+}
+
+/**
+ * 把 `sinceRef` 解析成一个确实存在的 commit。
+ *
+ * 只吞 `GitError`(`rev-parse --verify` 对不存在的名字正是非零退出);别的失败照旧抛出去——
+ * 权限、坏仓库这类问题换名字重试一万次也不会好。
+ *
+ * 三个名字都不在才抛 `MergeBaseError`,消息里**列出试过哪几个**:只说"main 不存在"会让人以为
+ * 是分支名写错,而实际最常见的形态是名字存在、只是没落成本地分支(远端有 `origin/main`)。
+ */
+export const resolveSinceRef = (run: GitRun, sinceRef: string): ResolvedRef => {
+  const candidates = sinceRefCandidates(sinceRef);
+  for (const name of candidates) {
+    try {
+      const sha = run(["rev-parse", "--verify", `${name}^{commit}`]).trim();
+      if (sha !== "") return { name, sha };
+    } catch (error) {
+      if (!(error instanceof GitError)) throw error;
+    }
+  }
+  throw new MergeBaseError(
+    sinceRef,
+    `试过的名字都不存在:${candidates.map((name) => `\`${name}\``).join("、")}`,
+  );
+};
 
 const splitNul = (stdout: string): readonly string[] =>
   stdout
@@ -197,16 +256,33 @@ export const computeChangeSet = (input: {
   const { run, sinceRef } = input;
   const headSha = run(["rev-parse", "HEAD"]).trim();
 
+  // 先把名字认成一个存在的 commit,再拿它算共同祖先:两步失败的原因不同(名字不存在 / 有名字但
+  // 没有公共历史),报错要分得开,否则读报的人不知道该 `git fetch` 还是该加深 clone。
+  const since = resolveSinceRef(run, sinceRef);
+
   let mergeBase: string;
   try {
-    mergeBase = run(["merge-base", sinceRef, "HEAD"]).trim();
+    mergeBase = run(["merge-base", since.name, "HEAD"]).trim();
   } catch (error) {
-    // ref 不存在、shallow clone 太浅、两个历史无公共祖先,在 git 眼里都是同一条命令失败。
+    // shallow clone 太浅、两个历史无公共祖先,在 git 眼里都是同一条命令失败。
     // 这里统一翻译成"算不出基准",而不是让调用方去认 GitError 的 stderr 措辞。
-    if (error instanceof GitError) throw new MergeBaseError(sinceRef, error.stderr.trim());
+    // 注意:没有公共祖先时 `git merge-base` 会**静默**非零退出(stderr 为空),所以不能把
+    // stderr 直接当原因拼进消息——那会得到一句"失败:"后面空着。
+    if (error instanceof GitError) {
+      const reason =
+        error.stderr.trim() === ""
+          ? "两个历史没有公共祖先(浅克隆下父提交被截断)"
+          : error.stderr.trim();
+      throw new MergeBaseError(
+        sinceRef,
+        `已解析到 \`${since.name}\`,但 git merge-base 失败:${reason}`,
+      );
+    }
     throw error;
   }
-  if (mergeBase === "") throw new MergeBaseError(sinceRef, "git merge-base 没有输出");
+  if (mergeBase === "") {
+    throw new MergeBaseError(sinceRef, `已解析到 \`${since.name}\`,但 git merge-base 没有输出`);
+  }
   const baseSha = mergeBase;
 
   // **工作区 vs 共同祖先**:已提交的、staged 的、unstaged 的一次算全(两者都反映在工作区里)。
@@ -222,6 +298,7 @@ export const computeChangeSet = (input: {
 
   return {
     sinceRef,
+    resolvedRef: since.name,
     baseSha,
     headSha,
     entries,
@@ -246,8 +323,13 @@ export const describeChangeSet = (changeSet: ChangeSet): string => {
   const count = (status: ChangeStatus): number =>
     changeSet.entries.filter((entry) => entry.status === status).length;
   const short = (sha: string): string => sha.slice(0, 7);
+  // 解析名字与调用方写的名字不同时才画箭头:本地有 `main` 的那些机器上不必看第二遍。
+  const base =
+    changeSet.resolvedRef === changeSet.sinceRef
+      ? `基准 = \`${changeSet.sinceRef}\``
+      : `基准 = \`${changeSet.sinceRef}\` → \`${changeSet.resolvedRef}\``;
   return (
-    `ChangeSet(基准 = \`${changeSet.sinceRef}\` 与 HEAD 的共同祖先 ${short(changeSet.baseSha)}):\n` +
+    `ChangeSet(${base} 与 HEAD 的共同祖先 ${short(changeSet.baseSha)}):\n` +
     `  基准 ${short(changeSet.baseSha)} → HEAD ${short(changeSet.headSha)}\n` +
     `  staged ${String(changeSet.staged.length)} · unstaged ${String(changeSet.unstaged.length)}` +
     ` · untracked ${String(changeSet.untracked.length)}(诊断,不参与选择)\n` +

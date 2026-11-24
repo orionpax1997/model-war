@@ -41,6 +41,36 @@ const SHELL_PLUMBING = /^(?:set -[a-z]+|mkdir -p|printf |cat |echo )/u;
  */
 const LITERAL_RUN = /^pnpm run ([A-Za-z0-9:_-]+)(?: --(?: (?:--[A-Za-z0-9:_-]+|-[A-Za-z]))*)?$/u;
 
+/** `uses: actions/checkout@<版本>` 那一行(只认 step 的 `uses`,版本号不参与判断)。 */
+const CHECKOUT_USES = /^\s*uses:\s*actions\/checkout@/u;
+
+/**
+ * 读出 `actions/checkout` 那一步的 `fetch-depth`(没这一步、或写了却没带这个键 → `undefined`)。
+ *
+ * 为什么值得一个纯函数:这条事实不在任何 `run:` 步里,`runStepViolations` 看不见它,而它是
+ * `check` 能不能算出基准的前提(`check` 以 merge-base 为基准,浅克隆没有历史)。
+ * 解析口径同本文件其余部分:不做通用 YAML,只按缩进认「同一个 step 内的键」——遇到不深于
+ * `uses:` 的行(下一条 step 的 `- ` 或回到 job 级键)就收手,不把后面 step 的键认成它的。
+ */
+export const checkoutFetchDepth = (yaml: string): number | undefined => {
+  const lines = yaml.split("\n");
+  const usesIndex = lines.findIndex((line) => CHECKOUT_USES.test(line));
+  if (usesIndex === -1) return undefined;
+  const usesLine = lines[usesIndex] ?? "";
+  const usesIndent = usesLine.length - usesLine.trimStart().length;
+  for (let index = usesIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (line.trim() === "") continue;
+    const indent = line.length - line.trimStart().length;
+    // 下一条 step(`- ` 自占行首)或回到 job 级键:这个 step 结束了。
+    if (indent < usesIndent) return undefined;
+    if (indent === usesIndent && line.trimStart().startsWith("- ")) return undefined;
+    const match = /^fetch-depth:\s*"?(\d+)"?\s*$/u.exec(line.trim());
+    if (match !== null) return Number(match[1]);
+  }
+  return undefined;
+};
+
 /** `pnpm run ${{ matrix.script }}`:矩阵模板,真实成员由 `matrixLegs` 校验。 */
 const TEMPLATE_RUN = /^pnpm run \$\{\{\s*matrix\.script\s*\}\}$/u;
 

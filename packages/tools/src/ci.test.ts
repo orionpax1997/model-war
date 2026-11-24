@@ -21,6 +21,7 @@ import { expect, it } from "vitest";
 
 import {
   artifactNameViolations,
+  checkoutFetchDepth,
   extractRunCommands,
   hardGateScripts,
   matrixLegs,
@@ -135,6 +136,47 @@ it("主链只有一个执行步,且它就是 `pnpm run check -- --full`", () => 
   // (ADR-0010:CI 失败等价于命名脚本失败;ADR-0038:一条命令,没有档位)。
   const steps = extractRunCommands(fast).filter((command) => !command.startsWith("pnpm install"));
   expect(steps).toEqual(["pnpm run check -- --full"]);
+});
+
+// ── Checkout 深度:`check` 的基准能不能算出来的前提 ──────────────────────────
+
+/**
+ * 为什么这条必须盯着:`check` 的一切从 `main` 与 HEAD 的**共同祖先**算起。
+ *
+ * CI 在 `pull_request` 上检的是 detached 的 merge ref——本地没有 `main`(只有 `origin/main`);
+ * 而默认的 `fetch-depth: 1` 又只有一条截断的历史。两条叠在一起,`check` 在 CI 上以
+ * `MergeBaseError` 红在最后一步,而**本地永远绿**:本机有本地 `main`、有完整历史。
+ * 它是一个只在 CI 上复现、拿掉一行 yaml 就回来、而且没有任何其它断言看得见的洞——
+ * 所以拉历史的深度必须是钉住的事实,而不是「看起来写下过」。
+ */
+it("主链 Checkout 拉全历史:fetch-depth: 0(`check` 算共同祖先的前提)", () => {
+  expect(checkoutFetchDepth(fast), "fast.yml 的 Checkout 步必须写 fetch-depth: 0").toBe(0);
+});
+
+it("反例:checkout 缺 fetch-depth 或写成浅深度时,判据立即不符", () => {
+  const step = (body: readonly string[]): string =>
+    ["jobs:", "  x:", "    steps:", "      - name: Checkout", "        uses: actions/checkout@v7"]
+      .concat(body)
+      .concat(["", "      - name: Next", "        run: pnpm run quick", ""])
+      .join("\n");
+
+  // 没写这个键:默认就是 1。这正是 CI 红过的那一版 yaml。
+  expect(checkoutFetchDepth(step([]))).toBeUndefined();
+  expect(checkoutFetchDepth(step(["        with:", "          fetch-depth: 1"]))).toBe(1);
+  // 深度只从 checkout 自己那一步读:后面 step 里的同名键不算。
+  expect(
+    checkoutFetchDepth(
+      step([
+        "        with:",
+        "          fetch-depth: 0",
+        "      - name: Other",
+        "        with:",
+        "          fetch-depth: 1",
+      ]),
+    ),
+  ).toBe(0);
+  // 连 checkout 步都没有:同样是 undefined,不许默认为「已经拉全了」。
+  expect(checkoutFetchDepth(["jobs:", "  x:", "    steps:", ""].join("\n"))).toBeUndefined();
 });
 
 it("`check --full` 是默认计划的超集:默认要门禁自测时,收口一定补上它", async () => {
