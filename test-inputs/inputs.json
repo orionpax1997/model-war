@@ -1570,6 +1570,7 @@
     "packages/tools/src/scope/test-layers.test.ts": [
       "coverage-debt.txt",
       "package.json",
+      "packages/tools/src/gates.test.ts",
       "test-inputs/inputs.json",
       "vitest.config.ts"
     ],
