@@ -20,6 +20,7 @@ import { join, matchesGlob, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildOutputsOf, workspacesOf } from "./build-outputs.js";
+import type { ChangeEntry } from "./change-set.js";
 import {
   ALWAYS,
   GATES_CASES,
@@ -30,7 +31,7 @@ import {
   UnregisteredPathError,
   decide,
 } from "./change-radius.js";
-import { runsFor, unobservedGap } from "./check.js";
+import { describeDeleted, probeTargets, runsFor, unobservedGap } from "./check.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
 import {
   currentFingerprint,
@@ -244,6 +245,52 @@ describe("decide:图与表各管半边", () => {
     });
     expect(decision.notBuilt.length).toBe(2);
     expect(decision.scripts).toEqual([...ALWAYS, "test:all"]);
+  });
+
+  /**
+   * **删除的文件没有产物可言。**
+   *
+   * `notBuilt` 问的是"还在的文件跟上构建了吗",而删除的文件的产物永远不会出现——拿它去
+   * 触发退回全量,得到的是一个没有事实支撑的 `test:all`(本分支删掉三份 `landing-gate` 时实测:
+   * `radius: test:all`)。它与 `总会问"有没有测试候选"` 是同一个根因的两面:**删除不是改动**。
+   *
+   * 三条断言盯三个方向:删除不进 `notBuilt`;`M` / `A` 的产物缺失**仍然**进(不能把"没构建"
+   * 整类放过);删了又建不算删除(它仍有行为,产物照旧必须存在)。
+   */
+  it("删除的条目不进 `notBuilt`(删一个源码文件不该把计划退回全量)", () => {
+    const gone = "packages/engine/src/runner/quickjs.ts";
+    const decision = decide({ paths: [gone], workspaces, exists: () => false, deleted: [gone] });
+    expect(decision.notBuilt).toEqual([]);
+    expect(decision.scripts).not.toContain("test:all");
+  });
+
+  it("反方向:`M` / `A` 的产物缺失仍然进 `notBuilt`(「没构建」整类不能被放过)", () => {
+    const live = "packages/engine/src/runner/quickjs.ts";
+    // 不传 `deleted` = 路径还在(修改/新增两种状态的形状相同:文件存在、产物缺失)。
+    const decision = decide({ paths: [live], workspaces, exists: () => false });
+    expect(decision.notBuilt.length).toBe(2);
+    expect(decision.scripts).toContain("test:all");
+  });
+
+  it("删了又建不算删除:它仍有行为,产物照旧必须存在", () => {
+    const rewritten = "packages/engine/src/runner/quickjs.ts";
+    // 口径只有一份:删除集合由 `probeTargets` 算,这里递过去而不是另写一条过滤。
+    const targets = probeTargets({
+      entries: [
+        { status: "D", path: rewritten },
+        { status: "A", path: rewritten },
+      ],
+      files: [rewritten],
+    });
+    expect(targets.deleted).toEqual([]);
+    const decision = decide({
+      paths: [rewritten],
+      workspaces,
+      exists: () => false,
+      deleted: targets.deleted,
+    });
+    expect(decision.notBuilt.length).toBe(2);
+    expect(decision.scripts).toContain("test:all");
   });
 
   it("没登记的路径**抛错**而不是跳过(静默跳过等于假绿)", () => {
@@ -464,6 +511,73 @@ describe("未覆盖红线:红要有出路", () => {
     expect(scripts["check"], "check 是 agent 唯一入口").toBeDefined();
     expect(scripts["check:full"], "档位不该以脚本形式存在(--full 才是收口)").toBeUndefined();
     expect(scripts["verify:scoped"], "旧名字仍在:agent 会看到两个入口").toBeUndefined();
+  });
+});
+
+/**
+ * **删除不是改动:探针与图对它都无话可说。**
+ *
+ * 删除的路径按 ChangeSet 的语义**留在**集合里(状态 `D`,见 `change-set.ts`):它参与选择,否则
+ * "改了什么"就少了一块。但它不能进逐文件探针：`vitest related` 问的是一个**已不存在的文件**,
+ * 答不出任何东西;而探针这一层只承认"确知为零"与"确知跑过",答不出 = 红。于是每一次删文件都会
+ * 拿到一条假红,而假红的处方是"给一个已删掉的文件补用例"——做不到,也不应该做。
+ *
+ * 删除要保的性质是另一条:**没带走没人发现的依赖**。它由 `tsc -b` 与全量测试兜——两者都是
+ * "删了就在原地喊"的形状,不需要有人预先知道这个文件被谁用。
+ *
+ * 四条断言盯三个方向:删除不进探针也不进 gap（否则假红）;说明行真的出现并点明由谁兜
+ * (静默跳过与"没人观测"在输出上是同一句话);以及**反方向**——只放行 `D`,`M` / `A` / `R`
+ * 的未观测仍然红。没有最后一条,这条口径就会从"删除没有行为"滑成"不知道的都放过"。
+ */
+describe("删除:探针与图都无话可说", () => {
+  const GONE = "packages/tools/src/gate/landing-gate.ts";
+  const entry = (status: ChangeEntry["status"], path: string, from?: string): ChangeEntry =>
+    from === undefined ? { status, path } : { status, path, from };
+
+  it("删除的路径进 `deleted` 而不进探针清单(不进探针就没有 gap:假红在这一层被挡住)", () => {
+    const targets = probeTargets({ entries: [entry("D", GONE)], files: [GONE] });
+    expect(targets.probe).toEqual([]);
+    expect(targets.deleted).toEqual([GONE]);
+    // gaps 的唯一来源是探针对每个**未观测文件**问出来的结论。把它走一遍:
+    const gaps = targets.probe.filter(
+      (path) => unobservedGap(path, { kind: "no-tests" }) !== undefined,
+    );
+    expect(gaps, `删除的路径进了 gaps(删掉的文件答不出用例数,这不是"没人观测")`).toEqual([]);
+  });
+
+  it("说明行必须出现且点名路径 + 点明由 `tsc -b` 与全量测试兜(不静默跳过)", () => {
+    const note = probeTargets({ entries: [entry("D", GONE)], files: [GONE] }).note;
+    expect(note).toContain(GONE);
+    expect(note).toContain("tsc -b");
+    expect(note).toContain("全量测试");
+    // 没有删除时不许凭空多出一行:说明行只描述真实存在的那几条。
+    expect(describeDeleted([])).toBe("");
+    expect(probeTargets({ entries: [entry("M", GONE)], files: [GONE] }).note).toBe("");
+  });
+
+  it("反方向:`M` / `A` 的未观测仍然红(删除的口径只对 `D`)", () => {
+    for (const status of ["M", "A"] as const) {
+      const targets = probeTargets({ entries: [entry(status, GONE)], files: [GONE] });
+      expect(targets.probe, `${status} 被当成删除了`).toEqual([GONE]);
+      expect(targets.deleted).toEqual([]);
+      expect(targets.note).toBe("");
+      // 它进了探针清单,探针答"零候选"就上红线。
+      expect(unobservedGap(GONE, { kind: "no-tests" })).toBeDefined();
+    }
+  });
+
+  it("删了又建回来 / 重命名的旧侧仍有行为可问,照常探(豁免不能漏成少跑)", () => {
+    const targets = probeTargets({
+      entries: [
+        entry("D", "a/rewritten.ts"),
+        entry("A", "a/rewritten.ts"),
+        entry("R", "a/renamed.ts", "a/original.ts"),
+        entry("D", "a/really-gone.ts"),
+      ],
+      files: ["a/original.ts", "a/really-gone.ts", "a/renamed.ts", "a/rewritten.ts"],
+    });
+    expect(targets.probe).toEqual(["a/original.ts", "a/renamed.ts", "a/rewritten.ts"]);
+    expect(targets.deleted).toEqual(["a/really-gone.ts"]);
   });
 });
 
