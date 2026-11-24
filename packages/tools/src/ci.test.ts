@@ -153,7 +153,7 @@ it("主链只有一个执行步,且它就是 `pnpm run check -- --full <基准>`
  * 所以断言的不是 yaml 的写法,而是**实参**:把那个事件代进去,看 `check` 真的收到什么。
  * 基线来自 `github.base_ref`——换一个 base 分支,实参跟着变;写死某个分支名就解不出实参。
  */
-it("PR 上 check 收到 `--since=origin/<base>`;push 上不传,退回脚本里的默认值", () => {
+it("PR 上 check 收到 `--since=origin/<base>`;push 上不传,退回 check.ts 的默认基准", () => {
   expect(
     checkStepArgs({ yaml: fast, event: "pull_request", baseRef: "feature/script-naming" }),
   ).toEqual(["--full", "--since=origin/feature/script-naming"]);
@@ -164,6 +164,71 @@ it("PR 上 check 收到 `--since=origin/<base>`;push 上不传,退回脚本里�
   ]);
   // 合入 `main` 时没有 base_ref:空值是一个**消失的词**,不是一个空参数——`check` 退回默认值。
   expect(checkStepArgs({ yaml: fast, event: "push", baseRef: "main" })).toEqual(["--full"]);
+});
+
+// ── 实参怎么变成基准:命令行赢过一切,默认值只住在 check.ts ─────────────────
+
+/**
+ * 这一族盯的是**两个真源打架**的形状:它不报错、不红,只是比错了对象。
+ *
+ * CI 实测过的原样:命令行 `pnpm run check -- --full --since=origin/feature/script-naming`,
+ * 展开成 `node …/check.ts --since=main -- --full --since=origin/feature/script-naming`——
+ * `package.json` 的脚本写死了一份 `--since=main`(第二个真源),而当时的 `parseArgs` 是
+ * `argv.find(...)`,**第一个命中就赢**。于是 PR 对着 `main` 算半径(41 个提交),并红在与本 PR
+ * 无关的门禁上。三层缺陷叠在一起:脚本里那份默认值、`find` 的取值方向、`pnpm … -- …` 递进来的 `--`。
+ *
+ * 所以三条一起钉住。默认值 `main` 只有**一个**家:`check.ts` 的 `parseArgs`。
+ */
+it("`check` 脚本里不写基准:默认值只住在 check.ts 一处", () => {
+  expect(manifest().scripts.check, "check 脚本不见了").toBeDefined();
+  expect(
+    manifest().scripts.check,
+    "check 脚本里又写了一份基准——命令行传进来的 `--since` 会被它压住(第二个真源)",
+  ).not.toContain("--since");
+});
+
+it("`parseArgs`:命令行是显式覆盖,最后一个赢;`--` 不参与解析;空值退回 main", async () => {
+  const { parseArgs } = await import("./scope/check.ts");
+
+  // 1. 正常形态:两个开关各自生效。
+  expect(parseArgs(["--full", "--since=origin/x"])).toEqual({
+    since: "origin/x",
+    print: false,
+    full: true,
+  });
+
+  // 2. 重复出现时**后者赢**。`find`(第一个赢)正是 CI 上那次错误的形状。
+  expect(parseArgs(["--since=a", "--since=b"]).since).toBe("b");
+  // 两种来源同时在场(脚本里的旧写法 + 命令行)时,命令行仍然赢。
+  expect(
+    parseArgs(["--since=main", "--", "--full", "--since=origin/feature/script-naming"]).since,
+  ).toBe("origin/feature/script-naming");
+
+  // 3. `pnpm run check -- --full` 会把分隔符自己递进来:它不算参数,不影响后面的解析。
+  expect(parseArgs(["--", "--full"]).full).toBe(true);
+  expect(parseArgs(["--", "--full", "--since=origin/x"])).toEqual({
+    since: "origin/x",
+    print: false,
+    full: true,
+  });
+
+  // 4. 空 `--since=` 退回默认值,不解析成空串(空串会让 `git` 以别的错红,而不是退回默认基准)。
+  expect(parseArgs(["--since="]).since).toBe("main");
+  // 5. 不传 `--since` 就是默认基准:CI 的 push 形态靠的就是这一条。
+  expect(parseArgs(["--full"]).since).toBe("main");
+});
+
+/**
+ * push 到 `main` 的形态要**走完整条路**才算证明:`$SINCE` 为空 → shell 里消失的词 →
+ * `check` 收到 `--full` → `parseArgs` 给出默认基准。分段断言(`$SINCE` 为空是一个消失的词、
+ * 不传 `--since` 得到 `main`)各自绿、接起来却可能错——接起来的这一步就是这里要的。
+ */
+it("push 形态(`$SINCE` 为空)端到端得到默认基准 `main`", async () => {
+  const { parseArgs } = await import("./scope/check.ts");
+  const pushArgs = checkStepArgs({ yaml: fast, event: "push", baseRef: "main" });
+  expect(pushArgs, "push 形态的实参解不出来").toBeDefined();
+  // `pnpm run check -- …` 会把分隔符递给脚本,所以这里也带着它。
+  expect(parseArgs([...(pushArgs ?? []), "--"]).since).toBe("main");
 });
 
 it("反例:把 base 写死成某个分支名,表达式就认不出来(红而不是静默用错基准)", () => {

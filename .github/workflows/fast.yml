@@ -75,7 +75,8 @@ jobs:
       #
       # 这不是给 agent 加档位,是把 CI 本来就掌握的事实(`github.base_ref`)交给同一条命令:
       # push 到 `main` 时没有 base_ref,`SINCE` 为空,命令行不多一个参数(不是空参数),
-      # `check` 退回脚本里的默认值。
+      # `check` 退回它自己的默认基准(`main`)。默认值只住在 `scope/check.ts` 一处:脚本里再写
+      # 一份就是第二个真源,而两份之间的分歧没有任何红信号(实测:PR 对着 main 比了 41 个提交)。
       - name: check --full
         env:
           SINCE: ${{ github.event_name == 'pull_request' && format('--since=origin/{0}', github.base_ref) || '' }}

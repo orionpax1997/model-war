@@ -84,18 +84,31 @@ export const FULL_CHAIN: readonly string[] = ["verify", "gate:types"];
 /** 未覆盖登记的落点。路径相对仓库根,`#` 之后写为什么现在不测。 */
 export const DEBT_PATH = "coverage-debt.txt";
 
-interface Options {
+export interface Options {
   readonly since: string;
   readonly print: boolean;
   readonly full: boolean;
 }
 
-const parseArgs = (argv: readonly string[]): Options => {
-  const since = argv.find((arg) => arg.startsWith("--since="))?.slice("--since=".length);
+/**
+ * 命令行 → 选项。**纯函数,导出的唯一目的是被断言**:这里的每一条口径都红过。
+ *
+ * - `--` 是 `pnpm run check -- …` 的分隔符,**它自己也会进 argv**;它不是参数,不参与解析。
+ * - `--since=` **最后一个赢**。写成 `find` 时第一个命中就定局,于是 `package.json` 脚本里那个
+ *   写死的 `--since=main` 会永远压住命令行传进来的值——CI 上实测:PR 对着 `main` 比了 41 个提交。
+ * - 空 `--since=` 退回 `main`,不解析成空串。**默认值只住这里一处**:脚本里再写一份就是第二
+ *   个真源,而两份真源的分歧不会有任何红信号。
+ */
+export const parseArgs = (argv: readonly string[]): Options => {
+  const args = argv.filter((arg) => arg !== "--");
+  const since = args
+    .filter((arg) => arg.startsWith("--since="))
+    .at(-1)
+    ?.slice("--since=".length);
   return {
     since: since === undefined || since === "" ? "main" : since,
-    print: argv.includes("--print"),
-    full: argv.includes("--full"),
+    print: args.includes("--print"),
+    full: args.includes("--full"),
   };
 };
 
