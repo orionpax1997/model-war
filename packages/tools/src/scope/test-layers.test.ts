@@ -30,6 +30,7 @@ import {
   SUITES,
   UnregisteredPathError,
   decide,
+  probeApplies,
 } from "./change-radius.js";
 import { describeDeleted, probeTargets, runsFor, unobservedGap } from "./check.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
@@ -950,6 +951,44 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
     // 反方向:不能顺手把它当门禁自测——那是跑错族,而跑错族不会报错。
     expect(decision.scripts).not.toContain("test:gates");
   });
+
+  /**
+   * **`sandbox` 族的测试文件**:表指名拾取它的那一族,探针不再问它。
+   *
+   * 缺任何一半都会退回「留一行债」的形状——只加族规则,探针照样拿 `--project all` 去问、
+   * 答「0 条」,把「问错了池子」读成「没人看着它」;只豁免不加规则,则谁也不跑它自己那一族,
+   * 改坏了没有任何声音。目标族名从 `vitest.config.ts` 推导,与上一条用同一份判据。
+   */
+  it.each(["apps/cli/src/gen-cli.test.ts", "apps/cli/src/agent-real-session.test.ts"])(
+    "%s 落到拾取它的那一族,并退出逐文件探针",
+    async (file) => {
+      const projects = (await projectsOf()).filter((project) => picks(project, file));
+      expect(
+        projects.map((project) => project.name),
+        "拾取它的 project 变了",
+      ).toEqual(["sandbox"]);
+
+      const entries = Object.entries(manifest().scripts)
+        .filter(
+          ([name, command]) =>
+            name.startsWith("test") &&
+            projects.every(({ name: project }) => command.includes(`--project ${project}`)),
+        )
+        .map(([name]) => name);
+      expect(entries.length, `没有任何脚本跑 ${file} 所在的 project`).toBeGreaterThan(0);
+
+      const decision = decideOn([file]);
+      expect(
+        entries.some((entry) => decision.scripts.includes(entry)),
+        `计划里没有拾取它的那一族(实际:${decision.scripts.join(", ")})`,
+      ).toBe(true);
+
+      // 探针写死问 `--project all`:它答不出这个文件的候选,而 0 条会被读成「确知为零」。
+      expect(probeApplies(file), `${file} 仍会进逐文件探针,而它不在 all 的池子里`).toBe(false);
+      // 反方向:池子里的测试文件照旧问图——豁免只对池子外的那几族开。
+      expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(true);
+    },
+  );
 
   it("`decide([packages/tools/src/ci.test.ts])` 不含 test:gates(本票的起因)", () => {
     const decision = decideOn(["packages/tools/src/ci.test.ts"]);
