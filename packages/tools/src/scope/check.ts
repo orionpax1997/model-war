@@ -20,12 +20,13 @@
  *
  * - 说不清:既映射不到产物也没有表规则的路径 → 红(它的默认表现是少跑)。
  * - 少跑:`test:all` 被选中就不再单独跑它的子集;产物不在盘上则先增量构建,仍缺才退回全量。
- * - 无人观测:改完没有任何测试候选、观测也为空 → 红,并给出两条出路(补用例,或登记
- *   `coverage-debt.txt`)。这是 agent 最大的盲区,而原来的系统在它改完之后什么都不说。
+ * - 无人观测:改完没有任何**能证明这块行为的测试候选**(零候选 / 只有结构测试 / 全 skip /
+ *   观测为空)→ 红,并给出两条出路(补用例,或登记 `coverage-debt.txt`)。这是 agent 最大的
+ *   盲区,而原来的系统在它改完之后什么都不说。
  * - 问不出用例数:探针报告缺失 / 不可解析 → 红。**未知不是绿**,而且本仓库的 vitest 配置带
  *   `passWithNoTests: true`,只看退出码会把"一条没选中"读成"通过"。
- * - 判据本身过期:入库观测快照的内容指纹(recorder / setup / `vitest.config.ts`)与现在对不上
- *   → 红,并在消息里给两个指纹与两条重录命令。旧的 map 不再被当成判据:它的失效方向是少记,
+ * - 判据本身过期:入库观测快照的内容指纹(`WATCHED_FILES` 的内容)与现在对不上 → 红,并在
+ *   消息里给两个指纹与两条重录命令。旧的 map 不再被当成判据:它的失效方向是少记,
  *   而少记与“没人读”在输出上是同一句话。
  *
  * ── 计划只有一处构造 ──
@@ -66,13 +67,7 @@ import {
 } from "./change-set.ts";
 import { chainProjects, fullPlan, scriptProjects, type RunItem, type Scripts } from "./plan.ts";
 import { probeRelated, type ProbeOutcome } from "./related-probe.ts";
-import {
-  currentFingerprint,
-  invert,
-  isSnapshotCurrent,
-  loadInputsMap,
-  type InputsMap,
-} from "./test-inputs.ts";
+import { currentFingerprint, invert, loadInputsMap, snapshotStaleMessage } from "./test-inputs.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -176,31 +171,6 @@ export const labelOf = (item: RunItem): string => {
     case "gates":
       return item.patterns.length === 0 ? "test:gates" : `test:gates -t ${item.patterns.join("|")}`;
   }
-};
-
-/**
- * 观测快照过期时的红消息。**过期即红**:`undefined` = 还能当判据。
- *
- * 为什么不是"警告一句然后照旧用":旧 map 的失效方向是**少记**——recorder 换了 hook、project
- * 划分变了之后,它会安静地少几条观测,于是选择器少选一批测试,而少选不报错。既然"用过期的
- * 判据"与"没有判据"是同一件事,这里就必须在**拿它当判据之前**停下。
- *
- * 消息里三个要素缺一不可:两个指纹(谁跟谁对不上)、"为什么指纹能决定这件事"、两条命令
- * (`observe:inputs:accept` 重录、`observe:inputs` 复核,后者是防止重录把变窄写进仓库)。
- */
-export const snapshotStaleMessage = (input: {
-  readonly map: InputsMap;
-  readonly fingerprint: string;
-}): string | undefined => {
-  if (isSnapshotCurrent(input)) return undefined;
-  const recorded = input.map.fingerprint === "" ? "(空:旧快照没有指纹)" : input.map.fingerprint;
-  return (
-    `观测快照过期:入库指纹 ${recorded},现在是 ${input.fingerprint}。\n` +
-    '指纹覆盖 recorder / setup / vitest.config.ts:观测仪器变了,旧 map 里"谁读什么"不再是\n' +
-    '同一回事,拿它判"有没有测试观测到"只会少跑,所以这里直接红。\n' +
-    "重录:`node --run observe:inputs:accept`(约 85s);复核:`node --run observe:inputs`" +
-    "(重录变窄等于少跑,复核就是在拦这件事)。\n"
-  );
 };
 
 /**

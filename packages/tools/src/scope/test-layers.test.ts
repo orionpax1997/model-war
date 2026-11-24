@@ -27,9 +27,14 @@ import {
   UnregisteredPathError,
   decide,
 } from "./change-radius.js";
-import { runsFor, snapshotStaleMessage, unobservedGap } from "./check.js";
+import { runsFor, unobservedGap } from "./check.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
-import { currentFingerprint, isInputPath, loadInputsMap } from "./test-inputs.js";
+import {
+  currentFingerprint,
+  isInputPath,
+  loadInputsMap,
+  snapshotStaleMessage,
+} from "./test-inputs.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const workspaces = workspacesOf(repoRoot);
@@ -303,8 +308,9 @@ describe("观测 map:它自己也要有判据", () => {
    * **快照过期即红**(票 T6)。指纹对不上时不许继续拿旧 map 判"有没有观测":旧 map 的
    * 失效方向是少记,而少记读出来就是"没人看这块"——两个完全不同的红混成一条。
    *
-   * 第一条断言同时是**入库快照的新鲜度门禁**:改了 recorder / setup / `vitest.config.ts`
-   * 就必须重录,不重录这里就红(并且消息里直接给出两条命令)。
+   * 第一条断言同时是**入库快照的新鲜度门禁**:改了 `WATCHED_FILES` 里的任一装配点
+   * (recorder / setup / `vitest.config.ts` / 聚合口径 / 录制口径)就必须重录,
+   * 不重录这里就红(并且消息里直接给出两条命令)。
    *
    * 它唯一不跑的情形是**正在录制**(`observe:inputs` 自己跑的那趟 `test:all`):那一刻正在
    * 被写的就是它要断言的那份快照。这不是把红改成跳过——录制结束后同一条断言在 `test`、

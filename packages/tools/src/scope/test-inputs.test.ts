@@ -35,6 +35,12 @@ const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 /** 前三个被监视文件的路径;测试里用它们当临时仓库的键,不写字面量。 */
 const [RECORDER = "", SETUP = "", CONFIG = ""] = WATCHED_FILES;
 
+/** 一份"所有被监视文件都不存在"的指纹,用来验删除也进指纹。 */
+const allMissing = (contentOfFirst: string): readonly string[] => [
+  contentOfFirst,
+  ...WATCHED_FILES.slice(1).map(() => MISSING_FILE),
+];
+
 const dirs: string[] = [];
 
 afterAll(() => {
@@ -83,9 +89,8 @@ describe("内容指纹:同一份输入在任何地方都是同一枚", () => {
     });
     const missing = openRepo({ [RECORDER]: "recorder" });
     expect(currentFingerprint(missing)).not.toBe(currentFingerprint(complete));
-    expect(currentFingerprint(missing)).toBe(
-      fingerprintOf(["recorder", MISSING_FILE, MISSING_FILE]),
-    );
+    // 期望值从 `WATCHED_FILES` 的长度推出来:监视名单增减时,这里跟着走而不是写死条数。
+    expect(currentFingerprint(missing)).toBe(fingerprintOf(allMissing("recorder")));
   });
 });
 

@@ -12,9 +12,10 @@
  * 漂移意味着**某段代码的副作用面变了**——那本身值得被看见,不该悄悄过去。这条与 `gate:rootfs`
  * 同一个形状:入库产物只能被显式重写,不能被链路顺手刷新。
  *
- * map 还带一枚**内容指纹**(`recorder.ts` + setup + `vitest.config.ts` 的内容哈希)。它管的是
- * 比漂移更早的一件事:这份 map 还是不是同一台"仪器"录的。仪器变了(改了 hook、改了 project
- * 划分),逐条差异就没意义了——所以这里先报过期、再谈差异。
+ * map 还带一枚**内容指纹**(`WATCHED_FILES`:recorder + setup + `vitest.config.ts` + 聚合与录制
+ * 口径本身)。它管的是比漂移更早的一件事:这份 map 还是不是同一台"仪器"录的。仪器变了
+ * (改了 hook、改了 project 划分、改了聚合/录制口径),逐条差异就没意义了——所以这里先报过期、
+ * 再谈差异。那段话只有一处(`test-inputs.ts` 的 `snapshotStaleMessage`):`check` 与这里共用它。
  */
 
 import { spawnSync } from "node:child_process";
@@ -27,8 +28,8 @@ import {
   currentFingerprint,
   diffInputs,
   isClean,
-  isSnapshotCurrent,
   loadInputsMap,
+  snapshotStaleMessage,
   writeInputsMap,
 } from "./test-inputs.ts";
 
@@ -88,14 +89,10 @@ const main = (): number => {
 
   // 指纹对不上时,map 的逐条差异没有意义:两份不是同一个仪器录的。先把这件事说出来,
   // 再把人引到重录命令上——否则读的人会去逐个看差异,而看懂了也修不了。
-  if (!isSnapshotCurrent({ map: before, fingerprint })) {
-    process.stderr.write(
-      `观测快照过期:入库指纹 ${before.fingerprint === "" ? "(空:旧快照)" : before.fingerprint},` +
-        `现在是 ${fingerprint}。\n` +
-        '指纹覆盖 recorder / setup / vitest.config.ts:观测仪器变了,旧 map 里"谁读什么"不再是' +
-        "同一回事,逐条差异已无意义。\n" +
-        "重录:`node --run observe:inputs:accept`(约 85s),然后 `node --run observe:inputs` 复核。\n",
-    );
+  // 文本不在这里写:`check` 的红线用的是同一段(`snapshotStaleMessage`),两处写两份就会各自漂。
+  const stale = snapshotStaleMessage({ map: before, fingerprint });
+  if (stale !== undefined) {
+    process.stderr.write(`\n${stale}`);
     return 1;
   }
 
