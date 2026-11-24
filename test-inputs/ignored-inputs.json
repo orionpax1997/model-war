@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "test": "apps/cli/src/selection/grid-selection.test.ts",
+      "line": 441,
+      "path": "archive",
+      "reason": "四份陪练档在本机时才跑的真子进程 e2e(skipIf 之外只剩夹具用例);另一条工作分支(wt-ign-02)正在把这一批改成入库 fixture,那之后删掉本条"
+    },
+    {
+      "test": "apps/cli/src/trial/run-trial-script.test.ts",
+      "line": 50,
+      "path": "archive",
+      "reason": "同上:真安装面(`archive/` 四份陪练档)在本地才算得出一份计划,别的机器整条跳过;另一条工作分支(wt-ign-02)正在改成入库 fixture,那之后删掉本条"
+    },
+    {
+      "test": "packages/gen/src/observations.test.ts",
+      "line": 706,
+      "path": "archive/minimax-m3.1-flash/observed-2026-10-13T13-48-45-729Z.jsonl",
+      "reason": "这一份真实观测是「三层反馈读得回来」的唯一凭据(三场、四方终局齐),没有等价夹具;另一条工作分支(wt-ign-01)正在把它抄成入库 fixture,那之后删掉本条"
+    },
+    {
+      "test": "packages/runner/src/archive-optimization.test.ts",
+      "line": 264,
+      "path": "archive/claude-opus-5-5/2026-10-16T08-40-12-578Z/meta.json",
+      "reason": "v1 历史档的真实副本,用来钉住「v2 判据收严不把老档读拒」;另一条工作分支(wt-ign-01)正在改成入库 fixture,那之后删掉本条"
+    },
+    {
+      "test": "packages/runner/src/archive-report-v2.test.ts",
+      "line": 711,
+      "path": "archive/claude-opus-5-5",
+      "reason": "真实 v1 档(本地有才跑)的整档对照:报告口径与「存档字节不变」都对着它断言;另一条工作分支(wt-ign-01)正在改成入库 fixture,那之后删掉本条"
+    },
+    {
+      "test": "packages/runner/src/sparring-pool.test.ts",
+      "line": 235,
+      "path": "archive",
+      "reason": "四份钉死的陪练档摘要只能在有档的机器上核对,没档时整条 skipIf;另一条工作分支(wt-ign-01)正在改成入库 fixture,那之后删掉本条"
+    }
+  ]
+}
