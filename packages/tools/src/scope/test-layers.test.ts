@@ -44,9 +44,12 @@ const configText = (): string =>
   readFileSync(fileURLToPath(new URL("../../../../vitest.config.ts", import.meta.url)), "utf8");
 
 describe("表:引用的脚本与路径都真实存在", () => {
-  it.each([...ALWAYS, ...SUITES, "test:related"])("%s 在 package.json 里", (script) => {
-    expect(manifest().scripts[script], `package.json 里没有 ${script}`).toBeDefined();
-  });
+  it.each([...ALWAYS, ...SUITES, "test:related", "check", "observe:inputs"])(
+    "%s 在 package.json 里",
+    (script) => {
+      expect(manifest().scripts[script], `package.json 里没有 ${script}`).toBeDefined();
+    },
+  );
 
   it("规则里出现的 suite 都在 SUITES 里(没有偷偷多一个测试族)", () => {
     const allowed = new Set(SUITES);
@@ -287,8 +290,51 @@ describe("观测 map:它自己也要有判据", () => {
 
   it("recorder 挂在 worker 的 execArgv 上(拆掉它 map 会静默变空)", () => {
     const config = configText();
-    expect(config).toContain("poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } }");
+    expect(config, "worker 的 execArgv 没接上 recorder").toContain("execArgv: RECORD_EXEC_ARGV");
     expect(config, "recorder 的装载位置不在 config 里").toContain("RECORD_SETUP");
     expect(config, "收口那次跑(all)必须带录制开关").toContain("RECORD_EXEC_ARGV");
+  });
+});
+
+/**
+ * 红线自己也要有出路。
+ *
+ * 「改动无人观测即红」只在两种情况下可执行:债务表在它指向的位置,且每条登记的路径都真实存在。
+ * 否则 agent 拿到一条红、按提示去登记、却发现那张表根本不存在——这比不红更坏。
+ */
+describe("未覆盖红线:红要有出路", () => {
+  const debt = (): readonly string[] => {
+    const text = readFileSync(join(repoRoot, "coverage-debt.txt"), "utf8");
+    return text
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("#"))
+      .map((line) => (line.split("#")[0] ?? "").trim());
+  };
+
+  it("coverage-debt.txt 存在,且登记的路径都真实存在", () => {
+    expect(existsSync(join(repoRoot, "coverage-debt.txt"))).toBe(true);
+    const stale = debt().filter((path) => !existsSync(join(repoRoot, path)));
+    expect(stale, `债务表里有不存在的路径(表自己腐烂了):${stale.join(", ")}`).toEqual([]);
+  });
+
+  it("开了 mustObserve 的规则,map 里都有观测到它(否则第一次改就红且无解)", () => {
+    const map = loadInputsMap(repoRoot);
+    const observed = new Set(Object.values(map.files).flat());
+    const blind = RADIUS.filter((rule) => rule.mustObserve === true).filter(
+      (rule) =>
+        ![...observed].some((path) => path === rule.area || path.startsWith(`${rule.area}/`)),
+    );
+    expect(
+      blind.map((rule) => rule.area),
+      `这些规则要求必须观测,但 map 里一条都没有——红线会立刻误伤`,
+    ).toEqual([]);
+  });
+
+  it("`check` 只有一条命令,没有并列的第二档", () => {
+    const scripts = manifest().scripts;
+    expect(scripts["check"], "check 是 agent 唯一入口").toBeDefined();
+    expect(scripts["check:full"], "档位不该以脚本形式存在(--full 才是收口)").toBeUndefined();
+    expect(scripts["verify:scoped"], "旧名字仍在:agent 会看到两个入口").toBeUndefined();
   });
 });

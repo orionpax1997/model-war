@@ -15,7 +15,7 @@
  * fast.yml 改了却没过这条,快链当场红。
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { expect, it } from "vitest";
 
@@ -45,7 +45,8 @@ const nightly = workflowText("nightly.yml");
  * 抄一遍就是第二份定义。曾经这里写的是 `["quick","gate:types","test"]`,那等于把 `verify` 的
  * 两条腿在 yaml 与测试里各展开一次:给 `verify` 加一条腿,CI 与这条断言都不会跟。
  */
-const FAST_MEMBERS = ["verify", "gate:types"] as const;
+/** 主流水线的收口只有一个名字:CI 与本地跑的是同一条命令(ADR-0038 §四)。 */
+const FAST_MEMBERS = ["check"] as const;
 
 /** 夜间硬门禁:任一红 = 夜间链红。 `mutate:*` 在这里而不是观测项,因为它是棘轮(ADR-0026):
  * 不设绝对阈值,但「同一分片比入库基线低」是退化,退化即红。 */
@@ -119,8 +120,25 @@ it("正例:一份只调命名脚本的最小 workflow 判绿", () => {
 
 // ── 成员清单:主链 / 夜间硬门禁 / 夜间观测项 ─────────────────────────────────
 
-it("主链成员 = verify + gate:types", () => {
+it("主链成员 = `check --full` 一条", () => {
   expect(sorted(namedScripts(fast))).toEqual(sorted(FAST_MEMBERS));
+  // 档位不靠 yaml 展开:收口与"改完就跑"是同一条命令的两个 flag。
+  expect(fast).toContain("pnpm run check -- --full");
+});
+
+it("`check --full` 的收口链就是主流水线那一串,且每个名字都真实存在", async () => {
+  const { DEBT_PATH, FULL_CHAIN } = await import("./scope/check.ts");
+
+  // 链的家在 `check.ts` 的 `FULL_CHAIN`:yaml 只出现 `check`,名字不在这里再抄一份。
+  expect(FULL_CHAIN.length).toBeGreaterThan(0);
+  for (const script of FULL_CHAIN) {
+    expect(scripts.has(script), `FULL_CHAIN 里有不存在的脚本:${script}`).toBe(true);
+  }
+  expect(sorted(FULL_CHAIN)).toEqual(sorted(["verify", "gate:types"]));
+
+  // 债务表必须在仓库根,且判据指向它——两处名字对不上时,红的方向是"agent 找不到出路"。
+  expect(existsSync(`${repoRoot}/${DEBT_PATH}`)).toBe(true);
+  expect(fast).toContain("--full");
 });
 
 it("夜间链硬门禁齐全,观测项恰为 scan", () => {

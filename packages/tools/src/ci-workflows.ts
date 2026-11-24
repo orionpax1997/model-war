@@ -32,8 +32,14 @@ const DIRECT_ENTRY = /(?:^|[;&|]\s*)(?:node|npx|tsx|tsc|vitest|stryker|scc|bun|d
  */
 const SHELL_PLUMBING = /^(?:set -[a-z]+|mkdir -p|printf |cat |echo )/u;
 
-/** `pnpm run <字面脚本名>`;脚本名允许 `:` 与 `-`(`gate:cross-process` 这种形态)。 */
-const LITERAL_RUN = /^pnpm run ([A-Za-z0-9:_-]+)$/u;
+/**
+ * `pnpm run <字面脚本名>`,脚本名允许 `:` 与 `-`(`gate:cross-process` 这种形态)。
+ *
+ * 允许尾随 `-- <flag>`:收口是 `pnpm run check -- --full`(ADR-0038「一条命令,没有档位」),
+ * 而 `--` 之后只许出现**开关**——带空格或引号的实参一旦放进来,这一步就又变回"yaml 里写命令",
+ * 链定义会分叉。
+ */
+const LITERAL_RUN = /^pnpm run ([A-Za-z0-9:_-]+)(?: --(?: (?:--[A-Za-z0-9:_-]+|-[A-Za-z]))*)?$/u;
 
 /** `pnpm run ${{ matrix.script }}`:矩阵模板,真实成员由 `matrixLegs` 校验。 */
 const TEMPLATE_RUN = /^pnpm run \$\{\{\s*matrix\.script\s*\}\}$/u;

@@ -13,7 +13,7 @@
     "verify": "node --run quick && node --run gate:static && node --run test:all",
     "verify:wide": "node --run verify && node --run gate:types && node --run gate:deps && node --run gate:declared-deps && node --run gate:drift && node --run gate:bench && node --run gate:runtime",
     "verify:kernel": "node --run build && node --run gate:sandbox && node --run test:kernel",
-    "verify:scoped": "node packages/tools/src/scope/run-scoped-verify.ts --since=main",
+    "check": "node packages/tools/src/scope/check.ts --since=main",
     "nightly": "node --run verify:wide && node --run test:gates && node --run test:slow && node --run gate:selfproof && node --run gate:cross-process && node --run gate:limits && node --run gate:budget:recheck && node --run verify:kernel && node --run observe:inputs && node --run mutate:engine:processor",
     "build": "tsc -b",
     "build:bench": "node packages/tools/src/benchmarks/build-benchmarks.ts",
