@@ -514,11 +514,48 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
     ).toEqual([]);
   });
 
-  it("反方向:图看不见的测试文件仍由兜底补门禁自测(豁免不能漏成少跑)", () => {
+  it("反方向:图看不见的测试文件仍被选中(豁免不能漏成少跑)", () => {
+    const bare = new Set(["quick", "gate:static"]);
     const missing = GRAPH_BLIND_TESTS.filter(
-      (file) => !decideOn([file]).scripts.includes("test:gates"),
+      (file) => !decideOn([file]).scripts.some((script) => !bare.has(script)),
     );
     expect(missing, `这些文件改了就没人跑了:${missing.join(", ")}`).toEqual([]);
+  });
+
+  /**
+   * **跑错族比少跑更陉。** `gates-slow.test.ts` 属于 `slow` project(nightly 的那一半),
+   * 而兜底 (`packages/tools` → `test:gates`) 会把改它的人送去门禁自测:多跑 166s,而它自己
+   * 一条都没跑。目标族**不手写**,从 `vitest.config.ts` 推导:拾取它的 project → 带那个
+   * `--project` 的命名脚本。
+   */
+  it("gates-slow.test.ts 落到拾取它的 project 的入口,而不是门禁自测", async () => {
+    const file = "packages/tools/src/gates-slow.test.ts";
+    const projects = (await projectsOf()).filter((project) => picks(project, file));
+    expect(
+      projects.map((project) => project.name),
+      "拾取它的 project 变了",
+    ).toEqual(["slow"]);
+
+    const scripts = manifest().scripts;
+    const entries = Object.entries(scripts)
+      .filter(
+        ([name, command]) =>
+          name.startsWith("test") &&
+          projects.every(({ name: p }) => command.includes(`--project ${p}`)),
+      )
+      .map(([name]) => name);
+    expect(
+      entries.length,
+      `没有任何脚本跑 project ${projects.map((p) => p.name).join(",")}`,
+    ).toBeGreaterThan(0);
+
+    const decision = decideOn([file]);
+    expect(
+      entries.some((entry) => decision.scripts.includes(entry)),
+      `计划里没有拾取它的那一族(实际:${decision.scripts.join(", ")})`,
+    ).toBe(true);
+    // 反方向:不能顺手把它当门禁自测——那是跑错族,而跑错族不会报错。
+    expect(decision.scripts).not.toContain("test:gates");
   });
 
   it("`decide([packages/tools/src/ci.test.ts])` 不含 test:gates(本票的起因)", () => {
