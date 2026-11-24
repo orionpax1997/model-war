@@ -6,6 +6,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   ACTION_API_NAMES,
@@ -699,43 +700,51 @@ const v1ArchivePlan = (): TrialPlan => ({
   planSha256: "0".repeat(64),
 });
 
-/** 归档里候选末位的那一份真实观测（2026-10-13 三场、四方终局齐、行动事实完整）。 */
-const archiveObservations = join(
-  import.meta.dirname,
-  "../../..",
-  "archive/minimax-m3.1-flash/observed-2026-10-13T13-48-45-729Z.jsonl",
+/**
+ * 归档里候选末位的那一份观测（2026-10-13 三场、四方终局齐、行动事实完整）。
+ *
+ * 读的是入库副本：`packages/runner/src/fixtures/archive/v1-observed-minimax/` 把
+ * `archive/minimax-m3.1-flash/observed-2026-10-13T13-48-45-729Z.jsonl` 逐字节抄了一份，并保住
+ * `<slug>/observed-<runId>.jsonl` 这个与 `<runId>/` 同级的位置。`archive/` 不入库，按它守卫
+ * 只会让这一例在干净克隆上沉默地 skip——而「`readTrialObservations` 读得动真档形状」正是它证的事。
+ *
+ * 为什么不裁行内字段：`readTrialObservations` 对每一行做闭合字段与计数自洽校验，把观测裁成
+ * 只留被断言用到的字段，等于把被测的「读得动」换成「读得动我造的形状」。
+ */
+const archiveObservations = fileURLToPath(
+  new URL(
+    "../../runner/src/fixtures/archive/v1-observed-minimax/archive/minimax-m3.1-flash/observed-2026-10-13T13-48-45-729Z.jsonl",
+    import.meta.url,
+  ),
 );
 
-it.skipIf(!existsSync(archiveObservations))(
-  "真实历史归档的观测重建三层反馈：事实可读、无多出来的解读",
-  () => {
-    const planOfArchive = v1ArchivePlan();
-    const first = JSON.parse(readFileSync(archiveObservations, "utf8").split("\n")[0] ?? "{}") as {
-      actionFacts?: { scriptSha256?: string };
-    };
-    const readings = readTrialObservations(
-      archiveObservations,
-      first.actionFacts?.scriptSha256 ?? "",
-      planOfArchive,
-    );
-    expect(readings).toHaveLength(3);
-    const feedback = renderScoreSourceFeedback(readings ?? [], planOfArchive);
+it("历史归档的观测（入库副本）重建三层反馈：事实可读、无多出来的解读", () => {
+  const planOfArchive = v1ArchivePlan();
+  const first = JSON.parse(readFileSync(archiveObservations, "utf8").split("\n")[0] ?? "{}") as {
+    actionFacts?: { scriptSha256?: string };
+  };
+  const readings = readTrialObservations(
+    archiveObservations,
+    first.actionFacts?.scriptSha256 ?? "",
+    planOfArchive,
+  );
+  expect(readings).toHaveLength(3);
+  const feedback = renderScoreSourceFeedback(readings ?? [], planOfArchive);
 
-    expect(feedback).toContain(SECTION_DIFF);
-    expect(feedback).toContain(SECTION_MATCHES);
-    expect(feedback).toContain(SECTION_WORST);
-    // v1 三场是同一格（座位0 / corridor-split）：候选末位、与第一名差 58。
-    expect(cellLines(feedback)).toEqual([
-      expect.stringContaining(
-        "座位0 / corridor-split：3 局，平均名次 4.00，平均名次积分 0.00，平均领土分 0.00（第一名 58.00，分差 58.00），末位 3 局",
-      ),
-    ]);
-    // v1 没有轮空，组合列如实写「无轮空」而不是硬套网格的读法。
-    expect(matchLines(feedback)[0]).toBe(
-      "  #00 | corridor-split | 座位0 | 组合0（无轮空） | 4 | 0/58/0/4 | timeout",
-    );
-    expect(detailLines(feedback)).toHaveLength(3);
-    expect(feedback).toContain("终局事实：seed=101，已执行 tick=600，结束原因=timeout");
-    expect(feedback).not.toMatch(/请检查|建议|应该|坐标|策略诊断/);
-  },
-);
+  expect(feedback).toContain(SECTION_DIFF);
+  expect(feedback).toContain(SECTION_MATCHES);
+  expect(feedback).toContain(SECTION_WORST);
+  // v1 三场是同一格（座位0 / corridor-split）：候选末位、与第一名差 58。
+  expect(cellLines(feedback)).toEqual([
+    expect.stringContaining(
+      "座位0 / corridor-split：3 局，平均名次 4.00，平均名次积分 0.00，平均领土分 0.00（第一名 58.00，分差 58.00），末位 3 局",
+    ),
+  ]);
+  // v1 没有轮空，组合列如实写「无轮空」而不是硬套网格的读法。
+  expect(matchLines(feedback)[0]).toBe(
+    "  #00 | corridor-split | 座位0 | 组合0（无轮空） | 4 | 0/58/0/4 | timeout",
+  );
+  expect(detailLines(feedback)).toHaveLength(3);
+  expect(feedback).toContain("终局事实：seed=101，已执行 tick=600，结束原因=timeout");
+  expect(feedback).not.toMatch(/请检查|建议|应该|坐标|策略诊断/);
+});
