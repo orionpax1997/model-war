@@ -13,7 +13,7 @@
  * **同进程**十次重跑已经落在 `packages/engine/src/determinism.test.ts`(check 链上);本门禁补的是
  * **跨进程**那一层:进程 A `modelwar match <input.json>` 写一份回放,进程 B
  * `modelwar verify <replay.jsonl>` 按同一份 input.json **重新执行**并逐 tick 比对 `stateHash`。
- * 这条缝就是 hld §10.3 的复算链,也是 `apps/cli/src/cli.test.ts:676-701` 那条真实基准脚本端到端
+ * 这条缝就是 hld §10.3 的复算链,也是 `apps/cli/src/cli-match.test.ts` 里 cell-a 那条真实基准脚本端到端
  * 用例走的同一条公开面——本文件只是把那条用例从测试里提出来,变成一道独立的命名门禁。
  *
  * ── 样本从哪来 ──────────────────────────────────────────────────────────────
@@ -21,7 +21,7 @@
  * `script.ts` 上),配固定种子、入库地图 `maps/open-clash.json` 与 `rulesets/v1.json`。门禁把四份
  * 存档三件套、input.json、地图、规则集、runtime bundle(`packages/engine/sandbox-runtime/
  * runtime.iife.js`,入库)与 `quickjs-wasi` 的 wasm(由 `pnpm install` 提供)现造进一个**临时
- * root**(做法同 `cli.test.ts` 的 `writeMatchInput`),让 `--root` 就是这一局的安装根;所有产物落在
+ * root**(做法同 `cli-harness.ts` 的 `writeMatchInput`),让 `--root` 就是这一局的安装根;所有产物落在
  * 系统临时目录,仓库树里不留任何东西(`runs/**` 本就入库在外)。
  *
  * **为什么不入库一份冻结 `input.json`**(曾经考虑过的另一条路):这份样本的可复现输入只有四样——冻结
@@ -37,7 +37,7 @@
  * 东西。`--keep` 保留临时 root(排障用),默认删。
  *
  * ── 它属于哪一层 ────────────────────────────────────────────────────────────
- * 它 spawn 一次 `tsc -b` + esbuild 打一份 CLI 单文件 bundle(与 `cli.test.ts:52-58` 同形),再真跑
+ * 它 spawn 一次 esbuild 打一份 CLI 单文件 bundle(与 `cli-harness.ts` 的 `prepareCli` 同形),再真跑
  * 一局真沙箱——**不是零构建**的 `gate/run-*-gate.ts` 那一族,故归**按需→夜间**层:不进
  * `quick` / `check` / `test` / `verify`(hld §2.2.7)。它的位置纪律由
  * `packages/tools/src/gates.test.ts` 的 `跨进程一致性门禁按需跑…` 盯着。
@@ -70,7 +70,7 @@ const BENCHMARK_CELLS = [
 type BenchmarkCell = (typeof BENCHMARK_CELLS)[number];
 
 const DEFAULT_CELL: BenchmarkCell = "cell-a-melee-pressure";
-/** 与 `cli.test.ts` 的 `writeMatchInput` 同一颗种子,样本因此逐次可复现。 */
+/** 与 `cli-harness.ts` 的 `writeMatchInput` 同一颗种子,样本因此逐次可复现。 */
 const DEFAULT_SEED = 20260101;
 const MAP_NAME = "open-clash";
 const RULESET_VERSION = "v2";
@@ -109,7 +109,7 @@ const parseArgs = (argv: readonly string[]): Options => {
 
 type Outcome = { readonly status: number; readonly stdout: string; readonly stderr: string };
 
-/** 与 `cli.test.ts` 的执行器同形:`cwd` 固定仓库根,不传 `env`(继承父进程)。 */
+/** 与 `cli-harness.ts` 的执行器同形:`cwd` 固定仓库根,不传 `env`(继承父进程)。 */
 const run = (command: string, args: readonly string[]): Outcome => {
   const result = spawnSync(command, [...args], { cwd: repoRoot, encoding: "utf8" });
   if (result.error !== undefined) {
@@ -175,7 +175,7 @@ type SandboxPaths = {
 
 /**
  * 在临时 root 里现造一份「四份存档 + input.json + 地图 + 规则集 + 沙箱资源」的对局样本。
- * 形态逐条对齐 `cli.test.ts:writeMatchInput`,执行体换成**入库的基准脚本产物**。
+ * 形态逐条对齐 `cli-harness.ts` 的 `writeMatchInput`,执行体换成**入库的基准脚本产物**。
  */
 const materialize = (root: string, options: Options, sandbox: SandboxPaths): Sample => {
   const mapBytes = readFileSync(join(repoRoot, "maps", `${MAP_NAME}.json`));
@@ -249,7 +249,7 @@ const materialize = (root: string, options: Options, sandbox: SandboxPaths): Sam
 
 // ── 反例:改一个 tick 的 stateHash ────────────────────────────────────────────
 
-/** 参数 `--tamper`:把回放里第一个 tick 的 `stateHash` 末位改掉(与 `cli.test.ts` 的反例同形)。 */
+/** 参数 `--tamper`:把回放里第一个 tick 的 `stateHash` 末位改掉(与 `cli-verify.test.ts` 的反例同形)。 */
 const tamperOneTick = (replayPath: string): void => {
   const lines = readFileSync(replayPath, "utf8")
     .trim()

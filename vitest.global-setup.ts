@@ -8,8 +8,9 @@
  *
  * 为什么是 globalSetup 而不是测试文件里的 `beforeAll`:ESM 的模块加载先于 hook,
  * 一个需要 dist 的 `import` 在 `beforeAll` 跑之前就已经解析完了,补不上。
- * `apps/cli/src/cli.test.ts` 里那个 `beforeAll` 之所以管用,是因为它要 dist 是为了
- * 在 hook **之后**打 bundle;本文件那两条(校验器单测与属性测试)要 dist 是在 import 时刻,
+ * `apps/cli/src/cli-*.test.ts` 那四个文件的 `beforeAll` 之所以不用自己再 `tsc -b` 一遍,
+ * 就是因为本文件已经在任何模块加载前把 dist 备齐了(打 bundle 发生在 hook 里,早于它的只有
+ * import 时刻的解析)。本文件那两条(校验器单测与属性测试)要 dist 是在 import 时刻,
  * 属于另一回事,别照抄那个位置。
  *
  * 代价:每次 vitest 启动多一次 `tsc -b`。全量门禁 `verify:wide` 里 `gate:types` 已经构建过,

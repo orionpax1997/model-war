@@ -20,7 +20,7 @@ import { trialGridPlanFixture } from "./trial-grid.fixture.js";
  *
  * 断言对象是外部可观察产物——写出的 `input.json` 的键集与内容、`report.json` 的内容(含问题
  * 清单)、退出码、每局被 spawn 的次数——而不是内部函数调用。真沙箱那一路由
- * `apps/cli/src/cli.test.ts` 的 fixture 赛季 e2e 盯着,这里只盯调度逻辑本身(并发池、
+ * `apps/cli/src/cli-season.test.ts` 的 fixture 赛季 e2e 盯着,这里只盯调度逻辑本身(并发池、
  * 退出码 2/3 重跑一次、1/4/null 中止、确定性排序)。
  */
 

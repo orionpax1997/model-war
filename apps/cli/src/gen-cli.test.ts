@@ -43,7 +43,7 @@
  * ── 为什么不在这里再跑一次 `tsc -b` ──
  *
  * `vitest.global-setup.ts` 在任何测试模块加载前已把工作区包的 `dist/` 备齐,esbuild 才解析得到
- * `@model-war/gen` 的 `exports`。再补一次会与 `cli.test.ts` 的 `beforeAll` 并发写同一份 dist。
+ * `@model-war/gen` 的 `exports`。再补一次就是并发写同一份 dist——没有任何收益,只有竞态。
  */
 
 import { spawn } from "node:child_process";
