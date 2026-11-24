@@ -10,22 +10,22 @@ status: superseded by ADR-0010
 
 装在根 `devDependencies`;包管理器版本由 `packageManager` 字段钉死。
 
-| 工具 | 版本 | 约束 | 备注 |
-|---|---|---|---|
-| pnpm | 12.8.1 | `packageManager` 精确 | 构建脚本白名单在本仓库的 `pnpm-workspace.yaml` 顶层 `allowBuilds` |
-| typescript | 7.0.2 | **精确锁版** | 影响复现:冻结脚本的编译产物由它产出。`bin` 是 `tsc`;`tsgo` 是 nightly 包 `@typescript/native-preview` 的名字,已取消 |
-| quickjs-wasi | 3.6.2 | **精确锁版** | 影响复现:沙箱运行时。锁版理由见 [0001](./0001-sandbox-quickjs-wasi.md) |
-| oxlint-tsgolint | 7.0.2003 | **精确锁版** | 随 TypeScript 主版本走,二者须同时升级。该包提供 `tsgolint` 二进制,但其独立 CLI 入口不受支持,类型感知 lint 走 `oxlint --type-aware` |
-| oxlint | ^1.86.0 | caret + lockfile | |
-| oxfmt | ^0.71.0 | caret + lockfile | 0.x 风险见下 |
-| oxc-parser | ^0.152.0 | caret + lockfile | 静态校验器(工具包)的解析层 |
-| vitest | ^5.0.3 | caret + lockfile | |
-| fast-check | ^4.10.2 | caret + lockfile | |
-| ajv | ^8.20.0 | caret + lockfile | 数据格式校验 |
-| dependency-cruiser | ^18.4.0 | caret + lockfile | |
-| esbuild | ^0.28.2 | caret + lockfile | **唯一需要执行构建脚本的依赖**(它的 `postinstall` 才把原生二进制装到位),列进 `allowBuilds` |
-| @types/node | ^24.19.0 | caret,**必须锁在 24.x** | 类型定义随运行时 Node 主版本走;`latest` dist-tag 指向 26.x,取它会让 Node 24 的 API 面凭空多出一截 |
-| Node | ≥ 22.18.0 | `engines` | 22.18 是 Node 22 LTS 里默认开启 type stripping 的第一个版本,`packages/tools` 直接跑源码依赖这一点 |
+| 工具               | 版本      | 约束                    | 备注                                                                                                                               |
+| ------------------ | --------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| pnpm               | 12.8.1    | `packageManager` 精确   | 构建脚本白名单在本仓库的 `pnpm-workspace.yaml` 顶层 `allowBuilds`                                                                  |
+| typescript         | 7.0.2     | **精确锁版**            | 影响复现:冻结脚本的编译产物由它产出。`bin` 是 `tsc`;`tsgo` 是 nightly 包 `@typescript/native-preview` 的名字,已取消                |
+| quickjs-wasi       | 3.6.2     | **精确锁版**            | 影响复现:沙箱运行时。锁版理由见 [0001](./0001-sandbox-quickjs-wasi.md)                                                             |
+| oxlint-tsgolint    | 7.0.2003  | **精确锁版**            | 随 TypeScript 主版本走,二者须同时升级。该包提供 `tsgolint` 二进制,但其独立 CLI 入口不受支持,类型感知 lint 走 `oxlint --type-aware` |
+| oxlint             | ^1.86.0   | caret + lockfile        |                                                                                                                                    |
+| oxfmt              | ^0.71.0   | caret + lockfile        | 0.x 风险见下                                                                                                                       |
+| oxc-parser         | ^0.152.0  | caret + lockfile        | 静态校验器(工具包)的解析层                                                                                                         |
+| vitest             | ^5.0.3    | caret + lockfile        |                                                                                                                                    |
+| fast-check         | ^4.10.2   | caret + lockfile        |                                                                                                                                    |
+| ajv                | ^8.20.0   | caret + lockfile        | 数据格式校验                                                                                                                       |
+| dependency-cruiser | ^18.4.0   | caret + lockfile        |                                                                                                                                    |
+| esbuild            | ^0.28.2   | caret + lockfile        | **唯一需要执行构建脚本的依赖**(它的 `postinstall` 才把原生二进制装到位),列进 `allowBuilds`                                         |
+| @types/node        | ^24.19.0  | caret,**必须锁在 24.x** | 类型定义随运行时 Node 主版本走;`latest` dist-tag 指向 26.x,取它会让 Node 24 的 API 面凭空多出一截                                  |
+| Node               | ≥ 22.18.0 | `engines`               | 22.18 是 Node 22 LTS 里默认开启 type stripping 的第一个版本,`packages/tools` 直接跑源码依赖这一点                                  |
 
 两条实测出来的操作事实,写在这里免得下次再踩:
 
@@ -38,12 +38,12 @@ status: superseded by ADR-0010
 
 hld §2.2.2 写的是"project references + `paths`"。本仓库**只保留 project references**,`paths` 一处不写,类型解析走 pnpm workspace 软链 + `exports` 的 `types` 条件。实测矩阵(在 `packages/engine` 上改配置后跑 `tsc -b --force`):
 
-| 形状 | `tsc -b` 结果 |
-|---|---|
-| `exports` + project references(**采用**) | 退出 0 |
+| 形状                                            | `tsc -b` 结果                                                                                       |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `exports` + project references(**采用**)        | 退出 0                                                                                              |
 | `paths` 直指包源码,**且**保留 project reference | 退出 0——但源码路径被重定向到对方的 `.d.ts` 产物,`paths` 沦为一条与 `exports` 重复解析同一模块的映射 |
-| `paths` 直指包源码,**无** project reference | TS6059 + TS6307 |
-| `tsc -p packages/engine`(replay 未构建) | TS2307 |
+| `paths` 直指包源码,**无** project reference     | TS6059 + TS6307                                                                                     |
+| `tsc -p packages/engine`(replay 未构建)         | TS2307                                                                                              |
 
 第三行的原始输出(`<repo>` 是仓库根的省略,其余逐字照抄):
 

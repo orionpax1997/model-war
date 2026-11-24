@@ -91,11 +91,11 @@ ADR-0029 的配额强制依赖「harness 是唯一执行者」：执行前解析
 
 ### 每步的字节由三条键级上限管，截断在生成侧
 
-| 键 | 上限 | 保留 | 理由 |
-|---|---|---|---|
-| `stdout` | 16 KiB | 头 30% / 尾 70% | 诊断尾部常有汇总 |
-| `stderr` | 4 KiB | 头 70% / 尾 30% | 类型检查的第一条错误在全量诊断的开头 |
-| `raw`（模型原文） | **不截断**（仅 64 KiB 病态保护） | — | 上一轮已是响应 token，回传不增加新信息成本 |
+| 键                | 上限                             | 保留            | 理由                                       |
+| ----------------- | -------------------------------- | --------------- | ------------------------------------------ |
+| `stdout`          | 16 KiB                           | 头 30% / 尾 70% | 诊断尾部常有汇总                           |
+| `stderr`          | 4 KiB                            | 头 70% / 尾 30% | 类型检查的第一条错误在全量诊断的开头       |
+| `raw`（模型原文） | **不截断**（仅 64 KiB 病态保护） | —               | 上一轮已是响应 token，回传不增加新信息成本 |
 
 截断发生在生成侧：模型看到的字节就是落盘的字节（ADR-0031）。三条键级上限而不是一个合计上限，是因为合计会造出键间的相互挤占。
 
@@ -232,13 +232,13 @@ $ echo $?
 
 2026-11-19 拿真实首条消息（`prompts/agent-system.md` + `prompts/agent.md` 的渲染结果，与真会话逐字相同）打同一端点，唯一变量是请求里有没有 `tools`：
 
-| 席位 | 不给 `tools` | 给 `tools` |
-|---|---|---|
-| `tencent/hy4-flash` | XML 6/6 次 | **tool_calls 6/6**，0 XML |
-| `xiaomi/mimo-v2.6-flash` | XML 3/5，围栏块 1 | **tool_calls 3/4** |
-| `stealth/glyph-cluster:free` | `finish=length`，content 空 | **tool_calls 1/1** |
-| `minimax/m3.1-flash` | 围栏块 ✓ | tool_calls ✓ |
-| `thinkingmachines/inkling-2-small:free` | **content 空**（`finishReason: tool_calls`） | 免费档已下线 |
+| 席位                                    | 不给 `tools`                                 | 给 `tools`                |
+| --------------------------------------- | -------------------------------------------- | ------------------------- |
+| `tencent/hy4-flash`                     | XML 6/6 次                                   | **tool_calls 6/6**，0 XML |
+| `xiaomi/mimo-v2.6-flash`                | XML 3/5，围栏块 1                            | **tool_calls 3/4**        |
+| `stealth/glyph-cluster:free`            | `finish=length`，content 空                  | **tool_calls 1/1**        |
+| `minimax/m3.1-flash`                    | 围栏块 ✓                                     | tool_calls ✓              |
+| `thinkingmachines/inkling-2-small:free` | **content 空**（`finishReason: tool_calls`） | 免费档已下线              |
 
 `hy4` 那 6/6 是在同一份 message 上重复六次得到的，无一次退化成 XML。同一批模型、同一渠道、同一份提示词，唯一变量是请求里有没有 `tools`——所以「这个席位与 bash-only 协议不适配」那条上一节裁决的适用范围要收窄：**当时不适配的是我们没发的那个字段**。
 
@@ -298,6 +298,7 @@ $ echo $?
    **不带 `tools` 也 403**：该席位在本账号档位下整体被渠道拒。所以「声明形状会不会 400」「`tool_result` 能否配对」**零证据**。按 fail-closed，这一族**不声明** `tools`，用它的席位在会话起跑前拒跑并点名——不是「没试过」，是「试了，席位被拒，所以没有证据，不写未验证的翻译」。`responses` / `generate-content` 两族同一条规矩（本季名册不用）。
 
 > **本条的前提已于 2026-11-21 被推翻：上面的 403 是链路故障，不是档位事实，三步探针当天全部 200。** 见文末「修订（2026-11-21）：`messages` 族的 403 不复现」一节。本节以下原文保留，它记的是当天真实的读数与当时的判断。
+
 2. **`arguments` 是模型写的 JSON 字符串，可以被写坏。** 归 `malformed-arguments` 拒绝档：不执行任何工具、计一步、回纠正消息。解析放在动作层而不是传输层，是因为它是一条模型能自我修正的格式失败——放进传输层就变成了端点错误。
 3. **并行调用被拒，但渠道可能自己并行。** 判据在动作层（一次以上一律拒绝），而请求体里**不发** `parallel_tool_calls: false`（那是 OpenAI 专有键，别的渠道收到不认识的键可能直接 400）。于是存在一个渠道侧的可能：它一次给我们多条 `tool_calls`——那正好落进 `multiple-tool-calls` 的拒绝档，代价是浪费一步，不是静默执行一条。
 4. **`raw` 在工具调用轮次里常态为空，逐字字节搬到了 `toolCall.argumentsJson`。** 初版「`raw` 不截断」（残余风险 2）那条的关切没有消失，只是换了字段：真正的正文在 `argumentsJson` 里，而它同样不截断、原样落档。读侧必须知道「两个字段各管一件事」，否则会从 `raw == ""` 误判成「模型什么都没说」——`inkling` 那场就是这个误判的真实样本。
@@ -310,16 +311,24 @@ $ echo $?
 
 三步各一次真请求，`probes/messages-tool-roundtrip/`（脚本入 git，凭证从 `.env` 读）：
 
-| | 请求 | 状态 | `stop_reason` | `content` 块 |
-|---|---|---|---|---|
-| ① | 不带 `tools` | 200 | `end_turn` | `text` |
-| ② | 带 `tools` | 200 | `tool_use` | `tool_use` |
-| ③ | 回显 assistant 的 `content` + 发一条 `tool_result` | 200 | `end_turn` | `thinking`, `text` |
+|     | 请求                                               | 状态 | `stop_reason` | `content` 块       |
+| --- | -------------------------------------------------- | ---- | ------------- | ------------------ |
+| ①   | 不带 `tools`                                       | 200  | `end_turn`    | `text`             |
+| ②   | 带 `tools`                                         | 200  | `tool_use`    | `tool_use`         |
+| ③   | 回显 assistant 的 `content` + 发一条 `tool_result` | 200  | `end_turn`    | `thinking`, `text` |
 
 ② 的 `content` 原文：
 
 ```json
-[{"type":"tool_use","id":"toolu_018uPE8eFnpritXWKqgCGX7W","name":"bash","input":{"command":"ls -la /"},"caller":{"type":"direct"}}]
+[
+  {
+    "type": "tool_use",
+    "id": "toolu_018uPE8eFnpritXWKqgCGX7W",
+    "name": "bash",
+    "input": { "command": "ls -la /" },
+    "caller": { "type": "direct" }
+  }
+]
 ```
 
 于是上一节那两句结论各自换一个状态：
