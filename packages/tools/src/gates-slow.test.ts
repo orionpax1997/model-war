@@ -220,11 +220,19 @@ it("单局墙钟与快照回放门禁:人为放大回放体量即红,还原后�
 // 脚本（复算的实际断言在 `probe-harness.test.ts` 的三条 `复算:*` 用例里），它的位置纪律在
 // `gates.test.ts`。这里跑它本身。反例用 `--tamper-probe` / `--tamper-baseline`（门禁只改本进程传给
 // 被测测试的 env），不动仓库里的任何东西；还原 = 无参数再跑一次回到绿。
+//
+// 门禁跑哪个 project 是**算**出来的（`vitest list --filesOnly --json` → 收这个文件的最窄池），
+// 不写死：`a8c1de3` 把 `probe-harness.test.ts` 从 `unit` 挪进 `vm` 时，写死 `--project unit`
+// 的那一版就变成了「读到 0 个复算用例」，而那是**配置搬家**的症状，不是失配语义，两种处方
+// 完全不同（查配置 vs 查基准）。下面的断言把那两种红分得开：红必须说得出是哪一侧。
 
 it("标定复算门禁:终值下探针被截停、基准不被截停,退出 0", { timeout: 900_000 }, () => {
   const result = cached("gate:budget:recheck");
   expect(result.status, result.output).toBe(0);
   expect(result.output, result.output).toContain("MW_BUDGET_RECHECK=1");
+  // 归属是算出来的：输出里那一行就是证据（哪个 project、由哪次查询得出）。换配置时它会跟着变，
+  // 所以这里不写死名字，只要求它存在且说明了来路。
+  expect(result.output, result.output).toMatch(/^ {2}project:[a-z][a-z-]*\(由 /mu);
   expect(result.output, result.output).toContain("探针:终值下三类探针均被截停");
   expect(result.output, result.output).toContain("基准:终值预算下三份基准脚本均不被截停");
   expect(result.output, result.output).toContain("推导:终值推导与规则集逐键自洽");
@@ -243,6 +251,10 @@ it("标定复算门禁:基准被截停 → 红,还原 → 绿", { timeout: 900_0
   const tampered = cached("gate:budget:recheck", ["--tamper-baseline"]);
   expect(tampered.status, `基准被截停门禁仍为绿:\n${tampered.output}`).not.toBe(0);
   expect(tampered.output, tampered.output).toContain("预算复算门禁:红(基准被截停)");
+  // 这一红不能是「读到 0 个复算用例」：那句红意味着门禁拿错了 project 去跑（a8c1de3 之后
+  // 稳定复现的那次），它证的不是基准被截停，而是门禁自己没跑到用例。两种红的处方不同，
+  // 混成一句就等于把「配置搬家」和「基准失配」当成了同一件事。
+  expect(tampered.output, tampered.output).not.toContain("读到 0 个");
   expectRestored(cached("gate:budget:recheck"), "基准反例后");
 });
 

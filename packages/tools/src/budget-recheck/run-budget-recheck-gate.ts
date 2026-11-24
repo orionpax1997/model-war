@@ -15,6 +15,13 @@
  * 并且终值推导(读数 × 系数)与 `rulesets/v1.json` 逐键一致。这把原本只写在标定读数散文里的
  * 「终值仍自洽」变成可执行断言——不一致即红。
  *
+ * ── 用例住在哪个 project:算,不写死 ─────────────────────────────────────────
+ * 本门禁只跑一个测试文件,但那个文件住在哪个 project 是**配置事实**,会随测试分层搬家
+ * (`a8c1de3` 就把它从 `unit` 挪进了 `vm`)。写死 `--project unit` 的下场是:vitest 收 0 个文件
+ * 退 0,而红的理由变成「读到 0 个复算用例」——错的地方不是本门禁要断言的失配语义。
+ * 所以先 `vitest list --filesOnly --json` 问 vitest「谁收这个文件」,再按收文件数取最窄的那个
+ * (`vitest/project-membership.ts`,判据与理由写在那里)。配置搬了,答案跟着搬。
+ *
  * ── 它与另两条门禁的分工 ────────────────────────────────────────────────────
  * `gate:budget`(快门禁,零构建)读**结构**:整数倍、夹逼、文档副本一致。本门禁读**失配语义**:
  * 它要真跑引擎,故归**按需→夜间**层(不进 `quick` / `check` / `test` / `verify`)。
@@ -38,6 +45,11 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { vacuousReason } from "../gate/vacuous.ts";
+import {
+  parseListedFiles,
+  resolveProject,
+  type ProjectResolution,
+} from "../vitest/project-membership.ts";
 
 /** 仓库根 = 本文件上溯四级(`packages/tools/src/budget-recheck/`)。 */
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -95,9 +107,67 @@ const reasonOf = (output: string): string => {
   return "复算不通过";
 };
 
+/**
+ * 问 vitest「谁收着 `TEST_FILE`」,返回要传给 `--project` 的名字。
+ *
+ * 两次失败要分辨得清:列不出文件(命令本身红)与没有 project 收这个文件(配置把文件漏了)
+ * 都不是「复算不通过」,所以各自给一句自己的话,不混进失配语义那三种理由里。
+ */
+const resolveTestProject = ():
+  | {
+      readonly ok: true;
+      readonly project: string;
+      readonly candidates: readonly string[];
+    }
+  | { readonly ok: false; readonly reason: string } => {
+  const listed = spawnSync(
+    process.env["GATE_PNPM"] ?? "pnpm",
+    // `--filesOnly`:按**文件**列举,不按用例名——被 `it.runIf(...)` 包着的复算用例在非复算
+    // 模式下是 skipped,靠用例名列会得出「这个文件不存在」的反向结论。`--json` 带上
+    // `projectName`,这一列正是本门禁唯一缺的那个配置事实。
+    ["exec", "vitest", "list", "--filesOnly", "--json"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  if (listed.error !== undefined) {
+    throw listed.error;
+  }
+  if ((listed.status ?? -1) !== 0) {
+    return {
+      ok: false,
+      reason: `vitest list 列不出测试文件(退出码 ${String(listed.status)}):拿不到归属就只能猜 project,按失败处理。`,
+    };
+  }
+  // 解析失败也是一种「判不出归属」:它不能退化成一个空列表,否则会被当成「没人收这个文件」。
+  const resolution = (():
+    | ProjectResolution
+    | { readonly kind: "broken"; readonly reason: string } => {
+    try {
+      return resolveProject(parseListedFiles(listed.stdout), TEST_FILE);
+    } catch (error) {
+      return { kind: "broken", reason: (error as Error).message };
+    }
+  })();
+  if (resolution.kind !== "resolved") {
+    return { ok: false, reason: resolution.reason };
+  }
+  return {
+    ok: true,
+    project: resolution.project,
+    candidates: resolution.candidates,
+  };
+};
+
 const main = (argv: readonly string[]): number => {
   const tamper = parseTamper(argv);
   process.stdout.write("预算复算门禁:重跑预算探针 + 三份基准脚本,判终值仍自洽\n");
+  const ownership = resolveTestProject();
+  if (!ownership.ok) {
+    process.stdout.write(`预算复算门禁:红(${ownership.reason})\n`);
+    return 1;
+  }
+  process.stdout.write(
+    `  project:${ownership.project}(由 \`vitest list --filesOnly --json\` 算出:收它的 project 有 ${ownership.candidates.join(", ")},取最窄的那个)\n`,
+  );
   process.stdout.write(
     `  rerun:${TEST_FILE}(MW_BUDGET_RECHECK=1${
       tamper === null ? "" : `,MW_RECHECK_TAMPER=${tamper}`
@@ -114,7 +184,7 @@ const main = (argv: readonly string[]): number => {
     process.env["GATE_PNPM"] ?? "pnpm",
     // `--reporter=verbose` 不是好看:默认 reporter 在非 TTY 下**不输出用例名**,而本门禁的
     // 空转检测要从输出里数「那些用例真的跑了吗」(见下面那段)。
-    ["exec", "vitest", "run", "--project", "unit", "--reporter=verbose", TEST_FILE],
+    ["exec", "vitest", "run", "--project", ownership.project, "--reporter=verbose", TEST_FILE],
     {
       cwd: repoRoot,
       encoding: "utf8",
