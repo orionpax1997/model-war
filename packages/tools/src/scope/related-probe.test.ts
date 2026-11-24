@@ -110,7 +110,7 @@ describe("classify:六种状态", () => {
     expect(crashed.kind).toBe("failed");
   });
 
-  it("只有结构测试文件 → structural-only", () => {
+  it("只有结构测试文件 → structural-only(消息点名「别的文件的形状」)", () => {
     // 这张表的每条路径必须真实存在:清单腐烂会让 structural-only 静默退化成 ran。
     for (const path of STRUCTURAL_TESTS) {
       expect(existsSync(join(repoRoot, path)), `结构测试清单里的 ${path} 不存在`).toBe(true);
@@ -121,6 +121,9 @@ describe("classify:六种状态", () => {
 
     expect(outcome.kind).toBe("structural-only");
     expect(outcome.kind === "structural-only" && outcome.structural).toEqual([structural]);
+    // 这句话本身就是判据的一部分:读的人得知道为什么“有测试”却不给绿。
+    expect(isRed(outcome)).toBe(true);
+    expect(messageOf(outcome)).toContain("别的文件的形状");
   });
 
   it("报告 undefined → no-report(不是 no-tests),且与 no-tests 的消息不同", () => {

@@ -16,7 +16,7 @@
  *    的 runtime 产物被读,不被 import,图对它们没有边。
  * 3. **仓库事实交给表**(`RADIUS`),表只在这个范围内是判据。
  *
- * 四条红得方向明确,都是「错要红,不能沉默」的形状:
+ * 五条红得方向明确,都是「错要红,不能沉默」的形状:
  *
  * - 说不清:既映射不到产物也没有表规则的路径 → 红(它的默认表现是少跑)。
  * - 少跑:`test:all` 被选中就不再单独跑它的子集;产物不在盘上则先增量构建,仍缺才退回全量。
@@ -24,6 +24,9 @@
  *   `coverage-debt.txt`)。这是 agent 最大的盲区,而原来的系统在它改完之后什么都不说。
  * - 问不出用例数:探针报告缺失 / 不可解析 → 红。**未知不是绿**,而且本仓库的 vitest 配置带
  *   `passWithNoTests: true`,只看退出码会把"一条没选中"读成"通过"。
+ * - 判据本身过期:入库观测快照的内容指纹(recorder / setup / `vitest.config.ts`)与现在对不上
+ *   → 红,并在消息里给两个指纹与两条重录命令。旧的 map 不再被当成判据:它的失效方向是少记,
+ *   而少记与“没人读”在输出上是同一句话。
  *
  * ── 计划只有一处构造 ──
  *
@@ -62,8 +65,14 @@ import {
   gitRunIn,
 } from "./change-set.ts";
 import { chainProjects, fullPlan, scriptProjects, type RunItem, type Scripts } from "./plan.ts";
-import { probeRelated } from "./related-probe.ts";
-import { invert, loadInputsMap } from "./test-inputs.ts";
+import { probeRelated, type ProbeOutcome } from "./related-probe.ts";
+import {
+  currentFingerprint,
+  invert,
+  isSnapshotCurrent,
+  loadInputsMap,
+  type InputsMap,
+} from "./test-inputs.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -169,6 +178,63 @@ export const labelOf = (item: RunItem): string => {
   }
 };
 
+/**
+ * 观测快照过期时的红消息。**过期即红**:`undefined` = 还能当判据。
+ *
+ * 为什么不是"警告一句然后照旧用":旧 map 的失效方向是**少记**——recorder 换了 hook、project
+ * 划分变了之后,它会安静地少几条观测,于是选择器少选一批测试,而少选不报错。既然"用过期的
+ * 判据"与"没有判据"是同一件事,这里就必须在**拿它当判据之前**停下。
+ *
+ * 消息里三个要素缺一不可:两个指纹(谁跟谁对不上)、"为什么指纹能决定这件事"、两条命令
+ * (`observe:inputs:accept` 重录、`observe:inputs` 复核,后者是防止重录把变窄写进仓库)。
+ */
+export const snapshotStaleMessage = (input: {
+  readonly map: InputsMap;
+  readonly fingerprint: string;
+}): string | undefined => {
+  if (isSnapshotCurrent(input)) return undefined;
+  const recorded = input.map.fingerprint === "" ? "(空:旧快照没有指纹)" : input.map.fingerprint;
+  return (
+    `观测快照过期:入库指纹 ${recorded},现在是 ${input.fingerprint}。\n` +
+    '指纹覆盖 recorder / setup / vitest.config.ts:观测仪器变了,旧 map 里"谁读什么"不再是\n' +
+    '同一回事,拿它判"有没有测试观测到"只会少跑,所以这里直接红。\n' +
+    "重录:`node --run observe:inputs:accept`(约 85s);复核:`node --run observe:inputs`" +
+    "(重录变窄等于少跑,复核就是在拦这件事)。\n"
+  );
+};
+
+/**
+ * 探针结论 → 未观测登记(纯函数,`main` 与测试共用一份)。
+ *
+ * 三条能算出"这条改动没人看"的结论落在这里;`failed` / `no-report` 不在这张表里——它们
+ * 不是"没有判据"而是"判据在喊"与"问不出答案",处方不同,由 `main` 各自处理。
+ *
+ * 结构测试那一条的措辞是判据的一部分:它断言的**不是**被改模块的行为,而是别的文件的形状
+ * (依赖方向、文档归属、版本边界)。把这种文件记成"有测试候选"等于用一张图纸证明一栋楼。
+ */
+export const unobservedGap = (
+  path: string,
+  outcome: ProbeOutcome,
+): { readonly path: string; readonly why: string } | undefined => {
+  switch (outcome.kind) {
+    case "ran":
+      return undefined;
+    case "structural-only":
+      return {
+        path,
+        why: `只有结构测试被选中(${outcome.structural.join(", ")}):它们断言的是别的文件的形状,不是这块代码的行为`,
+      };
+    case "no-tests":
+      return { path, why: "依赖图一条用例都没选中:确知为零" };
+    case "all-skipped":
+      return { path, why: `选中的 ${String(outcome.files.length)} 个测试文件全部 skip` };
+    case "failed":
+    case "no-report":
+      // 这两种红有各自的处方(先修测试 / 先修探针),不走"补用例或登记债务"那条路。
+      return undefined;
+  }
+};
+
 const runCommand = (label: string, args: readonly string[]): number => {
   process.stdout.write(`\n=== ${label} ===\n`);
   const result = spawnSync(process.execPath, args, { cwd: repoRoot, stdio: "inherit" });
@@ -216,6 +282,16 @@ const main = (argv: readonly string[]): number => {
   const options = parseArgs(argv);
   const scripts = readScripts();
   const workspaces = workspacesOf(repoRoot);
+
+  // ── 观测快照还能不能当判据:过期即红,而且**不继续用旧 map** ──
+  // 顺序是判据的一部分:先判快照,再谈"有没有观测到"。否则旧 map 的少记会被读成
+  // "没人读它",而那些路径恰好是行为输入——两种红混成一条,修的地方也看不出来。
+  const map = loadInputsMap(repoRoot);
+  const stale = snapshotStaleMessage({ map, fingerprint: currentFingerprint(repoRoot) });
+  if (stale !== undefined) {
+    process.stderr.write(`\n${stale}`);
+    return 1;
+  }
 
   // ── 改了什么:一份规范 ChangeSet(merge-base 基准,两端都留,失败显式) ──
   let changeSet: ReturnType<typeof computeChangeSet>;
@@ -271,7 +347,7 @@ const main = (argv: readonly string[]): number => {
    * 这是依赖图看不见的那一类——`rulesets/*.json`、`maps/*.yaml`、wasm、入库的 runtime 产物。
    * 它们由图的话,改一条规则取值只会选中"import 了这个 JSON 的模块",而那通常是零个测试。
    */
-  const observedByInput = invert(loadInputsMap(repoRoot));
+  const observedByInput = invert(map);
   const observedTests = new Set<string>();
   for (const path of files) {
     for (const test of observedByInput.get(path) ?? []) observedTests.add(test);
@@ -313,7 +389,9 @@ const main = (argv: readonly string[]): number => {
         : "computed: 图没有边(不是源码,也映射不出产物)";
     const observed = observedByInput.get(path)?.size ?? 0;
     const observedText =
-      observed === 0 ? "observed: 没有测试读过它" : `observed: ${String(observed)} 个测试文件读过`;
+      observed === 0
+        ? "observed: 没有测试观测到它"
+        : `observed: ${String(observed)} 个测试文件观测到它`;
     const rule = ruleFor(path);
     const suites = suitesFor(path);
     const staticText =
@@ -344,9 +422,11 @@ const main = (argv: readonly string[]): number => {
     `\n选中(三源:computed 依赖图 / observed 观测 map / static 仓库事实):\n` +
       `  always:   ${always.join(", ")}\n` +
       `  radius:   ${radius.join(", ") || "—"}\n` +
-      `  computed: ${String(decision.graphFiles.length)} 个文件交给依赖图\n` +
-      `  observed: ${String(observedTests.size)} 个测试文件命中\n` +
+      `  computed: ${String(decision.graphFiles.length)} 个文件作为测试候选交给依赖图\n` +
+      `  observed: ${String(observedTests.size)} 个测试文件观测到这些运行时输入\n` +
       gatesLine +
+      "  术语:上面那几族是选中的验证族,交给图的是测试候选,observed 记的是观测到的运行时输入。\n" +
+      '        候选只承诺"会被执行":它断言了什么,只有它自己的失败与通过能说。\n' +
       `${evidenceLines.join("\n")}\n`,
   );
   if (decision.notBuilt.length > 0) {
@@ -369,7 +449,7 @@ const main = (argv: readonly string[]): number => {
   } else {
     process.stdout.write(
       `\n执行计划(默认):${runs.map(labelOf).join(" → ") || "无"}\n` +
-        `  (选中的是测试**候选**;它断言了什么,只有它自己的失败/通过能说)\n`,
+        `  (选中的是测试**候选**:上面这几族会执行;它断言了什么,只有它自己的失败/通过能说)\n`,
     );
   }
   if (options.print) return 0;
@@ -435,18 +515,6 @@ const main = (argv: readonly string[]): number => {
     switch (outcome.kind) {
       case "ran":
         break;
-      case "no-tests":
-        gaps.push({ path, why: "依赖图一条用例都没选中:确知为零" });
-        break;
-      case "structural-only":
-        gaps.push({
-          path,
-          why: `只选中了结构测试(${outcome.structural.join(", ")}):那是别的文件的形状`,
-        });
-        break;
-      case "all-skipped":
-        gaps.push({ path, why: `选中的 ${String(outcome.files.length)} 个测试文件全部 skip` });
-        break;
       case "failed":
         // 候选红了不是"没有判据",是"判据在喊":先修它,别把两种红混成一条。
         process.stderr.write(
@@ -460,6 +528,11 @@ const main = (argv: readonly string[]): number => {
           })。\n未知不是绿:这条判据只承认「确知为零」与「确知跑过」。\n`,
         );
         return 1;
+      default: {
+        // 三条"算得出没人看"的结论共用一张表(`unobservedGap`),它们都落到同一条红线上。
+        const gap = unobservedGap(path, outcome);
+        if (gap !== undefined) gaps.push(gap);
+      }
     }
   }
   if (gaps.length > 0) return reportUnobserved(gaps, "code");
@@ -480,7 +553,7 @@ const reportUnobserved = (
   process.stderr.write(
     `\n改动没有被任何测试观测到(computed 与 observed 都是空的):\n` +
       `${gaps.map((gap) => `  ${gap.path}\n    ${gap.why}`).join("\n")}\n\n` +
-      `${tail}\n两条出路,选一条:\n` +
+      `${tail}\n选中的验证族没给这块改动留下任何候选;两条出路,选一条:\n` +
       `  1. 补一个用例,让它真的执行到这块;\n` +
       `  2. 在 ${DEBT_PATH} 里登记一行并写清为什么现在不测:\n` +
       `     ${gaps[0]?.path ?? "<路径>"}  # 为什么现在不测\n`,

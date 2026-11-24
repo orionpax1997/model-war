@@ -36,7 +36,14 @@ import { buildOutputsOf, isSourceFile, sourceOf, type Workspace } from "./build-
 export const ALWAYS: readonly string[] = ["quick", "gate:static"];
 
 /** 全部测试族。除 `quick` / `gate:static` 之外的每个测试入口都要在这里登记一次。 */
-export const SUITES: readonly string[] = ["test", "test:vm", "test:e2e", "test:gates", "test:all"];
+export const SUITES: readonly string[] = [
+  "test",
+  "test:vm",
+  "test:e2e",
+  "test:gates",
+  "test:slow",
+  "test:all",
+];
 
 export interface Radius {
   /** 相对仓库根的路径前缀;`p === area || p.startsWith(area + "/")` 命中。 */
@@ -86,6 +93,11 @@ export const RADIUS: readonly Radius[] = [
     why: "vitest 侧接线(报告汇总、内核探针)的判据是同目录的 `.test.ts`,在 `unit` 池子里——这一档只补 `test`,不牵扯门禁自测",
   },
   {
+    area: "packages/tools/src/gates-slow.test.ts",
+    suites: ["test:slow"],
+    why: "它属于 `slow` project(nightly 的那一半),兜底会把改它的人送去 `test:gates`:既多跑了不该跑的族,又**没跑它自己**——跑错族比多跑更贵",
+  },
+  {
     area: "packages/tools",
     suites: ["test:gates"],
     fallback: true,
@@ -100,6 +112,12 @@ export const RADIUS: readonly Radius[] = [
     area: "packages/runner/src/fixtures",
     suites: ["test"],
     why: "单测的夹具(黄金档等),被读成文本而不是 import——图对它没有边",
+  },
+  {
+    area: "packages/engine/src/fixtures/guest",
+    mustObserve: true,
+    suites: ["test:vm"],
+    why: "guest 侧夹具脚本:被 `readFileSync` 读成文本塞进 VM,不是 import——图对它没有边;读它的两条用例(`sandbox` / `quickjs`)都在 vm 族。模块加载期读盘(票 T6 修好了归属)才让它被观测到,而没规则的输入会让选择器抛错",
   },
   {
     area: "packages/schema/script-api",
@@ -313,6 +331,10 @@ const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(p
  *
  * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 `all` 块重新
  * 推导一遍再对账——谁单方面改了都会红。
+ *
+ * 清单只说"图看不见它",**不说"该跑哪一族"**。后者由各文件自己的规则决定(`RADIUS` 顺序即
+ * 优先级):`gates-slow.test.ts` 住在 `slow` project,于是它有自己的那条(`test:slow`),
+ * 而不是被兜底送去门禁自测——跑错族与少跑一样是错的,只是它多跑的那一半不报错。
  */
 export const GRAPH_BLIND_TESTS: readonly string[] = [
   "packages/tools/src/gates.test.ts",
