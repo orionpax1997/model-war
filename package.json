@@ -48,6 +48,7 @@
     "gate:limits": "node --disable-warning=ExperimentalWarning packages/tools/src/limits/run-limits-gate.ts",
     "gate:gen-grid": "node --run build && node --disable-warning=ExperimentalWarning packages/tools/src/gen-grid/run-gen-grid-gate.ts",
     "test": "vitest run --project unit --project property",
+    "test:related": "vitest related --run --project all",
     "test:all": "vitest run --project all --project property",
     "test:e2e": "vitest run --project e2e",
     "test:vm": "vitest run --project vm",

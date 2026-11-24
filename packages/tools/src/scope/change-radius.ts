@@ -1,88 +1,47 @@
 /**
- * **改动半径 → 该跑哪些命名脚本**。`verify:scoped` 的唯一真源。
+ * **改动 → 该跑什么**。`verify:scoped` 的唯一真源。
  *
- * ── 这张表要解的是什么 ──
+ * ── 两个半边,分工明确 ──
  *
- * `verify` 是收口:`quick` + `gate:static` + 全量测试。它一次要对,所以该跑全。但"每次改动都付
- * 同样的账"是另一回事——改一段散文(`docs/`)与改一个 VM 的 tick 循环,后果完全不在一个量级上,
- * 而后者才是那 70s 的账主。这张表把「改到哪儿 → 至少跑什么」变成可执行的东西,而不是靠人记。
+ * **代码改动交给依赖图。** 源码文件先经 `build-outputs.ts` 展开成产物路径(跨包边指向
+ * `dist/`,而 `git diff` 给的是 `src/`),再连同源码一起交给 `vitest related`。选哪些测试
+ * 不是这里算的,是图算的——它能看见 `import`、能看见跨包解析,人工表看不见这些。
  *
- * ── 为什么不能用 `vitest --changed` 自动推 ──
+ * **图看不见的交给表。** 两类:数据文件(`rulesets/`、`maps/`、`prompts/`)与仓库事实
+ * (`package.json`、锁文件、`vitest.config.ts`)。它们被读、被解析,不被 import,所以图对它们
+ * 一无所知,只能由表说「改这里要跑哪几族」。第三条是 `packages/tools`:门禁自测住在独立
+ * project 里(`gates`),不在 `all` 的池子里,图选不到它。
  *
- * 它按 import 图找相关测试。而本仓最贵的那些用例是**进程级**的:它们 spawn 打好的 CLI 产物,
- * 与被测代码在依赖图上**没有边**。改 `packages/engine/src/runner/quickjs.ts`,`--changed` 不会
- * 选中 `cli-match.test.ts`——它会静默跳过,绿得刚好把问题盖住。那正是「机器背书的假确定性」。
- * 所以这里用的是**人工列的、默认保守的**前缀表,并且:
+ * 表**只在这个范围内是判据**。给 `apps/cli`、`packages/engine` 这类代码目录写规则是多余且
+ * 有害的——图的结论永远比人写的更准,两份并存时人写的那份只会腐烂(ADR-0038 的落选条目)。
  *
- * - 表里的占位比表外的漏项安全:拿不准就往多的写(多跑几秒 vs 假绿);
- * - 未登记的路径**直接红**,不是跳过;
- * - `packages/tools/src/scope/test-layers.test.ts` 盯着三件事:每条规则指向的脚本真实存在、
- *   仓库顶层每个条目都被覆盖、每个 vitest project 都有入口。
+ * ── 三条不能让步的性质 ──
  *
- * 新增一个包 / 一个顶层目录时,那条测试会红——这是有意的:漏登记的后果是"那部分代码改了却没人
- * 跑它的测试",而它不会以报错的形式自己显形。
+ * 1. **说不清就不许跑少。** 既映射不到产物、也没有表规则的路径 → 红。
+ * 2. **产物不存在同样要红。** 源码改了但 `dist/` 没跟上(没跑过 `tsc -b`),静态映射就失效,
+ *    此时退回全量而不是照旧少选——那正是"静默少选"的形状。
+ * 3. **顺序稳定。** `ALWAYS` 先跑(便宜、失败快),其余按 `SUITES` 的固定顺序,于是同样的
+ *    改动每次得到同样的序列,日志可比。
  */
+
+import { buildOutputsOf, type Workspace } from "./build-outputs.ts";
 
 /** 任何改动都要跑的两步:格式化/静态检查(输入在编辑面上)、入库事实漂移(1s 级)。 */
 export const ALWAYS: readonly string[] = ["quick", "gate:static"];
+
+/** 全部测试族。除 `quick` / `gate:static` 之外的每个测试入口都要在这里登记一次。 */
+export const SUITES: readonly string[] = ["test", "test:vm", "test:e2e", "test:gates", "test:all"];
 
 export interface Radius {
   /** 相对仓库根的路径前缀;`p === area || p.startsWith(area + "/")` 命中。 */
   readonly area: string;
   /** 除 `ALWAYS` 之外还要跑的命名脚本(必须是 `package.json` 里真实存在的名字)。 */
   readonly suites: readonly string[];
-  /** 为什么是这几条。读的人要能不查代码就判断这条规则该不该改。 */
+  /** 为什么是这几条,或者为什么一条都不需要。 */
   readonly why: string;
 }
 
-/**
- * 全部测试族。`quick` / `gate:static` 之外的每一个测试入口都要在这里登记一次,
- * 否则 `test-layers.test.ts` 会指着"这个 project 没人会跑它"。
- */
-export const SUITES: readonly string[] = [
-  "test",
-  "test:vm",
-  "test:e2e",
-  "test:gates",
-  "test:kernel",
-];
-
 export const RADIUS: readonly Radius[] = [
-  {
-    area: "apps/cli",
-    suites: ["test", "test:e2e"],
-    why: "argv 解析、退出码、整条链路都在这一层;e2e 是唯一能证「一条命令行串起全部」的地方",
-  },
-  {
-    area: "packages/engine",
-    suites: ["test", "test:vm"],
-    why: "引擎改动要在真 quickjs-wasi VM 上复验(确定性、预算轨、注入面),桩跑不出这些",
-  },
-  {
-    area: "packages/schema",
-    suites: ["test", "test:vm"],
-    why: "契约与内置常量是 VM 侧的输入,改了就要在真 VM 上复验一遍落地形态",
-  },
-  {
-    area: "packages/replay",
-    suites: ["test", "test:vm"],
-    why: "回放格式与 stateHash 是复算链的锚点,VM 侧有独立一份",
-  },
-  {
-    area: "packages/runner",
-    suites: ["test"],
-    why: "赛季调度、排名、报告是纯逻辑;真链路由 apps/cli 的 e2e 覆盖",
-  },
-  {
-    area: "packages/gen",
-    suites: ["test"],
-    why: "生成链路用替身执行器验;真沙箱那一份在 test:kernel(要 bwrap)",
-  },
-  {
-    area: "packages/tools",
-    suites: ["test", "test:gates"],
-    why: "tools 里大部分是门禁本身,改判据就得跑门禁自测(它 spawn 真实命令)",
-  },
   {
     area: "rulesets",
     suites: ["test:vm"],
@@ -94,14 +53,19 @@ export const RADIUS: readonly Radius[] = [
     why: "地图是引擎的输入,地形判据与整场行为都在 VM 侧",
   },
   {
+    area: "packages/tools",
+    suites: ["test:gates"],
+    why: "门禁自测住在独立的 `gates` project 里,不在 `all` 的池子里——图选不到它,只能由表补",
+  },
+  {
     area: "benchmarks",
     suites: ["test:vm", "test:e2e"],
     why: "基准脚本同时被 VM 组当执行体、被 e2e 组当 CLI 夹具",
   },
   {
-    area: "sandbox-rootfs",
+    area: "packages/gen/sandbox-rootfs",
     suites: [],
-    why: "rootfs 漂移由 gate:static 里的 gate:rootfs 盯,不牵扯对局",
+    why: "生成期沙箱的入库 rootfs;漂移由 gate:static 里的 gate:rootfs 盯,不牵扯对局",
   },
   {
     area: "docs",
@@ -146,7 +110,7 @@ export const RADIUS: readonly Radius[] = [
   {
     area: ".github",
     suites: ["test"],
-    why: "CI 接线由 packages/tools/src/ci.test.ts 盯(快链成员、缓存键)",
+    why: "CI 接线由 packages/tools/src/ci.test.ts 盯(快链成员、缓存键),它不 import CI 文件",
   },
   {
     area: ".githooks",
@@ -160,27 +124,27 @@ export const RADIUS: readonly Radius[] = [
   },
   {
     area: "package.json",
-    suites: ["test", "test:vm", "test:e2e"],
+    suites: ["test:all"],
     why: "脚本与依赖一变,任何一族都可能受影响:收窄就是假绿",
   },
   {
     area: "pnpm-lock.yaml",
-    suites: ["test", "test:vm", "test:e2e"],
-    why: "同上:依赖树变了等于换了一套运行时",
+    suites: ["test:all"],
+    why: "依赖树变了等于换了一套运行时",
   },
   {
     area: "pnpm-workspace.yaml",
-    suites: ["test", "test:vm", "test:e2e"],
+    suites: ["test:all"],
     why: "工作区拓扑变了,包解析与打包都会动",
   },
   {
     area: "tsconfig.base.json",
-    suites: ["test"],
-    why: "编译选项影响所有包的产物形态",
+    suites: ["test:all"],
+    why: "编译选项影响所有包的产物形态,而选择器正是按产物问图",
   },
   {
     area: "tsconfig.json",
-    suites: ["test"],
+    suites: ["test:all"],
     why: "根 tsconfig 的引用集合,决定 `tsc -b` 的编译面",
   },
   {
@@ -190,13 +154,13 @@ export const RADIUS: readonly Radius[] = [
   },
   {
     area: "vitest.config.ts",
-    suites: ["test", "test:vm", "test:e2e", "test:gates"],
+    suites: ["test:all", "test:gates"],
     why: "project 划分一变,「哪一族跑哪些文件」就变了——这是判据本身的定义",
   },
   {
     area: "vitest.global-setup.ts",
-    suites: ["test", "test:vm", "test:e2e"],
-    why: "它在任何模块加载前跑 tsc -b,四个测试族全靠它",
+    suites: ["test:all"],
+    why: "它在任何模块加载前跑 `tsc -b`,而选择器依赖产物存在",
   },
   {
     area: "vitest.kernel-guard.setup.ts",
@@ -216,7 +180,32 @@ export const RADIUS: readonly Radius[] = [
   {
     area: ".dependency-cruiser.js",
     suites: [],
-    why: "包边界规则由 gate:static 里的 gate:deps 之外的 verify:wide 覆盖",
+    why: "包边界规则,由 verify:wide 的 gate:deps 覆盖",
+  },
+  {
+    area: "models.yaml",
+    suites: ["test"],
+    why: "模型名册被生成链路按需读取;形状由 gen 的单测盯",
+  },
+  {
+    area: "season.yaml",
+    suites: [],
+    why: "本地赛季配置(样例在 season.example.yaml)",
+  },
+  {
+    area: "season.example.yaml",
+    suites: ["test"],
+    why: "赛季配置样例,被解析侧的单测当夹具读",
+  },
+  {
+    area: "skills-lock.json",
+    suites: [],
+    why: "技能锁(提交时间与内容快照),按路径读",
+  },
+  {
+    area: "stryker.config.mjs",
+    suites: [],
+    why: "变异测试总配置,只在 mutate:* 里生效",
   },
   {
     area: "AGENTS.md",
@@ -232,31 +221,6 @@ export const RADIUS: readonly Radius[] = [
     area: "README.md",
     suites: [],
     why: "仓库入口说明,按路径读",
-  },
-  {
-    area: "models.yaml",
-    suites: [],
-    why: "模型名册,生成链路按需读取;形状由 gen 的单测盯",
-  },
-  {
-    area: "season.yaml",
-    suites: [],
-    why: "本地赛季配置,被 `run` 当输入;样例在 season.example.yaml",
-  },
-  {
-    area: "season.example.yaml",
-    suites: [],
-    why: "赛季配置样例,被解析侧的单测当夹具读",
-  },
-  {
-    area: "skills-lock.json",
-    suites: [],
-    why: "技能锁(提交时间与内容快照),按路径读",
-  },
-  {
-    area: "stryker.config.mjs",
-    suites: [],
-    why: "变异测试总配置,只在 mutate:* 里生效",
   },
 ];
 
@@ -274,34 +238,81 @@ export const IGNORED_AREAS: readonly string[] = [
   "node_modules",
 ];
 
-export interface Plan {
-  /** 按维度稳定顺序排好的待跑脚本(去重)。 */
+/** 被 `test:all` 覆盖的子集：它们在 `all` 的池子里，选中全量后不必再单独跑一遍。 */
+const SUPERSEDED_BY_ALL: readonly string[] = ["test", "test:vm", "test:e2e"];
+
+export interface Decision {
+  /** 按固定顺序排好的待跑命名脚本(去重)。 */
   readonly scripts: readonly string[];
-  /** 命中的规则(给人看"为什么是这些")。 */
+  /** 交给依赖图选择器的文件(源码 + 展开出的产物)。 */
+  readonly graphFiles: readonly string[];
+  /** 源码改了但产物不存在——静态映射失效,已退回全量。 */
+  readonly notBuilt: readonly string[];
+  /** 命中的表规则(给人看"为什么是这些")。 */
   readonly hits: readonly Radius[];
 }
 
+export interface DecisionInput {
+  readonly paths: readonly string[];
+  readonly workspaces: readonly Workspace[];
+  /** 产物是否已在磁盘上。注入是为了能测"没 build 就退回全量"这条分支。 */
+  readonly exists: (path: string) => boolean;
+}
+
 /**
- * 把一组改动路径翻成待跑脚本。
+ * 把一组改动路径翻成一份执行计划。
  *
- * `ALWAYS` 先跑(便宜、失败快),其余按 `SUITES` 的顺序排——保证同样的改动每次得到同样的序列,
- * 报告与日志可比。
+ * 抛 `UnregisteredPathError` 的条件**只有一个**:既映射不到产物、也没有表规则。
  */
-export const planFor = (paths: readonly string[]): Plan => {
+export const decide = (input: DecisionInput): Decision => {
   const hits: Radius[] = [];
   const chosen = new Set<string>();
-  for (const path of paths) {
+  const graphFiles = new Set<string>();
+  const notBuilt = new Set<string>();
+
+  for (const path of input.paths) {
+    const outputs = buildOutputsOf(path, input.workspaces);
     const rule = RADIUS.find(
       (candidate) => path === candidate.area || path.startsWith(`${candidate.area}/`),
     );
-    if (rule === undefined) {
+    if (outputs.length === 0 && rule === undefined) {
       throw new UnregisteredPathError(path);
     }
-    if (!hits.includes(rule)) hits.push(rule);
-    for (const script of rule.suites) chosen.add(script);
+    if (rule !== undefined && !hits.includes(rule)) hits.push(rule);
+    for (const script of rule?.suites ?? []) chosen.add(script);
+    if (outputs.length === 0) continue;
+
+    // 源码与产物**都**交给图:源码问出包内的测试,产物问出跨包依赖它的测试,两者并集才完整。
+    graphFiles.add(path);
+    for (const output of outputs) {
+      graphFiles.add(output);
+      if (!input.exists(output)) notBuilt.add(output);
+    }
   }
-  const scripts = [...ALWAYS, ...SUITES.filter((suite) => chosen.has(suite))];
-  return { scripts, hits };
+
+  const scripts = new Set(ALWAYS);
+  if (notBuilt.size > 0) {
+    // 产物不在盘上时,静态映射给出的边是空的——照旧少选就是"静默少选"。退回全量。
+    scripts.add("test:all");
+  } else {
+    for (const suite of SUITES) if (chosen.has(suite)) scripts.add(suite);
+  }
+  // `test:all` 一旦被选中，就把它的子集收掉：`test` / `test:vm` / `test:e2e` 都在它的池子里，
+  // 再跑一遍是把同一批文件跑第二遍。`test:gates` **不**收——它住在独立 project，不在池子里。
+  // （一条 `package.json` 的改动会把半径撑到全量，此时不收敛就是 70s + 25s + 21s + 34s。）
+  const effective = scripts.has("test:all")
+    ? new Set([...scripts].filter((script) => !SUPERSEDED_BY_ALL.includes(script)))
+    : scripts;
+  const ordered = [
+    ...ALWAYS,
+    ...SUITES.filter((suite) => effective.has(suite) && !ALWAYS.includes(suite)),
+  ];
+  return {
+    scripts: ordered,
+    graphFiles: [...graphFiles].sort(),
+    notBuilt: [...notBuilt].sort(),
+    hits,
+  };
 };
 
 /** 改了没登记的地方。**必须红**:静默跳过等于机器给人一个假的绿。 */
@@ -309,6 +320,7 @@ export class UnregisteredPathError extends Error {
   constructor(path: string) {
     super(
       `路径没有归属:${path}\n` +
+        "它既不在任何工作区包的 `src/` 下(映射不到构建产物,图无从判断),也没有表规则。\n" +
         "请在 packages/tools/src/scope/change-radius.ts 的 RADIUS 里给它一条规则" +
         "(拿不准就往多的写:多跑几秒比假绿便宜)。",
     );

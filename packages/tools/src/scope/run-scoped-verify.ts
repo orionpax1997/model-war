@@ -1,31 +1,31 @@
 /**
- * `verify:scoped --since=<ref>`:按**改动半径**选出该跑哪些命名脚本,然后按顺序跑。
+ * `verify:scoped --since=<ref> [--print]`:按**改动半径**选出该跑什么,然后按顺序跑。
  *
- * 与 `verify` 的分工:`verify` 是**收口**(一次要对,所以跑全);本脚本是**按改动选范围**
- * (改散文的人不该付 VM 整场的账)。两者的判据关系是「`verify` ⊇ `verify:scoped`」——
- * 选出来的永远是全量的子集,合并前仍然要跑全量。
+ * 与 `verify` 的分工:`verify` 是**收口**(一次要对,所以跑全);本脚本回答「这次改动该付多少」。
+ * 两者的关系是「`verify` ⊇ `verify:scoped`」——选出来的永远是全量的子集,合并前仍要跑全量。
  *
- * ── 三条不能让步的性质 ──
+ * 三件事由 ADR-0038 定下:
  *
- * 1. **未登记的路径是红,不是跳过。** 静默跳过等于给一个假绿,那比没有更坏。
- * 2. **只调命名脚本**(`node --run <name>`),不内联命令:链路里出现的每一个东西仍然能在
- *    `package.json` 里找到、能单独跑、能被 `test-layers.test.ts` 盯住。
- * 3. **顺序稳定**:`ALWAYS` 先跑(便宜、失败快),其余按 `SUITES` 的固定顺序,于是同样的改动
- *    每次得到同样的序列,日志可比。
+ * 1. **代码改动交给依赖图**(`vitest related`),并对每条改动打印依据行。图比人写的表更准,
+ *    但前提是拿**产物路径**去问:跨包边指向 `dist/`,而 `git diff` 给的是 `src/`。
+ * 2. **图看不见的交给表**(数据文件、仓库事实、`gates` project),表只在这个范围内是判据。
+ * 3. **说不清就红**:既映射不到产物也没有表规则的路径直接红;产物不在盘上也红(退回全量)。
  *
  * 用法:
  *
  * ```
- * pnpm run verify:scoped                    # 对比 main(main 上就是工作区改动)
+ * pnpm run verify:scoped                    # 对比 main
  * pnpm run verify:scoped -- --since=HEAD~3  # 对比某个提交
  * pnpm run verify:scoped -- --print         # 只打印计划,不跑
  * ```
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { UnregisteredPathError, planFor } from "./change-radius.ts";
+import { buildOutputsOf, workspacesOf } from "./build-outputs.ts";
+import { UnregisteredPathError, decide } from "./change-radius.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -68,10 +68,15 @@ const changedFiles = (since: string): readonly string[] => {
 const main = (): number => {
   const options = parseArgs(process.argv.slice(2));
   const files = changedFiles(options.since);
+  const workspaces = workspacesOf(repoRoot);
 
-  let scripts: readonly string[];
+  let decision: ReturnType<typeof decide>;
   try {
-    scripts = planFor(files).scripts;
+    decision = decide({
+      paths: files,
+      workspaces,
+      exists: (path) => existsSync(join(repoRoot, path)),
+    });
   } catch (error) {
     if (error instanceof UnregisteredPathError) {
       process.stderr.write(`${error.message}\n`);
@@ -82,24 +87,48 @@ const main = (): number => {
 
   const manifest = JSON.parse(
     readFileSync(new URL("../../../../package.json", import.meta.url), "utf8"),
-  ) as {
-    scripts: Record<string, string>;
-  };
+  ) as { scripts: Record<string, string> };
   // 名字先验一遍:拼错的名字在这里红,而不是等 spawn 时报「Unknown script」。
-  for (const script of scripts) {
+  for (const script of [...decision.scripts, "test:related"]) {
     if (manifest.scripts[script] === undefined) {
-      process.stderr.write(`change-radius 指向了不存在的脚本:${script}\n`);
+      process.stderr.write(`改动半径指向了不存在的脚本:${script}\n`);
       return 1;
     }
   }
 
+  // 依据行:每个改动一条,说明它走的是图的半边还是表的半边。
+  const evidence = files.map((path) => {
+    const outputs = buildOutputsOf(path, workspaces);
+    if (outputs.length > 0) {
+      return `  ${path}\n    → 依赖图(源码 + ${String(outputs.length)} 个产物)`;
+    }
+    const rule = decision.hits.find((hit) => path === hit.area || path.startsWith(`${hit.area}/`));
+    const suites = rule?.suites ?? [];
+    return `  ${path}\n    → ${suites.length === 0 ? "无测试依赖(静态门禁覆盖)" : suites.join(", ")}`;
+  });
+
+  const total =
+    decision.scripts.length +
+    (decision.graphFiles.length > 0 && !decision.scripts.includes("test:all") ? 1 : 0);
   process.stdout.write(
-    `改动半径(对比 ${options.since},${String(files.length)} 个文件):\n` +
-      scripts.map((script) => `  → ${script}\n`).join(""),
+    `改动半径(对比 ${options.since},${String(files.length)} 个文件,${String(total)} 步):\n` +
+      `${evidence.join("\n")}\n` +
+      decision.scripts.map((script) => `  ⇒ ${script}\n`).join(""),
   );
+  if (decision.notBuilt.length > 0) {
+    process.stdout.write(
+      `  ! 产物不在盘上(${decision.notBuilt.slice(0, 3).join(", ")}${decision.notBuilt.length > 3 ? " …" : ""}),` +
+        "静态映射失效,已退回全量\n",
+    );
+  }
+  if (decision.graphFiles.length > 0 && !decision.scripts.includes("test:all")) {
+    process.stdout.write(
+      `  ⇒ test:related(${String(decision.graphFiles.length)} 个文件交给依赖图)\n`,
+    );
+  }
   if (options.print) return 0;
 
-  for (const script of scripts) {
+  for (const script of decision.scripts) {
     process.stdout.write(`\n=== ${script} ===\n`);
     const result = spawnSync(process.execPath, ["--run", script], {
       cwd: repoRoot,
@@ -110,8 +139,26 @@ const main = (): number => {
       return result.status ?? 1;
     }
   }
-  process.stdout.write(`\n按改动半径要跑的都绿了:${scripts.join(" → ")}\n`);
-  process.stdout.write("合并前仍要跑全量:`pnpm run verify`。\n");
+
+  // 全量已经跑过时不再问图:那是它的子集。
+  if (decision.graphFiles.length > 0 && !decision.scripts.includes("test:all")) {
+    process.stdout.write(`\n=== test:related ===\n`);
+    const result = spawnSync(
+      process.execPath,
+      ["--run", "test:related", "--", ...decision.graphFiles],
+      { cwd: repoRoot, stdio: "inherit" },
+    );
+    if (result.status !== 0) {
+      process.stderr.write(
+        `\n依赖图没有选中任何测试,或选中的测试红了(退出码 ${String(result.status)})。\n` +
+          "「没有测试观测到这些改动」与「测试红了」不是一回事:前者说明这块代码没有判据,\n" +
+          "要么补用例,要么在 coverage-debt.txt 里登记一行并写清为什么现在不测。\n",
+      );
+      return result.status ?? 1;
+    }
+  }
+
+  process.stdout.write(`\n按改动半径要跑的都绿了。合并前仍要跑全量:\`pnpm run verify\`。\n`);
   return 0;
 };
 

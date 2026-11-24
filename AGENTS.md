@@ -13,7 +13,7 @@ This repository uses Matt Pocock's engineering skills (installed under `.pi/skil
 - code-review skill:Standards 与 Spec 两个子代理都用 `Review`(`.pi/agents/review.md`)派发。
 - research 任务：调研与探索一律派给 `Explore` 子代理，主线程只下指令和聚合结论，不自己读文件爬代码。派发时必须在 prompt 里写明「用 codegraph 查」,探索子代理优先调用 codegraph MCP 工具（见下节）,grep/find/read 只作补充。
 - 探索子代理的产出是结论 + 关键文件：行号引用，不是文件转储；不要让它整段贴源码回来。
-- 三档，别混：`quick`（0.75s，每轮）→ `test` / `verify:scoped`（十几到几十秒，按改动）→ `verify`（~70s，收口）。实现与修复期间跑 `pnpm run quick` 和相关测试；不确定该跑哪些时用 `pnpm run verify:scoped`（它按 `packages/tools/src/scope/change-radius.ts` 的改动半径表自动选，没登记的路径会直接红）；完成 review 修复后由主线程跑 `pnpm run verify`。
+- 三档，别混：`quick`（0.75s，每轮）→ `test` / `verify:scoped`（十几到几十秒，按改动）→ `verify`（~70s，收口）。实现与修复期间跑 `pnpm run quick` 和相关测试；不确定该跑哪些时用 `pnpm run verify:scoped`（代码改动交给依赖图，数据文件与仓库事实交给表，每条改动打印依据行；没登记的路径直接红，见 `docs/adr/0038-test-selection-computable.md`）；完成 review 修复后由主线程跑 `pnpm run verify`。
 - `verify` = `quick`（格式、lint、禁浮点、预算结构——输入都在编辑面上）+ `gate:static`（工具版本耦合、散文禁抄取值、契约包清单、首条消息命令与宿主工具清单、rootfs 漂移——输入是入库事实）+ `test:all`（unit + property + `test:vm` 真 quickjs 整场 + `test:e2e` 进程级 CLI，单池一次跑完）。默认 `test` **不含**后两族：它们各要跑满 600 tick，摊进编辑循环就会逼出「写完一起跑」。要单独跑它们用 `test:vm` / `test:e2e`。**改了 `prompts/`、`docs/`、`rulesets/`、依赖版本或 `sandbox-rootfs/` 之后跑 `quick` 是绿的，因为那些门禁不在 `quick` 里**：要么跑 `verify`，要么单跑对应的 `gate:*`；Vitest 会为工作区依赖做增量构建。`verify:wide` 全量门禁、`test:gates`、`test:slow`、`gate:selfproof`、变异测试等专项质量检查仅在验收明确要求或改动直接影响其覆盖范围时运行，并说明原因。
 
 ### 门禁纪律

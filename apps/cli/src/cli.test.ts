@@ -16,6 +16,7 @@ import {
   COMMANDS,
   openMap,
   prepareCli,
+  runInProcess,
   terrainWithOrbits,
   type CliHarness,
 } from "./cli-harness.js";
@@ -242,4 +243,21 @@ it("report 只读归档，不触发对局，--model/--json 从唯一 CLI 输出�
   const help = cli.run(["report", "--help"]);
   expect(help.status).toBe(0);
   for (const option of ["--root", "--model", "--json"]) expect(help.stdout).toContain(option);
+});
+
+/**
+ * 同进程与真进程的**表面输出**必须一致(ADR-0038 第一条)。
+ *
+ * 这条断言的存在理由是它自己的失败模式:入口拆成「可 import 的 `main` + 薄壳」之后,两条路径
+ * 可能悄悄分叉——薄壳里多写一行 stdout、`main` 里依赖了只在进程里成立的全局状态。分叉不会让
+ * 任何既有断言变红,只会让「同进程那一批用例」验的东西与「真跑一遍」验的东西逐渐不是一回事。
+ */
+it("同进程调用与真进程产物的表面输出一致", async () => {
+  for (const args of [["--version"], ["--help"]] as const) {
+    const spawned = cli.run([...args]);
+    const inProcess = await runInProcess([...args]);
+    expect(inProcess.status, `同进程 \`${args.join(" ")}\` 的退出码`).toBe(spawned.status);
+    expect(inProcess.stdout, `同进程 \`${args.join(" ")}\` 的 stdout`).toBe(spawned.stdout);
+    expect(inProcess.stderr, `同进程 \`${args.join(" ")}\` 的 stderr`).toBe(spawned.stderr);
+  }
 });
