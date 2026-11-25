@@ -37,8 +37,15 @@ const workflowText = (name: string): string =>
 const fast = workflowText("fast.yml");
 const nightly = workflowText("nightly.yml");
 
-/** 主链成员(ADR-0010:PR/合入触发的快链 = `quick` + `gate:types` + `test`)。 */
-const FAST_MEMBERS = ["quick", "gate:types", "test"] as const;
+/**
+ * 主链成员(ADR-0010:PR/合入触发的快链 = `verify` + `gate:types`)。
+ *
+ * **链本身不在这里展开**:链的家是 `package.json` 的 `verify`。这条断言只钉「CI 调的是哪几个
+ * 命名脚本」,不钉「verify 里串了哪几步」——后者改了由 `package.json` 与运行结果自证,在这里
+ * 抄一遍就是第二份定义。曾经这里写的是 `["quick","gate:types","test"]`,那等于把 `verify` 的
+ * 两条腿在 yaml 与测试里各展开一次:给 `verify` 加一条腿,CI 与这条断言都不会跟。
+ */
+const FAST_MEMBERS = ["verify", "gate:types"] as const;
 
 /** 夜间硬门禁:任一红 = 夜间链红。 `mutate:*` 在这里而不是观测项,因为它是棘轮(ADR-0026):
  * 不设绝对阈值,但「同一分片比入库基线低」是退化,退化即红。 */
@@ -112,7 +119,7 @@ it("正例:一份只调命名脚本的最小 workflow 判绿", () => {
 
 // ── 成员清单:主链 / 夜间硬门禁 / 夜间观测项 ─────────────────────────────────
 
-it("主链成员 = quick + gate:types + test", () => {
+it("主链成员 = verify + gate:types", () => {
   expect(sorted(namedScripts(fast))).toEqual(sorted(FAST_MEMBERS));
 });
 

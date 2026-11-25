@@ -1,7 +1,7 @@
-# 主流水线(快链):PR 开/更新/重开与合入 main 时跑 `quick` + `gate:types` + `test`。
+# 主流水线(快链):PR 开/更新/重开与合入 main 时跑 `verify` + `gate:types`。
 #
 # ── 只调命名脚本 ──
-# 两个 run 步都是 `pnpm run <script>`:CI 的失败信号只有一个来源——那条命名脚本本身
+# 每个 run 步都是 `pnpm run <script>`:CI 的失败信号只有一个来源——那条命名脚本本身
 # (ADR-0010「CI 失败等价于命名脚本失败」)。yaml 里不写裸命令,也不设「CI 专属」断言。
 #
 # ── 无凭证、离线可跑 ──
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   verify:
-    name: 快链(quick + gate:types + test)
+    name: 快链(verify + gate:types)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -50,13 +50,16 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: quick
-        run: pnpm run quick
+      # 一步跑完整条收口链(`verify` = `quick` + `test`)。
+      #
+      # 曾经拆成 `quick` / `test` 两个 step 为了归因,但 GitHub 不能单独重跑某个 step(只能重跑整个
+      # job),两个 step 的实际作用只是「一眼看出哪类挂了」——日志同样给得出。代价却是链定义有两份:
+      # 链的家在 `package.json`(ADR-0010「CI 失败等价于命名脚本失败」),而 yaml 里再展开一遍,
+      # 于是给 `verify` 加一条腿 CI 不会跟、也没有断言会红。本地收口与 CI 现在跑的是同一个命令。
+      - name: verify
+        run: pnpm run verify
 
       # 类型感知 lint(`tsc -b` + `oxlint --type-aware`)。它只挂这条链,不进 `verify`:
       # 本地每轮跑会断反馈回路(hld §2.2.7)。仍是命名脚本,不直调 tsc / oxlint。
       - name: gate:types
         run: pnpm run gate:types
-
-      - name: test
-        run: pnpm run test
