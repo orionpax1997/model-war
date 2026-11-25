@@ -21,6 +21,9 @@ import { expect, it } from "vitest";
 
 import {
   artifactNameViolations,
+  checkStepArgs,
+  checkoutFetchDepth,
+  evaluateSinceExpression,
   extractRunCommands,
   hardGateScripts,
   matrixLegs,
@@ -129,12 +132,166 @@ it("主链成员 = `check --full` 一条", () => {
   expect(fast).toContain("pnpm run check -- --full");
 });
 
-it("主链只有一个执行步,且它就是 `pnpm run check -- --full`", () => {
+it("主链只有一个执行步,且它就是 `pnpm run check -- --full <基准>`", () => {
   // 装依赖那步不算"执行项目代码":除此之外,跑什么全部由那一条命名脚本决定。
   // 两个 step 的实际作用是「一眼看出哪类挂了」,代价却是链定义在 yaml 里再展开一份
   // (ADR-0010:CI 失败等价于命名脚本失败;ADR-0038:一条命令,没有档位)。
+  // 尾部那个 `$SINCE` 是同一 step 的 env(见下面的"基线比哪个对象"),不是第二个档位。
   const steps = extractRunCommands(fast).filter((command) => !command.startsWith("pnpm install"));
-  expect(steps).toEqual(["pnpm run check -- --full"]);
+  expect(steps).toEqual(["pnpm run check -- --full $SINCE"]);
+});
+
+// ── 基准比的是哪个对象:PR 对着它的 base 分支 ────────────────────────────────
+
+/**
+ * **PR 上的改动半径必须对着 base 分支算,而不是对着 `main`。**
+ *
+ * 这一条盯的是一个没有红信号的东西:基准比错了仍然会跑、仍然会绿或红,但红在的地方与本 PR
+ * 无关。实测过一次:base 分支比 `main` 多 41 个提交,那些"已经合过的历史"被算成这个 PR 的改动,
+ * 半径从两族变成 `test:gates, test:slow, test:all`(239s),并红在一条只在 nightly 跑的门禁上。
+ *
+ * 所以断言的不是 yaml 的写法,而是**实参**:把那个事件代进去,看 `check` 真的收到什么。
+ * 基线来自 `github.base_ref`——换一个 base 分支,实参跟着变;写死某个分支名就解不出实参。
+ */
+it("PR 上 check 收到 `--since=origin/<base>`;push 上不传,退回 check.ts 的默认基准", () => {
+  expect(
+    checkStepArgs({ yaml: fast, event: "pull_request", baseRef: "feature/script-naming" }),
+  ).toEqual(["--full", "--since=origin/feature/script-naming"]);
+  // 基线是算出来的,不是写死的:换一个 base_ref,实参逐字跟着换。
+  expect(checkStepArgs({ yaml: fast, event: "pull_request", baseRef: "main" })).toEqual([
+    "--full",
+    "--since=origin/main",
+  ]);
+  // 合入 `main` 时没有 base_ref:空值是一个**消失的词**,不是一个空参数——`check` 退回默认值。
+  expect(checkStepArgs({ yaml: fast, event: "push", baseRef: "main" })).toEqual(["--full"]);
+});
+
+// ── 实参怎么变成基准:命令行赢过一切,默认值只住在 check.ts ─────────────────
+
+/**
+ * 这一族盯的是**两个真源打架**的形状:它不报错、不红,只是比错了对象。
+ *
+ * CI 实测过的原样:命令行 `pnpm run check -- --full --since=origin/feature/script-naming`,
+ * 展开成 `node …/check.ts --since=main -- --full --since=origin/feature/script-naming`——
+ * `package.json` 的脚本写死了一份 `--since=main`(第二个真源),而当时的 `parseArgs` 是
+ * `argv.find(...)`,**第一个命中就赢**。于是 PR 对着 `main` 算半径(41 个提交),并红在与本 PR
+ * 无关的门禁上。三层缺陷叠在一起:脚本里那份默认值、`find` 的取值方向、`pnpm … -- …` 递进来的 `--`。
+ *
+ * 所以三条一起钉住。默认值 `main` 只有**一个**家:`check.ts` 的 `parseArgs`。
+ */
+it("`check` 脚本里不写基准:默认值只住在 check.ts 一处", () => {
+  expect(manifest().scripts.check, "check 脚本不见了").toBeDefined();
+  expect(
+    manifest().scripts.check,
+    "check 脚本里又写了一份基准——命令行传进来的 `--since` 会被它压住(第二个真源)",
+  ).not.toContain("--since");
+});
+
+it("`parseArgs`:命令行是显式覆盖,最后一个赢;`--` 不参与解析;空值退回 main", async () => {
+  const { parseArgs } = await import("./scope/check.ts");
+
+  // 1. 正常形态:两个开关各自生效。
+  expect(parseArgs(["--full", "--since=origin/x"])).toEqual({
+    since: "origin/x",
+    print: false,
+    full: true,
+  });
+
+  // 2. 重复出现时**后者赢**。`find`(第一个赢)正是 CI 上那次错误的形状。
+  expect(parseArgs(["--since=a", "--since=b"]).since).toBe("b");
+  // 两种来源同时在场(脚本里的旧写法 + 命令行)时,命令行仍然赢。
+  expect(
+    parseArgs(["--since=main", "--", "--full", "--since=origin/feature/script-naming"]).since,
+  ).toBe("origin/feature/script-naming");
+
+  // 3. `pnpm run check -- --full` 会把分隔符自己递进来:它不算参数,不影响后面的解析。
+  expect(parseArgs(["--", "--full"]).full).toBe(true);
+  expect(parseArgs(["--", "--full", "--since=origin/x"])).toEqual({
+    since: "origin/x",
+    print: false,
+    full: true,
+  });
+
+  // 4. 空 `--since=` 退回默认值,不解析成空串(空串会让 `git` 以别的错红,而不是退回默认基准)。
+  expect(parseArgs(["--since="]).since).toBe("main");
+  // 5. 不传 `--since` 就是默认基准:CI 的 push 形态靠的就是这一条。
+  expect(parseArgs(["--full"]).since).toBe("main");
+});
+
+/**
+ * push 到 `main` 的形态要**走完整条路**才算证明:`$SINCE` 为空 → shell 里消失的词 →
+ * `check` 收到 `--full` → `parseArgs` 给出默认基准。分段断言(`$SINCE` 为空是一个消失的词、
+ * 不传 `--since` 得到 `main`)各自绿、接起来却可能错——接起来的这一步就是这里要的。
+ */
+it("push 形态(`$SINCE` 为空)端到端得到默认基准 `main`", async () => {
+  const { parseArgs } = await import("./scope/check.ts");
+  const pushArgs = checkStepArgs({ yaml: fast, event: "push", baseRef: "main" });
+  expect(pushArgs, "push 形态的实参解不出来").toBeDefined();
+  // `pnpm run check -- …` 会把分隔符递给脚本,所以这里也带着它。
+  expect(parseArgs([...(pushArgs ?? []), "--"]).since).toBe("main");
+});
+
+it("反例:把 base 写死成某个分支名,表达式就认不出来(红而不是静默用错基准)", () => {
+  const hardcoded = fast.replace(
+    "format('--since=origin/{0}', github.base_ref)",
+    "'--since=origin/main'",
+  );
+  expect(hardcoded, "替换没命中:fast.yml 的表达式被改写了").not.toBe(fast);
+  expect(
+    checkStepArgs({ yaml: hardcoded, event: "pull_request", baseRef: "feature/x" }),
+    "写死分支名的表达式居然解出了实参",
+  ).toBeUndefined();
+  // 纯函数层的反例:认不出的形态给 `undefined`,认得出的非 PR 事件给空串(两者不同)。
+  expect(
+    evaluateSinceExpression("${{ github.base_ref }}", { event: "pull_request", baseRef: "x" }),
+  ).toBeUndefined();
+});
+
+it("反例:`$SINCE` 没在同一步的 env 里声明 → 解不出实参(那一截会静默消失)", () => {
+  const dropped = fast.replace(/^\s*env:\n\s*SINCE: .*\n/mu, "");
+  expect(dropped, "替换没命中:env 块被改写了").not.toBe(fast);
+  expect(checkStepArgs({ yaml: dropped, event: "pull_request", baseRef: "main" })).toBeUndefined();
+});
+
+// ── Checkout 深度:`check` 的基准能不能算出来的前提 ──────────────────────────
+
+/**
+ * 为什么这条必须盯着:`check` 的一切从 `main` 与 HEAD 的**共同祖先**算起。
+ *
+ * CI 在 `pull_request` 上检的是 detached 的 merge ref——本地没有 `main`(只有 `origin/main`);
+ * 而默认的 `fetch-depth: 1` 又只有一条截断的历史。两条叠在一起,`check` 在 CI 上以
+ * `MergeBaseError` 红在最后一步,而**本地永远绿**:本机有本地 `main`、有完整历史。
+ * 它是一个只在 CI 上复现、拿掉一行 yaml 就回来、而且没有任何其它断言看得见的洞——
+ * 所以拉历史的深度必须是钉住的事实,而不是「看起来写下过」。
+ */
+it("主链 Checkout 拉全历史:fetch-depth: 0(`check` 算共同祖先的前提)", () => {
+  expect(checkoutFetchDepth(fast), "fast.yml 的 Checkout 步必须写 fetch-depth: 0").toBe(0);
+});
+
+it("反例:checkout 缺 fetch-depth 或写成浅深度时,判据立即不符", () => {
+  const step = (body: readonly string[]): string =>
+    ["jobs:", "  x:", "    steps:", "      - name: Checkout", "        uses: actions/checkout@v7"]
+      .concat(body)
+      .concat(["", "      - name: Next", "        run: pnpm run quick", ""])
+      .join("\n");
+
+  // 没写这个键:默认就是 1。这正是 CI 红过的那一版 yaml。
+  expect(checkoutFetchDepth(step([]))).toBeUndefined();
+  expect(checkoutFetchDepth(step(["        with:", "          fetch-depth: 1"]))).toBe(1);
+  // 深度只从 checkout 自己那一步读:后面 step 里的同名键不算。
+  expect(
+    checkoutFetchDepth(
+      step([
+        "        with:",
+        "          fetch-depth: 0",
+        "      - name: Other",
+        "        with:",
+        "          fetch-depth: 1",
+      ]),
+    ),
+  ).toBe(0);
+  // 连 checkout 步都没有:同样是 undefined,不许默认为「已经拉全了」。
+  expect(checkoutFetchDepth(["jobs:", "  x:", "    steps:", ""].join("\n"))).toBeUndefined();
 });
 
 it("`check --full` 是默认计划的超集:默认要门禁自测时,收口一定补上它", async () => {

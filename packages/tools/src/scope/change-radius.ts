@@ -428,6 +428,17 @@ export interface DecisionInput {
   readonly workspaces: readonly Workspace[];
   /** 产物是否已在磁盘上。注入是为了能测"没 build 就退回全量"这条分支。 */
   readonly exists: (path: string) => boolean;
+  /**
+   * 这些路径**已经不在仓库里了**(本次改动删除的)。
+   *
+   * 判据只看**还在的文件**有没有产物:删除的文件本来就没有产物,那不是"没构建",是"不存在了"。
+   * 两者混在一起的话,删一个源码文件就会让整个计划退回全量(`test:all`),而退回的理由是一句
+   * 错话——“静态映射失效”不成立,映射好着呢,只是目标没了。
+   *
+   * 口径与 `check.ts` 的 `probeTargets` 同源:同一路径若另有一条非删除的条目(删了又建),它
+   * 不算删除,产物照旧必须存在。调用方直接递 `probeTargets(...).deleted`,不要另算一份。
+   */
+  readonly deleted?: readonly string[];
 }
 
 /**
@@ -483,6 +494,7 @@ export const decide = (input: DecisionInput): Decision => {
   const notBuilt = new Set<string>();
   /** 命中的、且规则要求跑门禁自测的改动文件(`-t` 模式只能逐个文件查)。 */
   const gatesFiles = new Set<string>();
+  const deleted = new Set(input.deleted ?? []);
 
   for (const path of input.paths) {
     const rule = ruleFor(path);
@@ -508,6 +520,9 @@ export const decide = (input: DecisionInput): Decision => {
     // 源码与产物**都**交给图:源码问出包内的测试,产物问出跨包依赖它的测试,两者并集才完整。
     graphFiles.add(source);
     graphFiles.add(path);
+    // 删除的文件**没有产物可言**:"产物不在盘上"这句判据问的是"还在的文件有没有跟上构建",
+    // 而删除的文件的产物永远不会出现。拿它去触发退回全量,得到的是一个没有事实支撑的 `test:all`。
+    if (deleted.has(path) || deleted.has(source)) continue;
     for (const output of outputs) {
       graphFiles.add(output);
       if (!input.exists(output)) notBuilt.add(output);

@@ -29,6 +29,12 @@
  *   消息里给两个指纹与两条重录命令。旧的 map 不再被当成判据:它的失效方向是少记,
  *   而少记与“没人读”在输出上是同一句话。
  *
+ * 有一处口径例外,它只对**删除**开:状态 `D` 的路径不探。`vitest related` 问的是一个已不存在的
+ * 文件,答不出任何东西;而探针这一层只承认"确知为零"与"确知跑过",于是每一次删文件都会拿到
+ * 一条假红。删除要保的性质是"没带走没人发现的依赖",它由 `tsc -b` 与全量测试兜。判据收在
+ * `probeTargets` 一个纯函数里:只放行 `D`(`M`/`A`/`R` 的未观测仍然红),而且**打印说明**,
+ * 不静默跳过。
+ *
  * ── 计划只有一处构造 ──
  *
  * `runsFor({scripts, decision})` 是**唯一**的计划构造函数,`main` 只负责执行与打印。好处不是
@@ -64,6 +70,7 @@ import {
   computeChangeSet,
   describeChangeSet,
   gitRunIn,
+  type ChangeEntry,
 } from "./change-set.ts";
 import { chainProjects, fullPlan, scriptProjects, type RunItem, type Scripts } from "./plan.ts";
 import { probeRelated, type ProbeOutcome } from "./related-probe.ts";
@@ -77,18 +84,31 @@ export const FULL_CHAIN: readonly string[] = ["verify", "gate:types"];
 /** 未覆盖登记的落点。路径相对仓库根,`#` 之后写为什么现在不测。 */
 export const DEBT_PATH = "coverage-debt.txt";
 
-interface Options {
+export interface Options {
   readonly since: string;
   readonly print: boolean;
   readonly full: boolean;
 }
 
-const parseArgs = (argv: readonly string[]): Options => {
-  const since = argv.find((arg) => arg.startsWith("--since="))?.slice("--since=".length);
+/**
+ * 命令行 → 选项。**纯函数,导出的唯一目的是被断言**:这里的每一条口径都红过。
+ *
+ * - `--` 是 `pnpm run check -- …` 的分隔符,**它自己也会进 argv**;它不是参数,不参与解析。
+ * - `--since=` **最后一个赢**。写成 `find` 时第一个命中就定局,于是 `package.json` 脚本里那个
+ *   写死的 `--since=main` 会永远压住命令行传进来的值——CI 上实测:PR 对着 `main` 比了 41 个提交。
+ * - 空 `--since=` 退回 `main`,不解析成空串。**默认值只住这里一处**:脚本里再写一份就是第二
+ *   个真源,而两份真源的分歧不会有任何红信号。
+ */
+export const parseArgs = (argv: readonly string[]): Options => {
+  const args = argv.filter((arg) => arg !== "--");
+  const since = args
+    .filter((arg) => arg.startsWith("--since="))
+    .at(-1)
+    ?.slice("--since=".length);
   return {
     since: since === undefined || since === "" ? "main" : since,
-    print: argv.includes("--print"),
-    full: argv.includes("--full"),
+    print: args.includes("--print"),
+    full: args.includes("--full"),
   };
 };
 
@@ -171,6 +191,74 @@ export const labelOf = (item: RunItem): string => {
     case "gates":
       return item.patterns.length === 0 ? "test:gates" : `test:gates -t ${item.patterns.join("|")}`;
   }
+};
+
+/**
+ * **删除没有「行为」可测。**
+ *
+ * 删除的路径按 T1 的语义**留在** ChangeSet 里(状态 `D`)——它必须参与选择,否则「改了什么」
+ * 就少了一块。但它不能进「有没有测试候选」那道探针:`vitest related` 问的是一个**已不存在的
+ * 文件**,答不出任何东西;而探针这一层只承认「确知为零」与「确知跑过」,答不出就是红。于是每一次
+ * 删文件都会拿到一条假红,而假红的方向是要人补一个**删掉的文件**的用例。
+ *
+ * 删除要保的性质是另一条:**删掉的东西不许带走没人发现的依赖**。它不由"探针有没有选中测试"
+ * 兜,而由类型检查(原来的 import 方编译失败,`tsc -b`)与全量测试(那些用例红)兜——两者都
+ * 是「删了就在原地喊」的形状,不需要有人预先知道这个文件被谁用。
+ *
+ * 所以这里判的是**要不要探**,不是"要不要看":删除不进探针清单、不登记 gap,但**不静默**——
+ * `note` 那一行必须打出来,读报的人得知道这条路径被有意放过了、以及由谁兜。
+ */
+export interface ProbeTargets {
+  /** 要走逐文件探针的路径(`files` 减去删除的那些)。 */
+  readonly probe: readonly string[];
+  /** 删除的路径:不探、不登记 gap,只打印说明。 */
+  readonly deleted: readonly string[];
+  /** 给读报的人的那一行;没有删除时是空串。 */
+  readonly note: string;
+}
+
+/**
+ * 删除那几行的说明。提成纯函数是为了能断言「它真的出现了」,而不是靠读代码相信它被打印。
+ *
+ * 措辞要点:先说**谁被放过**(点名路径),再说**由谁兜**。只说"跳过"会让读报的人以为这块没人管;
+ * 说明里必须出现 `tsc -b` 与全量测试,那才是这条口径的兜底,也是唯一的兜底。
+ */
+export const describeDeleted = (deleted: readonly string[]): string =>
+  deleted.length === 0
+    ? ""
+    : `  删除 ${String(deleted.length)} 个文件:${deleted.join(", ")}\n` +
+      "    它们没有「行为」可测:逐文件探针不跑、也不登记未观测。\n" +
+      "    (文件已不存在,`vitest related` 对它答不出任何东西——答不出不是「没人观测」。)\n" +
+      "    删掉的东西有没有带走没人发现的依赖,由 `tsc -b`(原来的 import 方编译失败)\n" +
+      "    与全量测试(那批用例红)说话,不由探针有没有选中测试说话。\n";
+
+/**
+ * 一份 ChangeSet → 哪些路径要探、哪些是删除。纯函数(`main` 与测试共用一份)。
+ *
+ * 两条与保守方向有关的细节:
+ *
+ * - 同一路径若**还有**一条非删除的条目(重命名的旧侧、或同一次改动里删了又建回来),它仍有行为
+ *   可问,照常探。只按"路径上出现过 D"就放过,会让"删了又建"这种改动绕开红线。
+ * - 只放行**状态 `D`**:`M` / `A` / `R` 的未观测仍然红(反方向由测试钉住),否则这里就从
+ *   "删除没有行为"滑成"不知道的都放过",而那正是这条红线的反面。
+ */
+export const probeTargets = (input: {
+  readonly entries: readonly ChangeEntry[];
+  readonly files: readonly string[];
+}): ProbeTargets => {
+  const deleted = new Set(
+    input.entries.filter((entry) => entry.status === "D").map((entry) => entry.path),
+  );
+  for (const entry of input.entries) {
+    if (entry.status !== "D") deleted.delete(entry.path);
+    if (entry.from !== undefined) deleted.delete(entry.from);
+  }
+  const gone = input.files.filter((path) => deleted.has(path));
+  return {
+    probe: input.files.filter((path) => !deleted.has(path)),
+    deleted: gone,
+    note: describeDeleted(gone),
+  };
 };
 
 /**
@@ -278,11 +366,19 @@ const main = (argv: readonly string[]): number => {
   const files = changeSet.files;
   process.stdout.write(`${describeChangeSet(changeSet)}\n`);
 
+  // 删除的那几条**不走探针**,也不登记未观测;但必须**打印出来**——静默跳过与"没人观测"在输出上
+  // 是同一句话,而它们的处方完全相反(前者无事可做,后者要补用例)。判据与措辞都在 `probeTargets`。
+  const targets = probeTargets({ entries: changeSet.entries, files });
+  if (targets.note !== "") process.stdout.write(targets.note);
+
   const decideNow = (): ReturnType<typeof decide> =>
     decide({
       paths: files,
       workspaces,
       exists: (path) => existsSync(join(repoRoot, path)),
+      // 删除的路径**没有产物可言**:它们不进 `notBuilt`(否则删一个源码文件就把计划退回全量)。
+      // 口径只有一份——就在 `probeTargets` 里,这里递过去而不另算。
+      deleted: targets.deleted,
     });
 
   let decision: ReturnType<typeof decide>;
@@ -450,7 +546,7 @@ const main = (argv: readonly string[]): number => {
    * 代码的答案要等图跑完才知道(有没有测试 import 它),行为输入的答案现在就有(没有任何测试
    * 读过它)。两者共用一张债务表,理由相同:能看见的债好过看不见的零。
    */
-  const unobserved = files.filter(
+  const unobserved = targets.probe.filter(
     (path) =>
       observedByInput.get(path) === undefined &&
       !debt.has(path) &&

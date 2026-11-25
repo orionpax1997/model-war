@@ -31,8 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # fetch-depth: 0 —— 不是「多下点历史更保险」,是判据的前提。
+      # `check` 以基准分支与 HEAD 的共同祖先为基准;默认的 `fetch-depth: 1` 只有一条截断的历史,
+      # 算不出共同祖先(`check` 会以 MergeBaseError 红在第一步)。
+      # 另:`pull_request` 上检的是 detached 的 merge ref,本地没有基准分支(只有 `origin/*`),
+      # 而 `origin/<base_ref>` 也得靠全量 fetch 才会落地——PR 的基准是下面那个 `SINCE`。
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # pnpm 必须先上 PATH:下面 setup-node 的 cache: pnpm 会 shell out 跑 `pnpm store path`,
       # 顺序反了直接失败。省略 version → 读 package.json 的 packageManager(pnpm@12.8.1)。
@@ -59,5 +66,18 @@ jobs:
       #
       # 现在 yaml 只出现一个名字 `check --full`;这条链自己住 `scope/check.ts` 的 `FULL_CHAIN`,
       # 本地与 CI 同一个定义、同一措辞(ADR-0038「一条命令,没有档位」)。
+      #
+      # ── 基准要比**对的**那个对象:PR 比它的 base 分支 ──
+      # `check` 的口径是「从分叉点以来你改了什么」。PR 上那个分叉点是 **base 分支**,不是 `main`:
+      # 变更流分支常常不是直接从 `main` 切的,base 分支比 `main` 多出的提交是**已经合过的历史**,
+      # 不是这个 PR 的改动。拿 `main` 当基准,那些历史改动会一起进半径(实测:41 个提交把
+      # `test:gates` / `test:slow` 拖进来,239s,并红在其中一条只在 nightly 跑的门禁上)。
+      #
+      # 这不是给 agent 加档位,是把 CI 本来就掌握的事实(`github.base_ref`)交给同一条命令:
+      # push 到 `main` 时没有 base_ref,`SINCE` 为空,命令行不多一个参数(不是空参数),
+      # `check` 退回它自己的默认基准(`main`)。默认值只住在 `scope/check.ts` 一处:脚本里再写
+      # 一份就是第二个真源,而两份之间的分歧没有任何红信号(实测:PR 对着 main 比了 41 个提交)。
       - name: check --full
-        run: pnpm run check -- --full
+        env:
+          SINCE: ${{ github.event_name == 'pull_request' && format('--since=origin/{0}', github.base_ref) || '' }}
+        run: pnpm run check -- --full $SINCE
