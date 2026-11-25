@@ -16,6 +16,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, matchesGlob, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -88,8 +89,90 @@ const checkIgnore = (path: string): boolean => {
   throw new Error(`git check-ignore 意外退出码 ${String(result.status)}:${String(result.stderr)}`);
 };
 
-const configText = (): string =>
-  readFileSync(fileURLToPath(new URL("../../../../vitest.config.ts", import.meta.url)), "utf8");
+/**
+ * `vitest.config.ts` 的 project 表。**import 它求值,不拿正则切文本。**
+ *
+ * 这里曾经是 `configText().indexOf('name: "all"')` 切一刀,再断言切片里没有 `E2E_TESTS`:
+ * 它看着像在核对「all 包含 e2e / vm」,实际只核对「这两行之间的文本长什么样」。配置换个换行、
+ * 把常量展开成字面量、把 `exclude` 写成别的拼法,切片就切到别处——而**切错位不会红**,
+ * 它只会让那几条 `not.toContain` 安静地成立。
+ *
+ * 求值之后 `include` / `exclude` / `execArgv` 里的常量(`E2E_TESTS`、`RECORD_EXEC_ARGV`…)
+ * 已经是数组,于是可以直接问「这个 project 拾取这个文件吗」「worker 的启动参数是什么」。
+ * 同一份写法在 `plan.test.ts` 里也跑着。
+ */
+type ProjectConfig = {
+  readonly name: string;
+  readonly include: readonly string[];
+  readonly exclude: readonly string[];
+  readonly setupFiles?: readonly string[];
+  readonly execArgv?: readonly string[];
+};
+
+/** 录制开关的环境变量名,与它换来的那一条 `--import` 的落点。 */
+const INPUTS_FILE_ENV = "MODELWAR_TEST_INPUTS_FILE";
+const RECORDER = "packages/tools/src/scope/recorder.ts";
+const RECORD_SETUP = "./vitest.record-inputs.setup.ts";
+
+const configOf = async (specifier: string): Promise<readonly ProjectConfig[]> => {
+  const loaded = (await import(specifier)) as {
+    default: { test: { projects: readonly { test: ProjectConfig }[] } };
+  };
+  return loaded.default.test.projects.map((project) => project.test);
+};
+
+/**
+ * `vitest.config.ts` 的 project 表(按当前环境求值一次)。
+ *
+ * specifier 放在变量里:根配置不在 `packages/tools` 这个编译单元里(rootDir 不含仓库根),
+ * 而运行时的 Node 类型擦除直接执行它——仓库本来就是这么跑 `check.ts` 的。
+ */
+const projectsOf = (): Promise<readonly ProjectConfig[]> =>
+  configOf(pathToFileURL(join(repoRoot, "vitest.config.ts")).href);
+
+/**
+ * 在给定的录制开关下**重新求值**一次配置。
+ *
+ * 为什么不能只 import 一次:`execArgv` 在求值那一刻就按当时的环境定死了,而模块按 URL 缓存,
+ * 第二次 import 拿回来的还是第一份。所以 query 里带上开关的值,两个分支各求值一次——于是断言的
+ * 是**值**,"文本里出现过 `RECORD_EXEC_ARGV`"那种自证在这里过不去。
+ */
+const configUnder = async (record: boolean): Promise<readonly ProjectConfig[]> => {
+  const previous = process.env[INPUTS_FILE_ENV];
+  if (record) process.env[INPUTS_FILE_ENV] = join(tmpdir(), "modelwar-record-inputs-probe.json");
+  else delete process.env[INPUTS_FILE_ENV];
+  try {
+    const base = pathToFileURL(join(repoRoot, "vitest.config.ts")).href;
+    return await configOf(`${base}?record=${record ? "on" : "off"}`);
+  } finally {
+    if (previous === undefined) delete process.env[INPUTS_FILE_ENV];
+    else process.env[INPUTS_FILE_ENV] = previous;
+  }
+};
+
+/** 配置说这个 project 拾取这个文件吗(include 命中且 exclude 不命中)。 */
+const picks = (project: ProjectConfig, file: string): boolean =>
+  project.include.some((glob) => matchesGlob(file, glob)) &&
+  !project.exclude.some((glob) => matchesGlob(file, glob));
+
+/**
+ * 磁盘上所有测试文件(仓库相对、POSIX 分隔、已排序)。
+ *
+ * 样本取自**磁盘**而不是配置的 include:拿 include 里的 glob 当样本,`picks` 与它同源,
+ * 下面那条等集会退化成一句恒真的自证。
+ */
+const repoTestFiles = (): readonly string[] =>
+  ["apps", "packages"]
+    .flatMap((parent) =>
+      readdirSync(join(repoRoot, parent), { recursive: true, encoding: "utf8" }).map((name) =>
+        [parent, name.split(sep).join("/")].join("/"),
+      ),
+    )
+    .filter(
+      (file) =>
+        file.endsWith(".test.ts") && !file.includes("/dist/") && !file.includes("/node_modules/"),
+    )
+    .sort();
 
 describe("表:引用的脚本与路径都真实存在", () => {
   it.each([...ALWAYS, ...SUITES, "test:related", "check", "observe:inputs"])(
@@ -330,20 +413,49 @@ describe("链的组成:编辑循环窄,收口宽", () => {
     expect(all).not.toContain("--project vm");
   });
 
-  it("收口用的 all 项目没有排除 e2e / vm", () => {
-    const config = configText();
-    const start = config.indexOf('name: "all"');
-    expect(start).toBeGreaterThanOrEqual(0);
-    const rest = config.slice(start);
-    const next = rest.indexOf('name: "', 10);
-    const block = next < 0 ? rest : rest.slice(0, next);
-    expect(block).not.toContain("E2E_TESTS");
-    expect(block).not.toContain("VM_TESTS");
+  /**
+   * `all` 与 `unit ∪ e2e ∪ vm` 是**同一批文件**——这是配置那头注里写明的不变量,也正是在这里
+   * 被盯住的那一条。判据取**磁盘上的文件集合**去两边各问一遍,而不是看 `exclude` 数组里
+   * 有没有出现 `E2E_TESTS` 这个标识符:少排除一个、或 `unit` 多排除一个,两边都会红。
+   */
+  it("收口用的 all 与 unit ∪ e2e ∪ vm 是同一批文件(结构,不是文本)", async () => {
+    const projects = await projectsOf();
+    const byName = (name: string): ProjectConfig => {
+      const project = projects.find((candidate) => candidate.name === name);
+      expect(project, `vitest.config.ts 里没有 project ${name}`).toBeDefined();
+      return project as ProjectConfig;
+    };
+    const files = repoTestFiles();
+    expect(files.length, "一个测试文件都没数到:下面那条等集会静默成立").toBeGreaterThan(40);
+    const picked = (name: string): readonly string[] =>
+      files.filter((file) => picks(byName(name), file));
+
+    // 两个子集先各自非空,否则下面那句等集可以靠“两边都空”成立。
+    expect(picked("e2e").length, "e2e 一个文件都没拾取").toBeGreaterThan(0);
+    expect(picked("vm").length, "vm 一个文件都没拾取").toBeGreaterThan(0);
+    expect(
+      picked("all"),
+      "all 与 unit ∪ e2e ∪ vm 不是同一批文件:收口要么少跑 e2e / vm,要么把同一批文件跑两遍",
+    ).toEqual([...new Set(["unit", "e2e", "vm"].flatMap(picked))].sort());
   });
 
-  it("每个 project 都至少被一条命名脚本覆盖", () => {
-    const config = configText();
-    const projects = [...config.matchAll(/name: "([a-z]+)"/g)].map((match) => match[1] ?? "");
+  /**
+   * 上一条判据看的是**结构**:在内存里给 `all` 加一条 `exclude`,「拾取」必须跟着翻面。
+   * 切文本的写法过不了这一关——换个换行、把数组抽成常量,文本切片照样绿。
+   */
+  it("判据读的是配置的值:内存里给 all 加一条 exclude,「拾取」就翻面", async () => {
+    const projects = await projectsOf();
+    const all = projects.find((project) => project.name === "all") as ProjectConfig;
+    const file = "apps/cli/src/cli.test.ts";
+    expect(picks(all, file), `${file} 本来就不被 all 拾取:这条判据没有样本`).toBe(true);
+    expect(
+      picks({ ...all, exclude: [...all.exclude, file] }, file),
+      "改了一个字段判定却没变:这条判据读的不是配置的结构",
+    ).toBe(false);
+  });
+
+  it("每个 project 都至少被一条命名脚本覆盖", async () => {
+    const projects = (await projectsOf()).map((project) => project.name);
     expect(projects.length).toBeGreaterThan(5);
     const scripts = manifest().scripts;
     for (const project of projects) {
@@ -425,11 +537,45 @@ describe("观测 map:它自己也要有判据", () => {
     }
   });
 
-  it("recorder 挂在 worker 的 execArgv 上(拆掉它 map 会静默变空)", () => {
-    const config = configText();
-    expect(config, "worker 的 execArgv 没接上 recorder").toContain("execArgv: RECORD_EXEC_ARGV");
-    expect(config, "recorder 的装载位置不在 config 里").toContain("RECORD_SETUP");
-    expect(config, "收口那次跑(all)必须带录制开关").toContain("RECORD_EXEC_ARGV");
+  /**
+   * recorder 挂在 worker 的 `execArgv` 上:**取它的值**,不看文本里出现过某个串。
+   *
+   * 拆掉它 map 会静默变空,而空 map 读出来是「没人读这块」——所以两个方向都要断言:
+   * 打开录制开关时那几个 project 的 `execArgv` 恰为 `["--import", recorder 的 file URL]`,
+   * 关掉时恰为 `[]`(平时的运行里它是 no-op)。
+   */
+  it("recorder 挂在 worker 的 execArgv 上(取的是值,不是文本里出现过某个串)", async () => {
+    const recorderUrl = pathToFileURL(join(repoRoot, RECORDER)).href;
+    expect(existsSync(join(repoRoot, RECORDER)), "recorder 不在盘上").toBe(true);
+
+    const recording = await configUnder(true);
+    const carriers = recording.filter((project) => project.setupFiles?.includes(RECORD_SETUP));
+    expect(
+      carriers.length,
+      "录制 setup 一个 project 都没挂上:拆掉它 map 会静默变空",
+    ).toBeGreaterThan(3);
+    for (const project of carriers) {
+      expect(project.execArgv, `${project.name} 的 execArgv 没把 recorder --import 进去`).toEqual([
+        "--import",
+        recorderUrl,
+      ]);
+      // setup 与 execArgv 指的是同一个落点:两个真源分叉的话,录制会在一个不存在的文件上报错。
+      for (const setup of project.setupFiles ?? []) {
+        expect(
+          existsSync(join(repoRoot, setup)),
+          `${project.name} 的 setup 文件不存在:${setup}`,
+        ).toBe(true);
+      }
+    }
+    // 收口那次跑(all)必须带录制开关。
+    expect(carriers.map((project) => project.name)).toContain("all");
+
+    // 反方向:没有录制开关时不往 worker 里塞 `--import`。
+    for (const project of (await configUnder(false)).filter((candidate) =>
+      candidate.setupFiles?.includes(RECORD_SETUP),
+    )) {
+      expect(project.execArgv, `${project.name} 在没有录制开关时也装了 recorder`).toEqual([]);
+    }
   });
 
   /**
@@ -871,31 +1017,6 @@ describe("门禁自测的粒度:按文件缩到 -t 子集", () => {
  * 显式排除。一网打尽的后果是改门禁自测自己时一条都不跑——那是**少跑**,比多跑坏得多。
  */
 describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
-  type ProjectConfig = {
-    readonly name: string;
-    readonly include: readonly string[];
-    readonly exclude: readonly string[];
-  };
-
-  /**
-   * `vitest.config.ts` 的 project 表。**import 它而不是抄它的文本**:`include` / `exclude` 里的
-   * 常量(`GATES_TEST`、`E2E_TESTS`…)在这一步已经求值,抄文本就是抄第二份判据。
-   */
-  const projectsOf = async (): Promise<readonly ProjectConfig[]> => {
-    // specifier 放在变量里:根配置不在 `packages/tools` 这个编译单元里(rootDir 不含仓库根),
-    // 而运行时的 Node 类型擦除直接执行它——仓库本来就是这么跑 `check.ts` 的。
-    const specifier = pathToFileURL(join(repoRoot, "vitest.config.ts")).href;
-    const loaded = (await import(specifier)) as {
-      default: { test: { projects: readonly { test: ProjectConfig }[] } };
-    };
-    return loaded.default.test.projects.map((project) => project.test);
-  };
-
-  /** 配置说这个 project 拾取这个文件吗(include 命中且 exclude 不命中)。 */
-  const picks = (project: ProjectConfig, file: string): boolean =>
-    project.include.some((glob) => matchesGlob(file, glob)) &&
-    !project.exclude.some((glob) => matchesGlob(file, glob));
-
   /** `packages/tools/src` 下所有测试文件(仓库相对、POSIX 分隔、已排序)。 */
   const toolsTestFiles = (): readonly string[] =>
     readdirSync(join(repoRoot, "packages/tools/src"), { recursive: true, encoding: "utf8" })
