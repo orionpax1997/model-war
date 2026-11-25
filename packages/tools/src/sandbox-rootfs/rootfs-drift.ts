@@ -1,7 +1,7 @@
 /**
  * 入库 rootfs 的漂移判据(**纯函数层**):盘上的那棵树还是不是常量里说的那棵树。
  *
- * 入口是 `run-rootfs-drift-gate.ts`(根脚本 `check:sandbox-rootfs`),这里只把「哪里不对」
+ * 入口是 `run-rootfs-drift-gate.ts`(根脚本 `gate:rootfs`),这里只把「哪里不对」
  * 写成可读的中文;读盘与退出码归入口。分层理由同 `gate/budget-gate.ts`:入口能用假世界喂,
  * 反例不必改真实文件。
  *
@@ -26,7 +26,7 @@
  * 断言**——那一条断言的对象是「沙箱里有一份只会敲宿主的脚本」,而新世界里那句话本身是假的。
  *
  * ── 常量从 schema 的**源码文本**里取,不 import 真源包 ──
- * 本门禁挂在 `check:quick` 上,而快门禁必须零构建(`@model-war/schema` 的 `exports` 指向
+ * 本门禁挂在 `quick` 上,而快门禁必须零构建(`@model-war/schema` 的 `exports` 指向
  * `dist/`,import 它就让这条链依赖一次 `tsc -b`)。做法与 `run-prose-gate.ts` 读键清单源码、
  * `run-quickjs-coupling-gate.ts` 读冻结常量同源:读源码文本,按形态取字面量。抽不出来时
  * **按失败处理**并说明原因,不静默放行——那正是「判据失明但门禁全绿」的形态。
@@ -123,8 +123,7 @@ export const manifestFindings = (
     if (!have.has(path)) {
       findings.push({
         where: path,
-        detail:
-          "清单里点名了这份内容,盘上没有:挂载点会少一块。跑 `pnpm run sandbox:rootfs:build`。",
+        detail: "清单里点名了这份内容,盘上没有:挂载点会少一块。跑 `pnpm run build:rootfs`。",
       });
     }
   }
@@ -149,7 +148,7 @@ export const treeHashFinding = (expected: string, actual: string): RootfsFinding
         where: SCHEMA_CONSTANTS_SOURCE,
         detail:
           `整棵 rootfs 现算的 sha256 是 ${actual},而 SANDBOX_ROOTFS_TREE_HASH 写的是 ${expected}。` +
-          "内容物被改过(或被重新组装过):确认这次改动是想要的,再跑 `pnpm run sandbox:rootfs:build` " +
+          "内容物被改过(或被重新组装过):确认这次改动是想要的,再跑 `pnpm run build:rootfs` " +
           "把新哈希手写回去。",
       };
 
@@ -189,7 +188,7 @@ export const byteCopyFinding = (
         detail:
           `与真源 ${sourcePath} 不一致(副本 ${String(copy.byteLength)} 字节 / 真源 ` +
           `${String(source.byteLength)} 字节)。这一份是生成物:改真源,再跑 ` +
-          "`pnpm run sandbox:rootfs:build`。",
+          "`pnpm run build:rootfs`。",
       };
 
 /** 判据 5:顶层条目只许挂载面那两个目录与来路说明书。 */
@@ -261,7 +260,7 @@ export const provenanceFindings = (
         where: binary.path,
         detail:
           `\`PROVENANCE.md\` 说这份的 sha256 是 ${claimed},盘上的字节是 ${binary.sha256}。` +
-          "这份说明是生成物:改 `STATIC_BINARY_PINS`、重跑 `pnpm run sandbox:rootfs:build`。",
+          "这份说明是生成物:改 `STATIC_BINARY_PINS`、重跑 `pnpm run build:rootfs`。",
       });
     }
   }

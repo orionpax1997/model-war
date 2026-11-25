@@ -15,7 +15,7 @@
  *     于是不会把 `tsc -b` 一起弄红,反例只证明它该证明的那一件事。
  *     例外是 `typescript/*` 与 `vitest/*` 那批规则(不施加到 `.js` 上),它们用 .ts 探针;
  *     lint 用例里不跑 tsc,编译被染红也轮不到它说话。
- *     **类型感知 lint 那一条是唯一的例外**:它要的正好是 `tsc` 那一半(`lint:types` 含 `tsc -b`),
+ *     **类型感知 lint 那一条是唯一的例外**:它要的正好是 `tsc` 那一半(`gate:types` 含 `tsc -b`),
  *     所以探针必须**编得过**——它的红必须来自类型感知规则,而探针的编译产物得跟源码一起清。
  *   - **落进工具包源码树的 .ts 探针**(`__declared-deps-probe.ts`):给「声明即依赖」门禁用。
  *     它读的是 `packages/tools/src` 的源码,所以探针必须是 .ts;而它读不到 dist 里的任何东西,
@@ -82,6 +82,7 @@ import {
 import { MUTATION_SHARDS, shardByName } from "./mutation/shards.ts";
 import { isShardBaseline } from "./mutation/ratchet.ts";
 import { sectionMarker } from "./generate/section.ts";
+import { scriptsGateFindings } from "./gate/scripts-gate.ts";
 
 const bin = (name: string): string => here(`../../../node_modules/.bin/${name}`);
 
@@ -173,31 +174,31 @@ afterAll(() => {
 
 // ── 分层门禁在空壳上各自退出 0 ────────────────────────────────────────────────
 
-it("check:quick(格式 + lint + 工具版本耦合)在空壳上退出 0", () => {
-  const result = script("check:quick");
+it("quick(格式 + lint + 工具版本耦合)在空壳上退出 0", () => {
+  const result = script("quick");
   expect(result.status, result.output).toBe(0);
 });
 
-it("check:types(check:quick + tsc -b + 类型感知 lint)退出 0", () => {
-  const result = script("check:types");
+it("gate:types(quick + tsc -b + 类型感知 lint)退出 0", () => {
+  const result = script("gate:types");
   expect(result.status, result.output).toBe(0);
 });
 
-it("check:deps(依赖门禁)退出 0,且报告的巡航规模不为零", () => {
-  const result = script("check:deps");
+it("gate:deps(依赖门禁)退出 0,且报告的巡航规模不为零", () => {
+  const result = script("gate:deps");
   expect(result.status, result.output).toBe(0);
 
   // 反面证据:必须真的巡航到了图。depcruise 缺 TS 编译器时的行为是**静默跳过 .ts**,
   // 报告写着「0 modules, 0 dependencies」并且 exit 0——那是一条永远全绿、什么也没断言的假门禁。
-  // 所以这一条不是装饰:它是「check:deps 退出 0」这句话不成立的那种情形的唯一防线。
+  // 所以这一条不是装饰:它是「gate:deps 退出 0」这句话不成立的那种情形的唯一防线。
   const cruised = /(\d+) modules, (\d+) dependencies cruised/.exec(result.output);
   expect(cruised, `依赖门禁没有报告巡航规模,疑似空跑:\n${result.output}`).not.toBeNull();
   expect(Number(cruised?.[1] ?? "0"), "巡航到的模块数为零,门禁等于没跑").toBeGreaterThan(5);
   expect(Number(cruised?.[2] ?? "0")).toBeGreaterThan(5);
 });
 
-it("test:props(长时属性测试)退出 0", () => {
-  const result = script("test:props");
+it("test:property(长时属性测试)退出 0", () => {
+  const result = script("test:property");
   expect(result.status, result.output).toBe(0);
 });
 
@@ -240,32 +241,32 @@ it("quickjs-wasi 版本耦合断言:配套为 0,改根钉版即 1", () => {
   expect(bumped.status, "改根钉版后必须非零退出").toBe(1);
   expect(bumped.output, bumped.output).toContain("根依赖与冻结常量一致");
   // 报错信息要直接告诉人跑哪个脚本、把数字写回哪一节。
-  expect(bumped.output, bumped.output).toContain("pnpm run probes:sandbox");
+  expect(bumped.output, bumped.output).toContain("pnpm run observe:probes");
   expect(bumped.output, bumped.output).toContain("docs/hld.md §5.0");
 });
 
 // ── 禁浮点门禁反例 ───────────────────────────────────────────────────────────
 
 it("禁浮点门禁:engine 源码里出现浮点字面量就红,撤掉即绿", () => {
-  const clean = script("check:no-float");
+  const clean = script("gate:no-float");
   expect(clean.status, clean.output).toBe(0);
 
   // 探针落在 engine 的运行时代码里,而且是 .ts 而非 .js:这道门禁读的是**源码**
   // (自建校验器建在 oxc-parser 上,不经 tsc 产物),所以在 dist 里丢文件它根本看不见。
   // 位置与扩展名合起来才是「它真的在读该读的那片源码」的证据。
   const violated = withProbeFile(NO_FLOAT_PROBE, "export const speed = 1.5;\n", () =>
-    script("check:no-float"),
+    script("gate:no-float"),
   );
   expect(violated.status, "浮点字面量必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("__nofloat-probe.ts");
 
   // 同一路径换成整数:判决跟着内容走,不是跟着文件名走。
   const fixed = withProbeFile(NO_FLOAT_PROBE, "export const speed = 3;\n", () =>
-    script("check:no-float"),
+    script("gate:no-float"),
   );
   expect(fixed.status, `整数仍被拦下:\n${fixed.output}`).toBe(0);
 
-  expect(script("check:no-float").status).toBe(0);
+  expect(script("gate:no-float").status).toBe(0);
 });
 
 // ── 生成器:改真源 → 重跑 → 门禁的判决跟着变 ───────────────────────────────────
@@ -351,7 +352,7 @@ const withPatchedTruth = (
   try {
     // 先把真源编过去:真源是 `.ts`,而生产函数 import 的是 `@model-war/schema` 的编译产物,
     // 所以「改了真源」要成为漂移检查看得见的状态,得先让 `tsc -b` 把它编进 `packages/schema/dist`。
-    // CI 里这一步由 `check:types` 提供(`check:drift` 搭它的车),在这里必须自己补上。
+    // CI 里这一步由 `gate:types` 提供(`gate:drift` 搭它的车),在这里必须自己补上。
     const build = script("build");
     expect(build.status, `构建失败,真源改动没进 dist,反例不成立:\n${build.output}`).toBe(0);
 
@@ -365,7 +366,7 @@ const withPatchedTruth = (
       writeFileSync(snapshot.path, snapshot.text, "utf8");
     }
     // 真源还原之后,`packages/schema/dist` 可能停在被改过的源码上。补一次构建,
-    // 让后续用例(尤其依赖已就位产物的 check:deps 与漂移检查)看到一致状态;结果不额外断言,
+    // 让后续用例(尤其依赖已就位产物的 gate:deps 与漂移检查)看到一致状态;结果不额外断言,
     // 断言留给那些真正依赖构建产物的用例,免得它盖掉 body 原本的失败信息。
     script("build");
   }
@@ -386,7 +387,7 @@ const withRegeneratedAllowlist = (
 it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变", () => {
   // 基线:`clz32` 在名单里,用到它的脚本放行。没有它,后面那个「变红」可能只是探针本身写得不对。
   const allowed = withProbeFile(NO_FLOAT_PROBE, REMOVED_MEMBER_PROBE, () =>
-    script("check:no-float"),
+    script("gate:no-float"),
   );
   expect(allowed.status, `名单内的成员被拦下:\n${allowed.output}`).toBe(0);
 
@@ -394,7 +395,7 @@ it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变",
   // 门禁行为改变」这条链的正面证据,断言落在门禁的退出码与报告文本上,不碰任何内部函数。
   const removed = withRegeneratedAllowlist(
     (source) => source.replace(`  "${REMOVED_MEMBER}",\n`, ""),
-    () => withProbeFile(NO_FLOAT_PROBE, REMOVED_MEMBER_PROBE, () => script("check:no-float")),
+    () => withProbeFile(NO_FLOAT_PROBE, REMOVED_MEMBER_PROBE, () => script("gate:no-float")),
   );
   expect(removed.status, "真源摘掉成员后,用到它的脚本必须被拒绝").toBe(1);
   expect(removed.output, removed.output).toContain(`Math.${REMOVED_MEMBER}`);
@@ -415,7 +416,7 @@ it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变",
   // 少了这一条,「生成器把规则层弄坏了」也会被算作通过。
   const stillAllowed = withRegeneratedAllowlist(
     (source) => source.replace(`  "${REMOVED_MEMBER}",\n`, ""),
-    () => withProbeFile(NO_FLOAT_PROBE, STILL_ALLOWED_MEMBER_PROBE, () => script("check:no-float")),
+    () => withProbeFile(NO_FLOAT_PROBE, STILL_ALLOWED_MEMBER_PROBE, () => script("gate:no-float")),
   );
   expect(
     stillAllowed.status,
@@ -424,13 +425,13 @@ it("生成器:改真源重跑后,禁浮点门禁的白名单判决随之改变",
   ).toBe(0);
 
   // 链路的另一头:还原后门禁回到绿。少了它,一条「红到底」的假实现也能满足上面四条。
-  expect(script("check:no-float").status, "还原后禁浮点门禁没有回到绿").toBe(0);
+  expect(script("gate:no-float").status, "还原后禁浮点门禁没有回到绿").toBe(0);
 });
 
 // ── 生成物漂移检查反例 ────────────────────────────────────────────────────────
 
 /** 漂移检查的命名脚本。它需要构建前置(生产函数 import 真源包),所以只挂在全量门禁末尾。 */
-const driftCheck = (): Outcome => script("check:drift");
+const driftCheck = (): Outcome => script("gate:drift");
 
 /**
  * 往注册表数组字面量里插一条生成物声明,跑 `body`,无论成败都把注册表**按字节**还原。
@@ -609,12 +610,12 @@ it("生成物漂移检查:工作树里有与生成物无关的未提交内容时
 
 it("生成物漂移检查挂在全量门禁末尾,且不进快门禁", () => {
   // 挂在末尾而不是中间:前面几道各自独立,末尾那几道是「提交内容对不对」的复核(清单见上)。
-  expect(tailSteps(), "漂移检查不在全量门禁末尾那一组复核里").toContain("pnpm run check:drift");
+  expect(tailSteps(), "漂移检查不在全量门禁末尾那一组复核里").toContain("pnpm run gate:drift");
 
   // 不进快门禁的理由是它需要一次 `tsc -b`,而快门禁的零构建性质不能破(ADR-0003 的混合传输)。
   // 「零构建」没法直接断言,能断言的是它没被挂进快门禁这条链里。
-  expect(manifest().scripts["check:quick"]).not.toContain("check:drift");
-  expect(manifest().scripts["check:types"]).not.toContain("check:drift");
+  expect(manifest().scripts["quick"]).not.toContain("gate:drift");
+  expect(manifest().scripts["gate:types"]).not.toContain("gate:drift");
 });
 
 // ── 生成物漂移检查:区块形态(一份文件里的某一段是生成物) ─────────────────────────
@@ -928,99 +929,99 @@ it("生成物漂移检查:手改数值表区块正文 → 变红,手改表外散
 // ── 预算结构门禁:已定稿预算键的结构断言───────────────────────────────
 
 it("预算结构门禁:改一个预算取值(不是中断粒度的整数倍)→ 变红,按字节还原 → 变绿", () => {
-  const clean = script("check:budget");
+  const clean = script("gate:budget");
   expect(clean.status, clean.output).toBe(0);
 
   // 反例落在**数据文件**上(与数值表那一节同族):把事件计数上限改成一个不是中断粒度整数倍的数。
   // 门禁读的正是磁盘上那份 JSON,所以改完立刻可判、不需要先 `tsc -b`。
   const violated = withPatchedRuleset(
     (source) => source.replace('"eventTickLimit": 10000', '"eventTickLimit": 9999'),
-    () => script("check:budget"),
+    () => script("gate:budget"),
   );
   expect(violated.status, "事件计数上限不是中断粒度整数倍时门禁必须非零退出").toBe(1);
   expect(violated.output, "报告必须指名那个键").toContain("eventTickLimit");
   expect(violated.output, "报告必须说清是整数倍这一条").toContain("整数倍");
 
-  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:budget").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("预算结构门禁:内存夹逼被弄红——判罚线超过分配上限的一半 / 分配上限不足 8 倍 → 变红,还原 → 变绿", () => {
-  const clean = script("check:budget");
+  const clean = script("gate:budget");
   expect(clean.status, clean.output).toBe(0);
 
   // 反例:把判罚线抬到等于分配上限——既破了「判罚线 ≤ 分配上限的一半」,也破了「分配上限 ≥ 8 × 判罚线」。
   const violated = withPatchedRuleset(
     (source) => source.replace('"memoryTickCeiling": 524288', '"memoryTickCeiling": 4194304'),
-    () => script("check:budget"),
+    () => script("gate:budget"),
   );
   expect(violated.status, "判罚线越过分配上限的一半时门禁必须非零退出").toBe(1);
   expect(violated.output, "报告必须指名内存两键").toContain("memoryTickCeiling");
   expect(violated.output, "报告必须说清是夹逼这一条").toContain("内存夹逼");
 
-  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:budget").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("预算结构门禁:软阈(推导项)低于诚实存活堆峰值 → 变红,还原 → 变绿", () => {
-  const clean = script("check:budget");
+  const clean = script("gate:budget");
   expect(clean.status, clean.output).toBe(0);
 
   // 反例:判罚线取 250000。它仍满足夹逼(≤ 分配上限的一半、≥ 8 倍的反面也成立),但
   // 0.8 × 250000 = 200000 低于诚实峰值 201384——正常脚本会开始产内存压力观测。
   const violated = withPatchedRuleset(
     (source) => source.replace('"memoryTickCeiling": 524288', '"memoryTickCeiling": 250000'),
-    () => script("check:budget"),
+    () => script("gate:budget"),
   );
   expect(violated.status, "软阈低于诚实峰值时门禁必须非零退出").toBe(1);
   expect(violated.output, "报告必须说清是软阈下界这一条").toContain("软阈下界");
 
-  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:budget").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("预算结构门禁:体积上限低于基准产物最大值 → 变红,还原 → 变绿", () => {
-  const clean = script("check:budget");
+  const clean = script("gate:budget");
   expect(clean.status, clean.output).toBe(0);
 
   // 反例:把体积上限压到 4096——低于三份基准产物的最大值(cell-b 的 7579 字节)。
-  // 这条下界不在默认链上(check:selfproof 按需跑),所以由本门禁带着。
+  // 这条下界不在默认链上(gate:selfproof 按需跑),所以由本门禁带着。
   const violated = withPatchedRuleset(
     (source) => source.replace('"scriptSizeLimit": 32768', '"scriptSizeLimit": 4096'),
-    () => script("check:budget"),
+    () => script("gate:budget"),
   );
   expect(violated.status, "体积上限低于基准产物最大值时门禁必须非零退出").toBe(1);
   expect(violated.output, "报告必须指名体积键").toContain("scriptSizeLimit");
   expect(violated.output, "报告必须说清是体积上限这一条").toContain("体积上限");
 
-  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:budget").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("预算结构门禁:硬超时不足软限的 20 倍 → 变红,还原 → 变绿", () => {
-  const clean = script("check:budget");
+  const clean = script("gate:budget");
   expect(clean.status, clean.output).toBe(0);
 
   // 反例:硬超时压到 512——低于 20 × 软限 50 = 1000。硬超时是成本兜底,与只观测的软限的关系要钉住。
   const violated = withPatchedRuleset(
     (source) => source.replace('"wallClockHardTimeout": 1024', '"wallClockHardTimeout": 512'),
-    () => script("check:budget"),
+    () => script("gate:budget"),
   );
   expect(violated.status, "硬超时不足软限的 20 倍时门禁必须非零退出").toBe(1);
   expect(violated.output, "报告必须指名硬超时键").toContain("wallClockHardTimeout");
   expect(violated.output, "报告必须说清是墙钟硬超时这一条").toContain("墙钟硬超时");
 
-  expect(script("check:budget").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:budget").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("预算结构门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+it("预算结构门禁挂在 quick,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它必须挂在默认的快门禁上,否则改预算取值时没人拦。
-  expect(scripts["check:quick"] ?? "", "预算结构门禁不在快门禁里").toContain("check:budget");
+  expect(scripts["quick"] ?? "", "预算结构门禁不在快门禁里").toContain("gate:budget");
   // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
-  expect(scripts["check:selfproof"] ?? "", "预算结构门禁被挪进了按需门禁").not.toContain(
-    "check:budget",
+  expect(scripts["gate:selfproof"] ?? "", "预算结构门禁被挪进了按需门禁").not.toContain(
+    "gate:budget",
   );
-  expect(scripts["test:slow"] ?? "", "预算结构门禁被挪进了慢链").not.toContain("check:budget");
-  expect(scripts["test"] ?? "", "预算结构门禁被挪进了默认测试").not.toContain("check:budget");
+  expect(scripts["test:slow"] ?? "", "预算结构门禁被挪进了慢链").not.toContain("gate:budget");
+  expect(scripts["test"] ?? "", "预算结构门禁被挪进了默认测试").not.toContain("gate:budget");
   // 末尾那组仍是「提交内容对不对」的复核:结构门禁不属于那里。
-  expect(tailSteps(), "预算结构门禁被挪进了全量门禁末尾复核组").not.toContain("check:budget");
+  expect(tailSteps(), "预算结构门禁被挪进了全量门禁末尾复核组").not.toContain("gate:budget");
 });
 
 // ── 散文禁抄取值门禁:静态陈述变红,变更记账放行,ADR 目录被扫 ──────────────────
@@ -1056,27 +1057,27 @@ const withPatchedText = (
 };
 
 it("散文禁抄取值门禁:静态陈述变红,还原变绿", () => {
-  const clean = script("check:prose");
+  const clean = script("gate:prose");
   expect(clean.status, clean.output).toBe(0);
   // 规模自证:报告必须给出扫到的文档数与名字数——「退出 0」只有在真的扫过东西时才成立。
   expect(clean.output, clean.output).toContain("份文档");
   expect(clean.output, clean.output).toContain("个受管参数名");
 
   const violated = withProbeFile(PROSE_PROBE_PATH, "# 探针\n\n携带上限:`carryLimit`(=20)。\n", () =>
-    script("check:prose"),
+    script("gate:prose"),
   );
   expect(violated.status, "被扫目录里出现静态陈述时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain(PROSE_PROBE_PATH);
   expect(violated.output, violated.output).toContain("carryLimit");
 
-  expect(script("check:prose").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prose").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("散文禁抄取值门禁:变更记账(旧值 → 新值)放行", () => {
   const accounting = withProbeFile(
     PROSE_PROBE_PATH,
     "# 探针\n\n预算终值改了两处:`eventTickLimit` 10000→50000、`apiCallTickLimit` 300 -> 800。\n",
-    () => script("check:prose"),
+    () => script("gate:prose"),
   );
   expect(accounting.status, accounting.output).toBe(0);
 });
@@ -1087,22 +1088,22 @@ it("散文禁抄取值门禁:抽不出参数名时按失败处理(空转反例)"
   const broken = withPatchedText(
     "packages/schema/src/ruleset-keys.ts",
     (source) => source.replace("export const RULESET_KEY_CATALOG = {", "const RENAMED_CATALOG = {"),
-    () => script("check:prose"),
+    () => script("gate:prose"),
   );
   expect(broken.status, "抽不出参数名时门禁必须非零退出").toBe(1);
   expect(broken.output, broken.output).toContain("0 个键清单参数名");
 });
 
-it("散文禁抄取值门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+it("散文禁抄取值门禁挂在 quick,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它必须挂在默认的快门禁上,否则散文里抄取值时没人拦。
-  expect(scripts["check:quick"] ?? "", "散文判据不在快门禁里").toContain("check:prose");
+  expect(scripts["quick"] ?? "", "散文判据不在快门禁里").toContain("gate:prose");
   // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
-  expect(scripts["check:selfproof"] ?? "", "散文判据被挪进了按需门禁").not.toContain("check:prose");
-  expect(scripts["test:slow"] ?? "", "散文判据被挪进了慢链").not.toContain("check:prose");
-  expect(scripts["test"] ?? "", "散文判据被挪进了默认测试").not.toContain("check:prose");
+  expect(scripts["gate:selfproof"] ?? "", "散文判据被挪进了按需门禁").not.toContain("gate:prose");
+  expect(scripts["test:slow"] ?? "", "散文判据被挪进了慢链").not.toContain("gate:prose");
+  expect(scripts["test"] ?? "", "散文判据被挪进了默认测试").not.toContain("gate:prose");
   // 末尾那组仍是「提交内容对不对」的复核:散文判据属于编辑循环,不属于那里。
-  expect(tailSteps(), "散文判据被挪进了全量门禁末尾复核组").not.toContain("check:prose");
+  expect(tailSteps(), "散文判据被挪进了全量门禁末尾复核组").not.toContain("gate:prose");
 });
 
 // ── 契约挂载门禁:四条的字节与目录说明 ────────────────────────────────────
@@ -1121,7 +1122,7 @@ const CONTRACT_INDEX_FILE = "docs/rules-v2/README.md";
 const CONTRACT_IDENTITY_FILE = "packages/schema/src/contract-identity.ts";
 
 it("契约挂载门禁:骨架被手改时变红,还原变绿", () => {
-  const clean = script("check:contract");
+  const clean = script("gate:contract");
   expect(clean.status, clean.output).toBe(0);
   // 规模自证:报告必须给出挂载条数与目录里的文件数——「退出 0」只有在真读出东西时才成立。
   expect(clean.output, clean.output).toContain("条挂载");
@@ -1130,12 +1131,12 @@ it("契约挂载门禁:骨架被手改时变红,还原变绿", () => {
   const violated = withPatchedText(
     SKELETON_FILE,
     (source) => `${source}\n// 手改一行\n`,
-    () => script("check:contract"),
+    () => script("gate:contract"),
   );
   expect(violated.status, "骨架与 §6 不一致时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("不是同一份字节");
 
-  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:contract").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("契约挂载门禁:入库整树身份常量与现算不一致时变红", () => {
@@ -1145,45 +1146,45 @@ it("契约挂载门禁:入库整树身份常量与现算不一致时变红", () 
   const violated = withPatchedText(
     CONTRACT_IDENTITY_FILE,
     (source) => source.replace(/"[0-9a-f]{64}"/, `"${"0".repeat(64)}"`),
-    () => script("check:contract"),
+    () => script("gate:contract"),
   );
   expect(violated.status, "身份漂了但门禁没红").toBe(1);
   expect(violated.output).toContain("契约整树身份与入库常量不一致");
-  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:contract").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("契约挂载门禁:目录说明点名了不存在的挂载路径时变红", () => {
   const violated = withPatchedText(
     CONTRACT_INDEX_FILE,
     (source) => `${source}\n参见 \`/contract/notes.md\`。\n`,
-    () => script("check:contract"),
+    () => script("gate:contract"),
   );
   expect(violated.status, "说明里点名不存在的文件时必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("/contract/notes.md");
-  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:contract").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("契约挂载门禁:目录说明里出现可写面时变红", () => {
   const violated = withPatchedText(
     CONTRACT_INDEX_FILE,
     (source) => `${source}\n把骨架复制到 \`/workspace\` 再改。\n`,
-    () => script("check:contract"),
+    () => script("gate:contract"),
   );
   expect(violated.status, "说明里出现可写面时必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("/workspace");
-  expect(script("check:contract").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:contract").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("契约挂载门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+it("契约挂载门禁挂在 quick,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
-  // 在场:它守的那份生成物没有生成头注释,而日常入口是 `verify:fast`——抓不到等于没有。
-  expect(scripts["check:quick"] ?? "", "契约挂载判据不在快门禁里").toContain("check:contract");
+  // 在场:它守的那份生成物没有生成头注释,而日常入口是 `verify`——抓不到等于没有。
+  expect(scripts["quick"] ?? "", "契约挂载判据不在快门禁里").toContain("gate:contract");
   // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
-  expect(scripts["check:selfproof"] ?? "", "契约判据被挪进了按需门禁").not.toContain(
-    "check:contract",
+  expect(scripts["gate:selfproof"] ?? "", "契约判据被挪进了按需门禁").not.toContain(
+    "gate:contract",
   );
-  expect(scripts["test:slow"] ?? "", "契约判据被挪进了慢链").not.toContain("check:contract");
-  expect(tailSteps(), "契约判据被挪进了全量门禁末尾复核组").not.toContain("check:contract");
+  expect(scripts["test:slow"] ?? "", "契约判据被挪进了慢链").not.toContain("gate:contract");
+  expect(tailSteps(), "契约判据被挪进了全量门禁末尾复核组").not.toContain("gate:contract");
 });
 
 // ── 命令清单门禁:首条消息里说的命令 == 沙箱里有的命令 ──────────────────────────
@@ -1204,7 +1205,7 @@ const ROOTFS_MANIFEST_FILE = "packages/schema/src/sandbox-rootfs.ts";
 const AGENT_TEMPLATE_FILE = "prompts/agent.md";
 
 it("命令清单门禁:常量加了二进制而文案没跟上时变红并点名,还原变绿", () => {
-  const clean = script("check:prompt-commands");
+  const clean = script("gate:prompt:commands");
   expect(clean.status, clean.output).toBe(0);
   // 规模自证:报告必须给出条数与名字——「退出 0」只有在真比过两个集合时才成立。
   expect(clean.output, clean.output).toContain("静态二进制");
@@ -1213,12 +1214,12 @@ it("命令清单门禁:常量加了二进制而文案没跟上时变红并点名
   const violated = withPatchedText(
     ROOTFS_MANIFEST_FILE,
     (source) => source.replace('  "bin/ls",', '  "bin/__probe",\n  "bin/ls",'),
-    () => script("check:prompt-commands"),
+    () => script("gate:prompt:commands"),
   );
   expect(violated.status, "常量里多一个命令而文案没写时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("__probe");
 
-  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:commands").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("命令清单门禁:文案点名了沙箱里没有的命令时变红并点名", () => {
@@ -1226,11 +1227,11 @@ it("命令清单门禁:文案点名了沙箱里没有的命令时变红并点名
   const violated = withPatchedText(
     AGENT_TEMPLATE_FILE,
     (source) => source.replace("- `wc` —", "- `python3` — 解释器。\n- `wc` —"),
-    () => script("check:prompt-commands"),
+    () => script("gate:prompt:commands"),
   );
   expect(violated.status, "文案里写了沙箱没有的命令时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("python3");
-  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:commands").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("命令清单门禁:删掉「没有 sleep / awk」那句时变红(缺项也是清单的一部分)", () => {
@@ -1241,44 +1242,42 @@ it("命令清单门禁:删掉「没有 sleep / awk」那句时变红(缺项也�
         .split("\n")
         .filter((line) => !line.startsWith("没有 `awk`"))
         .join("\n"),
-    () => script("check:prompt-commands"),
+    () => script("gate:prompt:commands"),
   );
   expect(violated.status, "删掉缺项说明时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("sleep");
-  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:commands").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("命令清单门禁:二进制那一节的标题换词时红在标题上(不把整组报成「清单没写」)", () => {
   // 标题是分组的判据:它一换词,整节清单就不再算数。诊断必须指得到那一行,
   // 否则人会去补八九条清单项,而真正该改的只是一行标题。
   //
-  // 反例落在**二进制**那一节:宿主工具那一节的标题归 `check:prompt-tools`
+  // 反例落在**二进制**那一节:宿主工具那一节的标题归 `gate:prompt:tools`
   // (下一条用例),两条标题各有一条反例盯着。
   const violated = withPatchedText(
     AGENT_TEMPLATE_FILE,
     (source) => source.replace("### 静态二进制:通用命令", "### 本地命令:通用命令"),
-    () => script("check:prompt-commands"),
+    () => script("gate:prompt:commands"),
   );
   expect(violated.status, "分组标题换词时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("没有那条分组标题");
-  expect(script("check:prompt-commands").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:commands").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("命令清单门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+it("命令清单门禁挂在 quick,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
-  // 在场:它零构建(读两份文本、比两个集合),而日常入口是 `verify:fast`——抓不到等于没有。
-  expect(scripts["check:quick"] ?? "", "命令清单判据不在快门禁里").toContain(
-    "check:prompt-commands",
-  );
+  // 在场:它零构建(读两份文本、比两个集合),而日常入口是 `verify`——抓不到等于没有。
+  expect(scripts["quick"] ?? "", "命令清单判据不在快门禁里").toContain("gate:prompt:commands");
   // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
-  expect(scripts["check:selfproof"] ?? "", "命令清单判据被挪进了按需门禁").not.toContain(
-    "check:prompt-commands",
+  expect(scripts["gate:selfproof"] ?? "", "命令清单判据被挪进了按需门禁").not.toContain(
+    "gate:prompt:commands",
   );
   expect(scripts["test:slow"] ?? "", "命令清单判据被挪进了慢链").not.toContain(
-    "check:prompt-commands",
+    "gate:prompt:commands",
   );
   expect(tailSteps(), "命令清单判据被挪进了全量门禁末尾复核组").not.toContain(
-    "check:prompt-commands",
+    "gate:prompt:commands",
   );
 });
 
@@ -1298,7 +1297,7 @@ const PROBE_LIMITS_FILE = "packages/schema/src/probe-limits.ts";
 const AGENT_SYSTEM_FILE = "prompts/agent-system.md";
 
 it("工具清单门禁:全绿,且报告给出声明与宿主工具两档的规模", () => {
-  const clean = script("check:prompt-tools");
+  const clean = script("gate:prompt:tools");
   expect(clean.status, clean.output).toBe(0);
   // 规模自证:报告必须给出个数与名字——「退出 0」只有在真比过三个集合时才成立。
   expect(clean.output, clean.output).toContain("声明的工具");
@@ -1317,11 +1316,11 @@ it("工具清单门禁:声明里加了工具而文案没跟上时变红并点名
         '  {\n    name: "finish",',
         '  {\n    name: "diagnose",\n    description: "探针工具。",\n    parameters: NO_PARAMETERS,\n  },\n  {\n    name: "finish",',
       ),
-    () => script("check:prompt-tools"),
+    () => script("gate:prompt:tools"),
   );
   expect(violated.status, "声明里多一个工具而文案没写时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("diagnose");
-  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("工具清单门禁:文案点名了声明里没有的工具时变红并点名", () => {
@@ -1329,11 +1328,11 @@ it("工具清单门禁:文案点名了声明里没有的工具时变红并点名
   const violated = withPatchedText(
     AGENT_TEMPLATE_FILE,
     (source) => source.replace("- `finish` —", "- `__ghost` — 不存在的工具。\n- `finish` —"),
-    () => script("check:prompt-tools"),
+    () => script("gate:prompt:tools"),
   );
   expect(violated.status, "文案里写了声明没有的工具时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("__ghost");
-  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("工具清单门禁:宿主工具那一节的标题换词时红在标题上", () => {
@@ -1342,11 +1341,11 @@ it("工具清单门禁:宿主工具那一节的标题换词时红在标题上", 
   const violated = withPatchedText(
     AGENT_TEMPLATE_FILE,
     (source) => source.replace("### 宿主工具:调用它们,不在沙箱里", "### 宿主工具:换个词"),
-    () => script("check:prompt-tools"),
+    () => script("gate:prompt:tools"),
   );
   expect(violated.status, "分组标题换词时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("没有那条分组标题");
-  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("工具清单门禁:`system` 里点了一个既不是工具、也没登记的词时变红并点名", () => {
@@ -1355,11 +1354,11 @@ it("工具清单门禁:`system` 里点了一个既不是工具、也没登记的
   const violated = withPatchedText(
     AGENT_SYSTEM_FILE,
     (source) => `${source}\n也可以用 \`shell\` 跑。\n`,
-    () => script("check:prompt-tools"),
+    () => script("gate:prompt:tools"),
   );
   expect(violated.status, "`system` 里出现没着落的反引号单词时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("shell");
-  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("工具清单门禁:声明的写法变了、抽不出名字时按失败处理(空转反例)", () => {
@@ -1368,11 +1367,11 @@ it("工具清单门禁:声明的写法变了、抽不出名字时按失败处理
   const violated = withPatchedText(
     AGENT_TOOLS_FILE,
     (source) => source.replace("export const AGENT_TOOLS = [", "const SHADOWED_TOOLS = ["),
-    () => script("check:prompt-tools"),
+    () => script("gate:prompt:tools"),
   );
   expect(violated.status, "抽不出声明时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("AGENT_TOOLS");
-  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("工具清单门禁:探针场数改了而首条消息的散文没跟上时变红并点名两边", () => {
@@ -1386,14 +1385,14 @@ it("工具清单门禁:探针场数改了而首条消息的散文没跟上时变
         "export const PROBE_MATCH_LIMIT = 8 as const;",
         "export const PROBE_MATCH_LIMIT = 4 as const;",
       ),
-    () => script("check:prompt-tools"),
+    () => script("gate:prompt:tools"),
   );
   expect(violated.status, "散文与常量各说一个场数时门禁必须非零退出").toBe(1);
   // 诊断要同时指得到位置与两个数,否则人会去改工具声明(那份已经是对的)。
   expect(violated.output, violated.output).toContain(AGENT_TEMPLATE_FILE);
   expect(violated.output, violated.output).toContain("前 8 场");
   expect(violated.output, violated.output).toContain("是 4");
-  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("工具清单门禁:抽不出探针场数常量时按失败处理(空转反例)", () => {
@@ -1405,29 +1404,27 @@ it("工具清单门禁:抽不出探针场数常量时按失败处理(空转反�
         "export const PROBE_MATCH_LIMIT = 8 as const;",
         "export const PROBE_MATCH_LIMIT = TRIAL_GRID_SEAT_COUNT * 2 as const;",
       ),
-    () => script("check:prompt-tools"),
+    () => script("gate:prompt:tools"),
   );
   expect(violated.status, "抽不出场数时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("PROBE_MATCH_LIMIT");
-  expect(script("check:prompt-tools").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:prompt:tools").status, "还原后门禁没有回到绿").toBe(0);
 });
 
-it("工具清单门禁挂在 check:quick(紧跟命令清单门禁),且没被挪进按需 / 慢链", () => {
+it("工具清单门禁挂在 quick(紧跟命令清单门禁),且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
-  // 在场:它零构建(读三份文本、比三个集合),而日常入口是 `verify:fast`——抓不到等于没有。
-  expect(scripts["check:quick"] ?? "", "工具清单判据不在快门禁里").toContain("check:prompt-tools");
+  // 在场:它零构建(读三份文本、比三个集合),而日常入口是 `verify`——抓不到等于没有。
+  expect(scripts["quick"] ?? "", "工具清单判据不在快门禁里").toContain("gate:prompt:tools");
   // 位置:它紧跟在命令清单判据之后——两条判的是同一条首条消息的两节,排一起才读得懂报告。
-  expect(scripts["check:quick"] ?? "", "工具清单判据没跟在命令清单判据之后").toContain(
-    "check:prompt-commands && pnpm run check:prompt-tools",
+  expect(scripts["quick"] ?? "", "工具清单判据没跟在命令清单判据之后").toContain(
+    "gate:prompt:commands && pnpm run gate:prompt:tools",
   );
   // 缺席:它一个构建都不需要,所以没有任何理由进按需 / 慢链或默认测试(那是套娃)。
-  expect(scripts["check:selfproof"] ?? "", "工具清单判据被挪进了按需门禁").not.toContain(
-    "check:prompt-tools",
+  expect(scripts["gate:selfproof"] ?? "", "工具清单判据被挪进了按需门禁").not.toContain(
+    "gate:prompt:tools",
   );
-  expect(scripts["test:slow"] ?? "", "工具清单判据被挪进了慢链").not.toContain(
-    "check:prompt-tools",
-  );
-  expect(tailSteps(), "工具清单判据被挪进了全量门禁末尾复核组").not.toContain("check:prompt-tools");
+  expect(scripts["test:slow"] ?? "", "工具清单判据被挪进了慢链").not.toContain("gate:prompt:tools");
+  expect(tailSteps(), "工具清单判据被挪进了全量门禁末尾复核组").not.toContain("gate:prompt:tools");
 });
 
 // ── 验收落点门禁:落点表自己的存在性判据 ─────────────────────────────────────
@@ -1446,7 +1443,7 @@ const patchLandingRow =
     source.replace(new RegExp(`\\| ${face} \\| [^\\n]* \\|`), `| ${face} | ${landing} |`);
 
 it("验收落点门禁:全绿,且报告给出规模自证", () => {
-  const clean = script("check:landings");
+  const clean = script("gate:landings");
   expect(clean.status, clean.output).toBe(0);
   // 规模自证:「退出 0」只有在真的查过表与文档时才成立(8 行落点、多份文档)。
   expect(clean.output, clean.output).toContain("行落点");
@@ -1459,52 +1456,52 @@ it("验收落点门禁:某行落点改成不存在的文件 → 变红,还原 �
   const violated = withPatchedText(
     "docs/hld.md",
     patchLandingRow("只读隔离", "`packages/engine/src/snapshot/__no-such-landing.test.ts`"),
-    () => script("check:landings"),
+    () => script("gate:landings"),
   );
   expect(violated.status, "落点指向不存在的文件时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("__no-such-landing.test.ts");
   expect(violated.output, violated.output).toContain("文件路径");
 
-  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:landings").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("验收落点门禁:某行落点改成不存在的脚本名 → 变红,还原 → 变绿", () => {
   const violated = withPatchedText(
     "docs/hld.md",
-    patchLandingRow("契约可读性", "`check:no-such-landing`"),
-    () => script("check:landings"),
+    patchLandingRow("契约可读性", "`gate:no-such-landing`"),
+    () => script("gate:landings"),
   );
   expect(violated.status, "落点指向不存在的命名脚本时门禁必须非零退出").toBe(1);
-  expect(violated.output, violated.output).toContain("check:no-such-landing");
+  expect(violated.output, violated.output).toContain("gate:no-such-landing");
   expect(violated.output, violated.output).toContain("scripts 里没有这个名字");
 
-  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:landings").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("验收落点门禁:某行落点改成不存在的 CLI 子命令 → 变红,还原 → 变绿", () => {
   const violated = withPatchedText(
     "docs/hld.md",
     patchLandingRow("四方对等", "`modelwar no-such-command`"),
-    () => script("check:landings"),
+    () => script("gate:landings"),
   );
   expect(violated.status, "落点指向不存在的子命令时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("no-such-command");
   expect(violated.output, violated.output).toContain("COMMANDS 里没有");
 
-  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:landings").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("验收落点门禁:某行落点整行退回散文 → 变红(一行一个可执行 token 都没有)", () => {
   const violated = withPatchedText(
     "docs/hld.md",
     patchLandingRow("可追溯与复算", "存档元数据读入端校验 + 对局输入物化 + 报告双轨"),
-    () => script("check:landings"),
+    () => script("gate:landings"),
   );
   expect(violated.status, "整行落点是散文时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("可追溯与复算");
   expect(violated.output, violated.output).toContain("散文不是落点");
 
-  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:landings").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("验收落点门禁:文档里出现不存在的脚本形态 token → 变红,撤掉 → 变绿", () => {
@@ -1513,13 +1510,13 @@ it("验收落点门禁:文档里出现不存在的脚本形态 token → 变红,
   const violated = withProbeFile(
     LANDING_PROBE_PATH,
     "# 探针\n\n跑 `check:no-such-probe` 看结果。\n",
-    () => script("check:landings"),
+    () => script("gate:landings"),
   );
   expect(violated.status, "文档里错指脚本名时门禁必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain(LANDING_PROBE_PATH);
   expect(violated.output, violated.output).toContain("check:no-such-probe");
 
-  expect(script("check:landings").status, "还原后门禁没有回到绿").toBe(0);
+  expect(script("gate:landings").status, "还原后门禁没有回到绿").toBe(0);
 });
 
 it("验收落点门禁:抽不到 CLI 子命令名时按失败处理(空转反例)", () => {
@@ -1532,25 +1529,25 @@ it("验收落点门禁:抽不到 CLI 子命令名时按失败处理(空转反例
         "export const COMMANDS: readonly CommandSpec[] = [",
         "export const RENAMED_COMMANDS: readonly CommandSpec[] = [",
       ),
-    () => script("check:landings"),
+    () => script("gate:landings"),
   );
   expect(broken.status, "抽不出子命令名时门禁必须非零退出").toBe(1);
   expect(broken.output, broken.output).toContain("子命令名");
   expect(broken.output, broken.output).toContain("什么也没断言");
 });
 
-it("验收落点门禁挂在 check:quick,且没被挪进按需 / 慢链", () => {
+it("验收落点门禁挂在 quick,且没被挪进按需 / 慢链", () => {
   const scripts = manifest().scripts;
   // 在场:它必须挂在默认的快门禁上,否则落点表退化成装饰时没人拦。
-  expect(scripts["check:quick"] ?? "", "验收落点判据不在快门禁里").toContain("check:landings");
+  expect(scripts["quick"] ?? "", "验收落点判据不在快门禁里").toContain("gate:landings");
   // 缺席:零构建的静态门禁不该混进按需 / 慢链,也不该进默认功能测试(那是套娃)。
-  expect(scripts["check:selfproof"] ?? "", "验收落点判据被挪进了按需门禁").not.toContain(
-    "check:landings",
+  expect(scripts["gate:selfproof"] ?? "", "验收落点判据被挪进了按需门禁").not.toContain(
+    "gate:landings",
   );
-  expect(scripts["test:slow"] ?? "", "验收落点判据被挪进了慢链").not.toContain("check:landings");
-  expect(scripts["test"] ?? "", "验收落点判据被挪进了默认测试").not.toContain("check:landings");
+  expect(scripts["test:slow"] ?? "", "验收落点判据被挪进了慢链").not.toContain("gate:landings");
+  expect(scripts["test"] ?? "", "验收落点判据被挪进了默认测试").not.toContain("gate:landings");
   // 末尾那组仍是「提交内容对不对」的复核:落点判据属于编辑循环,不属于那里。
-  expect(tailSteps(), "验收落点判据被挪进了全量门禁末尾复核组").not.toContain("check:landings");
+  expect(tailSteps(), "验收落点判据被挪进了全量门禁末尾复核组").not.toContain("gate:landings");
 });
 
 // ── 生成物漂移检查:API 面的表(真源是符号表与后果行,落在契约文档的正文里) ─────────
@@ -1607,7 +1604,7 @@ it("生成物漂移检查:API 表区块——改真源不重跑 → 变红,手�
 // ── 依赖门禁反例:注入违规,确认规则真的挂在图上 ────────────────────────────────
 
 it("依赖门禁:engine 一旦 import runner 或 gen 就红,撤掉即绿", () => {
-  const clean = script("check:deps");
+  const clean = script("gate:deps");
   expect(clean.status, clean.output).toBe(0);
 
   // 一条规则、两个禁止目标(runner / gen)写成 `(?:specifier|resolved)` 交替式。
@@ -1617,35 +1614,35 @@ it("依赖门禁:engine 一旦 import runner 或 gen 就红,撤掉即绿", () =>
     const violated = withProbeFile(
       "packages/engine/dist/__gate-probe.js",
       `import "@model-war/${target}";\n`,
-      () => script("check:deps"),
+      () => script("gate:deps"),
     );
     expect(violated.status, `engine import ${target} 必须非零退出`).not.toBe(0);
     expect(violated.output, violated.output).toContain("engine-must-not-depend-on-runner-or-gen");
     expect(violated.output, violated.output).toContain(`@model-war/${target}`);
   }
 
-  const restored = script("check:deps");
+  const restored = script("gate:deps");
   expect(restored.status, restored.output).toBe(0);
 });
 
 it("依赖门禁:runner 一旦 import engine 就红,撤掉即绿", () => {
-  const clean = script("check:deps");
+  const clean = script("gate:deps");
   expect(clean.status, clean.output).toBe(0);
 
   const violated = withProbeFile(
     "packages/runner/dist/__gate-probe.js",
     'import { replayTickLine } from "@model-war/engine";\nexport const probe = replayTickLine;\n',
-    () => script("check:deps"),
+    () => script("gate:deps"),
   );
   expect(violated.status, "注入跨包方向违规后必须非零退出").not.toBe(0);
   expect(violated.output, violated.output).toContain("runner-must-not-depend-on-engine");
 
-  const restored = script("check:deps");
+  const restored = script("gate:deps");
   expect(restored.status, restored.output).toBe(0);
 });
 
 it("依赖门禁:gen 一旦 import engine / runner / replay 就红,撤掉即绿", () => {
-  const clean = script("check:deps");
+  const clean = script("gate:deps");
   expect(clean.status, clean.output).toBe(0);
 
   // 三个禁止目标写在同一台 `(?:specifier|resolved)` 交替式里:写漏一个时另外两个照样绿,所以三个各注一次。
@@ -1656,7 +1653,7 @@ it("依赖门禁:gen 一旦 import engine / runner / replay 就红,撤掉即绿"
     const violated = withProbeFile(
       "packages/gen/dist/__gate-probe.js",
       `import "@model-war/${target}";\n`,
-      () => script("check:deps"),
+      () => script("gate:deps"),
     );
     expect(violated.status, `gen import ${target} 必须非零退出`).not.toBe(0);
     const named = violated.output
@@ -1672,12 +1669,12 @@ it("依赖门禁:gen 一旦 import engine / runner / replay 就红,撤掉即绿"
     ).toBeGreaterThan(0);
   }
 
-  const restored = script("check:deps");
+  const restored = script("gate:deps");
   expect(restored.status, restored.output).toBe(0);
 });
 
 it("依赖门禁:engine 运行时一旦 import 第二个内建模块就红,撤掉即绿", () => {
-  const clean = script("check:deps");
+  const clean = script("gate:deps");
   expect(clean.status, clean.output).toBe(0);
 
   // 这条与上面那条不可互相替代:上面证明的是「包 → 包」那条边,
@@ -1686,19 +1683,19 @@ it("依赖门禁:engine 运行时一旦 import 第二个内建模块就红,撤�
   const violated = withProbeFile(
     "packages/engine/dist/__gate-probe.js",
     'import { readFileSync } from "node:fs";\nexport const probe = readFileSync;\n',
-    () => script("check:deps"),
+    () => script("gate:deps"),
   );
   expect(violated.status, "engine 运行时 import node:fs 必须非零退出").not.toBe(0);
   expect(violated.output, violated.output).toContain("engine-runtime-only-allows-node-crypto");
 
-  const restored = script("check:deps");
+  const restored = script("gate:deps");
   expect(restored.status, restored.output).toBe(0);
 });
 
 // ── 「声明即依赖」门禁反例:在工具包里 import 未声明的包 ────────────────────────────
 
 it("声明即依赖门禁:工具包 import 未声明的包就红,撤掉即绿", () => {
-  const clean = script("check:declared-deps");
+  const clean = script("gate:declared-deps");
   expect(clean.status, clean.output).toBe(0);
   // 反面证据:必须真的检查到了文件。「一个文件都没读到」是门禁目标失效的形态,
   // 那种情况入口会报 stderr 并按失败处理,但一条只会安静地扫零文件的规则更危险。
@@ -1710,7 +1707,7 @@ it("声明即依赖门禁:工具包 import 未声明的包就红,撤掉即绿", 
   const violated = withProbeFile(
     "packages/tools/src/__declared-deps-probe.ts",
     'import { expect, it } from "vitest";\nexport const probe = [expect, it];\n',
-    () => script("check:declared-deps"),
+    () => script("gate:declared-deps"),
   );
   expect(violated.status, "未声明的依赖必须非零退出").toBe(1);
   expect(violated.output, violated.output).toContain("undeclared-dependency");
@@ -1721,11 +1718,11 @@ it("声明即依赖门禁:工具包 import 未声明的包就红,撤掉即绿", 
   const declared = withProbeFile(
     "packages/tools/src/__declared-deps-probe.ts",
     'import { parseSync } from "oxc-parser";\nexport const probe = parseSync;\n',
-    () => script("check:declared-deps"),
+    () => script("gate:declared-deps"),
   );
   expect(declared.status, `已声明的依赖仍被拦下:\n${declared.output}`).toBe(0);
 
-  expect(script("check:declared-deps").status, "撤掉探针后门禁没有回到绿").toBe(0);
+  expect(script("gate:declared-deps").status, "撤掉探针后门禁没有回到绿").toBe(0);
 });
 
 // ── 格式门禁反例 ─────────────────────────────────────────────────────────────
@@ -1838,18 +1835,18 @@ const withTypeAwareProbe = (contents: string, body: () => Outcome): Outcome => {
   }
 };
 
-it("类型感知门禁:tsc 编得过的类型级违规让 lint:types 红,撤掉即绿", () => {
+it("类型感知门禁:tsc 编得过的类型级违规让 gate:types 红,撤掉即绿", () => {
   // 这一条与上面的 `lint 门禁` 不是同一件事。上面那道是语法级(`oxlint apps packages`),
   // 这里是类型感知那一半(`oxlint --type-aware`):规则要读类型信息才知道自己该不该说话。
-  // 主流水线挂的就是后者(`lint:types`),所以「它真的带着规则」只能用一条带类型的反例来证。
-  const clean = script("lint:types");
+  // 主流水线挂的就是后者(`gate:types`),所以「它真的带着规则」只能用一条带类型的反例来证。
+  const clean = script("gate:types");
   expect(clean.status, clean.output).toBe(0);
 
   // 探针的选型标准只有一条:**tsc 完全编得过,只有类型感知规则看得见**。
   // `unknown | string` 是合法类型,不是编译错误;它错在联合里 `unknown` 吞掉了另一半——
   // 这正是「只加类型检查(`tsc`)是无效的」那句话的样本:红线在那半边上,不在这半边上。
   const violated = withTypeAwareProbe('export const probe: unknown | string = "x";\n', () =>
-    script("lint:types"),
+    script("gate:types"),
   );
   expect(violated.status, `类型感知违规没有让门禁非零退出:\n${violated.output}`).toBe(1);
   // 点名规则本身:非零也可能是别的步骤顺手红了,那样这条反例证明的就不是它要证的那件事。
@@ -1861,12 +1858,12 @@ it("类型感知门禁:tsc 编得过的类型级违规让 lint:types 红,撤掉�
 
   // 还原:同一路径、同一道门禁,内容换成不触发规则的形态——判决跟内容走,不跟文件名走。
   const restored = withTypeAwareProbe('export const probe: unknown = "x";\n', () =>
-    script("lint:types"),
+    script("gate:types"),
   );
   expect(restored.status, `违规改成干净形态后仍被拦下:\n${restored.output}`).toBe(0);
 
   // 探针已撤,真实树必须回到绿。这一条是兜底:前两行里任何一步的清理漏了,都会在这里红。
-  const after = script("lint:types");
+  const after = script("gate:types");
   expect(after.status, `撤掉探针后类型感知门禁没有回到绿:\n${after.output}`).toBe(0);
 });
 
@@ -2000,7 +1997,7 @@ it("基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原
   const product = `${repoRoot}benchmarks/cell-c-claim-no-harvest/script.js`;
   const committed = readFileSync(product);
 
-  const clean = script("check:bench");
+  const clean = script("gate:bench");
   expect(clean.status, clean.output).toBe(0);
   // 绿的时候报告要说清「判的是哪几份」,否则红起来时没人知道漏了谁。
   expect(clean.output, clean.output).toContain("基准产物门禁:绿(3 份");
@@ -2008,7 +2005,7 @@ it("基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原
   try {
     // 只改最后一行的缩进:编译产物的内容不变而字节变了——正是「手改过」与「编译出来的」的分界。
     writeFileSync(product, committed.toString("utf8").replace(/\n$/, "\n\n"), "utf8");
-    const drifted = script("check:bench");
+    const drifted = script("gate:bench");
     expect(drifted.status, "入库的产物与源码分叉了,门禁必须非零退出").not.toBe(0);
     expect(drifted.output, drifted.output).toContain("cell-c-claim-no-harvest");
     expect(drifted.output, drifted.output).toContain("与重新编译的结果不一致");
@@ -2017,17 +2014,17 @@ it("基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原
     writeFileSync(product, committed);
   }
 
-  const restored = script("check:bench");
+  const restored = script("gate:bench");
   expect(restored.status, `按字节还原后没有回到绿:\n${restored.output}`).toBe(0);
 });
 
 it("基准产物门禁挂在全量门禁末尾,且不进快门禁", () => {
   // 与漂移检查同一位置纪律:提交内容对不对的那几道复核都在末尾(清单见上)。
-  expect(tailSteps(), "基准产物门禁不在全量门禁末尾那一组复核里").toContain("pnpm run check:bench");
+  expect(tailSteps(), "基准产物门禁不在全量门禁末尾那一组复核里").toContain("pnpm run gate:bench");
 
-  // 它要 spawn 一次 tsc,与快门禁的零构建性质不相容(理由同 check:drift)。
-  expect(manifest().scripts["check:quick"]).not.toContain("check:bench");
-  expect(manifest().scripts["check:types"]).not.toContain("check:bench");
+  // 它要 spawn 一次 tsc,与快门禁的零构建性质不相容(理由同 gate:drift)。
+  expect(manifest().scripts["quick"]).not.toContain("gate:bench");
+  expect(manifest().scripts["gate:types"]).not.toContain("gate:bench");
 });
 
 // ── runtime bundle 门禁反例:手改入库产物一个字节即红 ─────────────────────────
@@ -2042,14 +2039,14 @@ it("runtime bundle 门禁:手改入库产物一个字节 → 红,按字节还原
   const product = `${repoRoot}${SANDBOX_RUNTIME_ARTIFACT_PATH}`;
   const committed = readFileSync(product);
 
-  const clean = script("check:runtime");
+  const clean = script("gate:runtime");
   expect(clean.status, clean.output).toBe(0);
   expect(clean.output, clean.output).toContain("runtime bundle 门禁:绿");
 
   try {
     // 只多一个换行:内容看着没变而字节变了——正是「手改过」与「构建出来的」的分界。
     writeFileSync(product, `${committed.toString("utf8")}\n`, "utf8");
-    const drifted = script("check:runtime");
+    const drifted = script("gate:runtime");
     expect(drifted.status, "入库的产物被手改了,门禁必须非零退出").not.toBe(0);
     expect(drifted.output, drifted.output).toContain("与重新构建的结果不一致");
     expect(drifted.output, drifted.output).toContain("runtime bundle 门禁:红");
@@ -2057,19 +2054,19 @@ it("runtime bundle 门禁:手改入库产物一个字节 → 红,按字节还原
     writeFileSync(product, committed);
   }
 
-  const restored = script("check:runtime");
+  const restored = script("gate:runtime");
   expect(restored.status, `按字节还原后没有回到绿:\n${restored.output}`).toBe(0);
 });
 
 it("runtime bundle 门禁挂在全量门禁末尾,且不进快门禁", () => {
   // 与漂移检查、基准产物门禁同一位置纪律:提交内容对不对的那几道复核都在末尾。
   expect(tailSteps(), "runtime bundle 门禁不在全量门禁末尾那一组复核里").toContain(
-    "pnpm run check:runtime",
+    "pnpm run gate:runtime",
   );
 
-  // 它要 spawn 一次 esbuild,与快门禁的零构建性质不相容(理由同 check:drift)。
-  expect(manifest().scripts["check:quick"]).not.toContain("check:runtime");
-  expect(manifest().scripts["check:types"]).not.toContain("check:runtime");
+  // 它要 spawn 一次 esbuild,与快门禁的零构建性质不相容(理由同 gate:drift)。
+  expect(manifest().scripts["quick"]).not.toContain("gate:runtime");
+  expect(manifest().scripts["gate:types"]).not.toContain("gate:runtime");
 });
 
 // ── rootfs 清单门禁反例:清单与磁盘逐项双向比对 ──────────────────────────────
@@ -2090,13 +2087,13 @@ it("rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、�
   const bytes = readFileSync(victim);
   const mode = statSync(victim).mode;
 
-  const clean = script("check:sandbox-rootfs");
+  const clean = script("gate:rootfs");
   expect(clean.status, clean.output).toBe(0);
   expect(clean.output, clean.output).toContain("rootfs 漂移门禁:绿");
 
   try {
     rmSync(victim);
-    const missing = script("check:sandbox-rootfs");
+    const missing = script("gate:rootfs");
     expect(missing.status, "盘上少了一份内容物,门禁必须非零退出").not.toBe(0);
     expect(missing.output, missing.output).toContain("bin/cp");
     expect(missing.output, missing.output).toContain("盘上没有");
@@ -2109,7 +2106,7 @@ it("rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、�
   const extra = `${rootfs}/bin/__extra-probe`;
   try {
     writeFileSync(extra, "不在清单里的一份\n", { mode: 0o755 });
-    const surplus = script("check:sandbox-rootfs");
+    const surplus = script("gate:rootfs");
     expect(surplus.status, "盘上多了一份不在清单里的文件,门禁必须非零退出").not.toBe(0);
     expect(surplus.output, surplus.output).toContain("__extra-probe");
     expect(surplus.output, surplus.output).toContain("不在清单里");
@@ -2117,7 +2114,7 @@ it("rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、�
     rmSync(extra, { force: true });
   }
 
-  const restored = script("check:sandbox-rootfs");
+  const restored = script("gate:rootfs");
   expect(restored.status, `还原后没有回到绿:\n${restored.output}`).toBe(0);
 });
 
@@ -2130,7 +2127,7 @@ it("rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、�
 // 而那是全量门禁其余七步加起来(约 9s)的九倍。挂着它的 `check` 名义上是「提交前跑一遍」,
 // 实际上八成时间花在一道与提交内容无关的重测算上——**命令名与它真实的时间代价对不上,
 // 人就会开始不跑它,或者每次都跳过它**,两种都等价于没有这道门禁。
-// 诚实的做法是把它标成按需:它有自己的脚本(`pnpm run check:selfproof`),有自己的反例
+// 诚实的做法是把它标成按需:它有自己的脚本(`pnpm run gate:selfproof`),有自己的反例
 // (`test:slow`),改契约 / 改 `rulesets/` / 改自证桩时手工敲。
 //
 // **代价要说清楚**:它从「每次 check 都拦」退化成「想跑才拦」,而它是 srs 那条机器防线的唯一执行者。
@@ -2140,25 +2137,25 @@ it("rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、�
 it("契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖", () => {
   const scripts = manifest().scripts;
   // 缺席:它不在全量门禁的任何一个 project 里(含末尾那一组)。
-  expect(scripts["check"] ?? "", "契约自证门禁还在 check 里").not.toContain("check:selfproof");
-  expect(tailSteps(), "契约自证门禁还在全量门禁末尾那一组复核里").not.toContain("check:selfproof");
+  expect(scripts["check"] ?? "", "契约自证门禁还在 check 里").not.toContain("gate:selfproof");
+  expect(tailSteps(), "契约自证门禁还在全量门禁末尾那一组复核里").not.toContain("gate:selfproof");
   // 也不在快门禁与类型门禁里——那两处它从来就不该在,留着这条是为了挡住「顺手挪进去」。
-  expect(scripts["check:quick"], "契约自证门禁被挪进了快门禁").not.toContain("check:selfproof");
-  expect(scripts["check:types"], "契约自证门禁被挪进了类型门禁").not.toContain("check:selfproof");
+  expect(scripts["quick"], "契约自证门禁被挪进了快门禁").not.toContain("gate:selfproof");
+  expect(scripts["gate:types"], "契约自证门禁被挪进了类型门禁").not.toContain("gate:selfproof");
   // 在场:按需入口还在(它是这件事的全部意义),且测试侧的反例由 test:slow 承载。
-  expect(scripts["check:selfproof"] ?? "", "按需入口没了,这道门禁从此没人跑").toContain(
+  expect(scripts["gate:selfproof"] ?? "", "按需入口没了,这道门禁从此没人跑").toContain(
     "run-selfproof-gate.ts",
   );
   expect(scripts["test:slow"] ?? "", "契约自证的反例没有落进可手工调用的入口").toContain(
     "--project slow",
   );
   // 慢检查只保留独立入口,快速验证命令不能把它们隐式带入。
-  for (const entry of ["check", "check:quick", "check:types", "test", "verify:fast"] as const) {
+  for (const entry of ["verify:wide", "quick", "gate:types", "test", "verify"] as const) {
     expect(scripts[entry] ?? "", `慢门禁被放进快速入口 ${entry}`).not.toContain("test:slow");
-    expect(scripts[entry] ?? "", `慢门禁被放进快速入口 ${entry}`).not.toContain("check:selfproof");
+    expect(scripts[entry] ?? "", `慢门禁被放进快速入口 ${entry}`).not.toContain("gate:selfproof");
   }
   // 与基准产物门禁同侧:末尾那一组仍然全是「提交内容对不对」的复核。
-  expect(tailSteps(), "基准产物门禁被挤出了末尾那一组").toContain("pnpm run check:bench");
+  expect(tailSteps(), "基准产物门禁被挤出了末尾那一组").toContain("pnpm run gate:bench");
 });
 
 // ── 三条按需门禁的位置纪律(跨进程一致性 / 单局墙钟与快照回放 / 标定复算)──────────
@@ -2170,17 +2167,17 @@ it("契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆�
 // (hld §2.2.7)。三块逐字重复,故收成表驱动:一行 = 一个门禁。
 
 it.each([
-  ["跨进程一致性门禁", "run-cross-process-gate.ts", "check:cross-process"],
-  ["单局墙钟与快照回放门禁", "run-limits-gate.ts", "check:limits"],
-  ["标定复算门禁", "run-budget-recheck-gate.ts", "check:budget-recheck"],
-  // 真网格那条腿:它不碰内核(所以不进 `check:sandbox`),但要一份别的东西——四份钉死的
-  // 陪练存档,而 `archive/` 不入库。混进 `check:sandbox` 会让「沙箱坏了」与「这台机器没有
+  ["跨进程一致性门禁", "run-cross-process-gate.ts", "gate:cross-process"],
+  ["单局墙钟与快照回放门禁", "run-limits-gate.ts", "gate:limits"],
+  ["标定复算门禁", "run-budget-recheck-gate.ts", "gate:budget:recheck"],
+  // 真网格那条腿:它不碰内核(所以不进 `verify:kernel`),但要一份别的东西——四份钉死的
+  // 陪练存档,而 `archive/` 不入库。混进 `verify:kernel` 会让「沙箱坏了」与「这台机器没有
   // 陪练存档」变成同一条红,所以它自己一条腿。
-  ["真网格一次评测门禁", "run-gen-grid-gate.ts", "check:gen-grid"],
+  ["真网格一次评测门禁", "run-gen-grid-gate.ts", "gate:gen-grid"],
 ])("%s按需跑:不在快链里,但有独立入口", (gate, entryFragment, keyword) => {
   const scripts = manifest().scripts;
   // 缺席:它不在任何一个常跑入口里。
-  for (const entry of ["check", "check:quick", "check:types", "test", "verify:fast"] as const) {
+  for (const entry of ["verify:wide", "quick", "gate:types", "test", "verify"] as const) {
     expect(scripts[entry] ?? "", `${gate}被放进快速入口 ${entry}`).not.toContain(keyword);
   }
   // 也不在末尾那一组复核里——它按需跑,不是「提交内容对不对」的复核。
@@ -2237,13 +2234,18 @@ it("真 bwrap 的用例不在常跑入口上(sandbox project)", () => {
     expect(sandboxListed, `${path} 没被 sandbox 收着`).toContain(path);
   }
 
-  // 默认 `test` 也不带它,而它的入口是命名脚本 `check:sandbox`:
+  // 默认 `test` 也不带它,而它的入口是命名脚本 `verify:kernel`:
   // 拆出去是为了「有需要时手工跑」,没有入口这件事就没做完。
   const test = manifest().scripts["test"] ?? "";
   expect(test, "默认 test 不该跑真 bwrap 的会话用例").not.toContain("--project sandbox");
+  // 拆成两层之后要跟到第二跳:`verify:kernel` 串联 `test:kernel`,project 名住在后者里。
   expect(
-    manifest().scripts["check:sandbox"] ?? "",
+    manifest().scripts["verify:kernel"] ?? "",
     "真 bwrap 的会话用例没有落进可手工调用的命名脚本",
+  ).toContain("pnpm run test:kernel");
+  expect(
+    manifest().scripts["test:kernel"] ?? "",
+    "`test:kernel` 不再指向 sandbox project",
   ).toContain("--project sandbox");
 
   // 同时确认它的**假执行器孪生**还在常跑链上:移走不等于丢掉覆盖。
@@ -2404,9 +2406,9 @@ it("Stryker 分片清单与配置同名:已播种的片有入库基线与串了�
     );
   }
 
-  // 12 个分片 = 12 条入口脚本(含默认的 `mutate`,它是 engine-processor 分片那条)。
+  // 12 个分片 = 12 条入口脚本(engine-processor 那片是 `mutate:engine:processor`;`mutate:baseline` 是唯一写口,不算)。
   const mutateScripts = Object.keys(scripts).filter(
-    (name) => name === "mutate" || name.startsWith("mutate:"),
+    (name) => name.startsWith("mutate:") && name !== "mutate:baseline",
   );
   expect(mutateScripts.length, `变异入口脚本数变了:\n${mutateScripts.join("\n")}`).toBe(
     MUTATION_SHARDS.length,
@@ -2414,7 +2416,7 @@ it("Stryker 分片清单与配置同名:已播种的片有入库基线与串了�
 });
 
 it("engine-processor 分片仍限定结算管线,且棘轮不设绝对阈值", () => {
-  // `pnpm run mutate` 与夜间链走的是这一片:`stryker.config.mjs` 只是转发壳。
+  // `pnpm run mutate:engine:processor` 与夜间链走的是这一片:`stryker.config.mjs` 只是转发壳。
   const forwarder = readFileSync(`${repoRoot}stryker.config.mjs`, "utf8");
   expect(forwarder, "stryker.config.mjs 不再是 engine-processor 的转发壳").toContain(
     'export { default } from "./stryker/engine-processor.mjs";',
@@ -2476,14 +2478,14 @@ it("属性测试(*.prop.ts)不进任何分片的变异范围:它们是测试,不
 // 流水线,且跑完变异入口的比较后基线字节不变)、agent 纪律(AGENTS.md《门禁纪律》)。
 
 /** 抬基线命令的可 grep 字面量:脚本名与入口文件名。两者都在场才算「这条命令存在且可调」。 */
-const BASELINE_RAISE_MARKERS = ["mutation:baseline:raise", "accept-baseline"] as const;
+const BASELINE_RAISE_MARKERS = ["mutate:baseline", "accept-baseline"] as const;
 
 /** 一段文本里出现抬基线命令就返回命中的字面量。纯函数:反例可以直接喂一段构造的清单文本。 */
 const baselineRaiseIn = (text: string): string | undefined =>
   BASELINE_RAISE_MARKERS.find((marker) => text.includes(marker));
 
 /** 常跑入口(清单本身由「变异 / 扫描只在夜间」那条钉住)。 */
-const FREQUENT_ENTRIES = ["check", "check:quick", "check:types", "test", "verify:fast"] as const;
+const FREQUENT_ENTRIES = ["verify:wide", "quick", "gate:types", "test", "verify"] as const;
 
 /** 「入口名 → 命令」里哪些入口带着抬基线命令。 */
 const raiseViolationsIn = (entries: Readonly<Record<string, string>>): readonly string[] =>
@@ -2508,10 +2510,9 @@ const workflowTexts = (): readonly (readonly [string, string])[] =>
 
 it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核组与变异入口上", () => {
   // 在场:它是「显式为之」的唯一入口。缺了它,基线只能靠手改文件抬——那时棘轮就没有权柄了。
-  expect(
-    manifest().scripts["mutation:baseline:raise"] ?? "",
-    "抬基线命令没落进可手工调用的脚本",
-  ).toContain("accept-baseline.ts");
+  expect(manifest().scripts["mutate:baseline"] ?? "", "抬基线命令没落进可手工调用的脚本").toContain(
+    "accept-baseline.ts",
+  );
 
   // 缺席①:五个常跑入口。
   const frequent = frequentEntryCommands();
@@ -2528,7 +2529,7 @@ it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核
   // 缺席③:12 条变异入口。跑完变异就地比 → 比完不许顺手抬。
   const scripts = manifest().scripts;
   const mutateScripts = Object.entries(scripts).filter(
-    ([name]) => name === "mutate" || name.startsWith("mutate:"),
+    ([name]) => name.startsWith("mutate:") && name !== "mutate:baseline",
   );
   expect(mutateScripts.length, "变异入口清单空了,下面的缺席断言会在空数组上通过").toBe(
     MUTATION_SHARDS.length,
@@ -2551,17 +2552,15 @@ it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核
 
   // 自证:这条 grep 抓得住东西。否则上面四处「缺席」可能只是「什么都没查」。
   expect(
-    baselineRaiseIn(
-      '{"scripts":{"check:quick":"pnpm run mutation:baseline:raise --shard=replay"}}',
-    ),
+    baselineRaiseIn('{"scripts":{"quick":"pnpm run mutate:baseline --shard=replay"}}'),
     "grep 抓不住被塞进命令文本的抬基线命令",
-  ).toBe("mutation:baseline:raise");
-  expect(baselineRaiseIn('{"scripts":{"check:quick":"pnpm run check:prose"}}')).toBeUndefined();
+  ).toBe("mutate:baseline");
+  expect(baselineRaiseIn('{"scripts":{"quick":"pnpm run gate:prose"}}')).toBeUndefined();
 });
 
 // ── 可解释性诊断:在场,但只在按需层 ──────────────────────────────────────────
 //
-// 诊断脚本(`pnpm run mutation:diagnose`)回答的是「这片分数低,是因为测试弱、测不到、
+// 诊断脚本(`pnpm run observe:mutation`)回答的是「这片分数低,是因为测试弱、测不到、
 // 还是口径不对」。它是**观测**:只读报告、只写一份 Markdown 报告。
 // 所以它的位置与抬基线命令相反但同形——
 //   抬基线命令:能改判据,所以必须**不在**任何自动路径上;
@@ -2569,85 +2568,85 @@ it("抬基线命令在场,但不在任何流水线、常跑入口、末尾复核
 // 两条纪律合起来是同一句:能改判据的开关不能进判据路径,纯观测的按需工具也不必进。
 it("变异诊断入口在场,但不在任何常跑入口与流水线上,且不改判据", () => {
   const scripts = manifest().scripts;
-  const diagnose = scripts["mutation:diagnose"] ?? "";
+  const diagnose = scripts["observe:mutation"] ?? "";
   // 在场:它是「为什么低」这件事的唯一入口。缺了它,低分片就只能靠猜。
   expect(diagnose, "诊断入口没落进可手工调用的脚本").toContain("run-mutation-diagnose.ts");
 
   // 缺席①:五个常跑入口。
   const frequent = frequentEntryCommands();
   const onFrequent = Object.entries(frequent)
-    .filter(([, command]) => command.includes("mutation:diagnose"))
+    .filter(([, command]) => command.includes("observe:mutation"))
     .map(([name]) => name);
   expect(onFrequent, "诊断入口被接进了常跑入口").toEqual([]);
 
   // 缺席②:两条流水线。
   for (const [name, text] of workflowTexts()) {
-    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("mutation:diagnose");
+    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("observe:mutation");
   }
 
   // 缺席③:它不改判据。诊断里出现抬基线入口,就是「观测顺手改了判据」——
   // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
   expect(diagnose, "诊断入口里出现了抬基线命令").not.toContain("accept-baseline");
-  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutation:baseline:raise");
+  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutate:baseline");
 
-  // 反例:把诊断接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  // 反例:把诊断接进 quick,同样的断言必须红(纯文本,不真改 package.json)。
   const tampered = {
     ...frequent,
-    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run mutation:diagnose`,
+    quick: `${frequent["quick"] ?? ""} && pnpm run observe:mutation`,
   };
   expect(
     Object.entries(tampered)
-      .filter(([, command]) => command.includes("mutation:diagnose"))
+      .filter(([, command]) => command.includes("observe:mutation"))
       .map(([name]) => name),
-    "诊断接进 check:quick 却没被判红",
-  ).toEqual(["check:quick"]);
+    "诊断接进 quick 却没被判红",
+  ).toEqual(["quick"]);
 });
 
 it("测试纪律规则的诊断入口在场,但不在任何常跑入口与流水线上,且不改判据", () => {
   const scripts = manifest().scripts;
-  const diagnose = scripts["lint:diagnose"] ?? "";
+  const diagnose = scripts["observe:lint"] ?? "";
   // 在场:它是「那 99 处命中到底有没有风险」这件事的唯一入口。缺了它,这个问题只能靠回忆回答。
   expect(diagnose, "诊断入口没落进可手工调用的脚本").toContain("run-vitest-rules-diagnose.ts");
 
   // 缺席①:五个常跑入口。它是观测,不该占每轮反馈的预算。
   const frequent = frequentEntryCommands();
   const onFrequent = Object.entries(frequent)
-    .filter(([, command]) => command.includes("lint:diagnose"))
+    .filter(([, command]) => command.includes("observe:lint"))
     .map(([name]) => name);
   expect(onFrequent, "诊断入口被接进了常跑入口").toEqual([]);
 
   // 缺席②:两条流水线。
   for (const [name, text] of workflowTexts()) {
-    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("lint:diagnose");
+    expect(text, `流水线 ${name} 里出现了诊断入口`).not.toContain("observe:lint");
   }
 
   // 缺席③:它不改判据。诊断里出现抬基线入口,就是「观测顺手改了判据」——
   // 那正是《门禁纪律》要防的形状(能改判据的开关出现在判据自己的路径上)。
   expect(diagnose, "诊断入口里出现了抬基线命令").not.toContain("accept-baseline");
-  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutation:baseline:raise");
+  expect(diagnose, "诊断入口里出现了抬基线脚本名").not.toContain("mutate:baseline");
 
-  // 反例:把诊断接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  // 反例:把诊断接进 quick,同样的断言必须红(纯文本,不真改 package.json)。
   const tampered = {
     ...frequent,
-    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run lint:diagnose`,
+    quick: `${frequent["quick"] ?? ""} && pnpm run observe:lint`,
   };
   expect(
     Object.entries(tampered)
-      .filter(([, command]) => command.includes("lint:diagnose"))
+      .filter(([, command]) => command.includes("observe:lint"))
       .map(([name]) => name),
-    "诊断接进 check:quick 却没被判红",
-  ).toEqual(["check:quick"]);
+    "诊断接进 quick 却没被判红",
+  ).toEqual(["quick"]);
 });
 
 it("三个观测入口都在场,但不在任何常跑入口与流水线上,且不改判据", () => {
   const scripts = manifest().scripts;
   // 这三个都是**观测**:只读、只写报告,不判定任何东西。
-  //   · `lint:diagnose`   —— 测试纪律规则的命中到底有没有风险(纯读源码,秒级);
-  //   · `test:report`     —— 慢测试长尾与不稳定用例(**要跑两遍全量测试**,分钟级);
-  //   · `mutation:history` —— 变异分数的趋势(纯读基线,秒级)。
+  //   · `observe:lint`   —— 测试纪律规则的命中到底有没有风险(纯读源码,秒级);
+  //   · `observe:test`     —— 慢测试长尾与不稳定用例(**要跑两遍全量测试**,分钟级);
+  //   · `observe:history` —— 变异分数的趋势(纯读基线,秒级)。
   // 「按需工具不进任何链」是已被断言钉死的纪律:观测挂在常跑链上只会白占反馈预算
-  // (`test:report` 尤其——它每轮要跑两遍测试),而它的产物默认不被任何门禁消费。
-  const observers = ["lint:diagnose", "test:report", "mutation:history"];
+  // (`observe:test` 尤其——它每轮要跑两遍测试),而它的产物默认不被任何门禁消费。
+  const observers = ["observe:lint", "observe:test", "observe:history"];
 
   // 在场:每一个都要能被手工调到。缺了它,对应的问题就只能靠回忆回答。
   for (const name of observers) {
@@ -2675,36 +2674,34 @@ it("三个观测入口都在场,但不在任何常跑入口与流水线上,且�
   for (const name of observers) {
     const command = scripts[name] ?? "";
     expect(command, `${name} 里出现了抬基线命令`).not.toContain("accept-baseline");
-    expect(command, `${name} 里出现了抬基线脚本名`).not.toContain("mutation:baseline:raise");
+    expect(command, `${name} 里出现了抬基线脚本名`).not.toContain("mutate:baseline");
   }
 
-  // 反例:把其中一个接进 check:quick,同样的断言必须红(纯文本,不真改 package.json)。
+  // 反例:把其中一个接进 quick,同样的断言必须红(纯文本,不真改 package.json)。
   const tampered = {
     ...frequent,
-    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run test:report`,
+    quick: `${frequent["quick"] ?? ""} && pnpm run observe:test`,
   };
   expect(
     Object.entries(tampered)
-      .filter(([, command]) => command.includes("test:report"))
+      .filter(([, command]) => command.includes("observe:test"))
       .map(([name]) => name),
-    "观测接进 check:quick 却没被判红",
-  ).toEqual(["check:quick"]);
+    "观测接进 quick 却没被判红",
+  ).toEqual(["quick"]);
 });
 
-it("反例:抬基线命令被塞进 check:quick → 断言红,还原 → 绿(纯文本,不真改 package.json)", () => {
+it("反例:抬基线命令被塞进 quick → 断言红,还原 → 绿(纯文本,不真改 package.json)", () => {
   const frequent = frequentEntryCommands();
   expect(raiseViolationsIn(frequent), "还原状态下就已经是红").toEqual([]);
-  // 临时把命令加进 check:quick(只在字串层面),同样的断言必须红。
+  // 临时把命令加进 quick(只在字串层面),同样的断言必须红。
   const tampered = {
     ...frequent,
-    "check:quick": `${frequent["check:quick"] ?? ""} && pnpm run mutation:baseline:raise --shard=replay`,
+    quick: `${frequent["quick"] ?? ""} && pnpm run mutate:baseline --shard=replay`,
   };
-  expect(raiseViolationsIn(tampered), "抬基线命令进了 check:quick 却没被判红").toEqual([
-    "check:quick",
-  ]);
+  expect(raiseViolationsIn(tampered), "抬基线命令进了 quick 却没被判红").toEqual(["quick"]);
   // 换一条入口也一样:判红的对象是命令文本,不是某个名字。
   expect(
-    raiseViolationsIn({ ...frequent, test: "pnpm run mutation:baseline:raise --shard=replay" }),
+    raiseViolationsIn({ ...frequent, test: "pnpm run mutate:baseline --shard=replay" }),
   ).toEqual(["test"]);
 });
 
@@ -2957,12 +2954,14 @@ it("棘轮门禁:低一分夹具 → 红,等于/高于 → 绿,无基线 → 首
 it("变异 / 扫描只在夜间:不进任何常跑入口,但有独立脚本", () => {
   const scripts = manifest().scripts;
   // 在场:两个命名脚本都在(它们是这件事的全部意义)。
-  expect(scripts["mutate"] ?? "", "mutate 脚本没了").toContain("stryker run");
-  expect(scripts["scan"] ?? "", "scan 脚本没了").toContain("run-scan-gate.ts");
+  expect(scripts["mutate:engine:processor"] ?? "", "engine-processor 分片入口没了").toContain(
+    "stryker run",
+  );
+  expect(scripts["observe:scan"] ?? "", "observe:scan 脚本没了").toContain("run-scan-gate.ts");
 
   // 缺席:它们不进任何一个常跑入口。`mutate` 是棘轮(有红线),但它的红线单位是分片、
   // 成本是分钟到小时级;`scan` 仍是观测。两者挂在快链上都只会拖慢反馈回路。
-  for (const entry of ["check", "check:quick", "check:types", "test", "verify:fast"] as const) {
+  for (const entry of ["verify:wide", "quick", "gate:types", "test", "verify"] as const) {
     const command = scripts[entry] ?? "";
     expect(command, `变异测试被放进常跑入口 ${entry}`).not.toContain("mutate");
     expect(command, `扫描观测被放进常跑入口 ${entry}`).not.toContain("scan");
@@ -2975,7 +2974,7 @@ it("变异 / 扫描只在夜间:不进任何常跑入口,但有独立脚本", ()
 });
 
 it("scan 观测可调通:退出 0 且落盘口径 meta(装了记版本 / 没装记 skipped)", () => {
-  const result = script("scan");
+  const result = script("observe:scan");
   expect(result.status, result.output).toBe(0);
 
   const metaPath = `${repoRoot}reports/scan/meta.json`;
@@ -2992,4 +2991,83 @@ it("scan 观测可调通:退出 0 且落盘口径 meta(装了记版本 / 没装�
   const hasVersion = meta.version !== undefined;
   const hasSkipped = meta.skipped !== undefined;
   expect(hasVersion !== hasSkipped, "装了与没装的标记必须恰有一个").toBe(true);
+});
+
+// ── 命名规范门禁(gate:scripts):四条判据各配一条反例 ─────────────────────────
+
+/**
+ * 反例用的最小世界:五个层脚本 + 两个 project 家,值全部是合法的串联形态。
+ * 真源是 `package.json` 与 `docs/hld.md` §2.2.7——这里只是把它们缩到能逐条弄坏的大小。
+ */
+const SCRIPTS_WORLD: Readonly<Record<string, string>> = {
+  quick: "pnpm run gate:drift",
+  verify: "pnpm run quick && pnpm run test",
+  "verify:wide": "pnpm run verify",
+  "verify:kernel": "pnpm run build",
+  nightly: "pnpm run verify:wide",
+  test: "vitest run --project unit --project property",
+  "test:kernel": "vitest run --project sandbox",
+  "gate:drift": "node packages/tools/src/generate/run-drift-gate.ts",
+};
+
+const SCRIPTS_TABLE = [
+  "#### 2.2.7 脚本分层与 CI 质量门禁",
+  "",
+  "| 层 | 入口 |",
+  "|---|---|",
+  "| 编辑循环 | `quick` |",
+  "| 收口 | `verify` |",
+  "| 广 度 | `verify:wide` |",
+  "| 内核 | `verify:kernel` |",
+  "| 夜间 | `nightly` |",
+  "| 门禁 | `gate:drift` |",
+  "| 观测 | `observe:test` |",
+  "| 变异 | `mutate:replay` |",
+  "| 测试 | `test:gates` |",
+  "",
+  "#### 2.2.8 依赖策略",
+  "",
+  "表格之外的散文不参与判据。",
+  "",
+].join("\n");
+
+it("命名规范:真实清单与真实层表全绿(空数组在入口那边按失败处理)", () => {
+  const findings = scriptsGateFindings({
+    scripts: manifest().scripts,
+    hldText: readFileSync(`${repoRoot}docs/hld.md`, "utf8"),
+  });
+  expect(
+    findings,
+    findings.map((finding) => `${finding.where} ${finding.detail}`).join("\n"),
+  ).toEqual([]);
+});
+
+it("反例:名字长出闭集之外 → 红", () => {
+  const findings = scriptsGateFindings({
+    scripts: { ...SCRIPTS_WORLD, "check:drift": "node x.ts" },
+    hldText: SCRIPTS_TABLE,
+  });
+  expect(findings.some((finding) => finding.where === "check:drift")).toBe(true);
+});
+
+it("反例:层脚本内联工具命令 → 红(同一条命令的第二份定义)", () => {
+  const findings = scriptsGateFindings({
+    scripts: { ...SCRIPTS_WORLD, quick: "tsc -b" },
+    hldText: SCRIPTS_TABLE,
+  });
+  expect(findings.some((finding) => finding.where === "quick")).toBe(true);
+});
+
+it("反例:--project 在 test 之外再写一份 → 红", () => {
+  const findings = scriptsGateFindings({
+    scripts: { ...SCRIPTS_WORLD, "gate:drift": "vitest run --project unit" },
+    hldText: SCRIPTS_TABLE,
+  });
+  expect(findings.some((finding) => finding.where === "gate:drift")).toBe(true);
+});
+
+it("反例:层表漏掉一层 → 红(文档与清单分家)", () => {
+  const withoutWide = SCRIPTS_TABLE.replace("| 广 度 | `verify:wide` |\n", "");
+  const findings = scriptsGateFindings({ scripts: SCRIPTS_WORLD, hldText: withoutWide });
+  expect(findings.some((finding) => finding.detail.includes("verify:wide"))).toBe(true);
 });

@@ -1,5 +1,5 @@
 /**
- * 验收落点门禁(`check:landings`)的入口:读文档与真源投影,跑纯函数,打印违规,按结果设退出码。
+ * 验收落点门禁(`gate:landings`)的入口:读文档与真源投影,跑纯函数,打印违规,按结果设退出码。
  *
  * 用 `node packages/tools/src/gate/run-landing-gate.ts` 直接跑——本包以源码形式由 Node 的类型擦除
  * 执行,不产出 dist、也不设 bin(hld §3.2),因此本包内部的相对 import 一律写 `.ts` 扩展名。

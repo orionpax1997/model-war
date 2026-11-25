@@ -96,7 +96,7 @@ describe("两条快链都装上了,真 bwrap 的 project 没被误伤", () => {
     expect(projectBlockOf(config, project)).toContain(SETUP_FILE);
   });
 
-  // 反面:探针装进这三个 project 会把「真沙箱能不能跑」也一起弄假,那正是 `check:sandbox` 要验的事。
+  // 反面:探针装进这三个 project 会把「真沙箱能不能跑」也一起弄假,那正是 `verify:kernel` 要验的事。
   it.each(["gates", "slow", "sandbox"])("%s 链没装探针", (project) => {
     expect(projectBlockOf(config, project)).not.toContain(SETUP_FILE);
   });

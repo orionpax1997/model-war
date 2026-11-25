@@ -37,25 +37,25 @@ const workflowText = (name: string): string =>
 const fast = workflowText("fast.yml");
 const nightly = workflowText("nightly.yml");
 
-/** 主链成员(ADR-0010:PR/合入触发的快链 = `check:quick` + `lint:types` + `test`)。 */
-const FAST_MEMBERS = ["check:quick", "lint:types", "test"] as const;
+/** 主链成员(ADR-0010:PR/合入触发的快链 = `quick` + `gate:types` + `test`)。 */
+const FAST_MEMBERS = ["quick", "gate:types", "test"] as const;
 
-/** 夜间硬门禁:任一红 = 夜间链红。 `mutate` 在这里而不是观测项,因为它是棘轮(ADR-0026):
+/** 夜间硬门禁:任一红 = 夜间链红。 `mutate:*` 在这里而不是观测项,因为它是棘轮(ADR-0026):
  * 不设绝对阈值,但「同一分片比入库基线低」是退化,退化即红。 */
 const NIGHTLY_HARD_GATES = [
-  "check",
+  "verify:wide",
   "test:gates",
   "test:slow",
-  "check:selfproof",
-  "check:cross-process",
-  "check:limits",
-  "check:budget-recheck",
-  "check:sandbox",
-  "mutate",
+  "gate:selfproof",
+  "gate:cross-process",
+  "gate:limits",
+  "gate:budget:recheck",
+  "verify:kernel",
+  "mutate:engine:processor",
 ] as const;
 
-/** 夜间观测项:只落盘不设红线,红不阻断(ADR-0010、ADR-0026:后者的棘轮只管 `mutate`,`scan` 仍只观测)。 */
-const NIGHTLY_OBSERVATIONS = ["scan"] as const;
+/** 夜间观测项:只落盘不设红线,红不阻断(ADR-0010、ADR-0026:后者的棘轮只管 `mutate:*`,`observe:scan` 仍只观测)。 */
+const NIGHTLY_OBSERVATIONS = ["observe:scan"] as const;
 
 const sorted = (values: readonly string[]): readonly string[] => [...values].sort();
 
@@ -104,7 +104,7 @@ it("正例:一份只调命名脚本的最小 workflow 判绿", () => {
     "  x:",
     "    steps:",
     "      - run: pnpm install --frozen-lockfile",
-    "      - run: pnpm run check:quick",
+    "      - run: pnpm run quick",
     "",
   ].join("\n");
   expect(runStepViolations(good, scripts)).toEqual([]);
@@ -112,7 +112,7 @@ it("正例:一份只调命名脚本的最小 workflow 判绿", () => {
 
 // ── 成员清单:主链 / 夜间硬门禁 / 夜间观测项 ─────────────────────────────────
 
-it("主链成员 = check:quick + lint:types + test", () => {
+it("主链成员 = quick + gate:types + test", () => {
   expect(sorted(namedScripts(fast))).toEqual(sorted(FAST_MEMBERS));
 });
 
@@ -147,7 +147,7 @@ it("反例:拿脚本名直接拼产物名会被判红", () => {
 
 it("反例:夜间链抽掉一道硬门禁,成员清单立即不符", () => {
   const tampered = nightly.replace(
-    '          - { script: "check:limits", slug: "check-limits", advisory: false, timeout: 60 }\n',
+    '          - { script: "gate:limits", slug: "gate-limits", advisory: false, timeout: 60 }\n',
     "",
   );
   expect(sorted(hardGateScripts(tampered))).not.toEqual(sorted(NIGHTLY_HARD_GATES));

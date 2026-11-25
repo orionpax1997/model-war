@@ -13,11 +13,10 @@
  * (ADR-0026:「不入库的棘轮不是棘轮」)。放在分片配置旁边,是因为「哪一个分片的基线」
  * 这件事与「哪一个分片的配置」是同一个问题。
  *
- * ── 为什么 `engine-processor` 的入口脚本叫 `mutate` ────────────────────────
- * 它是分片改造之前的默认分片,`pnpm run mutate` 与夜间链一直走它;
- * `stryker.config.mjs` 至今只是转发到 `stryker/engine-processor.mjs`。
- * 于是这个分片的入口就是 `mutate`——不另立一个同内容的 `mutate:engine:processor`,
- * 同一个作用域有两条入口是又一处会漂的真源。
+ * ── `engine-processor` 的入口脚本是 `mutate:engine:processor` ──────────────
+ * 它是分片改造之前的默认分片,曾以裸 `mutate` 为入口,而夜间矩阵里那条 `mutate` 被
+ * 读成「跑全部变异」——名字与范围不符是实打实的误读源。现在每一片都以分片名作后缀,
+ * `stryker.config.mjs` 仍只是转发到 `stryker/engine-processor.mjs`。
  *
  * ── 未播种的分片 ──────────────────────────────────────────────────────────
  * `engine` 与 `gen` 两片现在**没有**基线文件(没有覆盖各自 `mutate` 范围的真实报告,
@@ -59,7 +58,7 @@ export const MUTATION_SHARDS: readonly MutationShard[] = [
   {
     name: "engine-processor",
     config: "stryker/engine-processor.mjs",
-    script: "mutate",
+    script: "mutate:engine:processor",
     baseline: "stryker/baseline/engine-processor.json",
     report: "reports/mutation/engine-processor.json",
   },

@@ -220,7 +220,7 @@ const valueTableContent = (truthRelativePath: string): string => {
       "> 本表是**生成物**,勿手改:由 `packages/tools/src/generate/rules-value-table.ts` 从",
       `> \`${truthRelativePath}\` 与 \`packages/schema/src/ruleset-keys.ts\`(键清单)产出。`,
       "> 改真源后跑 `pnpm run generate`;手改会在下一次生成时被原样覆盖,并被生成物漂移检查",
-      "> (`check:drift`)判红。",
+      "> (`gate:drift`)判红。",
       "",
       "**参数取值**",
       "",

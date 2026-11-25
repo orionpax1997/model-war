@@ -2,7 +2,7 @@
 
 三份基准脚本:每份一份**源码**(`script.ts`)+ 一份**编译产物**(`script.js`)+ 下面这张说明表。
 产物入库的理由是门禁的第一印象——clone 完直接能跑,不该每次先构建一遍;
-因此「入库的产物就是 `tsconfig.scripts.json` 真跑出来的那份」由门禁 `check:bench` 逐字节判,
+因此「入库的产物就是 `tsconfig.scripts.json` 真跑出来的那份」由门禁 `gate:bench` 逐字节判,
 不由人记。产物是怎么跑出来的见 §4。
 
 > **口径(本轮重写):这三份是本轮(`§5`/`§9` 已落库的终稿契约)的读数,与另外两批都不可互比。**
@@ -92,8 +92,8 @@
 
 ```bash
 pnpm run build              # 工作区包的 dist(真源包的声明/常量要从那里读)
-pnpm run bench:build        # 把三份产物按 tsconfig.scripts.json 重编译并写回 script.js
-pnpm run check:bench        # 门禁:重编译结果必须与入库产物逐字节一致(挂在全量门禁 check 末尾)
+pnpm run build:bench        # 把三份产物按 tsconfig.scripts.json 重编译并写回 script.js
+pnpm run gate:bench        # 门禁:重编译结果必须与入库产物逐字节一致(挂在全量门禁 check 末尾)
 ```
 
 产物用的是仓库根那份 `tsconfig.scripts.json`,由它派生一份**只覆盖 `files` 与 `outDir`**
@@ -102,7 +102,7 @@ pnpm run check:bench        # 门禁:重编译结果必须与入库产物逐字�
 **类型面已回填**(`packages/schema/script-api/index.d.ts`),所以「API 名字拼错」这类错误在
 编译期就红——三份的「名字未声明」诊断已**全部归零**。`tsconfig.scripts.json` 刻意不设
 `noEmitOnError`,`tsc` 在还有诊断的情形下照常 emit,那份产物就是门禁与生成管线将来真正加载的东西。
-本轮 `pnpm run bench:build` 的退出码与诊断读数:
+本轮 `pnpm run build:bench` 的退出码与诊断读数:
 
 | 诊断类别 | 三份的条数(A / B / C) | 是什么的账 |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ pnpm run check:bench        # 门禁:重编译结果必须与入库产物逐字�
 | 可能为 `undefined`(TS18048 / TS2532) | 0 / 24 / 0 | cell-b 自己按下标取值,与类型面无关;归零不是回填的验收项 |
 
 三类之外任何一条诊断都判红(门禁与测试都判)。因此编译退出码**不再是判据**:本轮 A / C 退出码 0,
-B 退出码 2(只余 24 条 `possibly-undefined`),产物的可信度由 `check:bench` 的逐字节一致承担。
+B 退出码 2(只余 24 条 `possibly-undefined`),产物的可信度由 `gate:bench` 的逐字节一致承担。
 **本目录不替回填那一格把类型面填上**:真源包里那份声明由对局内核与沙箱执行器回填,
 这一格只保证编译配置指向那个家。
 
@@ -156,7 +156,7 @@ done
 
 ## 7. 机器防线:契约自证门禁
 
-这三份产物不只是**证据**,还是一道门禁的输入:`check:selfproof`
+这三份产物不只是**证据**,还是一道门禁的输入:`gate:selfproof`
 (`node packages/tools/src/selfproof/run-selfproof-gate.ts`,挂在 `check` 末尾最后一道)拿终稿契约
 把它们**过静态校验器 → 跑标定环那个桩的矩阵**,只回答四个外部可问的问题:
 
@@ -173,6 +173,6 @@ done
 补法与残余偏差记在 `packages/tools/src/selfproof/contract-compat.ts`——桩一行未改,
 补法也不静默:换契约版本时**判据不变、门禁仍绿是正常的,而四问的取值会全部变**,
 本目录这张表里的静态校验结果与本节的读数都不是回归基线。
-完整报告(口径、逐臂读数、区分度矩阵)由同一条命令现场生成:`pnpm run check:selfproof` 默认只打印,
+完整报告(口径、逐臂读数、区分度矩阵)由同一条命令现场生成:`pnpm run gate:selfproof` 默认只打印,
 加 `node packages/tools/src/selfproof/run-selfproof-gate.ts --out=reports/selfproof` 则把
 `report.md` / `summary.json` / `matches.json` 落进 `reports/`(该目录不入库,与变异 / 扫描报告同一处置)。

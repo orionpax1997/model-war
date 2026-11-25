@@ -1,8 +1,8 @@
 /**
  * 入库 rootfs 的**判据接线**:把读盘与纯判据(`rootfs-drift.ts`)接起来,交回一份结论。
  *
- * 两处消费者:`run-rootfs-drift-gate.ts`(`check:sandbox-rootfs`,快门禁上的一条独立门禁)与
- * `run-sandbox-gate.ts`(`check:sandbox` 四件事里的「rootfs 漂移」那一条)。判据只有一份,
+ * 两处消费者:`run-rootfs-drift-gate.ts`(`gate:rootfs`,快门禁上的一条独立门禁)与
+ * `run-sandbox-gate.ts`(`verify:kernel` 四件事里的「rootfs 漂移」那一条)。判据只有一份,
  * 两个入口读同一份——分别实现会让「两条腿都说自己查了 rootfs」而实际口径不同。
  */
 
@@ -131,7 +131,7 @@ export const checkRootfsTree = (repoRoot: string): RootfsCheck => {
       where: ROOTFS_PROVENANCE_DOC,
       detail:
         "产物目录里没有来路说明书。它不入树哈希、也不上挂载面,缺了不会有别的判据发现:" +
-        "跑 `pnpm run sandbox:rootfs:build` 重新生成。",
+        "跑 `pnpm run build:rootfs` 重新生成。",
     });
   } else {
     findings.push(

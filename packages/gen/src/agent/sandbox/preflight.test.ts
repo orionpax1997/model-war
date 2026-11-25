@@ -1,7 +1,7 @@
 /**
  * 启动自证的三块可测部分:**版本比较**、**失败文本的三种成因**、**不可用就失败**。
  *
- * 真跑 bwrap 的那一条在 `pnpm run check:sandbox`(需要非特权 user namespace);这里只测纯判据与
+ * 真跑 bwrap 的那一条在 `pnpm run verify:kernel`(需要非特权 user namespace);这里只测纯判据与
  * 「bwrap 根本起不来」这一支——它不依赖内核能力,任何机器上都跑得出来。
  *
  * 为什么失败文本值得断言:`bwrap` 从内核只拿到 `EPERM`,这是上游明说的限制。报错里那三条成因
@@ -91,7 +91,7 @@ describe("失败文本:三种已知成因一条不落", () => {
   });
 
   it("还写着自检入口与 CI 的安装入口(读报错的人下一步该敲哪条)", () => {
-    expect(message).toContain("check:sandbox");
+    expect(message).toContain("verify:kernel");
     expect(message).toContain("setup:sandbox");
   });
 });

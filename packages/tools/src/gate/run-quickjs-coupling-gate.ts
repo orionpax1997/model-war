@@ -1,11 +1,11 @@
 /**
- * 工具版本耦合断言:`quickjs-wasi` 的根级精确钉版必须与冻结常量模块一致(根脚本 `coupling:quickjs`)。
+ * 工具版本耦合断言:`quickjs-wasi` 的根级精确钉版必须与冻结常量模块一致(根脚本 `gate:toolchain:quickjs`)。
  *
  * ── 为什么要有这条断言 ──
  * hld §5.0 那五条沙箱行为结论只对某一个 `quickjs-wasi` 版本成立,而「**没有任何机器会提醒后来者
  * 它们已经过期**」(§5.0「升级条款」段,§12 #8)。本仓库没有常驻 CI(门禁是命名脚本、手工触发),
  * 所以提醒只能挂在默认的快速链上:版本一升,这条断言立刻红,报错信息直接说明该去跑哪个脚本、
- * 该把数字写回哪一节。它只比对两个字符串,几乎零成本——这正是它配得上 `check:quick` 的理由。
+ * 该把数字写回哪一节。它只比对两个字符串,几乎零成本——这正是它配得上 `quick` 的理由。
  *
  * ── 与探针为什么分开 ──
  * 探针要真装 VM、真跑行为(见 `sandbox-probes/run-probes.ts`),不能塞进每次编辑都跑的快速链;
@@ -27,7 +27,7 @@ const require = createRequire(import.meta.url);
 
 const rootPackageJsonPath = fileURLToPath(new URL("../../../../package.json", import.meta.url));
 
-const PROBES_SCRIPT = "pnpm run probes:sandbox";
+const PROBES_SCRIPT = "pnpm run observe:probes";
 const HLD_SECTION = "docs/hld.md §5.0";
 
 type Manifest = {

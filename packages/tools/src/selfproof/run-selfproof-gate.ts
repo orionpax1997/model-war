@@ -1,5 +1,5 @@
 /**
- * 门禁:**契约自证**——一条命令回答四个外部可问的问题(根脚本 `check:selfproof`)。
+ * 门禁:**契约自证**——一条命令回答四个外部可问的问题(根脚本 `gate:selfproof`)。
  *
  * ```
  * node packages/tools/src/selfproof/run-selfproof-gate.ts [--out=<目录>] [--serial] [--jobs=N]

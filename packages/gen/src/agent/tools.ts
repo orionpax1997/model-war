@@ -6,7 +6,7 @@
  * 请求里的 `tools` 是模型认知面的**结构**:`check` / `probe` / `evaluate` / `finish` 存在、要不要
  * 参数、`evaluate` 只有三次——这些在 API 层就写得下,比 `prompts/agent.md` 里一段散文可靠。
  * 所以描述文案不是注释,是协议的一部分:改它等于改 harness(进 `harnessDigest`,票 06)。
- * 与之配对的那一半在 `prompts/agent.md`(票 04),两者由 `check:prompt-tools` 对住。
+ * 与之配对的那一半在 `prompts/agent.md`(票 04),两者由 `gate:prompt:tools` 对住。
  *
  * ── 为什么不带 `parallel_tool_calls` / `tool_choice: "required"` ──
  *
@@ -23,7 +23,7 @@
  *
  * ── 改常量写法就同步改门禁取法 ──
  *
- * `check:prompt-tools`(票 04)是**零构建**门禁:它不能 import `@model-war/gen`,只能读本文件的
+ * `gate:prompt:tools`(票 04)是**零构建**门禁:它不能 import `@model-war/gen`,只能读本文件的
  * **源码文本**并按 `name: "xxx"` 取名字(`packages/tools/src/prompt-commands.ts` 与
  * `rootfs-drift.ts` 同一套 fail-closed 取法)。所以这里必须是**字面量数组**:别改成函数生成、
  * 别跨文件拼装、别用 `satisfies`,否则那条门禁读不到五个名字。

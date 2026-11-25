@@ -1,7 +1,7 @@
 /**
- * 门禁:沙箱**真跑起来**是什么样(根脚本 `check:sandbox`)。
+ * 门禁:沙箱**真跑起来**是什么样(根脚本 `verify:kernel`)。
  *
- * 用法:`pnpm run check:sandbox`(命名脚本里先 `pnpm run build`,这一条要加载执行器的编译形态)。
+ * 用法:`pnpm run verify:kernel`(命名脚本里先 `pnpm run build`,这一条要加载执行器的编译形态)。
  *
  * ── 七件事,一件都不能 skip ──
  *
@@ -18,11 +18,11 @@
  *    同样配正对照:某一步正在跑时,宿主 `/proc` 里**看得到**它——否则「查不到」只是因为扫描
  *    本身看不见东西(空转)。正对照用一步死循环跑满墙钟,顺带把「墙钟到点杀整棵进程树」
  *    这条也真跑一遍(`timedOut` 必须为真)。
- * 4. **rootfs 漂移**:复用 `check:sandbox-rootfs` 的六条判据(同 `rootfs-check.ts` 一份实现)。
+ * 4. **rootfs 漂移**:复用 `gate:rootfs` 的六条判据(同 `rootfs-check.ts` 一份实现)。
  *    这条放这里是因为「沙箱里跑的东西」与「入库的内容物」是同一件事的两面:前者证明隔离成立,
  *    后者证明隔离住的正是那份字节。
  * 5. **命令真能用**:`sed` / `head` / `tail` / `wc` 各跑一条最小调用,并各断言 stdout 逐字节
- *    相符。这条判据的形状与其余六条不同:它不问「文件在不在」(那是 `check:sandbox-rootfs`
+ *    相符。这条判据的形状与其余六条不同:它不问「文件在不在」(那是 `gate:rootfs`
  *    的事),它问「模型敲下去之后能不能拿到它想要的字节」——`sed -i` 改得动文件、`sed -n`
  *    取得到 `api.md` 的中间段。没有它们时,`cat` 只能吐出 16 KiB 截断后的首尾两段,中间那
  *    一半模型**结构性读不到**;而「文件在库里」与「模型读得到」是两件事。
@@ -38,11 +38,11 @@
  * ── 真会话那条在本门禁之后跑,不在这份文件里 ──
  *
  * 「一场真会话在这套隔离里走得完」那一条住在 `apps/cli/src/agent-real-session.test.ts`
- * (vitest 的 `sandbox` project),由根脚本 `check:sandbox` 紧跟本门禁之后跑。它必须读
+ * (vitest 的 `sandbox` project),由根脚本 `verify:kernel` 紧跟本门禁之后跑。它必须读
  * `packages/gen` 与 `packages/runner` 的编译形态,而工具包不得 import 它们(hld §3.2),
  * 所以它不能写在这里。顺序是先隔离、后会话:隔离不成立时,那一条的结论没有意义。
  *
- * ── 为什么它不挂在 `check` / `check:quick` 上 ──
+ * ── 为什么它不挂在 `check` / `quick` 上 ──
  * 它需要内核能力(非特权 user namespace)与系统装的 `bubblewrap`。挂进常跑链,「全量门禁红了」
  * 会同时意味着「提交内容有问题」与「这台机器没装 bubblewrap」——两种处方混成一条红。所以它是
  * 自己那条命名脚本 + nightly 的硬腿(`.github/workflows/nightly.yml`),安装走 `pnpm run setup:sandbox`。
@@ -393,7 +393,7 @@ type CommandProbe = {
 /**
  * 判据 5:新增的四个 coreutils **真能用**,不是「文件在库里」。
  *
- * ── 为什么这条不能由 `check:sandbox-rootfs` 承担 ──
+ * ── 为什么这条不能由 `gate:rootfs` 承担 ──
  *
  * 那边判的是字节与清单(静态 ELF、树哈希、逐字节副本),它证明「这四份二进制入库了」。
  * 但模型要的是「敲 `sed -n '120,240p' /contract/api.md` 就能读到中间段」——两件事之间隔着
@@ -578,7 +578,7 @@ const backgroundOutcome = async (workspaceDir: string): Promise<Outcome> => {
     : { line: "✗ 后台进程不残留", failures };
 };
 
-/** 判据 4:rootfs 漂移(与 `check:sandbox-rootfs` 同一份判据)。 */
+/** 判据 4:rootfs 漂移(与 `gate:rootfs` 同一份判据)。 */
 const rootfsOutcome = (): Outcome => {
   const check = checkRootfsTree(repoRoot);
   const vacuous = vacuousReason(check.files, {
@@ -618,7 +618,7 @@ const report = (outcomes: readonly Outcome[], note: string): void => {
   }
   const failed = outcomes.some((outcome) => outcome.failures.length > 0);
   process.stdout.write(
-    `check:sandbox:${failed ? "红" : `绿(执行器入口 ${EXECUTOR_ENTRY},七件事全部真跑)`}\n`,
+    `verify:kernel:${failed ? "红" : `绿(执行器入口 ${EXECUTOR_ENTRY},七件事全部真跑)`}\n`,
   );
 };
 

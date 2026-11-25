@@ -5,7 +5,7 @@
 // 它们的唯一消费者是 `gates.test.ts` / `gates-slow.test.ts` —— 靠 spawn 子进程观察行为。
 // 那类测试不能进 dry-run 集(后者的「check 退出 0」会 spawn 全量 `check`,check 里又有 vitest,
 // 是叉炸弹),所以那批脚本变异后必然 100% NoCoverage。**把它们排进 mutate 只会浪费一次夜间预算。**
-// 同理 `generate/**`(1328 行)只被漂移门禁 `check:drift` 覆盖,没有单元测试,也排除;
+// 同理 `generate/**`(1328 行)只被漂移门禁 `gate:drift` 覆盖,没有单元测试,也排除;
 // `generated/**` 是生成物,不动。
 //
 // 能看见的部分:rules / validate / gate + 几个顶层纯模块。

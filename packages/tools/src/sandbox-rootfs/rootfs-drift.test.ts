@@ -4,10 +4,10 @@
  * ── 为什么最后那条最重要 ──
  * 其余用例证明判据会红、也会绿;只有「真实这棵树绿」把判据接到了入库产物上——它让默认的
  * `pnpm run test`(常跑链)也能拦住「顺手升级 bash」,而不是等到 nightly 的
- * `check:sandbox-rootfs` 才拦。反过来说,如果哪天这条红了,那不是测试坏了,是产物真的变了。
+ * `gate:rootfs` 才拦。反过来说,如果哪天这条红了,那不是测试坏了,是产物真的变了。
  *
  * ── 常量为什么从源码文本抽 ──
- * `check:sandbox-rootfs` 挂在 `check:quick` 上,快门禁必须零构建(`@model-war/schema` 的
+ * `gate:rootfs` 挂在 `quick` 上,快门禁必须零构建(`@model-war/schema` 的
  * `exports` 指向 `dist/`)。所以抽取器也在这里测:抽不出来必须是**明确的失败**,不能静默放行。
  */
 
@@ -89,7 +89,7 @@ describe("六条判据各自两个方向", () => {
     const finding = treeHashFinding("expected", "actual");
     expect(finding?.detail).toContain("actual");
     expect(finding?.detail).toContain("expected");
-    expect(finding?.detail).toContain("sandbox:rootfs:build");
+    expect(finding?.detail).toContain("build:rootfs");
   });
 
   it("② 文件集:多一个与少一个各报一条,顺序稳定", () => {

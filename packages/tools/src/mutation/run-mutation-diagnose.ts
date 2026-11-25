@@ -7,14 +7,14 @@
  *   `structural-attribution.ts` 的归因表,这两者都有单测;这份报告是它们的产物。
  * - **不改任何基线**。诊断读报告、读基线,只写 `reports/mutation/diagnosis.md` 与
  *   `reports/mutation/diagnosis.html`(产物目录,不入库)。抬基线的命令仍然只有
- *   `pnpm run mutation:baseline:raise` 一条,
+ *   `pnpm run mutate:baseline` 一条,
  *   且它不在本脚本的路径上。
  * - **缺报告不判红**。没跑过的分片就是没跑过,报告里列出来即可;硬判红会让人
  *   为了让报告好看而去跑全部分片。
  *
  * 用法:
- *   pnpm run mutation:diagnose            # 全部有报告的分片
- *   pnpm run mutation:diagnose -- schema   # 只诊断指定的分片
+ *   pnpm run observe:mutation            # 全部有报告的分片
+ *   pnpm run observe:mutation -- schema   # 只诊断指定的分片
  */
 
 import { readFileSync, statSync, writeFileSync } from "node:fs";

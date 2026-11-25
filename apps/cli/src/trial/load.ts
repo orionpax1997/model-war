@@ -123,7 +123,7 @@ const loadSandbox = (
   } catch {
     throw new Error(`读不了 quickjs wasm ${QUICKJS_WASI_WASM_PATH}`);
   }
-  // 常量 == 产物字节：门禁（`check:runtime`）担保它，入口只做一次顺手核对，
+  // 常量 == 产物字节：门禁（`gate:runtime`）担保它，入口只做一次顺手核对，
   // 对不上即 infra（安装面坏了，不是候选的错）。
   if (sha256(runtimeCode) !== measureSandboxRuntimeHash()) {
     throw new Error("runtime bundle 字节与入库哈希对不上（安装面损坏）");

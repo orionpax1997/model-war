@@ -5,7 +5,7 @@
  * `sleep`——真睡会把「服务那段时间没进账」测成一件看运气的事。
  *
  * 端到端的那一半(真 bwrap 里一步调 `evaluate`、宿主服务慢到超过单步额度)在
- * `apps/cli/src/agent-real-session.test.ts`(`pnpm run check:sandbox`)。
+ * `apps/cli/src/agent-real-session.test.ts`(`pnpm run verify:kernel`)。
  */
 
 import { describe, expect, it } from "vitest";

@@ -2,7 +2,7 @@
 #
 # model-war · 沙箱前置:装 bubblewrap 并让它真的能用(CI 用,可重复执行)
 #
-# 谁该跑它:`check:sandbox` 那条腿(以及任何要真跑 bwrap 的环境)。命名脚本是
+# 谁该跑它:`verify:kernel` 那条腿(以及任何要真跑 bwrap 的环境)。命名脚本是
 # `pnpm run setup:sandbox`,于是 CI 的 workflow 里只出现一个 `pnpm run <script>`——
 # **不写裸 apt-get / sysctl**(ADR-0010「CI 只调命名脚本」、ADR-0033「CI 里只调命名脚本」)。
 #
@@ -11,7 +11,7 @@
 # 应用可用,但**命名空间内不再给额外权限**,于是 bwrap 起沙箱时会拿到一个裸 `EPERM`。
 # 26.04 起 `bwrap-userns-restrict` profile 默认已加载,光改 sysctl 不够,还要卸载该 profile。
 # 这两件事都不是本仓库能控制的政策,所以本脚本**条件执行、失败即红**:环境变化要失败在
-# **这一行**,而不是变成 `check:sandbox` 里一串看不出因果的失败。
+# **这一行**,而不是变成 `verify:kernel` 里一串看不出因果的失败。
 #
 # 版本下限的判据不在这里(真源在 `packages/gen/src/agent/sandbox/preflight.ts`):本脚本只保证
 # 「装得上、跑得起来」,下限由执行器的 preflight 判——一处判据,一个家。
@@ -79,7 +79,7 @@ fi
 
 # ── 3. 冒烟:真的建一次沙箱 ────────────────────────────────────────────────────
 # 用宿主 /usr 做最小挂载(这一行只验「命名空间建得起来」,与入库 rootfs 无关;rootfs 的判据在
-# `pnpm run check:sandbox`)。三条 `--symlink` 是 Ubuntu 的 toldja:宿主的 /bin、/lib、/lib64
+# `pnpm run verify:kernel`)。三条 `--symlink` 是 Ubuntu 的 toldja:宿主的 /bin、/lib、/lib64
 # 都是指向 usr/ 下同名目录的符号链接,只 bind /usr 而不补这三条链接时 bwrap 会报
 # 「execvp /bin/true: No such file or directory」——那个报错看起来像「binary 丢了」,实际是
 # 「根里少了一个符号链接」。(入库 rootfs 那一侧不需要它:那里 /bin 与 /contract 是直接 bind 的。)
@@ -118,4 +118,4 @@ else
   fi
 fi
 
-ok "沙箱前置完成:下一步可以跑 pnpm run check:sandbox"
+ok "沙箱前置完成:下一步可以跑 pnpm run verify:kernel"

@@ -7,13 +7,13 @@
 #
 # ── 硬门禁 vs 观测项 ──
 # 单 job matrix + 矩阵项级 continue-on-error(不是 job 级!job 级会把红吞成 success)。
-#   硬门禁(check / test:gates / test:slow / check:selfproof / check:cross-process /
-#           check:limits / check:budget-recheck / mutate):红 = 该 job 红。
+#   硬门禁(check / test:gates / test:slow / gate:selfproof / gate:cross-process /
+#           gate:limits / gate:budget:recheck / mutate):红 = 该 job 红。
 #   观测项(scan):只落盘不设红线(ADR-0010、spec §7),红了不阻断别的 leg,
 #           但 steps.run.outcome 会写进产物——「今晚观测项自己红了」不被抹掉。
-# `mutate` 从观测项转成硬门禁的理由是 ADR-0026:变异分数改成棘轮,不设绝对阈值,
+# `mutate:*` 从观测项转成硬门禁的理由是 ADR-0026:变异分数改成棘轮,不设绝对阈值,
 # 但「同一分片比入库基线低」就是退化,而退化即红。它的红线单位是分片,基线在
-# `stryker/baseline/`(入版本库),比较串在脚本自身里(pnpm run mutate = stryker run + 棘轮门禁)。
+# `stryker/baseline/`(入版本库),比较串在脚本自身里(pnpm run mutate:<分片> = stryker run + 棘轮门禁)。
 # 这条 leg 只覆盖 engine-processor 一个分片;其余分片各有自己的 mutate:<分片> 入口,按需跑。
 # fail-fast: false 是硬要求:默认 true 会让第一条红把还在排队的观测项取消掉,
 # 于是「没产物」和「门禁红了」变成同一个现象,值班者分不开。
@@ -46,31 +46,31 @@ jobs:
           # upload-artifact 的产物名不许出现 `: * ? " < > | / \`(NTFS 兼容限制),带冒号直接失败。
           # 于是两条腿各带一份:script 用于执行与记录,slug 只用于产物名与落盘文件名。
           # ---- 硬门禁:红 = 该 job 红 ----
-          - { script: "check", slug: "check", advisory: false, timeout: 60 }
+          - { script: "verify:wide", slug: "verify-wide", advisory: false, timeout: 60 }
           - { script: "test:gates", slug: "test-gates", advisory: false, timeout: 60 }
           - { script: "test:slow", slug: "test-slow", advisory: false, timeout: 120 }
-          - { script: "check:selfproof", slug: "check-selfproof", advisory: false, timeout: 60 }
+          - { script: "gate:selfproof", slug: "gate-selfproof", advisory: false, timeout: 60 }
           - {
-              script: "check:cross-process",
-              slug: "check-cross-process",
+              script: "gate:cross-process",
+              slug: "gate-cross-process",
               advisory: false,
               timeout: 60,
             }
-          - { script: "check:limits", slug: "check-limits", advisory: false, timeout: 60 }
+          - { script: "gate:limits", slug: "gate-limits", advisory: false, timeout: 60 }
           - {
-              script: "check:budget-recheck",
-              slug: "check-budget-recheck",
+              script: "gate:budget:recheck",
+              slug: "gate-budget-recheck",
               advisory: false,
               timeout: 60,
             }
           # 沙箱执行器的自证腿(ADR-0033):真跑可用性 / 无网络 / 后台进程回收 / rootfs 漂移。
           # 它是硬门禁而不是观测项,因为「bwrap 不可用」必须失败在它自己那一行——「不可用就跳过」
           # 会让 Ubuntu 收紧非特权 userns 这类环境变化悄悄变成一整排静默通过的检查。
-          - { script: "check:sandbox", slug: "check-sandbox", advisory: false, timeout: 30 }
+          - { script: "verify:kernel", slug: "verify-kernel", advisory: false, timeout: 30 }
           # 棘轮:变异跑完就地比入库基线,低于基线即红(ADR-0026;不设绝对阈值)。
-          - { script: "mutate", slug: "mutate", advisory: false, timeout: 300 }
+          - { script: "mutate:engine:processor", slug: "mutate-engine-processor", advisory: false, timeout: 300 }
           # ---- 观测项:红不阻断,只把 outcome 落盘(ADR-0010:只落盘不设红线)----
-          - { script: "scan", slug: "scan", advisory: true, timeout: 30 }
+          - { script: "observe:scan", slug: "observe-scan", advisory: true, timeout: 30 }
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -90,7 +90,7 @@ jobs:
       # 都在 `scripts/setup-sandbox.sh` 里,workflow 里一个裸命令都没有(ADR-0033、ADR-0010)。
       # 放在 install 之前:环境准备好之前不装依赖,失败点更靠前。
       - name: Setup sandbox
-        if: matrix.script == 'check:sandbox'
+        if: matrix.script == 'verify:kernel'
         run: pnpm run setup:sandbox
 
       - name: Install

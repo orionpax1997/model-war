@@ -85,7 +85,7 @@ export const contractTreeDigest = (entries: readonly ContractTreeEntry[]): strin
 /**
  * 从真源包**源码文本**里取出入库常量。抽不出来返回 `undefined`,不猜。
  *
- * 为什么读源码文本:这道判据挂在 `check:contract`(`check:quick` 上),而快门禁必须零构建
+ * 为什么读源码文本:这道判据挂在 `gate:contract`(`quick` 上),而快门禁必须零构建
  * (hld §2.2.8、ADR-0003),`@model-war/schema` 的 exports 指向 `dist`,此刻未必存在。
  * 这条缝的脆弱处(改写常量声明会让抽取失效)由两条兜住:抽不出来按**失败**报(不按「无事可查」
  * 放过),以及 `contract-tree.test.ts` 里那条「抽取结果 == 真源包的常量」断言。

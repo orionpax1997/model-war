@@ -74,7 +74,7 @@
 //   · 任何「静态变异体存活率接近 100%」的分片,其静态部分都不能当质量证据;
 //   · 处置是修**测量口径**(让静态变异真正生效,或把它们排除出分数),不是补测试。
 // 判据与可复跑的诊断在 `packages/tools/src/mutation/diagnose.ts`
-// (入口 `pnpm run mutation:diagnose`,报告落 `reports/mutation/diagnosis.md`)。
+// (入口 `pnpm run observe:mutation`,报告落 `reports/mutation/diagnosis.md`)。
 //
 // 没做的事:变异体等价性判审(survived 里含无法杀死的等价变异体,所以「存活」高估了测试缺口)。
 //
@@ -147,7 +147,7 @@ const shared = {
   // 静默记成 NoCoverage。实测(全新克隆、未构建):dry-run 只 5 条用例、1218/1246 变异体 NoCoverage、
   // 分数坍到 1.93%;同一棵树上先跑 `pnpm run build` 再 dry-run:126 条用例、数字回到基线。
   // 所以「跑变异前必须有 dist」是这个夹具的**前提**,由命名入口自己声明,不靠调用方记得。
-  // `check:selfproof` 同一条理由(它用 `node` 直跑 `.ts` 入口并在加载时 import 工作区包)。
+  // `gate:selfproof` 同一条理由(它用 `node` 直跑 `.ts` 入口并在加载时 import 工作区包)。
 };
 
 /**

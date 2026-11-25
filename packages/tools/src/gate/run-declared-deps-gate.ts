@@ -4,7 +4,7 @@
  * 用 `node packages/tools/src/gate/run-declared-deps-gate.ts` 直接跑(同 `run-no-float-gate.ts`:
  * 本包以源码形式由 Node 的类型擦除执行,不产出 dist、也不设 bin,hld §3.2 的唯一 bin 在 `apps/cli`)。
  * **零构建**:这道门禁读的是源码与 `package.json`,不需要 `tsc -b` 的任何产物——
- * 与 `check:deps`(depcruise 巡航 dist,必须先构建)形成对照,也正是本包留在巡航范围之外的代价里
+ * 与 `gate:deps`(depcruise 巡航 dist,必须先构建)形成对照,也正是本包留在巡航范围之外的代价里
  * 可以被补上的那一半。理由与实测见 `declared-deps-gate.ts` 的头注与 `.dependency-cruiser.js`。
  *
  * 退出码是这个门禁对外的全部契约:0 = 干净,1 = 有违规(或门禁本身失效)。

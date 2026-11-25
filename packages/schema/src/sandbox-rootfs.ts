@@ -17,7 +17,7 @@
  *
  * ── 为什么是手写常量,而不是「运行时现算」 ──
  * 与 runtime bundle 同一条纪律:判据锚定确切字节,不锚运行目录。改产物后跑
- * `pnpm run sandbox:rootfs:build` 重算并手写回这里,门禁(`check:sandbox-rootfs`)负责证明
+ * `pnpm run build:rootfs` 重算并手写回这里,门禁(`gate:rootfs`)负责证明
  * 两者一致,并顺带证明清单不多不少、`bin/` 里**每一个**都是静态 ELF、`contract/` 与
  * `docs/rules-v2/` 逐字节相同。
  *
@@ -68,11 +68,11 @@ export const SANDBOX_ROOTFS_FILES = [
 /**
  * 整棵 rootfs 的树哈希:**按路径排序、每份拼 `path\0bytes`、串接后 sha256**。
  *
- * **本常量的书写真源是产物本身**:`pnpm run sandbox:rootfs:build` 打印它,人抄回这里,
+ * **本常量的书写真源是产物本身**:`pnpm run build:rootfs` 打印它,人抄回这里,
  * 门禁证明「现算 == 这里写的」。它是「模型看见的世界还是不是那份字节」的唯一判据。
  */
 export const SANDBOX_ROOTFS_TREE_HASH =
-  "ef41793a006a0395c55cca2899cd7e2a0afe0ca99a8e3caa1952e36c9d7a95c9";
+  "813e8daa9feece50db86384e952897adf7c4473af02861bda01c90b98aaa5be3";
 
 /** 被挂载的两个顶层目录:沙箱里的 `/bin` 与 `/contract`。 */
 export const SANDBOX_ROOTFS_BIN_DIR = "bin";

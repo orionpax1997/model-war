@@ -1,16 +1,16 @@
 /**
- * 契约挂载门禁(`check:contract`)的入口:`/contract` 四条与它们的真源是不是同一批字节。
+ * 契约挂载门禁(`gate:contract`)的入口:`/contract` 四条与它们的真源是不是同一批字节。
  *
  * 用 `node packages/tools/src/gate/run-contract-gate.ts` 直接跑——本包以源码形态由 Node 的类型
  * 擦除执行,不产出 dist、也不设 bin(hld §3.2),因此本包内部的相对 import 一律写 `.ts` 扩展名。
  *
- * ── 为什么它必须在 `check:quick` 里,而生成物漂移检查不在 ──
+ * ── 为什么它必须在 `quick` 里,而生成物漂移检查不在 ──
  *
- * 漂移检查(`check:drift`)要 `packages/schema/dist`,只能挂在全量门禁末尾(ADR-0003:快门禁
+ * 漂移检查(`gate:drift`)要 `packages/schema/dist`,只能挂在全量门禁末尾(ADR-0003:快门禁
  * 零构建)。本道门禁判的东西恰好**一个构建都不需要**:读两份文本、抽一个围栏块、比对、
  * 再查两条正则。而它守的是本次唯一新增的、最容易被当成普通文件手改的那份生成物
  * (`examples/minimal.ts` 没有生成头注释——它必须逐字节等于 API 文档 §6,多一行注释就不再相等)。
- * 日常入口是 `pnpm run verify:fast`,抓不到它等于没有。
+ * 日常入口是 `pnpm run verify`,抓不到它等于没有。
  *
  * ── 判据分三块,报告合在一处列 ──
  *
@@ -138,7 +138,7 @@ const identityFindings = (): readonly ContractFinding[] => {
       {
         where: CONTRACT_DIR,
         detail:
-          "挂载清单里的某一条读不到字节,整树身份无从计算。先修 `pnpm run check:contract` 报的缺文件。",
+          "挂载清单里的某一条读不到字节,整树身份无从计算。先修 `pnpm run gate:contract` 报的缺文件。",
       },
     ];
   }

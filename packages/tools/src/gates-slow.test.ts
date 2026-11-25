@@ -8,10 +8,10 @@
  * 更关键的是其中一条(`--same-script` 反例要证「三对都掉到 0/9」,一个关于指标的论断)必须跑全矩阵,
  * 它自己就 220s。**把 43s 的东西和 350s 的东西捆在一个脚本里,等于让每次想跑快的那一半的人
  * 付出慢的那一半的价钱**,于是两个后果二选一:要么整个门禁自测没人跑,要么它每天都跑,
- * 于是没人看结果。快慢仍分别按需运行,完整慢检查按需分别运行 `check:selfproof` 与 `test:slow`。
+ * 于是没人看结果。快慢仍分别按需运行,完整慢检查按需分别运行 `gate:selfproof` 与 `test:slow`。
  *
  * 覆盖纪律:门禁**已按需**——它不在 `check` 里(理由见 `gates.test.ts` 的
- * `契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`),由 `check:selfproof` 入口运行。
+ * `契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖`),由 `gate:selfproof` 入口运行。
  * 本文件就是它的按需覆盖:四问绿一次 + 三个反例成对「红 → 还原 → 绿」。
  *
  * 同一次改动里留了两条不变量在别处:「slow 不被 unit/gates/property 拾取」与「默认 `test` 不跑 slow」
@@ -33,7 +33,7 @@ import {
 // ── 会 spawn 全量门禁的那一条 ────────────────────────────────────────────────
 
 it("check(全量门禁)退出 0", () => {
-  const result = script("check");
+  const result = script("verify:wide");
   expect(result.status, result.output).toBe(0);
 });
 
@@ -48,7 +48,7 @@ it("check(全量门禁)退出 0", () => {
 // 形态与 `gates.test.ts` 里各节不同:基线绿只跑一次(单独一条用例),每条反例只跑两次,少掉的那次
 // 基线不是证据变薄——「同参数还原后回到绿」与「基线是绿的」证明的是同一件事。
 
-const selfproof = (args: readonly string[] = []): Outcome => script("check:selfproof", args);
+const selfproof = (args: readonly string[] = []): Outcome => script("gate:selfproof", args);
 
 /**
  * 「还原」步:去掉反例开关再跑一次,必须回到绿。
@@ -56,7 +56,7 @@ const selfproof = (args: readonly string[] = []): Outcome => script("check:selfp
  * ── 为什么单独抽出来 ──
  * 这一步原本只断言 status,而慢门禁红的原因有五六种(构建没过、空转、判据不过、真沙箱跑崩),
  * 事后拿一个 `expected 1 to be 0` 无从分辨,只能靠重跑猜。夜跑里真发生过一次
- * (`check:limits` 的还原步在 CI 上红过一次、同参数重跑又绿),那次连哪一档红的都说不出来。
+ * (`gate:limits` 的还原步在 CI 上红过一次、同参数重跑又绿),那次连哪一档红的都说不出来。
  * 于是把输出一律带进消息——它只在红的时候才被读,不影响绿的那条路径。
  */
 const expectRestored = (result: Outcome, what: string): void => {
@@ -132,7 +132,7 @@ it(
   "跨进程一致性门禁:正式样本 match → verify 逐 tick 一致,退出 0(真沙箱)",
   { timeout: 300_000 },
   () => {
-    const result = script("check:cross-process");
+    const result = script("gate:cross-process");
     expect(result.status, result.output).toBe(0);
     expect(result.output, result.output).toContain("cell-a-melee-pressure");
     expect(result.output, result.output).toContain("进程 B(verify):退出码 0");
@@ -143,12 +143,12 @@ it(
 );
 
 it("跨进程一致性门禁:改一 tick 的 stateHash 即红,还原后绿", { timeout: 300_000 }, () => {
-  const tampered = script("check:cross-process", ["--tamper"]);
+  const tampered = script("gate:cross-process", ["--tamper"]);
   expect(tampered.status, `改了一个 tick 门禁仍为绿:\n${tampered.output}`).not.toBe(0);
   expect(tampered.output, tampered.output).toContain("逐 tick hash:**不一致**");
   expect(tampered.output, tampered.output).toContain("跨进程一致性门禁:红");
   // 「还原」= 无参数再跑一次回到绿:门禁只碰临时目录,仓库状态全程未被触碰,所以无需手动还原。
-  expectRestored(script("check:cross-process"), "改 tick hash 后");
+  expectRestored(script("gate:cross-process"), "改 tick hash 后");
 });
 
 // ── 单局墙钟与快照回放门禁:正例绿一次 + 两侧反例各红一次 ────────────────────────
@@ -161,7 +161,7 @@ it("跨进程一致性门禁:改一 tick 的 stateHash 即红,还原后绿", { t
 // 红」,不是读数的取值),判据一字不改。
 
 it("单局墙钟与快照回放门禁:默认阈值下 #6/#7 都绿,退出 0(真沙箱)", { timeout: 300_000 }, () => {
-  const result = script("check:limits", ["--matches=2"]);
+  const result = script("gate:limits", ["--matches=2"]);
   expect(result.status, result.output).toBe(0);
   expect(result.output, result.output).toContain("#6 快照拷贝");
   expect(result.output, result.output).toContain("#7 单季回放");
@@ -169,22 +169,22 @@ it("单局墙钟与快照回放门禁:默认阈值下 #6/#7 都绿,退出 0(真�
 });
 
 it("单局墙钟与快照回放门禁:人为放大拷贝差值即红,还原后绿", { timeout: 300_000 }, () => {
-  const inflated = script("check:limits", ["--matches=2", "--copy-inflate=4"]);
+  const inflated = script("gate:limits", ["--matches=2", "--copy-inflate=4"]);
   expect(inflated.status, `放大拷贝差值后门禁仍为绿:\n${inflated.output}`).not.toBe(0);
   expect(inflated.output, inflated.output).toContain("占单局墙钟");
   expect(inflated.output, inflated.output).toContain("**红**");
   expect(inflated.output, inflated.output).toContain("limits 门禁:红");
   // 「还原」= 去掉开关再跑一次回到绿:门禁只碰临时目录,仓库状态全程未被触碰。
-  expectRestored(script("check:limits", ["--matches=2"]), "放大拷贝差值后");
+  expectRestored(script("gate:limits", ["--matches=2"]), "放大拷贝差值后");
 });
 
 it("单局墙钟与快照回放门禁:人为放大回放体量即红,还原后绿", { timeout: 300_000 }, () => {
-  const inflated = script("check:limits", ["--matches=2", "--volume-inflate=8"]);
+  const inflated = script("gate:limits", ["--matches=2", "--volume-inflate=8"]);
   expect(inflated.status, `放大回放体量后门禁仍为绿:\n${inflated.output}`).not.toBe(0);
   expect(inflated.output, inflated.output).toContain("#7 单季回放");
   expect(inflated.output, inflated.output).toContain("**红**");
   expect(inflated.output, inflated.output).toContain("limits 门禁:红");
-  expectRestored(script("check:limits", ["--matches=2"]), "放大回放体量后");
+  expectRestored(script("gate:limits", ["--matches=2"]), "放大回放体量后");
 });
 
 // ── 标定复算门禁:终值下复算绿一次 + 失配语义两侧各红一次 ────────────────
@@ -195,7 +195,7 @@ it("单局墙钟与快照回放门禁:人为放大回放体量即红,还原后�
 // 被测测试的 env），不动仓库里的任何东西；还原 = 无参数再跑一次回到绿。
 
 it("标定复算门禁:终值下探针被截停、基准不被截停,退出 0", { timeout: 900_000 }, () => {
-  const result = script("check:budget-recheck");
+  const result = script("gate:budget:recheck");
   expect(result.status, result.output).toBe(0);
   expect(result.output, result.output).toContain("MW_BUDGET_RECHECK=1");
   expect(result.output, result.output).toContain("探针:终值下三类探针均被截停");
@@ -205,18 +205,18 @@ it("标定复算门禁:终值下探针被截停、基准不被截停,退出 0", 
 });
 
 it("标定复算门禁:探针不被截停 → 红,还原 → 绿", { timeout: 900_000 }, () => {
-  const tampered = script("check:budget-recheck", ["--tamper-probe"]);
+  const tampered = script("gate:budget:recheck", ["--tamper-probe"]);
   expect(tampered.status, `探针不被截停门禁仍为绿:\n${tampered.output}`).not.toBe(0);
   expect(tampered.output, tampered.output).toContain("预算复算门禁:红(探针未被截停)");
   // 「还原」= 无参数再跑一次回到绿:门禁只碰临时进程的 env，仓库状态全程未被触碰。
-  expectRestored(script("check:budget-recheck"), "探针反例后");
+  expectRestored(script("gate:budget:recheck"), "探针反例后");
 });
 
 it("标定复算门禁:基准被截停 → 红,还原 → 绿", { timeout: 900_000 }, () => {
-  const tampered = script("check:budget-recheck", ["--tamper-baseline"]);
+  const tampered = script("gate:budget:recheck", ["--tamper-baseline"]);
   expect(tampered.status, `基准被截停门禁仍为绿:\n${tampered.output}`).not.toBe(0);
   expect(tampered.output, tampered.output).toContain("预算复算门禁:红(基准被截停)");
-  expectRestored(script("check:budget-recheck"), "基准反例后");
+  expectRestored(script("gate:budget:recheck"), "基准反例后");
 });
 
 // 与 gates.test.ts 的兜底清理同形态:进程被硬杀时 finally 根本没机会跑。
@@ -225,6 +225,6 @@ afterAll(() => {
 });
 
 // 「契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖」那条断言留在 `gates.test.ts`:
-// 它读的是 manifest 而不是跑矩阵(耗时可忽略),而位置纪律与 `check:drift` / `check:bench`
+// 它读的是 manifest 而不是跑矩阵(耗时可忽略),而位置纪律与 `gate:drift` / `gate:bench`
 // 是同一条纪律,就该在同一处被看着。它用到的清单由这个模块供值,清单本身只有一份
 // (`gates-harness.ts` 的 CONTENT_RECHECKS)。

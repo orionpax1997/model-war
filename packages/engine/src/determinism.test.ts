@@ -7,7 +7,7 @@
  * (`package.json:32`)显式跑 `vitest run --project unit --project property`,而 `test`
  * (`package.json:12`)也跑 `unit`。所以放在这里 = **check 链上每次必执行**,不可能静默回退。
  *
- * 为什么**不**新建一个 `check:determinism` 门禁脚本:CI 的集成门禁(端到端 + `verify` + 重跑 10 次
+ * 为什么**不**新建一个 `gate:determinism` 门禁脚本:CI 的集成门禁(端到端 + `verify` + 重跑 10 次
  * hash)是更高一层的接线(见 `docs/diagrams/v0-milestone-dag.md`)。这里交的是**check 链上的可执行
  * 验收**;把它接进 CI 集成门禁是后续接线,这里不抢它的定义。
  *

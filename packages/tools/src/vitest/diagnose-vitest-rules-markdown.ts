@@ -59,7 +59,7 @@ export const renderVitestRulesReport = (
   lines.push("");
   lines.push(`生成时刻:${meta.generatedAt}`);
   lines.push("");
-  lines.push("复跑:`pnpm run lint:diagnose`(只读源码,不跑测试,不进任何门禁链)。");
+  lines.push("复跑:`pnpm run observe:lint`(只读源码,不跑测试,不进任何门禁链)。");
   lines.push("");
 
   lines.push("## 摘要");

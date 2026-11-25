@@ -7,7 +7,7 @@
 ```
 pnpm install          # prepare 会自动装 git hooks;漏装就补 pnpm run setup:hooks
 pnpm run build
-pnpm run verify:fast  # 唯一收口命令:快反馈门禁 + 快速测试
+pnpm run verify  # 唯一收口命令:快反馈门禁 + 快速测试
 ```
 
 装好后用户面是 `modelwar`(仓库唯一 bin,七个子命令 gen / run / report / match / replay / verify / map-lint):
@@ -18,7 +18,7 @@ node apps/cli/dist/modelwar.mjs --help
 
 对局配置写在 `season.yaml`(模板 `season.example.yaml`)。生成管线要调模型时才读 `.env` 的 `COMMAND_CODE_API_KEY`(gitignored,值不进任何文档);其余开发与门禁都不需要它。
 
-`archive/`(冻结脚本存档)同样不入库,而真会话的 `evaluate` 与 `check:gen-grid` 都要读**四份钉死的陪练存档**(`packages/schema/src/trial-plan.ts` 的 `TRIAL_SPARRING_LADDER`)。干净克隆 / 新 worktree 上跑这两条之前先把存档拷进来:
+`archive/`(冻结脚本存档)同样不入库,而真会话的 `evaluate` 与 `gate:gen-grid` 都要读**四份钉死的陪练存档**(`packages/schema/src/trial-plan.ts` 的 `TRIAL_SPARRING_LADDER`)。干净克隆 / 新 worktree 上跑这两条之前先把存档拷进来:
 
 ```
 cp -a <有存档的仓库>/archive/. ./archive/
@@ -37,7 +37,7 @@ cp -a <有存档的仓库>/archive/. ./archive/
 | [docs/adr/](docs/adr/) | 决策记录(含 [索引](docs/adr/README.md)) |
 | [docs/rules-v2/](docs/rules-v2/) | **面向模型的契约**(生成物,不手改;取值真源在 `rulesets/`) |
 
-**代码是真源,但契约不是可删的**:`docs/rules-v2/` 是模型唯一能读到的规则输入,相当于公开 API 文档——它由代码、schema 与 `rulesets/` 生成,并由漂移门禁(`pnpm run check:drift`)保证不漂移。
+**代码是真源,但契约不是可删的**:`docs/rules-v2/` 是模型唯一能读到的规则输入,相当于公开 API 文档——它由代码、schema 与 `rulesets/` 生成,并由漂移门禁(`pnpm run gate:drift`)保证不漂移。
 
 规则与设计的详细层不再由文档各自复述一遍:机制与结算顺序看 `docs/rules-v2/rules.md`,参数取值看 `rulesets/*.json`,数据形状看 `packages/schema`,其余按上面的分工。
 
@@ -60,5 +60,5 @@ cp -a <有存档的仓库>/archive/. ./archive/
 
 ## 工作约定
 
-- 实现期间跑 `pnpm run check:quick`,收口跑 `pnpm run verify:fast`;全量门禁(check / test:gates / test:slow / mutate 等)不是默认流程,按需跑(理由见 [AGENTS.md](AGENTS.md))。
+- 实现期间跑 `pnpm run quick`,收口跑 `pnpm run verify`;全量门禁(check / test:gates / test:slow / mutate 等)不是默认流程,按需跑(理由见 [AGENTS.md](AGENTS.md))。
 - 提交信息禁 `Co-Authored-By`(单作者,commit-msg hook 强制)。

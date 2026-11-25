@@ -1,5 +1,5 @@
 /**
- * 基准脚本编译产物的**写回**(根脚本 `bench:build`)。
+ * 基准脚本编译产物的**写回**(根脚本 `build:bench`)。
  *
  * 用法:`node packages/tools/src/benchmarks/build-benchmarks.ts [目录名 ...]`
  * 不给目录名就是三份全写。给目录名只写那几份——改一份脚本时重跑它不必把另两份也重编译一次。

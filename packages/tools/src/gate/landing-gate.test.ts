@@ -26,7 +26,7 @@ import {
   type TrackedResult,
 } from "./landing-gate.ts";
 
-const SCRIPTS = ["check:prose", "check:landings", "coupling", "scan"] as const;
+const SCRIPTS = ["gate:prose", "gate:landings", "gate:toolchain", "quick", "nightly"] as const;
 const CLI_NAMES = ["verify", "map-lint"] as const;
 
 /** 默认世界:文件与目录都存在且被跟踪。单个用例按需要覆盖其中一项。 */
@@ -43,8 +43,9 @@ const kindOf = (raw: string): string | undefined => classifyLandingToken(raw, [.
 
 it("四类落点各按形态归类:命名脚本 / CLI 子命令 / 文件路径 / 目录", () => {
   // 命名脚本的两种认法:脚本形态(`a:b`)与「裸词恰好是脚本名」。
-  expect(kindOf("check:not-in-manifest")).toBe("script");
-  expect(kindOf("coupling")).toBe("script");
+  expect(kindOf("gate:not-in-manifest")).toBe("script");
+  expect(kindOf("quick")).toBe("script");
+  expect(kindOf("nightly")).toBe("script");
   // CLI:裸 `modelwar` 是 bin 名,不是子命令;带参数时只取子命令名。
   expect(classifyLandingToken("modelwar verify", [...SCRIPTS])).toEqual({
     kind: "cli",
@@ -66,7 +67,7 @@ it("四类落点各按形态归类:命名脚本 / CLI 子命令 / 文件路径 /
 it("两类显式豁免带理由:`node:` 内建与 `role:` 数据字段都不当脚本", () => {
   expect(scriptTokenExemption("node:crypto")?.reason).toContain("内建模块");
   expect(scriptTokenExemption("role:slug")?.reason).toContain("数据字段");
-  expect(scriptTokenExemption("check:prose")).toBeUndefined();
+  expect(scriptTokenExemption("gate:prose")).toBeUndefined();
   // 豁免 = 「这不是落点」,所以只有它的那一行仍然算「一个可执行 token 都没有」。
   expect(kindOf("node:util")).toBeUndefined();
   expect(kindOf("role:slug")).toBeUndefined();
@@ -84,7 +85,7 @@ const TABLE = [
   "",
   "| 验收面 | 落点 |",
   "|---|---|",
-  "| 不该被算进来 | `check:not-in-manifest` |",
+  "| 不该被算进来 | `gate:not-in-manifest` |",
 ].join("\n");
 
 it("只抽 §11 那张表:表头、分隔行与下一节的表格都不算落点行", () => {
@@ -110,7 +111,7 @@ it("一段文本里的落点 token 按书写顺序收集,认不出的不占位",
 it("全绿:每行都有存在的落点,统计口径给出规模自证", () => {
   const report = checkLandings({
     hldText: TABLE,
-    docs: [{ path: "docs/hld.md", text: "见 `check:prose`。" }],
+    docs: [{ path: "docs/hld.md", text: "见 `gate:prose`。" }],
     world: world(),
   });
   expect(report.findings).toEqual([]);
@@ -174,7 +175,7 @@ it("目录存在但是空的 → 红:空目录里没有任何可跑的东西", (
 
 it("脚本形态的 token 不在脚本清单里 → 红;CLI 子命令不在登记表里 → 红", () => {
   const badScript = checkLandings({
-    hldText: TABLE.replace("`benchmarks/`", "`check:no-such-gate`"),
+    hldText: TABLE.replace("`benchmarks/`", "`gate:no-such-gate`"),
     docs: [],
     world: world(),
   });
@@ -195,7 +196,7 @@ const doc = (path: string, text: string): LandingDoc => ({ path, text });
 it("文档里脚本形态的 token 必须存在;豁免按前缀、不按文件", () => {
   const docs = [
     doc("docs/adr/0005.md", "那个 `engine:runner` 缝与 `node:crypto`、`role:slug`。"),
-    doc("docs/hld.md", "跑 `check:prose` 与 `coupling`。"),
+    doc("docs/hld.md", "跑 `gate:prose` 与 `gate:toolchain`。"),
   ];
   const findings = scriptTokenFindings(docs, [...SCRIPTS]);
   // `engine:runner` 是子系统名写成了脚本形态 → 红(ADR-0005 就是被这一条抓出来的)。
@@ -208,7 +209,7 @@ it("文档里脚本形态的 token 必须存在;豁免按前缀、不按文件",
 });
 
 it("control:同一条文档扫描在脚本存在时全绿", () => {
-  const docs = [doc("docs/hld.md", "跑 `check:prose`、`coupling`、`node:util`。")];
+  const docs = [doc("docs/hld.md", "跑 `gate:prose`、`gate:toolchain`、`node:util`。")];
   expect(scriptTokenFindings(docs, [...SCRIPTS])).toEqual([]);
 });
 

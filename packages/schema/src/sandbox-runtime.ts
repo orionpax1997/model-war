@@ -39,7 +39,7 @@ export const QUICKJS_WASI_WASM_PATH = "node_modules/quickjs-wasi/quickjs.wasm";
 
 /**
  * runtime bundle 产物的字节 sha256。**本常量的书写真源是产物本身**:
- * 改产物后跑 `pnpm run runtime:build` 重算并手写回这里,门禁负责证明两者一致。
+ * 改产物后跑 `pnpm run build:runtime` 重算并手写回这里,门禁负责证明两者一致。
  */
 export const SANDBOX_RUNTIME_HASH =
   "011cdc90975d2eb555b1a788c4810cc7a7bbeb974e0a3dd41689c8d948b82f30";

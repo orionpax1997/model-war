@@ -24,7 +24,7 @@
  *
  * check 链上每跑一次都要便宜:默认样本很小(一个分配形态、1 MiB 上限、探针各 1 次、三轨各 3 tick、
  * 诚实侧一场),只在 `MW_READINGS_DIR` 设上时才展开(四个形态、8 MiB 上限、探针各 5 次、三轨各 8 tick、
- * 诚实侧三舱 × 三图 + 混编)。复现入口是根 `package.json` 的 `probes:budget`(读数落
+ * 诚实侧三舱 × 三图 + 混编)。复现入口是根 `package.json` 的 `observe:budget`(读数落
  * `runs/budget-calibration`,`runs/**` 已被 gitignore)。
  * **不设读数目录时零文件副作用**——落盘全在这一个闸门后面。
  *
@@ -117,7 +117,7 @@ const FROZEN_EMPTY_VM_SOURCE = "packages/tools/src/sandbox-probes/constants.ts:5
 
 /**
  * 三份基准产物的字节数(`benchmarks/<cell>/script.js`)。`scriptSizeLimit` 的下界依据是它们
- * 的最大值,与 `check:selfproof` 在占位期拿来做地板值的是同一批文件;现算而不抄 7579。
+ * 的最大值,与 `gate:selfproof` 在占位期拿来做地板值的是同一批文件;现算而不抄 7579。
  */
 const BENCHMARK_MAX_PRODUCT_BYTES = Math.max(
   ...CELLS.map((cell) => readFileSync(`${root}benchmarks/${cell}/script.js`).byteLength),
@@ -138,9 +138,9 @@ const readingsDir = process.env["MW_READINGS_DIR"];
 const fullSample = readingsDir !== undefined;
 
 /**
- * 复算模式(门禁 `check:budget-recheck` 设 `MW_BUDGET_RECHECK`):把**终值预算**真正装上
+ * 复算模式(门禁 `gate:budget:recheck` 设 `MW_BUDGET_RECHECK`):把**终值预算**真正装上
  * (探针与基准两侧),并把「终值仍自洽」变成断言——探针仍被截停、基准仍不被截停、终值推导与
- * 规则集逐键一致。**不改读数模式的规模与落盘语义**(默认 run 与 `probes:budget` 都不设它)。
+ * 规则集逐键一致。**不改读数模式的规模与落盘语义**(默认 run 与 `observe:budget` 都不设它)。
  */
 const recheckMode = process.env["MW_BUDGET_RECHECK"] !== undefined;
 /**
@@ -890,7 +890,7 @@ type Report = {
     readonly sandboxRuntimeArtifact: string;
     readonly quickjsWasiVersion: string;
     readonly interruptEventGranularity: number;
-    /** 三份基准产物的最大字节数;`scriptSizeLimit` 的下界依据(与 `check:selfproof` 同一批文件)。 */
+    /** 三份基准产物的最大字节数;`scriptSizeLimit` 的下界依据(与 `gate:selfproof` 同一批文件)。 */
     readonly benchmarkMaxProductBytes: number;
     readonly rerunCommand: string;
     readonly scope: string;
@@ -930,7 +930,7 @@ const buildReport = (): Report => {
       quickjsWasiVersion: QUICKJS_WASI_VERSION,
       interruptEventGranularity: INTERRUPT_EVENT_GRANULARITY,
       benchmarkMaxProductBytes: BENCHMARK_MAX_PRODUCT_BYTES,
-      rerunCommand: "pnpm run probes:budget",
+      rerunCommand: "pnpm run observe:budget",
       scope: SCOPE,
       probeScope: PROBE_SCOPE,
     },
@@ -1298,7 +1298,7 @@ const renderReadingsMarkdown = (report: Report): string => {
     "",
     "## 终值推导(由读数按规则代入;本节由渲染器生成)",
     "",
-    "> 本节是**生成代码**产出的,不是手写:重跑 `pnpm run probes:budget` 会按同一批读数重算。",
+    "> 本节是**生成代码**产出的,不是手写:重跑 `pnpm run observe:budget` 会按同一批读数重算。",
     "> 终值的家仍是 `rulesets/v1.json`;这里渲染的是 hld §5.3 的取值规则与代入算式,并核对代入结果",
     "> 与规则集取值是否一致。",
     "",
@@ -1323,7 +1323,7 @@ const renderReadingsMarkdown = (report: Report): string => {
     )} ms**。`,
     "不取 1000(非 2 的幂),也不盲目放大到 8192。",
     "",
-    "墙钟两键与体积键的约束核对(与 `check:budget` 门禁同一组判据):",
+    "墙钟两键与体积键的约束核对(与 `gate:budget` 门禁同一组判据):",
     "",
     `- 硬超时 ≥ 20 × 软限:${String(derivedHard)} ≥ ${String(20 * derivedSoft)} → ${
       derivedHard >= 20 * derivedSoft ? "成立" : "**不成立**"
@@ -1337,7 +1337,7 @@ const renderReadingsMarkdown = (report: Report): string => {
       report.meta.benchmarkMaxProductBytes,
     )} → ${derivedSize >= report.meta.benchmarkMaxProductBytes ? "成立" : "**不成立**"}。`,
     "",
-    "内存两键的约束核对(与 `check:budget` 门禁同一组判据;两个「未定」不是一件事:",
+    "内存两键的约束核对(与 `gate:budget` 门禁同一组判据;两个「未定」不是一件事:",
     "**分配上限未定 = VM 不设任何上限;判罚线未定 = 该轨不启用**):",
     "",
     `- 软阈 = floor(${String(MEMORY_SOFT_THRESHOLD_RATIO)} × 判罚线 ${String(derivedCeiling)}) = **${String(
@@ -1358,9 +1358,9 @@ const renderReadingsMarkdown = (report: Report): string => {
   ].join("\n");
 };
 
-// ── 复算（门禁 `check:budget-recheck`）：终值预算真装着，判失配语义与终值自洽 ────────
+// ── 复算（门禁 `gate:budget:recheck`）：终值预算真装着，判失配语义与终值自洽 ────────
 //
-// 这三条只在 `MW_BUDGET_RECHECK` 设上时跑（默认 `test` 与 `probes:budget` 都不设它）。
+// 这三条只在 `MW_BUDGET_RECHECK` 设上时跑（默认 `test` 与 `observe:budget` 都不设它）。
 // 「终值仍自洽」此前只渲染成读数报告里的散文：推导与规则集不一致时没有任何断言会红。
 // 这里把它变成可执行断言，并把诚实侧从空预算换成**终值预算**——空预算下没有一条轨启用，
 // 「不被截停」证明不了任何事（hld §5.3 要求的复算缺口）。
@@ -1428,7 +1428,7 @@ it.runIf(recheckMode)("复算:终值预算下三份基准脚本必不被截停",
 /**
  * 逐字相等断言**豁免**的键:墙钟两键的推导要用一次**负载敏感的墙钟读数**(`loopMsPeak`),
  * 在竞争的机器上会漂(终值取的是观测机制下界,而读数只要超过它的二十分之一就会把它顶掉)。
- * 它们的结构约束(2 的幂、硬 ≥ 20 × 软)由快门禁 `check:budget` 看着;行为侧(基准不被截停)
+ * 它们的结构约束(2 的幂、硬 ≥ 20 × 软)由快门禁 `gate:budget` 看着;行为侧(基准不被截停)
  * 由本门禁的另两条用例看着。其余六键的读数在固定脚本 / 图 / 种子下是确定值,故逐字相等。
  */
 const RECHECK_DERIVATION_EXEMPT: readonly string[] = ["wallClockSoftLimit", "wallClockHardTimeout"];

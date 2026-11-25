@@ -1,12 +1,12 @@
 /**
  * 沙箱行为五条结论的**冻结常量**:核对时的版本组合 + 本轮实测的数值。
  *
- * 这个模块是「机器可判的核对点」:`check:quick` 里的版本耦合断言
+ * 这个模块是「机器可判的核对点」:`quick` 里的版本耦合断言
  * (`gate/run-quickjs-coupling-gate.ts`)拿根 `package.json` 钉的 `quickjs-wasi` 版本与这里的
  * `PROBED_QUICKJS_WASI_VERSION` 比,**一升版即红**,报错信息直接指向复验脚本与 `docs/hld.md §5.0`。
  *
  * ── 为什么版本号在这里再写一份,而不 import 真源包 ──
- * 冻结常量模块保持**零 import**:探针由 Node 的类型擦除直接执行(`pnpm run probes:sandbox`),
+ * 冻结常量模块保持**零 import**:探针由 Node 的类型擦除直接执行(`pnpm run observe:probes`),
  * 那一刻工作区依赖未必构建过(`@model-war/schema` 的 exports 指向 `dist`)。它与真源包的
  * `QUICKJS_WASI_VERSION`(`packages/schema/src/sandbox-runtime.ts`)必须同步,这条由
  * `gate/quickjs-coupling.test.ts` 里一条断言钉住——两处版本真源漂移会让「探针核对的是哪个版本」
@@ -14,7 +14,7 @@
  *
  * ── 数值从哪来、怎么改 ──
  * 全部来自 `docs/hld.md §5.0` 表里那五条结论的可执行版本,由 `run-probes.ts` 实测复核。
- * 换版本组合后重跑 `pnpm run probes:sandbox`,把新数字写回这里与 `docs/hld.md §5.0`;
+ * 换版本组合后重跑 `pnpm run observe:probes`,把新数字写回这里与 `docs/hld.md §5.0`;
  * **数值类的判据一律是这里的常量,计时类的判据才是区间**——两者的信任来源不同,不要混。
  */
 
@@ -63,9 +63,9 @@ export const MEMORY_LIMIT_BYTES = 8 * 1024 * 1024;
 /**
  * 诚实侧基准脚本在真引擎上的**存活堆峰值**(字节,所有场次所有席位的峰值里再取最坏)。
  *
- * 来源:由“诚实侧”探针实测(`pnpm run probes:budget`,读数落 `runs/budget-calibration`,不入库);
+ * 来源:由“诚实侧”探针实测(`pnpm run observe:budget`,读数落 `runs/budget-calibration`,不入库);
  * 口径 = 每场每席的 tick 末 `runGC()` 后存活堆 `mallocSize` 峰值,再取全局最坏。
- * 它是内存两个键取值的下界依据(判罚线与软阈都必须严格高于它),所以冻在这里供 `check:budget`
+ * 它是内存两个键取值的下界依据(判罚线与软阈都必须严格高于它),所以冻在这里供 `gate:budget`
  * 与预算结构断言读;整数,不随运行微动到需要区间的程度。
  */
 export const HONEST_ALIVE_HEAP_PEAK_BYTES = 201_384;
@@ -73,7 +73,7 @@ export const HONEST_ALIVE_HEAP_PEAK_BYTES = 201_384;
 /**
  * 诚实侧基准脚本在真引擎上的**全局 API 调用峰值**(次/tick,同上口径的全局最坏)。
  *
- * 来源:同一次诚实侧实测(`pnpm run probes:budget`)。`apiCallTickLimit` 的取值规则是它 × 2;
+ * 来源:同一次诚实侧实测(`pnpm run observe:budget`)。`apiCallTickLimit` 的取值规则是它 × 2;
  * 冻在这里供读数复算与预算结构断言引用。
  */
 export const HONEST_API_CALL_PEAK = 133;

@@ -12,7 +12,7 @@
  *
  * ── 为什么 `measureSandboxRuntimeHash()` 返回常量而不是当场读盘 ──
  *
- * 常量与入库产物字节的一致性由**门禁**担保(`check:runtime` 比「现算 == 入库」「入库 hash ==
+ * 常量与入库产物字节的一致性由**门禁**担保(`gate:runtime` 比「现算 == 入库」「入库 hash ==
  * 常量」两段,见 `packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts`)。CLI 打包后
  * 不持有仓库根的可靠锚点(`import.meta.url` 会指到 `dist/`),当场读盘反而会把「判据锚定确切
  * 字节」这件事换成「判据锚定运行目录」——那是要消灭的漂移。读盘入口留给需要**逐字节核对**

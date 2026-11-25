@@ -7,7 +7,7 @@
  * - `PROBE_MATCH_LIMIT`:四个读者。`packages/gen/src/agent/tools.ts` 拿它写**工具声明的描述**
  *   (模型读到的就是那一段);`packages/gen/src/agent/host/probe-service.ts` 拿它决定"跑前几场";
  *   `apps/cli` 的试跑入口拿它做默认值与文案("前 N 场")。改这个数,这三处自动跟上——
- *   `prompts/agent.md` 里那句散文是第四处,**手写不能派生**,所以它由 `check:prompt-tools`
+ *   `prompts/agent.md` 里那句散文是第四处,**手写不能派生**,所以它由 `gate:prompt:tools`
  *   的一条判据对住(散文里的场数必须等于本常量)。
  * - `PROBE_NEAR_LIMIT_RATIO`:gen 侧的身份清单要记(`probe.nearLimitRatio`,票 06),
  *   `apps/cli` 的文案渲染要拿它判"贴边 / 充裕"。

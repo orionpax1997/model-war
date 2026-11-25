@@ -32,7 +32,7 @@ const DIRECT_ENTRY = /(?:^|[;&|]\s*)(?:node|npx|tsx|tsc|vitest|stryker|scc|bun|d
  */
 const SHELL_PLUMBING = /^(?:set -[a-z]+|mkdir -p|printf |cat |echo )/u;
 
-/** `pnpm run <字面脚本名>`;脚本名允许 `:` 与 `-`(`check:cross-process` 这种形态)。 */
+/** `pnpm run <字面脚本名>`;脚本名允许 `:` 与 `-`(`gate:cross-process` 这种形态)。 */
 const LITERAL_RUN = /^pnpm run ([A-Za-z0-9:_-]+)$/u;
 
 /** `pnpm run ${{ matrix.script }}`:矩阵模板,真实成员由 `matrixLegs` 校验。 */
@@ -175,7 +175,7 @@ export const observationalScripts = (yaml: string): readonly string[] =>
  * GitHub 产物名允许的字符:字母、数字与 `._-`。
  *
  * 禁用面来自 upload-artifact 自身的校验(`:` `*` `?` `"` `<` `>` `|` `/` `\r` `\n` `\`),
- * 它按 NTFS 兼容口径拦一道。夜间矩阵的脚本名天然带 `:`(`check:limits` 这种命名形态),
+ * 它按 NTFS 兼容口径拦一道。夜间矩阵的脚本名天然带 `:`(`gate:limits` 这种命名形态),
  * 所以产物名不能直接拼 `matrix.script`。
  */
 const ARTIFACT_NAME = /^[A-Za-z0-9._-]+$/u;
