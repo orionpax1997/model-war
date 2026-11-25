@@ -30,12 +30,14 @@ import {
   SUITES,
   UnregisteredPathError,
   decide,
+  probeApplies,
 } from "./change-radius.js";
 import { describeDeleted, probeTargets, runsFor, unobservedGap } from "./check.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
 import {
+  classifyInput,
   currentFingerprint,
-  isInputPath,
+  inputScopeOf,
   loadInputsMap,
   snapshotStaleMessage,
 } from "./test-inputs.js";
@@ -393,8 +395,34 @@ describe("观测 map:它自己也要有判据", () => {
     ).toEqual([]);
   });
 
-  it("map 里没有混进产物路径(报告与对局产物不是输入)", () => {
-    expect(inputs.filter((input) => !isInputPath(input))).toEqual([]);
+  /**
+   * 入库 map 与**现在的**观测口径必须一致。口径一变(比如这次把 `…/dist/` 从「一律算输入」
+   * 改成按「背后有没有源码」判),这条就在这里红:map 里还留着现在不算输入的路径。
+   * 判据只有一处(`classifyInput`),这里拿它过一遍入库数据——不是另写一份形状清单。
+   *
+   * 与「快照过期即红」同一条例外:**正在录制**时不比。那一刻盘上还是旧 map,而口径刚刚换过,
+   * 比下去就是"必须先重录、可重录又必须先过这一条"。录制结束后同一条断言在 `test` / `check`
+   * 上照样跑,口径与快照对不上的后果仍会回来。
+   */
+  it("map 里没有混进产物或派生路径(落点产物、node_modules、无源码的 dist 产物都不是输入)", () => {
+    const scope = inputScopeOf(repoRoot);
+    const stale = inputs
+      .map((input) => ({ input, verdict: classifyInput({ path: input, ...scope }) }))
+      .filter(({ verdict }) => verdict.kind === "excluded");
+    if (process.env["MODELWAR_TEST_INPUTS_FILE"] === undefined) {
+      expect(
+        stale,
+        "这些路径现在不算输入,但还留在入库 map 里(重录:`node --run observe:inputs:accept`):" +
+          unexplainable(stale.map(({ input }) => input)),
+      ).toEqual([]);
+    } else {
+      // 录制里也要留一条不恒真的:口径本身必须仍能把「派生的产物」判出来,否则上面那段
+      // 在录制外的断言就成了"一份没人能生成的清单"。
+      expect(
+        classifyInput({ path: "apps/cli/dist/modelwar.mjs", ...scope }).kind,
+        "口径认不出打包器的额外产物",
+      ).toBe("excluded");
+    }
   });
 
   it("recorder 挂在 worker 的 execArgv 上(拆掉它 map 会静默变空)", () => {
@@ -950,6 +978,44 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
     // 反方向:不能顺手把它当门禁自测——那是跑错族,而跑错族不会报错。
     expect(decision.scripts).not.toContain("test:gates");
   });
+
+  /**
+   * **`sandbox` 族的测试文件**:表指名拾取它的那一族,探针不再问它。
+   *
+   * 缺任何一半都会退回「留一行债」的形状——只加族规则,探针照样拿 `--project all` 去问、
+   * 答「0 条」,把「问错了池子」读成「没人看着它」;只豁免不加规则,则谁也不跑它自己那一族,
+   * 改坏了没有任何声音。目标族名从 `vitest.config.ts` 推导,与上一条用同一份判据。
+   */
+  it.each(["apps/cli/src/gen-cli.test.ts", "apps/cli/src/agent-real-session.test.ts"])(
+    "%s 落到拾取它的那一族,并退出逐文件探针",
+    async (file) => {
+      const projects = (await projectsOf()).filter((project) => picks(project, file));
+      expect(
+        projects.map((project) => project.name),
+        "拾取它的 project 变了",
+      ).toEqual(["sandbox"]);
+
+      const entries = Object.entries(manifest().scripts)
+        .filter(
+          ([name, command]) =>
+            name.startsWith("test") &&
+            projects.every(({ name: project }) => command.includes(`--project ${project}`)),
+        )
+        .map(([name]) => name);
+      expect(entries.length, `没有任何脚本跑 ${file} 所在的 project`).toBeGreaterThan(0);
+
+      const decision = decideOn([file]);
+      expect(
+        entries.some((entry) => decision.scripts.includes(entry)),
+        `计划里没有拾取它的那一族(实际:${decision.scripts.join(", ")})`,
+      ).toBe(true);
+
+      // 探针写死问 `--project all`:它答不出这个文件的候选,而 0 条会被读成「确知为零」。
+      expect(probeApplies(file), `${file} 仍会进逐文件探针,而它不在 all 的池子里`).toBe(false);
+      // 反方向:池子里的测试文件照旧问图——豁免只对池子外的那几族开。
+      expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(true);
+    },
+  );
 
   it("`decide([packages/tools/src/ci.test.ts])` 不含 test:gates(本票的起因)", () => {
     const decision = decideOn(["packages/tools/src/ci.test.ts"]);

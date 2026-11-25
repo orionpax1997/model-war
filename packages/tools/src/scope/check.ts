@@ -60,6 +60,7 @@ import {
   UnregisteredPathError,
   decide,
   mustObserve,
+  probeApplies,
   ruleFor,
   suitesFor,
   type Decision,
@@ -550,7 +551,10 @@ const main = (argv: readonly string[]): number => {
     (path) =>
       observedByInput.get(path) === undefined &&
       !debt.has(path) &&
-      mustObserve({ path, workspaces }),
+      mustObserve({ path, workspaces }) &&
+      // 探针问的是 `--project all`:表把池子外的一族指给这个文件时,问图等于问错池子
+      // (0 条会被读成「确知为零」),判据是那一族本身,而它已经在计划里被真的执行。
+      probeApplies(path),
   );
   const unobservedInputs = unobserved
     .filter((path) => !isSourceFile(path, workspaces))

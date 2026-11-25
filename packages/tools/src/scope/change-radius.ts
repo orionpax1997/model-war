@@ -43,6 +43,9 @@ export const SUITES: readonly string[] = [
   "test:gates",
   "test:slow",
   "test:all",
+  // 真 bwrap 那一族(`sandbox` project)。它**不在**常跑链上,也不在 `all` 的池子里——但它是
+  // 一条真实存在的验证族:改它自己的用例文件时,只有它能证明「改完还跑得起来」。
+  "test:kernel",
 ];
 
 export interface Radius {
@@ -96,6 +99,16 @@ export const RADIUS: readonly Radius[] = [
     area: "packages/tools/src/gates-slow.test.ts",
     suites: ["test:slow"],
     why: "它属于 `slow` project(nightly 的那一半),兜底会把改它的人送去 `test:gates`:既多跑了不该跑的族,又**没跑它自己**——跑错族比多跑更贵",
+  },
+  {
+    area: "apps/cli/src/agent-real-session.test.ts",
+    suites: ["test:kernel"],
+    why: "它在 `sandbox` project 里(真 bwrap、非特权 user namespace),`all` 的池子不收它——依赖图对「自己就是测试文件」的改动于是答不出候选,只能由表指名它自己那一族",
+  },
+  {
+    area: "apps/cli/src/gen-cli.test.ts",
+    suites: ["test:kernel"],
+    why: "同上:这条 CLI 冒烟要真 bwrap + 真网格,归 `sandbox`、被 `all` 排除;不指名这一族,改它就只剩一条债可走",
   },
   {
     area: "packages/tools",
@@ -356,6 +369,22 @@ export const suitesFor = (path: string): readonly string[] => {
     return [];
   return rule.suites;
 };
+
+/**
+ * **逐文件探针答得出这个路径吗?**
+ *
+ * 探针问的是 `vitest related --project all`(见 `check.ts`),它只对**在 `all` 的池子里**的
+ * 文件答得出候选。表把某个**池子外**的族指给这个文件时(改一个 `sandbox` / `gates` / `slow`
+ * 的测试文件),那条命令结构上只能答「0 条」——而 0 条在这里会被读成「确知为零,没人看着
+ * 它」,那是一句假话:问错了池子,不是没人看。
+ *
+ * 这类文件的判据是它自己那一族,而那一族**就是 `check` 会真的执行的那一条**(`decide` 已经
+ * 把名字算进计划)。所以探针在这里不适用,红线仍由族本身承担:跑不起来就红。
+ *
+ * 别的路径一视同仁地问图——源码,以及没有族可指的测试文件。
+ */
+export const probeApplies = (path: string): boolean =>
+  !(isTestCaseFile(path) && suitesFor(path).some((suite) => !SUPERSEDED_BY_ALL.includes(suite)));
 
 /** 顶层里**允许不登记**的条目:仓库元数据与产物,改了不影响任何判据。 */
 export const IGNORED_AREAS: readonly string[] = [

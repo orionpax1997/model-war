@@ -15,16 +15,21 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { workspacesOf } from "./build-outputs.js";
+import { DERIVED_RULES, isDerived } from "./ignored-inputs.js";
 import { RADIUS, decide, mustObserve, suitesFor } from "./change-radius.js";
 import {
   INPUTS_SCHEMA,
   type InputsMap,
+  type InputScope,
   MISSING_FILE,
   WATCHED_FILES,
   aggregate,
+  classifyInput,
   currentFingerprint,
   fingerprintOf,
+  inputScopeOf,
   invert,
+  isInputPath,
   isSnapshotCurrent,
   loadInputsMap,
   writeInputsMap,
@@ -208,5 +213,153 @@ describe("Input Root:新输入文件有地方可退(问行为,不问表)", () =>
     // 删除走的是同一套前缀规则:判据不读磁盘,只读路径。
     expect(suitesFor(file)).toEqual(["test:vm"]);
     expect(decide({ paths: [file], workspaces, exists: () => false }).scripts).toContain("test:vm");
+  });
+});
+
+/**
+ * 观测口径**按类**判定,不按条目枚举,也不按「这台机器上有没有」。
+ *
+ * 起因是一个真事:`apps/cli/dist/modelwar.mjs` 由 `pnpm --filter apps/cli build` 里的 esbuild
+ * 产出,标准链(`tsc -b`)不产出它。它在的机器上,`dependency-boundary` 那两个测试 spawn 的
+ * `depcruise` 会多 open 一条;于是同一份代码在「手工 build 过」的机器上录出来的 map 多两条,
+ * `observe:inputs` 红在一句「你构建过」上。那两句红跟代码没关系,是口径把**派生物**当成了输入。
+ *
+ * 这一组断言钉住三件事:
+ *
+ * 1. 口径与门禁白名单**同源**(`DERIVED_RULES`),覆盖同一批形状;
+ * 2. 反方向:`apps/cli/dist/modelwar.mjs` 一句话就被判成「派生、不算输入」;
+ * 3. 排除**看得见**:`aggregate` 把丢掉的东西交给 `onExcluded`,不是静默丢弃。
+ */
+describe("观测口径:按类排除派生,不随本机是否构建而变", () => {
+  /** 没有源码在背后的世界(干净机器 / 打包器的额外产物)。 */
+  const unbacked: InputScope = { backedArtifact: () => false };
+  /** 有源码在背后的世界(每个产物都是某个 `src/*.ts` 的下一跳)。 */
+  const backed: InputScope = { backedArtifact: () => true };
+
+  it("`apps/cli/dist/modelwar.mjs` 是派生,不算输入(本票的反方向)", () => {
+    const verdict = classifyInput({ path: "apps/cli/dist/modelwar.mjs", ...unbacked });
+    expect(verdict).toMatchObject({ kind: "excluded", reason: "derived" });
+    // 真实这棵树上也是同一个结论:它背后没有 `apps/cli/src/modelwar.ts`。
+    expect(
+      isInputPath({ path: "apps/cli/dist/modelwar.mjs", ...inputScopeOf(repoRoot) }),
+      "本机若真有 apps/cli/src/modelwar.ts,这条断言的立论就不成立了——先看那个文件",
+    ).toBe(false);
+    expect(existsSync(join(repoRoot, "apps/cli/src/modelwar.ts"))).toBe(false);
+  });
+
+  it("有源码在背后的 dist 产物仍然是输入(测试真的该读 dist 时走的是这一格)", () => {
+    // 测试读 `apps/cli/dist/match/assemble.js`:那是 `src/match/assemble.ts` 的产物,改源码要能
+    // 顺着它找到读它的测试——所以它在 map 里是**对的**,不许一刀切掉。
+    const real = inputScopeOf(repoRoot);
+    expect(existsSync(join(repoRoot, "apps/cli/src/match/assemble.ts"))).toBe(true);
+    expect(isInputPath({ path: "apps/cli/dist/match/assemble.js", ...real })).toBe(true);
+    expect(isInputPath({ path: "packages/engine/dist/index.js", ...real })).toBe(true);
+    // 判据是「背后有没有源码」,不是「在不在 dist 下」:同一路径换个世界就反过来。
+    expect(isInputPath({ path: "apps/cli/dist/match/assemble.js", ...unbacked })).toBe(false);
+  });
+
+  it("派生形状按整段 / 后缀判定,任意深度都算,且不误吞相邻名字", () => {
+    for (const path of [
+      "packages/x/node_modules/a/index.js",
+      "apps/cli/node_modules/@model-war/engine/package.json",
+      "packages/x/tsconfig.tsbuildinfo",
+      "packages/x/.vitest/report.json",
+      ".stryker-tmp/sandbox-1/index.js",
+    ]) {
+      expect(isInputPath({ path, ...backed }), `${path} 被当成输入了`).toBe(false);
+    }
+    for (const path of [
+      "packages/runner/src/distribution.ts",
+      "packages/runner/src/nodes_modules.ts",
+      "packages/tools/src/scope/test-inputs.ts",
+      "rulesets/v2.json",
+      "maps/open-clash.json",
+      "packages/engine/sandbox-runtime/runtime.iife.js",
+    ]) {
+      expect(isInputPath({ path, ...backed }), `${path} 被排除了`).toBe(true);
+    }
+  });
+
+  it("落点产物(顶层)不是输入:reports/ runs/ .scratch/ .workspaces/ .git/", () => {
+    for (const path of [
+      "reports/mutation/mutation.json",
+      "runs/2026-10-16/replay.jsonl",
+      ".scratch/spec.md",
+      ".workspaces/wt-01/x.ts",
+      ".git/config",
+    ]) {
+      expect(classifyInput({ path, ...backed }), path).toMatchObject({
+        kind: "excluded",
+        reason: "output",
+      });
+    }
+  });
+
+  /**
+   * **两处口径覆盖同一批形状**(本票第一条)。
+   *
+   * 观测口径(`classifyInput`)与门禁白名单(`DERIVED_RULES`)共用一张表,这一条是它的外部证据:
+   * 每条形状都造一个样本来,两边一起问。往 `DERIVED_RULES` 里加一种形状而观测口径没跟上、或
+   * 反过来在 `OUTPUT_ROOTS` 里塞进一个「派生」形状,这里就红。
+   */
+  it("派生白名单的每一条形状,观测口径都认(同源;改一边不改另一边在这里红)", () => {
+    expect(DERIVED_RULES.length).toBeGreaterThan(0);
+    for (const rule of DERIVED_RULES) {
+      const sample =
+        rule.kind === "segment"
+          ? `packages/probe/${rule.value}/index.js`
+          : `packages/probe/x${rule.value}`;
+      // 门禁那一侧:它是派生(允许被读,不必登记)。
+      expect(isDerived(sample), `${rule.value} 不在门禁的派生白名单里`).toBe(true);
+      // 观测那一侧:它不进 map(没有源码在背后时)。`dist/` 那一格是例外中的例外:
+      // 有源码在背后时它**算输入**,见上一条。
+      const verdict = classifyInput({ path: sample, ...unbacked });
+      expect(verdict, `${rule.value} 这种形状混进了输入 map`).toMatchObject({
+        kind: "excluded",
+        reason: "derived",
+      });
+      // 反过来:观测口径排除的「派生」必须真的是门禁认的那种派生,不许自己发明一类。
+      expect(isDerived(sample), `${rule.value} 被观测口径排除了,却不被门禁当成派生`).toBe(true);
+    }
+  });
+
+  it("排除是可见的:`aggregate` 把丢掉的东西交给 onExcluded,不是静默丢弃", () => {
+    const test = "packages/engine/src/sandbox.test.ts";
+    const jsonl = [
+      line(test, "rulesets/v2.json"),
+      line(test, "reports/mutation/mutation.json"),
+      line(test, "apps/cli/dist/modelwar.mjs"),
+    ].join("");
+    const dropped: { path: string; why: string }[] = [];
+    const map = aggregate(jsonl, "/repo", "fp", (path, verdict) => {
+      dropped.push({ path, why: verdict.why });
+    });
+    expect(map.files[test], "真输入被一起丢了").toEqual(["rulesets/v2.json"]);
+    expect(dropped.map((entry) => entry.path).sort()).toEqual([
+      "apps/cli/dist/modelwar.mjs",
+      "reports/mutation/mutation.json",
+    ]);
+    // 每条排除都带理由:审计的人能从日志里读出「为什么它不算输入」。
+    for (const entry of dropped)
+      expect(entry.why, `${entry.path} 被丢掉了却没说为什么`).not.toBe("");
+  });
+
+  it("同一份 jsonl,盘上有没有源码决定 `dist/` 算不算输入(不静默,也不迷信路径)", () => {
+    const test = "packages/x/src/a.test.ts";
+    const repo = openRepo({
+      "packages/x/tsconfig.json": JSON.stringify({
+        compilerOptions: { rootDir: "src", outDir: "dist" },
+      }),
+      "packages/x/src/a.ts": "export const a = 1;\n",
+    });
+    const jsonl = [
+      line(test, "packages/x/dist/a.js"),
+      line(test, "packages/x/dist/bundle.mjs"),
+    ].join("");
+    const dropped: string[] = [];
+    const map = aggregate(jsonl, repo, "fp", (path) => dropped.push(path));
+    // `a.js` 有 `src/a.ts` 在背后 → 是输入;`bundle.mjs` 没有 → 排除。
+    expect(map.files[test]).toEqual(["packages/x/dist/a.js"]);
+    expect(dropped).toEqual(["packages/x/dist/bundle.mjs"]);
   });
 });
