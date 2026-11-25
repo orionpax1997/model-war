@@ -54,7 +54,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildOutputsOf, isSourceFile, workspacesOf } from "./build-outputs.ts";
+import { buildOutputsOf, isSourceFile, workspacesOf, type Workspace } from "./build-outputs.ts";
 import {
   ALWAYS,
   UnregisteredPathError,
@@ -261,6 +261,30 @@ export const probeTargets = (input: {
     note: describeDeleted(gone),
   };
 };
+
+/**
+ * 未观测的路径 → 两半:**行为输入**与**源码**。纯函数,`main` 与测试共用一份。
+ *
+ * 两半走的是同一条红线(`reportUnobserved`),但两个不同的入口,而分开它们的那个反问就是
+ * 「它有没有 import 边可问」:行为输入(`rulesets/`、`maps/`、wasm、入库的 runtime 产物)
+ * 没有边,观测为空就是没有判据;源码有边,所以还得逐个问图。
+ *
+ * 为什么值得单独提出来而不是写在 `main` 里:债务表注释列举的「四类红」里有一条只在这里成立
+ * (行为输入观测为空),埋在 `main` 里的后果是它被删掉时没有任何断言会响——而 `coverage-debt`
+ * 是**放行**:少一类红就少一条真的判据。
+ */
+export const unobservedHalves = (input: {
+  readonly paths: readonly string[];
+  readonly workspaces: readonly Workspace[];
+}): {
+  readonly inputs: readonly { readonly path: string; readonly why: string }[];
+  readonly code: readonly string[];
+} => ({
+  inputs: input.paths
+    .filter((path) => !isSourceFile(path, input.workspaces))
+    .map((path) => ({ path, why: "它是行为输入,而观测 map 里没有任何测试读过它" })),
+  code: input.paths.filter((path) => isSourceFile(path, input.workspaces)),
+});
 
 /**
  * 探针结论 → 未观测登记(纯函数,`main` 与测试共用一份)。
@@ -556,9 +580,10 @@ const main = (argv: readonly string[]): number => {
       // (0 条会被读成「确知为零」),判据是那一族本身,而它已经在计划里被真的执行。
       probeApplies(path),
   );
-  const unobservedInputs = unobserved
-    .filter((path) => !isSourceFile(path, workspaces))
-    .map((path) => ({ path, why: "它是行为输入,而观测 map 里没有任何测试读过它" }));
+  const { inputs: unobservedInputs, code: blindCode } = unobservedHalves({
+    paths: unobserved,
+    workspaces,
+  });
 
   // 行为输入没有 import 边,图对它是瞎的:观测为空就是没有判据,不必等图。
   if (unobservedInputs.length > 0) return reportUnobserved(unobservedInputs, "input");
@@ -572,7 +597,6 @@ const main = (argv: readonly string[]): number => {
    * 代价是每个未观测文件一次 `test:related`(实测:零候选约 2s,有候选要真跑那些测试,最坏
    * ~24s)。所以先把成本说在前面——不说的话,agent 会以为进程卡死然后去杀它。
    */
-  const blindCode = unobserved.filter((path) => isSourceFile(path, workspaces));
   if (blindCode.length > 0) {
     process.stdout.write(
       `\n要逐个探 ${String(blindCode.length)} 个文件有没有测试候选:典型的每次约 3s,最坏 24s。\n`,
