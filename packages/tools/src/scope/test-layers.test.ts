@@ -33,7 +33,13 @@ import {
   decide,
   probeApplies,
 } from "./change-radius.js";
-import { describeDeleted, probeTargets, runsFor, unobservedGap } from "./check.js";
+import {
+  describeDeleted,
+  probeTargets,
+  runsFor,
+  unobservedGap,
+  unobservedHalves,
+} from "./check.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
 import {
   classifyInput,
@@ -685,6 +691,78 @@ describe("未覆盖红线:红要有出路", () => {
     expect(scripts["check"], "check 是 agent 唯一入口").toBeDefined();
     expect(scripts["check:full"], "档位不该以脚本形式存在(--full 才是收口)").toBeUndefined();
     expect(scripts["verify:scoped"], "旧名字仍在:agent 会看到两个入口").toBeUndefined();
+  });
+
+  /**
+   * **注释自己也要有判据**(票:注释行仍写着「computed 与 observed 都是空的」)。
+   *
+   * 那句话说宽了:结构测试那一条的 computed **不**空(它选出了一批文件,只是那些文件证的
+   * 不是这块代码的行为),而 `check.ts` 早已不是「只有一种红」。注释写宽的代价不是错字——
+   * 它是**放行**:读的人照着宽的那句去登记一行,而登记就放行。
+   *
+   * 所以两边都不拄清单:先用**真实的分派函数**问出那四类红还在不在
+   * (`unobservedHalves` 拆行为输入 / 源码,`unobservedGap` 分三种探针结论),再问注释
+   * 有没有点到它。反方向:这两类红(`failed` / `no-report`)**不**指向债务表,它们的处方是
+   * 先修测试 / 先修探针。
+   */
+  it("债务表注释列的出路,与 check.ts 实际指向它的四类红一致", () => {
+    const comment = readFileSync(join(repoRoot, "coverage-debt.txt"), "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("#"))
+      .join("\n");
+
+    const halves = unobservedHalves({
+      paths: ["rulesets/basic.json", "packages/engine/src/runner/quickjs.ts"],
+      workspaces,
+    });
+    // 行为输入与源码的分界就是「有没有 import 边可问」:行为输入没有边,源码有。
+    expect(halves.inputs.map((half) => half.path)).toEqual(["rulesets/basic.json"]);
+    expect(halves.code).toEqual(["packages/engine/src/runner/quickjs.ts"]);
+
+    const routes: readonly {
+      readonly why: string;
+      readonly phrase: string;
+      readonly gap: { readonly path: string; readonly why: string } | undefined;
+    }[] = [
+      { why: "行为输入没有任何测试观测到", phrase: "观测", gap: halves.inputs[0] },
+      {
+        why: "逐文件探针:确知为零",
+        phrase: "确知为零",
+        gap: unobservedGap("x.ts", { kind: "no-tests" }),
+      },
+      {
+        why: "逐文件探针:全部 skip",
+        phrase: "skip",
+        gap: unobservedGap("x.ts", { kind: "all-skipped", files: ["a.test.ts"] }),
+      },
+      {
+        why: "逐文件探针:只选中结构测试",
+        phrase: "结构测试",
+        gap: unobservedGap("x.ts", {
+          kind: "structural-only",
+          structural: [STRUCTURAL_TESTS[0] ?? ""],
+        }),
+      },
+    ];
+    for (const route of routes) {
+      expect(route.gap, `${route.why} 不再指向债务表:注释里那一行是假的`).toBeDefined();
+      expect(comment, `注释没给「${route.why}」这条出路:读的人会去登记一条不该放行的债`).toContain(
+        route.phrase,
+      );
+    }
+    // 条数也要对得上:少一类是假的、多一类同样是假的(多出来的那类没有代码在指它)。
+    const bullets = comment.split("\n").filter((line) => /^#\s+\d\./u.test(line));
+    expect(bullets.length, "注释里的出路条数与真正指向债务表的红不一致").toBe(routes.length);
+
+    // 反方向:这两类红有别的处方,不走“补用例或登记债务”这条路。
+    expect(
+      unobservedGap("x.ts", { kind: "failed", files: ["a.test.ts"], failed: 1 }),
+      "测试候选红了被记成了“没人观测”:处方应该是先修测试",
+    ).toBeUndefined();
+    expect(
+      unobservedGap("x.ts", { kind: "no-report", exit: null }),
+      "读不到报告被记成了“没人观测”:处方应该是先修探针",
+    ).toBeUndefined();
   });
 });
 
