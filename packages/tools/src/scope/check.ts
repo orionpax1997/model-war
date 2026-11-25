@@ -25,7 +25,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOutputsOf, isSourceFile, workspacesOf } from "./build-outputs.ts";
@@ -39,8 +40,6 @@ export const FULL_CHAIN: readonly string[] = ["verify", "gate:types"];
 
 /** 未覆盖登记的落点。路径相对仓库根,`#` 之后写为什么现在不测。 */
 export const DEBT_PATH = "coverage-debt.txt";
-
-const JSON_REPORT = ".vitest/json/output.json";
 
 interface Options {
   readonly since: string;
@@ -101,12 +100,23 @@ const loadDebt = (): ReadonlyMap<string, string> => {
   return debt;
 };
 
-/** 本次 `test:related` 真的跑了多少条用例。读不到就当未知,不拿未知当绿。 */
-const relatedTestCount = (): number | undefined => {
+/**
+ * 一次探针的 JSON 报告写进**临时目录**,用完即删:仓库里不留文件,也不依赖「默认报告路径」那种
+ * 隐式事实——那条路径只有在报告器恰好被配置时才存在,而它不存在时判据会静默变绿。
+ */
+const withReportPath = <T>(use: (reportPath: string) => T): T => {
+  const dir = mkdtempSync(join(tmpdir(), "mw-related-"));
   try {
-    const report = JSON.parse(readFileSync(join(repoRoot, JSON_REPORT), "utf8")) as {
-      numTotalTests?: number;
-    };
+    return use(join(dir, "report.json"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+/** 报告里真的跑了多少条用例。读不到就当未知——而未知不是绿。 */
+const countOf = (reportPath: string): number | undefined => {
+  try {
+    const report = JSON.parse(readFileSync(reportPath, "utf8")) as { numTotalTests?: number };
     return report.numTotalTests;
   } catch {
     return undefined;
@@ -115,7 +125,6 @@ const relatedTestCount = (): number | undefined => {
 
 /** 把改动递给依赖图;失败的两种含义不同,红的时候要分开说。 */
 const runRelated = (args: readonly string[]): number => {
-  rmSync(join(repoRoot, JSON_REPORT), { force: true });
   process.stdout.write(`\n=== test:related ===\n`);
   const result = spawnSync(process.execPath, ["--run", "test:related", "--", ...args], {
     cwd: repoRoot,
@@ -307,22 +316,24 @@ const main = (argv: readonly string[]): number => {
   const gaps: string[] = [];
   for (const path of blindCode) {
     const outputs = buildOutputsOf(path, workspaces);
-    rmSync(join(repoRoot, JSON_REPORT), { force: true });
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--run",
-        "test:related",
-        "--",
-        path,
-        ...outputs.filter((output) => existsSync(join(repoRoot, output))),
-      ],
-      { cwd: repoRoot, stdio: "ignore" },
-    );
-    const ran = relatedTestCount();
-    // 读不到报告时不判红:未知既不是绿也不是红,而这条判据只负责"确知为零"。
-    if (ran === 0) gaps.push(path);
-    else if (ran === undefined && result.status !== 0) gaps.push(path);
+    const ran = withReportPath((reportPath) => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--run",
+          "test:related",
+          "--",
+          "--reporter=json",
+          `--outputFile=${reportPath}`,
+          path,
+          ...outputs.filter((output) => existsSync(join(repoRoot, output))),
+        ],
+        { cwd: repoRoot, stdio: "ignore" },
+      );
+      return { count: countOf(reportPath), status: result.status };
+    });
+    // 读不到报告 → 红:未知不是绿。这里不拿退出码当唯一判据,但退出码非零仍然算红。
+    if (ran.count === undefined || ran.count === 0 || ran.status !== 0) gaps.push(path);
   }
   if (gaps.length > 0) return reportUnobserved(gaps, "code");
 
