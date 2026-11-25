@@ -12,6 +12,12 @@
  * 一无所知,只能由表说「改这里要跑哪几族」。第三条是 `packages/tools`:门禁自测住在独立
  * project 里(`gates`),不在 `all` 的池子里,图选不到它。
  *
+ * `packages/tools` 那一条**不再按目录一律触发**。整个目录一次扫进门禁自测(89 条 / 166s)是
+ * 拿时间换省心,而其中绝大多数改动跟门禁自测无关:选择器自身的判据住在 `unit` 池子里(图能
+ * 选中它),`vitest/` 那批接线的判据也在 `unit` 里。于是这一层拆三档——`src/scope`(一条都不
+ * 补,交图)、`src/vitest`(`test`)、其余(`test:gates`,但具体到文件时再用 `-t` 缩到那一批
+ * 用例,映射见 `GATES_CASES`)。**边界在文件上,不在目录上**:目录是人的组织方式。
+ *
  * 表**只在这个范围内是判据**。给 `apps/cli`、`packages/engine` 这类代码目录写规则是多余且
  * 有害的——图的结论永远比人写的更准,两份并存时人写的那份只会腐烂(ADR-0038 的落选条目)。
  *
@@ -46,6 +52,14 @@ export interface Radius {
   readonly mustObserve?: boolean;
   /** 为什么是这几条,或者为什么一条都不需要。 */
   readonly why: string;
+  /**
+   * 这条规则是**兜底**:它收的是"表里没有专门规则的工具包文件"。
+   *
+   * 兜底不对**测试文件本身**负责——测试文件的判据就是它自己,依赖图把它选得出来;例外是
+   * `GRAPH_BLIND_TESTS`(图看不见的那几个,仍由兜底补)。没有这条豁免,改一行 `ci.test.ts`
+   * (选择器自己的 CI 判据)就要重跑 89 条 / 166s 的门禁自测。
+   */
+  readonly fallback?: boolean;
 }
 
 export const RADIUS: readonly Radius[] = [
@@ -62,9 +76,20 @@ export const RADIUS: readonly Radius[] = [
     why: "地图是引擎的输入,地形判据与整场行为都在 VM 侧",
   },
   {
+    area: "packages/tools/src/scope",
+    suites: [],
+    why: "选择器自身的判据(`test-layers` / `plan` / `change-set` / 探针)住在 `unit` 池子里,依赖图能选中它;门禁自测与它无关,补上是白付 166s",
+  },
+  {
+    area: "packages/tools/src/vitest",
+    suites: ["test"],
+    why: "vitest 侧接线(报告汇总、内核探针)的判据是同目录的 `.test.ts`,在 `unit` 池子里——这一档只补 `test`,不牵扯门禁自测",
+  },
+  {
     area: "packages/tools",
     suites: ["test:gates"],
-    why: "门禁自测住在独立的 `gates` project 里,不在 `all` 的池子里——图选不到它,只能由表补",
+    fallback: true,
+    why: "门禁自测住在独立的 `gates` project 里,不在 `all` 的池子里——图选不到它,只能由表补;命中具体门禁文件时由 `GATES_CASES` 缩成 `-t` 子集;测试文件本身另有豁免(见 `GRAPH_BLIND_TESTS`)",
   },
   {
     area: "benchmarks",
@@ -265,6 +290,46 @@ export const RADIUS: readonly Radius[] = [
   },
 ];
 
+/**
+ * 一条路径归属的规则。`RADIUS` 的**顺序即优先级**:`packages/tools/src/scope` 在兜底的
+ * `packages/tools` 前面,于是选择器自身的改动不会被兜底规则吞掉。
+ *
+ * 三个调用方(选择、`mustObserve`、`check --print` 的依据行)共用这一份——各写一份 `startsWith`
+ * 的时候,依据行就曾拿命中集合里的第一条来比,把 `src/scope` 的改动显示成兜底规则。
+ */
+export const ruleFor = (path: string): Radius | undefined =>
+  RADIUS.find((candidate) => path === candidate.area || path.startsWith(`${candidate.area}/`));
+
+/** 测试文件(用例本身):`*.test.ts` / `*.prop.ts`。 */
+const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(path);
+
+/**
+ * **依赖图看不见的测试文件。**
+ *
+ * "改测试文件就交给依赖图"这句话有个前提:图看得见它。改一个测试文件时,`vitest related` 会
+ * 把它自己选出来(实测:`ci.test.ts` → 1 个文件 / 17 条 / 1.06s);但这几个文件被 `all` 显式
+ * 排除(`gates` / `slow` project),或者压根不在 `all` 的 include 里(`.prop.ts` 归 `property`)
+ * ——改它们的时候图会一条都不选,所以仍由兜底规则补整族。
+ *
+ * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 `all` 块重新
+ * 推导一遍再对账——谁单方面改了都会红。
+ */
+export const GRAPH_BLIND_TESTS: readonly string[] = [
+  "packages/tools/src/gates.test.ts",
+  "packages/tools/src/gates-slow.test.ts",
+  "packages/tools/src/rules/no-float.prop.ts",
+];
+
+/** 一条路径该补哪些族。选择与 `--print` 的依据行共用这一份,两处不各算一次。 */
+export const suitesFor = (path: string): readonly string[] => {
+  const rule = ruleFor(path);
+  if (rule === undefined) return [];
+  // 兜底不对测试文件本身负责:它的判据是它自己(依赖图选得出来),而门禁自测是另一件事。
+  if (rule.fallback === true && isTestCaseFile(path) && !GRAPH_BLIND_TESTS.includes(path))
+    return [];
+  return rule.suites;
+};
+
 /** 顶层里**允许不登记**的条目:仓库元数据与产物,改了不影响任何判据。 */
 export const IGNORED_AREAS: readonly string[] = [
   ".git",
@@ -279,6 +344,42 @@ export const IGNORED_AREAS: readonly string[] = [
   "node_modules",
 ];
 
+/**
+ * **门禁实现文件 → `gates.test.ts` 里那批用例的 `-t` 模式**(正则串)。
+ *
+ * `gates` project 只含一个文件(89 条 / 实测 166s),所以 project 层面的"相关选择"是 0/1;
+ * 真正的粒度只能来自**用例名过滤**。用例名以门禁名开头(`禁浮点门禁:…`),两者是同一条事实
+ * 的两种写法,于是这张表就是那条对应关系。
+ *
+ * 三条纪律:
+ *
+ * 1. **只收能映射到具体一批用例的文件**。公共基础设施(`gates-harness.ts`、`gate/source-tree.ts`、
+ *    `gate/vacuous.ts`、`ci-workflows.ts`)一动就是整族的语义,不映射 → 整族。
+ * 2. **空了就整族。** 表里查不到 = 不知道影响哪几条 = 全跑。多跑几秒比"少跑了没人管"便宜。
+ * 3. **模式必须真的命中。** 模式是名字过滤,改了用例名的措辞它就会静默失效——`test-layers.test.ts`
+ *    拿每个模式去 `gates.test.ts` 的 `it("…")` 上数一遍,0 命中即红。
+ *
+ * 另外这张表只能收**会被兜底选中**的文件:测试文件本身另有豁免(见 `GRAPH_BLIND_TESTS`),
+ * 给它们写映射就是死条目——`test-layers.test.ts` 一并盯这条(每条都要真的选中 `test:gates`)。
+ */
+export const GATES_CASES: Readonly<Record<string, readonly string[]>> = {
+  "packages/tools/src/gate/budget-gate.ts": ["预算结构门禁"],
+  "packages/tools/src/gate/run-budget-gate.ts": ["预算结构门禁"],
+  "packages/tools/src/gate/declared-deps-gate.ts": ["声明即依赖门禁"],
+  "packages/tools/src/gate/run-declared-deps-gate.ts": ["声明即依赖门禁"],
+  "packages/tools/src/gate/no-float-gate.ts": ["禁浮点门禁"],
+  "packages/tools/src/gate/run-no-float-gate.ts": ["禁浮点门禁"],
+  "packages/tools/src/gate/run-contract-gate.ts": ["契约挂载门禁"],
+  "packages/tools/src/gate/run-prompt-commands-gate.ts": ["命令清单门禁"],
+  "packages/tools/src/gate/run-prompt-tools-gate.ts": ["工具清单门禁"],
+  "packages/tools/src/gate/run-quickjs-coupling-gate.ts": ["quickjs-wasi 版本耦合断言"],
+  // `gate/*.test.ts` 不在表里:测试文件本身由豁免交给依赖图(改它就是跑它),
+  // 只有它们的**被测试物**上面那几行才需要 `-t`。
+  // `scan` 不是门禁而是一条观测(ADR-0010):用例名也写成了观测的样子,两处都得跟上。
+  "packages/tools/src/gate/scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
+  "packages/tools/src/gate/run-scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
+};
+
 /** 被 `test:all` 覆盖的子集：它们在 `all` 的池子里，选中全量后不必再单独跑一遍。 */
 const SUPERSEDED_BY_ALL: readonly string[] = ["test", "test:vm", "test:e2e"];
 
@@ -291,6 +392,13 @@ export interface Decision {
   readonly notBuilt: readonly string[];
   /** 命中的表规则(给人看"为什么是这些")。 */
   readonly hits: readonly Radius[];
+  /**
+   * 门禁自测要跑的 `-t` 模式(正则串)。**空数组 = 整族**。
+   *
+   * 空有两个来源,都不需要区分:根本没选 `test:gates`,或者选了但映射不到具体用例
+   * (公共基础设施、表外的文件、多个来源里有任何一个说不清)。
+   */
+  readonly gatesPatterns: readonly string[];
 }
 
 export interface DecisionInput {
@@ -317,16 +425,42 @@ const isManifest = (path: string): boolean =>
   path === "pnpm-lock.yaml" ||
   path.endsWith("/pnpm-lock.yaml");
 
+/**
+ * 门禁自测的子集:`test:gates` 被选中时,把命中的门禁实现文件翻成 `-t` 模式。
+ *
+ * 空数组 = **整族**。方向只有一边:宁可多跑,不许少跑——
+ *
+ * - 没选 `test:gates` → 空(不跑,与"整族"在调用方看来是一回事:两者都不带 `-t`);
+ * - 选了,但没有任何"要求门禁自测的规则"命中(`gatesFiles` 空)→ 整族(没有文件可映射);
+ * - 命中多个文件时取**并集**:并集 ⊇ 每一条,不会比单文件映射少跑;
+ * - 其中**任何一条**文件映射不出模式(公共基础设施、表外的文件)→ 整族。
+ */
+const gatesPatternsOf = (input: {
+  readonly needsGates: boolean;
+  readonly files: ReadonlySet<string>;
+}): readonly string[] => {
+  if (!input.needsGates || input.files.size === 0) return [];
+  const patterns = new Set<string>();
+  for (const file of input.files) {
+    const cases = GATES_CASES[file];
+    // 映射不出 = 不知道它影响哪批用例。"不知道"在这里不能当"没影响"。
+    if (cases === undefined) return [];
+    for (const pattern of cases) patterns.add(pattern);
+  }
+  // 排序只为两件事:日志可比、同一改动每次得到同一个计划。
+  return [...patterns].sort();
+};
+
 export const decide = (input: DecisionInput): Decision => {
   const hits: Radius[] = [];
   const chosen = new Set<string>();
   const graphFiles = new Set<string>();
   const notBuilt = new Set<string>();
+  /** 命中的、且规则要求跑门禁自测的改动文件(`-t` 模式只能逐个文件查)。 */
+  const gatesFiles = new Set<string>();
 
   for (const path of input.paths) {
-    const rule = RADIUS.find(
-      (candidate) => path === candidate.area || path.startsWith(`${candidate.area}/`),
-    );
+    const rule = ruleFor(path);
     // 产物路径先反查源码:测试会读 `dist/`,那不是第四类输入,是源码的下一跳。
     const source =
       buildOutputsOf(path, input.workspaces).length > 0 ? path : sourceOf(path, input.workspaces);
@@ -341,7 +475,9 @@ export const decide = (input: DecisionInput): Decision => {
       throw new UnregisteredPathError(path);
     }
     if (rule !== undefined && !hits.includes(rule)) hits.push(rule);
-    for (const script of rule?.suites ?? []) chosen.add(script);
+    const suites = suitesFor(path);
+    if (suites.includes("test:gates")) gatesFiles.add(path);
+    for (const script of suites) chosen.add(script);
     if (outputs.length === 0 || source === undefined) continue;
 
     // 源码与产物**都**交给图:源码问出包内的测试,产物问出跨包依赖它的测试,两者并集才完整。
@@ -375,6 +511,7 @@ export const decide = (input: DecisionInput): Decision => {
     graphFiles: [...graphFiles].sort(),
     notBuilt: [...notBuilt].sort(),
     hits,
+    gatesPatterns: gatesPatternsOf({ needsGates: effective.has("test:gates"), files: gatesFiles }),
   };
 };
 
@@ -401,9 +538,7 @@ export const mustObserve = (input: {
   readonly path: string;
   readonly workspaces: readonly Workspace[];
 }): boolean => {
-  const rule = RADIUS.find(
-    (candidate) => input.path === candidate.area || input.path.startsWith(`${candidate.area}/`),
-  );
+  const rule = ruleFor(input.path);
   if (rule?.mustObserve === true) return true;
   return isSourceFile(input.path, input.workspaces);
 };
