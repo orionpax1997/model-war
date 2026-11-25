@@ -27,9 +27,14 @@ import {
   UnregisteredPathError,
   decide,
 } from "./change-radius.js";
-import { runsFor, snapshotStaleMessage, unobservedGap } from "./check.js";
+import { runsFor, unobservedGap } from "./check.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
-import { currentFingerprint, isInputPath, loadInputsMap } from "./test-inputs.js";
+import {
+  currentFingerprint,
+  isInputPath,
+  loadInputsMap,
+  snapshotStaleMessage,
+} from "./test-inputs.js";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const workspaces = workspacesOf(repoRoot);
@@ -303,8 +308,9 @@ describe("观测 map:它自己也要有判据", () => {
    * **快照过期即红**(票 T6)。指纹对不上时不许继续拿旧 map 判"有没有观测":旧 map 的
    * 失效方向是少记,而少记读出来就是"没人看这块"——两个完全不同的红混成一条。
    *
-   * 第一条断言同时是**入库快照的新鲜度门禁**:改了 recorder / setup / `vitest.config.ts`
-   * 就必须重录,不重录这里就红(并且消息里直接给出两条命令)。
+   * 第一条断言同时是**入库快照的新鲜度门禁**:改了 `WATCHED_FILES` 里的任一装配点
+   * (recorder / setup / `vitest.config.ts` / 聚合口径 / 录制口径)就必须重录,
+   * 不重录这里就红(并且消息里直接给出两条命令)。
    *
    * 它唯一不跑的情形是**正在录制**(`observe:inputs` 自己跑的那趟 `test:all`):那一刻正在
    * 被写的就是它要断言的那份快照。这不是把红改成跳过——录制结束后同一条断言在 `test`、
@@ -476,6 +482,160 @@ describe("门禁自测的粒度:按文件缩到 -t 子集", () => {
       .filter((pattern) => names.every((name) => new RegExp(pattern, "u").test(name)))
       .map((pattern) => `命中全部用例的模式:${pattern}`);
     expect(broad, broad.join("; ")).toEqual([]);
+  });
+
+  /**
+   * **没有文件级 `-t` 归属的用例。**
+   *
+   * 上一条断言只验了一个方向:「每个模式都命中至少一条用例」。反方向当时是空的:在
+   * `gates.test.ts` 里新增一条**不带门禁名前缀**的用例,再改它测的那道门禁,只会跑旧子集,
+   * 没有任何东西会红——少跑的那一条永远不响。
+   *
+   * 所以每条用例必须落在两边之一:**命中至少一个 `GATES_CASES` 模式**,或者**登记在这张
+   * 名单里并写清为什么没有归属**。新增一条未归类的用例 → 红,逼人做一次判断:
+   * 给它一个模式(改某道门禁时只跑那几条),还是承认它是族级/整链的东西(改它时整族跑)。
+   *
+   * 名单的每一条都要有一个**说得出来的理由**,理由按家族写(同族的多条用例共享一句):
+   * 家族之间没有归属的原因不一样,而按条复制同一句只会让人去猜哪句是真的。
+   */
+  const UNATTRIBUTED_CASES: readonly {
+    readonly why: string;
+    readonly titles: readonly string[];
+  }[] = [
+    {
+      why: "链路:被测试物是「整条命名脚本在空壳上退出 0」,映射不到一个实现文件——它跑的就是 package.json 里的链",
+      titles: [
+        "quick(格式 + lint + 工具版本耦合)在空壳上退出 0",
+        "gate:types(quick + tsc -b + 类型感知 lint)退出 0",
+        "gate:deps(依赖门禁)退出 0,且报告的巡航规模不为零",
+        "test:property(长时属性测试)退出 0",
+      ],
+    },
+    {
+      why: "外部命令:被测试物是仓库外的工具(oxfmt / oxlint / tsc / depcruise)与它们的配置,缩不缩文件都落在同一道门禁里",
+      titles: [
+        "依赖门禁:engine 一旦 import runner 或 gen 就红,撤掉即绿",
+        "依赖门禁:runner 一旦 import engine 就红,撤掉即绿",
+        "依赖门禁:gen 一旦 import engine / runner / replay 就红,撤掉即绿",
+        "依赖门禁:engine 运行时一旦 import 第二个内建模块就红,撤掉即绿",
+        "格式门禁:未格式化的文件被拦下,由 oxfmt 修好后放行",
+        "参赛脚本的编译配置在格式门禁的覆盖范围内:它排版坏掉就红,按字节还原 → 绿",
+        "lint 门禁:被禁写法被拦下,改正后放行",
+        "类型感知门禁:tsc 编得过的类型级违规让 gate:types 红,撤掉即绿",
+      ],
+    },
+    {
+      why: "oxlint 插件规则:被测试物是 packages/tools/src/rules/ 下的一整套规则,不是单道门禁实现",
+      titles: [
+        "测试纪律门禁:集中测试 / 禁用测试 / 用例体内无断言各自变红,还原后放行",
+        "测试纪律门禁:断言写在用例体之外 → 变红(它属于每条用例的前提时除外)",
+        "测试纪律门禁:抛了异常但不检查消息变红,补上期望消息后放行",
+        "条件跳过(skipIf / runIf)的现有用法不被测试纪律的三条规则命中",
+      ],
+    },
+    {
+      why: "生成器与生成物:一次改动同时涉及生成器、真源与产物树,按实现文件缩只会给出错的安全感",
+      titles: [
+        "生成物漂移检查:改真源不重跑 → 变红,重跑并提交 → 变绿",
+        "生成物漂移检查:生成物被删 → 变红,还原 → 变绿",
+        "生成物漂移检查:生成物被手改 → 变红,按字节还原 → 变绿",
+        "生成物漂移检查:新增一件生成物但没进版本库 → 变红",
+        "生成物漂移检查:工作树里有与生成物无关的未提交内容时不误报",
+        "生成物漂移检查挂在全量门禁末尾,且不进快门禁",
+        "生成物漂移检查:区块形态——改正文、删整段、改标记都判红,改散文不管",
+        "生成器:区块正文被手改后重跑 → 填回去且不动散文;标记没了则拒绝硬填",
+        "生成物漂移检查:规则文档数值表——改取值不重跑 → 变红,两份文档同时说话,还原 → 变绿",
+        "生成物漂移检查:手改数值表区块正文 → 变红,手改表外散文 → 内容判定沉默,还原 → 变绿",
+        "生成物漂移检查:API 表区块——改真源不重跑 → 变红,手改区块正文 → 变红,还原 → 变绿",
+      ],
+    },
+    {
+      why: "散文真源:被测试物是整仓散文与 rules-doc-prose.ts 两处,表里没有它的文件级映射(改它时整族跑,方向是多跑)",
+      titles: [
+        "散文禁抄取值门禁:静态陈述变红,还原变绿",
+        "散文禁抄取值门禁:变更记账(旧值 → 新值)放行",
+        "散文禁抄取值门禁:抽不出参数名时按失败处理(空转反例)",
+        "散文禁抄取值门禁挂在 gate:static,且没被挪进按需 / 慢链",
+      ],
+    },
+    {
+      why: "入库产物与自证:门禁比对的另一半是磁盘上的产物 / 清单,失败点常在产物侧而不在实现文件侧;且它们按需或挂在全量末尾,不进常跑链",
+      titles: [
+        "基准产物门禁:入库的产物与源码分叉 → 变红,按字节还原 → 变绿",
+        "基准产物门禁挂在全量门禁末尾,且不进快门禁",
+        "runtime bundle 门禁:手改入库产物一个字节 → 红,按字节还原 → 绿",
+        "runtime bundle 门禁挂在全量门禁末尾,且不进快门禁",
+        "rootfs 门禁:清单与磁盘双向比对(少一份红、多一份也红、还原即绿)",
+        "契约自证门禁按需跑:不在 check 里,但有独立入口与反例覆盖",
+      ],
+    },
+    {
+      why: "分层事实:断言的是 vitest.config.ts 的 project 划分——一份配置,不是某个门禁实现",
+      titles: [
+        "gates 不在 unit 的拾取范围里(否则 check 会套娃成叉炸弹)",
+        "真 bwrap 的用例不在常跑入口上(sandbox project)",
+        "慢的那一半(slow project)不被任何常跑入口拾取",
+      ],
+    },
+    {
+      why: "版本耦合:被测试物是 toolchain-coupling.ts 与仓库根的版本钉,表里没有这条文件级映射",
+      titles: ["工具版本耦合断言:配套为 0,错位为 1"],
+    },
+    {
+      why: "变异与扫描:被测试物是 stryker 配置、入库基线与几个只在按需入口上的脚本",
+      titles: [
+        "Stryker 分片清单与配置同名:已播种的片有入库基线与串了棘轮门禁的入口脚本",
+        "engine-processor 分片仍限定结算管线,且棘轮不设绝对阈值",
+        "属性测试(*.prop.ts)不进任何分片的变异范围:它们是测试,不是生产代码",
+        "抬基线命令在场,但不在任何流水线、常跑入口、末尾复核组与变异入口上",
+        "变异诊断入口在场,但不在任何常跑入口与流水线上,且不改判据",
+        "测试纪律规则的诊断入口在场,但不在任何常跑入口与流水线上,且不改判据",
+        "三个观测入口都在场,但不在任何常跑入口与流水线上,且不改判据",
+        "反例:抬基线命令被塞进 quick → 断言红,还原 → 绿(纯文本,不真改 package.json)",
+        "跑完变异入口的棘轮比较后,入库基线的字节不变",
+        "真实跑一次 mutate:replay 之后,stryker/baseline/replay.json 的字节逐字不变",
+        "抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线",
+        "抬基线命令只抬本分片:指到别的分片的基线上 → 非零,且那份文件原样不动",
+        "棘轮门禁:低一分夹具 → 红,等于/高于 → 绿,无基线 → 首次,判不了 → 红",
+      ],
+    },
+  ];
+
+  it("反方向:每条用例要么命中一个模式,要么登记在「没有归属」名单里", () => {
+    const names = caseNames();
+    expect(names.length, `没从 ${GATES_TEST} 抽出用例名`).toBeGreaterThan(50);
+
+    // 模式引自表,不在这里另拄一份:上一条断言已经验过它们都活着。
+    const patterns = [...new Set(Object.values(GATES_CASES).flat())].sort();
+
+    // 名单本身不许腐烂:非空、每组都写了理由、组内非空、没有重复登记。
+    expect(UNATTRIBUTED_CASES.length, "名单空了:这条断言会静默成立").toBeGreaterThan(0);
+    const registered: string[] = [];
+    for (const group of UNATTRIBUTED_CASES) {
+      expect(group.why.length, "有一条理由等于没写").toBeGreaterThan(10);
+      expect(group.titles.length, `${group.why} 下面一条用例都没有`).toBeGreaterThan(0);
+      registered.push(...group.titles);
+    }
+    const duplicated = registered.filter((title, index) => registered.indexOf(title) !== index);
+    expect(duplicated, `这些用例被登记了两次:${duplicated.join(", ")}`).toEqual([]);
+
+    // 登记的名字必须真的存在于用例集合里:改名 / 删用例之后留下的幽灵条目会让人以为它还被盯着。
+    const ghosts = registered.filter((title) => !names.includes(title));
+    expect(ghosts, `名单里的这些用例在 ${GATES_TEST} 里不存在:${ghosts.join(", ")}`).toEqual([]);
+
+    // 反方向的主体:漏一条新的未归类用例,这里就红。
+    const matches = (name: string): boolean =>
+      patterns.some((pattern) => new RegExp(pattern, "u").test(name));
+    const unclassified = names.filter((name) => !matches(name) && !registered.includes(name));
+    expect(
+      unclassified,
+      "这些用例既没命中任何 -t 模式,也没登记为「没有归属」——改对应的门禁实现时它们不会被执行:" +
+        `\n  ${unclassified.join("\n  ")}`,
+    ).toEqual([]);
+
+    // 反向的反向:登记成"没有归属"却已经被某个模式命中 = 名单里的一句假话,该删掉。
+    const stale = registered.filter(matches);
+    expect(stale, `这些用例其实已经有 -t 归属了,从名单里删掉:${stale.join(", ")}`).toEqual([]);
   });
 
   it("计划里真的带上了模式(runsFor 把它填进 RunItem,执行时才变成 -t)", () => {

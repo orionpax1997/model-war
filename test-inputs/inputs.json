@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "fingerprint": "ff18ce3733928acd",
+  "fingerprint": "647cd0ff22d299d4",
   "files": {
     "apps/cli/src/agent-session-archive.test.ts": [
       "packages/tools/src/ast.ts",
@@ -1784,11 +1784,20 @@
       "packages/replay/tsconfig.json",
       "packages/runner/tsconfig.json",
       "packages/schema/tsconfig.json",
-      "packages/tools/tsconfig.json",
-      "vitest.config.ts"
+      "packages/tools/tsconfig.json"
     ],
     "packages/tools/src/scope/test-inputs.test.ts": [
+      "apps/cli/tsconfig.json",
+      "packages/engine/tsconfig.json",
+      "packages/gen/tsconfig.json",
+      "packages/replay/tsconfig.json",
+      "packages/runner/tsconfig.json",
+      "packages/schema/tsconfig.json",
       "packages/tools/src/scope/recorder.ts",
+      "packages/tools/src/scope/run-inputs.ts",
+      "packages/tools/src/scope/test-inputs.ts",
+      "packages/tools/tsconfig.json",
+      "test-inputs/inputs.json",
       "vitest.config.ts",
       "vitest.record-inputs.setup.ts"
     ],
@@ -1803,6 +1812,8 @@
       "packages/schema/tsconfig.json",
       "packages/tools/src/gates.test.ts",
       "packages/tools/src/scope/recorder.ts",
+      "packages/tools/src/scope/run-inputs.ts",
+      "packages/tools/src/scope/test-inputs.ts",
       "packages/tools/tsconfig.json",
       "test-inputs/inputs.json",
       "vitest.config.ts",

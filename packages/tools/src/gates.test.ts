@@ -2072,20 +2072,65 @@ it.each([
 
 // ── 反递归不变量 ─────────────────────────────────────────────────────────────
 
+/**
+ * 一个 project 实际拾取到的**文件**列——归属判据的唯一入参。
+ *
+ * 判据不能是「原始输出里有没有这个字符串」:`vitest list` 的一行是
+ * `[<project>] <文件路径> > <用例标题>`,标题是自由文本,而本仓库就有用例把
+ * `gates-slow.test.ts` 写进标题(`scope/test-layers.test.ts` 里那条归属用例),
+ * 于是 substring 判据被一条无关标题污染成「文件被收进去了」的假阳性。所以这里只取文件那一列,
+ * 并且按**整条路径**比较,不是子串。
+ *
+ * 用 `--filesOnly` 而不是从带标题的行里切 ` > `:整个文件都被 `it.skipIf(...)` 包住时,
+ * 按用例名列举一条都不出(见下面 sandbox 那一节),拿它当缺席证据会得出反向结论。
+ * 解析不出来就抛——静默跳过等于把这条判据关掉。
+ */
+const collectedFiles = (() => {
+  const cache = new Map<string, readonly string[]>();
+  return (project: string): readonly string[] => {
+    const cached = cache.get(project);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const listed = run("pnpm", ["exec", "vitest", "list", "--filesOnly", "--project", project]);
+    if (listed.status !== 0) {
+      throw new Error(
+        `\`vitest list --project ${project}\` 没跑通(退出码 ${listed.status}):\n${listed.output}`,
+      );
+    }
+    const files = listed.output
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => {
+        const [, lineProject = "", file = ""] = /^\[([^\]]+)\] (\S.*)$/.exec(line) ?? [];
+        if (lineProject !== project || file === "") {
+          throw new Error(
+            `解析不出 \`vitest list\` 的这一行(期望 \`[${project}] <文件路径>\`):${line}`,
+          );
+        }
+        return file;
+      });
+    if (files.length === 0) {
+      throw new Error(`\`vitest list --project ${project}\` 一个文件都没拾取到,列举本身失效了`);
+    }
+    cache.set(project, files);
+    return files;
+  };
+})();
+
 it("gates 不在 unit 的拾取范围里(否则 check 会套娃成叉炸弹)", () => {
   // 现状一旦破掉,后果是 check → 本文件 → check → 本文件 的无限套娃,
   // 而且它只在有人手工跑 check 时才发作,前面所有门禁全绿也拦不住。
   // 所以在这里显式断言一次:拿 vitest 自己的拾取结果当证据,不去猜 include 的匹配语义。
-  const listed = run("pnpm", ["exec", "vitest", "list", "--project", "unit"]);
-  expect(listed.status, listed.output).toBe(0);
-  expect(listed.output, "gates.test.ts 被 unit 收进去了,check 会无限套娃").not.toContain(
-    "gates.test.ts",
-  );
+  const unitFiles = collectedFiles("unit");
+  expect(
+    unitFiles,
+    `gates.test.ts 被 unit 收进去了,check 会无限套娃:\n${unitFiles.join("\n")}`,
+  ).not.toContain("packages/tools/src/gates.test.ts");
 
   // 顺带确认另一侧真的收进去了:排除过头和没排除是同一种失败。
-  const gatesListed = run("pnpm", ["exec", "vitest", "list", "--project", "gates"]);
-  expect(gatesListed.status, gatesListed.output).toBe(0);
-  expect(gatesListed.output, gatesListed.output).toContain("gates.test.ts");
+  const gatesFiles = collectedFiles("gates");
+  expect(gatesFiles, gatesFiles.join("\n")).toContain("packages/tools/src/gates.test.ts");
 });
 
 it("真 bwrap 的用例不在常跑入口上(sandbox project)", () => {
@@ -2100,22 +2145,20 @@ it("真 bwrap 的用例不在常跑入口上(sandbox project)", () => {
   // 这里按**文件**列(`--filesOnly`),不按用例名列:被 `it.skipIf(...)` 包着的用例在默认的
   // 名字列举里一条都不出现(实测),而 `gen-cli.test.ts` 整条都由 `skipIf` 包着——恰好是那种
   // 「列举不到」的文件,用它做缺席证据会得出反向结论。
-  const filesOf = (project: string): string => {
-    const listed = run("pnpm", ["exec", "vitest", "list", "--filesOnly", "--project", project]);
-    expect(listed.status, listed.output).toBe(0);
-    return listed.output;
-  };
-  const paths = ["agent-real-session.test.ts", "gen-cli.test.ts"] as const;
+  const paths = [
+    "apps/cli/src/agent-real-session.test.ts",
+    "apps/cli/src/gen-cli.test.ts",
+  ] as const;
   for (const project of ["unit", "property", "gates", "slow"] as const) {
-    const listed = filesOf(project);
+    const files = collectedFiles(project);
     for (const path of paths) {
-      expect(listed, `${path} 被 ${project} 收进去了`).not.toContain(path);
+      expect(files, `${path} 被 ${project} 收进去了:\n${files.join("\n")}`).not.toContain(path);
     }
   }
   // 反面证据:它们确实被自己的 project 收着(排除过头与没排除是同一种失败)。
-  const sandboxListed = filesOf("sandbox");
+  const sandboxFiles = collectedFiles("sandbox");
   for (const path of paths) {
-    expect(sandboxListed, `${path} 没被 sandbox 收着`).toContain(path);
+    expect(sandboxFiles, `${path} 没被 sandbox 收着:\n${sandboxFiles.join("\n")}`).toContain(path);
   }
 
   // 默认 `test` 也不带它,而它的入口是命名脚本 `verify:kernel`:
@@ -2133,9 +2176,8 @@ it("真 bwrap 的用例不在常跑入口上(sandbox project)", () => {
   ).toContain("--project sandbox");
 
   // 同时确认它的**假执行器孪生**还在常跑链上:移走不等于丢掉覆盖。
-  const unitListed = run("pnpm", ["exec", "vitest", "list", "--project", "unit"]);
-  expect(unitListed.status, unitListed.output).toBe(0);
-  expect(unitListed.output, unitListed.output).toContain("agent-session-archive.test.ts");
+  const unitFiles = collectedFiles("unit");
+  expect(unitFiles, unitFiles.join("\n")).toContain("apps/cli/src/agent-session-archive.test.ts");
 });
 
 it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
@@ -2143,16 +2185,14 @@ it("慢的那一半(slow project)不被任何常跑入口拾取", () => {
   // 一旦被 `check` 里的 `vitest run --project unit` 收进去,后果同样是套娃,而且同样
   // 只在有人手工跑 check 时才发作。所以这里对三个常跑 project 各断言一次。
   for (const project of ["unit", "property", "gates"] as const) {
-    const listed = run("pnpm", ["exec", "vitest", "list", "--project", project]);
-    expect(listed.status, listed.output).toBe(0);
-    expect(listed.output, `gates-slow.test.ts 被 ${project} 收进去了`).not.toContain(
-      "gates-slow.test.ts",
+    const files = collectedFiles(project);
+    expect(files, `gates-slow.test.ts 被 ${project} 收进去了:\n${files.join("\n")}`).not.toContain(
+      "packages/tools/src/gates-slow.test.ts",
     );
   }
   // 反面证据:它确实被自己的 project 收着(排除过头与没排除是同一种失败)。
-  const slowListed = run("pnpm", ["exec", "vitest", "list", "--project", "slow"]);
-  expect(slowListed.status, slowListed.output).toBe(0);
-  expect(slowListed.output, slowListed.output).toContain("gates-slow.test.ts");
+  const slowFiles = collectedFiles("slow");
+  expect(slowFiles, slowFiles.join("\n")).toContain("packages/tools/src/gates-slow.test.ts");
 
   // 默认 `test` 只跑快速的 unit + property;门禁自测与慢 project 都有独立入口。
   // 用显式 `--project` 列举而不是靠默认拾取规则,所以这里断言列举本身。
