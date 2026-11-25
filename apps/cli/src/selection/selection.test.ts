@@ -176,7 +176,9 @@ it(
   },
 );
 
-it("预定环境或外部候选身份错配在真实对局之前拒绝", () => {
+// 这条 spawn 真的跑一遍 CLI:即使它在对局之前就拒绝,起进程 + 加载 schema/runner 也已在负载高时
+// 实测 5.3–6.1s。默认 5s 会把「跑不完」报成「断言失败」,两件事的处方相反。
+it("预定环境或外部候选身份错配在真实对局之前拒绝", { timeout: 30000 }, () => {
   const f = fixture(["function loop() {}\n", "function loop() {}\n", "function loop() {}\n"]);
   writeFileSync(f.candidates[1]!.sourcePath, "provider-private");
   const ran = f.run([], f);
