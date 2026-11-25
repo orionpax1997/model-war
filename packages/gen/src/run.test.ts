@@ -119,7 +119,7 @@ it("顺利路径:一次 evaluate 出成绩就冻结,退出码 0", { timeout: 30_
       agentPrompt: PROMPT,
       workspaceDir,
       maxSteps: 2,
-      // 试跑与计划桩:验的是编排层,不是网格本身(真网格在 `gate:gen-grid` 那一侧)。
+      // 试跑与计划桩:验的是编排层,不是网格本身(真网格在 `gen-cli.test.ts` 那一侧)。
       // 桩写的是形状真实的一整张网格——候选的入场券就是「32 场一场不少」。
       trial: completeGridTrial(),
       trialPlan: () => gridPlanFixture(),
@@ -235,7 +235,7 @@ it("一批两模型一败一成:退出码非零,但成功那个照旧冻结", { 
       agentPrompt: PROMPT,
       workspaceDir,
       maxSteps: 2,
-      // 试跑与计划桩:验的是编排层,不是网格本身(真网格在 `gate:gen-grid` 那一侧)。
+      // 试跑与计划桩:验的是编排层,不是网格本身(真网格在 `gen-cli.test.ts` 那一侧)。
       // 桩写的是形状真实的一整张网格——候选的入场券就是「32 场一场不少」。
       trial: completeGridTrial(),
       trialPlan: () => gridPlanFixture(),

@@ -40,6 +40,7 @@ import {
   unobservedGap,
   unobservedHalves,
 } from "./check.js";
+import { scriptProjects } from "./plan.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
 import {
   classifyInput,
@@ -59,6 +60,73 @@ const manifest = (): { scripts: Record<string, string> } =>
   };
 
 const unexplainable = (paths: readonly string[]): string => `\n  ${paths.join("\n  ")}`;
+
+/** `packages/tools/src` 下所有门禁实现(`run-*-gate.ts`)。文件名是这条判据唯一的入参。 */
+const gateEntries = (): readonly string[] =>
+  readdirSync(join(repoRoot, "packages/tools/src"), { recursive: true, encoding: "utf8" })
+    .map((name) => name.split(sep).join("/"))
+    .filter((name) => /(?:^|\/)run-[a-z0-9-]+-gate\.ts$/u.test(name))
+    .map((name) => `packages/tools/src/${name}`)
+    .sort();
+
+/** 一条命令行里 `node --run <名字>` 的引用。与 `plan.ts` 的 `SCRIPT_REF` 同一条写法。 */
+const runRefsIn = (body: string): readonly string[] =>
+  [...body.matchAll(/node --run ([A-Za-z0-9:_-]+)/gu)].map((match) => match[1] as string);
+
+/** 一条命令行里被**裸路径**引用的门禁实现。(`node --run gate:<名字>` 那种不算裸路径。) */
+const inlinedGatesIn = (body: string): readonly string[] =>
+  [...body.matchAll(/packages\/tools\/src\/[^\s"'&|]*-gate\.ts/gu)].map(
+    (match) => match[0] as string,
+  );
+
+/**
+ * 判据①**组合门禁必须只拼有名字的门禁**:命令里既出现 `node --run gate:<别的门禁>`、
+ * 又内联了门禁文件的路径,那道被内联的门禁就没有名字。
+ */
+const mixedCompositeOf = (scripts: Record<string, string>): readonly string[] =>
+  Object.entries(scripts)
+    .filter(([name]) => name.startsWith("gate:"))
+    .map(([name, body]) => ({
+      name,
+      inlined: inlinedGatesIn(body),
+      composed: runRefsIn(body).filter((ref) => ref.startsWith("gate:")),
+    }))
+    .filter(({ inlined, composed }) => composed.length > 0 && inlined.length > 0)
+    .map(({ name, inlined }) => `${name} 既按名字拼其它门禁、又内联了 ${inlined.join("、")}`);
+
+/**
+ * 判据②**每个 `gate:*` 必须从某个非 `gate:` 脚本传递可达**:不挂在任何链上的门禁写了没人跑。
+ */
+const unchainedGates = (scripts: Record<string, string>): readonly string[] => {
+  const reachable = new Set<string>();
+  for (const root of Object.keys(scripts).filter((name) => !name.startsWith("gate:"))) {
+    for (const name of chainOf(scripts, root)) reachable.add(name);
+  }
+  return Object.keys(scripts)
+    .filter((name) => name.startsWith("gate:"))
+    .filter((gate) => !reachable.has(gate));
+};
+
+/** 判据③**门禁实现不许是孤儿**:没有任何脚本引用的 `run-*-gate.ts` 一行都不会执行。 */
+const orphanGates = (
+  scripts: Record<string, string>,
+  files: readonly string[],
+): readonly string[] => {
+  const bodies = Object.values(scripts).join("\n");
+  return files.filter((file) => !bodies.includes(file));
+};
+
+/** 从 `name` 出发做传递闭包(环引用不死循环:走过的名字就停)。 */
+const chainOf = (scripts: Record<string, string>, name: string): ReadonlySet<string> => {
+  const walked = new Set<string>();
+  const walk = (script: string): void => {
+    if (walked.has(script) || scripts[script] === undefined) return;
+    walked.add(script);
+    for (const ref of runRefsIn(scripts[script] as string)) walk(ref);
+  };
+  walk(name);
+  return walked;
+};
 
 const decideOn = (paths: readonly string[]) => decide({ paths, workspaces, exists: built });
 
@@ -472,6 +540,74 @@ describe("链的组成:编辑循环窄,收口宽", () => {
       );
       expect(covered, `没有任何 test*/verify* 脚本会跑 project ${project}`).toBe(true);
     }
+  });
+
+  /**
+   * **门禁的命名与链的纪律**:一道门禁要么自己有 `gate:*` 名,要么它本来就是那条链的入口名
+   * (`mutate:<分片>` / `observe:*` 这类脚本自己就是唯一入口)。三种病这里各有一条判据:
+   *
+   * 1. **组合门禁不许内联门禁文件的路径。** `gate:static` 把八道静态门禁拼起来,八个名字都在;
+   *    裸路径内联进去的那一道既跑不动单道(只能整条链跑),清单里也看不出这条链里有几道判据
+   *    ——`gate:ignored-inputs` 就是这么补出来的。
+   * 2. **`gate:*` 必须从某个非 `gate:` 脚本传递可达**(跟随 `node --run`)。不挂在任何链上的
+   *    门禁等于写了没人跑,而「没人跑」不会以红的形式显形——`gate:gen-grid` 就是这么烂掉的。
+   * 3. **门禁实现不许是孤儿**:没人引用的 `run-*-gate.ts` 一行都不会执行。
+   *
+   * 盲区写在这里而不是藏着:「门禁被内联进 `verify:wide` 这种非 `gate:` 链」第 1 条拦不住
+   * (它会跑,只是没有名字)。那种形状今天不存在,而真要拦它得给 `-gate.ts` 定一套命名法,
+   * 那属于另一张票。
+   */
+  it("每道门禁都有 `gate:*` 名:组合门禁只拼有名字的门禁,不内联门禁文件的路径", () => {
+    // 单道门禁不受这一条约束:它自己那个 `gate:` 名字就是这道门禁的名字(`gate:no-float` 的
+    // 命令行就是一条裸路径)。被拦的是**组合**脚本里夹着的那一道。
+    expect(
+      mixedCompositeOf(manifest().scripts),
+      "这些 gate:* 脚本把门禁内联进了组合链:每道门禁先有自己的 gate:<名字>,再由组合脚本按名字拼",
+    ).toEqual([]);
+  });
+
+  it("每个 `gate:*` 脚本都在某条链上(从非 gate 脚本可达)", () => {
+    const { scripts } = manifest();
+    expect(
+      Object.keys(scripts).filter((name) => name.startsWith("gate:")).length,
+      "一道 gate:* 都没数到:下面那句空集检查会静默成立",
+    ).toBeGreaterThan(15);
+    expect(unchainedGates(scripts), "这些 gate:* 不在任何链上:写了没人跑,而没人跑不会红").toEqual(
+      [],
+    );
+  });
+
+  it("每个门禁实现至少被一条命名脚本引用(不写没人跑的门禁)", () => {
+    const files = gateEntries();
+    expect(files.length, "一个门禁实现都没数到:下面的孤儿检查会静默成立").toBeGreaterThan(15);
+    expect(
+      orphanGates(manifest().scripts, files),
+      "这些 run-*-gate.ts 没有任何脚本引用:它们永远不会被跑",
+    ).toEqual([]);
+  });
+
+  /**
+   * **三条判据的反例都会红。** 只读 `package.json` 的断言最容易写成的形状就是「恒空」:正则写错
+   * 一个字符,`mixedCompositeOf` 永远返回 `[]`,而它看起来比谁都绿。所以喂一张人造脚本表。
+   *
+   * 表里三处病各自独立:`gate:composite` 既拼名字又内联路径(判据①)、`gate:lonely` 谁都不引用
+   * (判据②)、`gate/run-x-gate.ts` 没有任何脚本指向(判据③)。
+   */
+  it("反例真的会红(人造脚本表上点名三处病)", () => {
+    const synthetic: Record<string, string> = {
+      quick: "node --run gate:no-float && node --run gate:composite",
+      "gate:no-float": "node packages/tools/src/gate/run-no-float-gate.ts",
+      "gate:composite":
+        "node --run gate:no-float && node packages/tools/src/scope/run-ignored-inputs-gate.ts",
+      "gate:lonely": "node packages/tools/src/gate/run-x-gate.ts",
+    };
+    expect(mixedCompositeOf(synthetic)).toEqual([
+      "gate:composite 既按名字拼其它门禁、又内联了 packages/tools/src/scope/run-ignored-inputs-gate.ts",
+    ]);
+    expect(unchainedGates(synthetic)).toEqual(["gate:lonely"]);
+    expect(
+      orphanGates(synthetic, ["packages/tools/src/gate/run-no-float-gate.ts", "x/run-y-gate.ts"]),
+    ).toEqual(["x/run-y-gate.ts"]);
   });
 });
 
@@ -1215,6 +1351,23 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
       expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(true);
     },
   );
+
+  /**
+   * **真网格 32 场那条腿的家,从 `gate:gen-grid` 挪到了 `gen-cli.test.ts`。**
+   *
+   * 删掉 `gate:gen-grid` 的理由写在 hld §2.2.7 与那次提交里,不在这里重复。这里钉的是
+   * **替代品还在夜间可达链上**——`gen-cli.test.ts` 归 `sandbox` 族(上一条用例钉族归属),
+   * 而 `sandbox` 族只由 `test:kernel` 拾取,`test:kernel` 在 `verify:kernel` 里,
+   * `verify:kernel` 在 `nightly` 里。判据读的是 `package.json` 的 `nightly` 内容并**展开跟随**
+   * `node --run`(不读文档、不抄链):链中间少一环,这里就红。
+   */
+  it("真网格 32 场的接住方在 nightly 可达链上(sandbox 族 ← test:kernel ← verify:kernel ← nightly)", () => {
+    const { scripts } = manifest();
+    expect(
+      [...scriptProjects(scripts, "nightly")],
+      "nightly 走不到 sandbox 族:真网格那条腿、以及真 bwrap 的会话用例从此没人跑",
+    ).toContain("sandbox");
+  });
 
   it("`decide([packages/tools/src/ci.test.ts])` 不含 test:gates(本票的起因)", () => {
     const decision = decideOn(["packages/tools/src/ci.test.ts"]);

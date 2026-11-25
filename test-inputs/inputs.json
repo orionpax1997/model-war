@@ -1394,7 +1394,6 @@
       "packages/tools/src/gates-harness.ts",
       "packages/tools/src/gates-slow.test.ts",
       "packages/tools/src/gates.test.ts",
-      "packages/tools/src/gen-grid/run-gen-grid-gate.ts",
       "packages/tools/src/generate/api-surface.ts",
       "packages/tools/src/generate/artifact.ts",
       "packages/tools/src/generate/builtin-globals.ts",
