@@ -18,24 +18,26 @@ node apps/cli/dist/modelwar.mjs --help
 
 对局配置写在 `season.yaml`(模板 `season.example.yaml`)。生成管线要调模型时才读 `.env` 的 `COMMAND_CODE_API_KEY`(gitignored,值不进任何文档);其余开发与门禁都不需要它。
 
-`archive/`(冻结脚本存档)同样不入库,而真会话的 `evaluate` 与 `gate:gen-grid` 都要读**四份钉死的陪练存档**(`packages/schema/src/trial-plan.ts` 的 `TRIAL_SPARRING_LADDER`)。干净克隆 / 新 worktree 上跑这两条之前先把存档拷进来:
+`archive/`(冻结脚本存档)同样不入库,但**测试不需要它**:要陪练脚本字节的用例读各自包里的入库副本(`packages/runner/src/fixtures/archive/` 与 `apps/cli/src/fixtures/archive/`)。副本是逐字节裁下来的(摘要钉的是字节,裁了就换了一张网格),所以干净克隆 / 新 worktree 上 `node --run test` 全绿、跳过 0——有没有本机档,读数一样。
+
+根 `archive/` 只服务**真会话**:真跑 `modelwar gen` 时那次 `evaluate` 要读**四份钉死的陪练存档**(`packages/schema/src/trial-plan.ts` 的 `TRIAL_SPARRING_LADDER` + `TRIAL_SPARRING_SUBSTITUTE`)。干净克隆 / 新 worktree 上要真跑一次生成之前,先把存档拷进来:
 
 ```
 cp -a <有存档的仓库>/archive/. ./archive/
 ```
 
-缺档不会静默降级成代位:陪练摘要是钉死的,换一份就换一张网格,所以它指名一份硬失败(`docs/hld.md` §2.2.7 是这条归属的家)。
+缺档不会被静默顶替:四份陪练的身份与摘要钉死在 schema 里,换一份就换一张网格,所以缺哪一份就**指名哪一份硬失败**,不拿别的档凑数(唯一写明的例外是首次生成时「在位」那一席的代位档——那一条会在计划的 `source` 里带上 `#substitute`,不是静默降级)。判据在 `packages/runner/src/sparring-pool.ts`:摘要现算不信记录,不符即拒,拒绝理由带角色、模型、运行标识与期望 / 实际摘要。
 
 ## 文档
 
-| 文档 | 拥有 |
-|---|---|
-| [CONTEXT.md](CONTEXT.md) | 领域词汇与容易误用的概念 |
-| [docs/vision.md](docs/vision.md) | 定位、服务对象、核心差异、非目标与产品取舍、长期风险 |
-| [docs/gdd.md](docs/gdd.md) | 玩法设计意图、不可从代码推导的约束、规则侧决策记录 |
-| [docs/hld.md](docs/hld.md) | 架构边界、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 |
-| [docs/adr/](docs/adr/) | 决策记录(含 [索引](docs/adr/README.md)) |
-| [docs/rules-v2/](docs/rules-v2/) | **面向模型的契约**(生成物,不手改;取值真源在 `rulesets/`) |
+| 文档                             | 拥有                                                             |
+| -------------------------------- | ---------------------------------------------------------------- |
+| [CONTEXT.md](CONTEXT.md)         | 领域词汇与容易误用的概念                                         |
+| [docs/vision.md](docs/vision.md) | 定位、服务对象、核心差异、非目标与产品取舍、长期风险             |
+| [docs/gdd.md](docs/gdd.md)       | 玩法设计意图、不可从代码推导的约束、规则侧决策记录               |
+| [docs/hld.md](docs/hld.md)       | 架构边界、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 |
+| [docs/adr/](docs/adr/)           | 决策记录(含 [索引](docs/adr/README.md))                          |
+| [docs/rules-v2/](docs/rules-v2/) | **面向模型的契约**(生成物,不手改;取值真源在 `rulesets/`)         |
 
 **代码是真源,但契约不是可删的**:`docs/rules-v2/` 是模型唯一能读到的规则输入,相当于公开 API 文档——它由代码、schema 与 `rulesets/` 生成,并由漂移门禁(`pnpm run gate:drift`)保证不漂移。
 
@@ -43,20 +45,20 @@ cp -a <有存档的仓库>/archive/. ./archive/
 
 ## 仓库地图
 
-| 位置 | 装什么 |
-|---|---|
-| apps/cli | `modelwar` 唯一用户面,只做路由 |
+| 位置            | 装什么                                          |
+| --------------- | ----------------------------------------------- |
+| apps/cli        | `modelwar` 唯一用户面,只做路由                  |
 | packages/schema | 类型 / 常量 / 参数 key / JSON Schema 的唯一真源 |
-| packages/engine | 确定性内核 + quickjs-wasi 沙箱 |
-| packages/replay | 回放格式与 stateHash 原语 |
-| packages/runner | 赛季调度、进程池、排名、报告、叙事战报 |
-| packages/gen | 脚本生成管线(唯一联网包,永不进对局进程) |
-| packages/tools | 仓库自用门禁脚本与生成器(以源码执行,不进 dist) |
-| rulesets/ | 参数取值真源 `rulesets/*.json` |
-| benchmarks/ | 基准脚本:模型仅凭契约盲写、真引擎跑通的对照脚本 |
-| archive/ | 冻结脚本与校验失败记录 |
-| maps/ | 对局地图;runs/ 是对局产物(gitignored,可重生成) |
-| probes/ | 上游缺陷的一次性复现探针 |
+| packages/engine | 确定性内核 + quickjs-wasi 沙箱                  |
+| packages/replay | 回放格式与 stateHash 原语                       |
+| packages/runner | 赛季调度、进程池、排名、报告、叙事战报          |
+| packages/gen    | 脚本生成管线(唯一联网包,永不进对局进程)         |
+| packages/tools  | 仓库自用门禁脚本与生成器(以源码执行,不进 dist)  |
+| rulesets/       | 参数取值真源 `rulesets/*.json`                  |
+| benchmarks/     | 基准脚本:模型仅凭契约盲写、真引擎跑通的对照脚本 |
+| archive/        | 冻结脚本与校验失败记录                          |
+| maps/           | 对局地图;runs/ 是对局产物(gitignored,可重生成)  |
+| probes/         | 上游缺陷的一次性复现探针                        |
 
 ## 工作约定
 
