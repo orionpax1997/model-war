@@ -225,6 +225,51 @@ describe("classify:六种状态", () => {
     expect(messageOf(missing)).toContain("读不到");
     expect(messageOf(empty)).toContain("确知为零");
   });
+
+  /**
+   * **“落点用不了”与“路径写在 tmpdir 外”是两件事,处方相反。**
+   *
+   * - 路径不在 tmpdir = **调用方写错了**(探针不许往仓库里写文件):这是编程错误,该抛,
+   *   修的是调用点。它由 `assertUnderTemp` 管,不属六态里的任何一格。
+   * - 路径在 tmpdir、那个位置却写不出来(目录被占 / 无权限)= **环境**:探针这道判据这一次
+   *   确实问不出答案,那就是 `no-report`。抛出去会把「未知」伪装成「工具坏了」。
+   *
+   * 落点是一个被普通文件占住的“目录”:不依赖文件权限位,任何 uid 下都是同一个形状
+   * (无权限的 EACCES 也是同一格,只是 root 下不成立)。
+   */
+  it("落点在 tmpdir 内但写不出去 → no-report,且消息与 no-tests 不同", () => {
+    const dir = mkdtempSync(join(tmpdir(), "modelwar-related-probe-occupied-"));
+    const occupied = join(dir, "occupied");
+    writeFileSync(occupied, "占位\n");
+    try {
+      const outcome = probeRelated({
+        repoRoot,
+        paths: [SMALL_TARGET],
+        project: "all",
+        reportPath: join(occupied, "report.json"),
+      });
+      expect(outcome.kind).toBe("no-report");
+      // 进程压根没起:退出码是「无」,不是某个红过的码。
+      expect(outcome.kind === "no-report" ? outcome.exit : "?").toBeNull();
+      expect(isRed(outcome)).toBe(true);
+      expect(messageOf(outcome)).not.toBe(messageOf({ kind: "no-tests" }));
+      expect(messageOf(outcome)).toContain("读不到");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("落点在 tmpdir 外 → 仍然抛错(那是调用方写错了,不是环境)", () => {
+    for (const reportPath of [
+      join(repoRoot, "related-probe-report.json"),
+      join(repoRoot, "packages", "tools", "report.json"),
+    ]) {
+      expect(() =>
+        probeRelated({ repoRoot, paths: [SMALL_TARGET], project: "all", reportPath }),
+      ).toThrow(/tmpdir/u);
+      expect(existsSync(reportPath), `探针在仓库里留了文件:${reportPath}`).toBe(false);
+    }
+  });
 });
 
 describe("真探针:报告是唯一的判据", () => {

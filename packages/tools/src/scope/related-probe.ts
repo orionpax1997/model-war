@@ -25,7 +25,7 @@
  * | `no-tests`        | 确知为零                               | 红:补用例或登记 coverage-debt |
  * | `all-skipped`     | 选中的全部 `skip`                      | 红:跳过不是证据               |
  * | `failed`          | 选中且红了                             | 红:`test:related` 本身红      |
- * | `no-report`       | 报告缺失 / 不可解析 / 进程没跑起来     | 红:未知不是绿                 |
+ * | `no-report`       | 报告缺失 / 不可写 / 不可解析 / 进程没跑起来 | 红:未知不是绿            |
  *
  * 最后两条的区别是**知道**与**不知道**,不是程度差别:`no-tests` 是"报告说 0 条",
  * `no-report` 是"没有报告可读"。两者都红,但消息不同(见 `messageOf`),因为处方不同——
@@ -210,6 +210,22 @@ const assertUnderTemp = (path: string): void => {
   }
 };
 
+/**
+ * 清掉落点上可能残留的报告。**返回 `false` = 这个落点这次用不了**
+ * (目录被占 / 无权限 / 那个名字本身是个目录)。
+ *
+ * 失败不能“尽力而为地跳过”:那里躺着的是**上一次**的报告,读出来会把「问不出答案」判成
+ * 别人的结论——比报错坏得多。所以清不掉就提前收手,如实分类成 `no-report`。
+ */
+const clearReport = (path: string): boolean => {
+  try {
+    rmSync(path, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export interface ProbeInput {
   /** 仓库根(报告里的绝对路径靠它相对化)。 */
   readonly repoRoot: string;
@@ -230,9 +246,13 @@ export interface ProbeInput {
 export const probeRelated = (input: ProbeInput): ProbeOutcome => {
   const owned = input.reportPath === undefined;
   const reportPath = input.reportPath ?? tempReportPath();
+  // 路径不在 tmpdir = **调用方写错了**,照旧抛(见 `assertUnderTemp`)。这与下面那条不同:
+  // 「在 tmpdir 里写不出来」是环境的事,不是编程错误。
   assertUnderTemp(reportPath);
+  // 落点用不了(目录被占 / 无权限):真相是「读不到报告」而不是「零候选」。
+  // 这条不归 `no-tests` 管,两者的处方相反:一个要补用例,一个要先修探针。
+  if (!clearReport(reportPath)) return { kind: "no-report", exit: null };
   try {
-    rmSync(reportPath, { force: true });
     const result = spawnSync(
       process.execPath,
       [
@@ -258,7 +278,8 @@ export const probeRelated = (input: ProbeInput): ProbeOutcome => {
     const report = json === undefined ? undefined : parseReport(json, input.repoRoot);
     return classify(report, STRUCTURAL_TESTS, result.status);
   } finally {
-    rmSync(reportPath, { force: true });
+    // 清理是尽力而为:判据已经算完,清理失败不改结论(最坏是 tmpdir 里多留一个文件)。
+    clearReport(reportPath);
     if (owned) rmSync(dirname(reportPath), { recursive: true, force: true });
   }
 };
