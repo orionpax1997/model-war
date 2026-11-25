@@ -1,7 +1,7 @@
 /**
- * 门禁:**测试不许依赖 git 忽略的本机状态**(挂在 `gate:static` 快链上)。
+ * 门禁:**测试不许依赖 git 忽略的本机状态**(`gate:ignored-inputs`,由 `gate:static` 快链组合)。
  *
- * 用法:`node packages/tools/src/scope/run-ignored-inputs-gate.ts`
+ * 用法:`node --run gate:ignored-inputs`(或 `node packages/tools/src/scope/run-ignored-inputs-gate.ts`)
  *
  * ── 四条判据(判据层在 `ignored-inputs.ts`,纯函数) ──
  * ① 把 `test-inputs/inputs.json` 的每一条观测输入过一遍 `git check-ignore --stdin --no-index`;
@@ -17,7 +17,7 @@
  * (ADR-0038 第三条),所以判据跟着行为走:以后有人新写一个读 `archive/` 的测试,他那一跑
  * 会往 map 里落一条,这道门禁下一次就点名——不需要谁记得回来加名单。
  *
- * ── 为什么在 `gate:static` 上 ──
+ * ── 为什么有 `gate:ignored-inputs` 这个名字,为什么挂在 `gate:static` 上 ──
  * 零构建、不 spawn 测试:一次 `git check-ignore`(全部路径一次过 stdin)+ 读两份入库 JSON
  * (外加每条登记那一行源码),1s 级。与「入库事实的漂移」同一族(cf. `gate:rootfs`),PR 上就能拦住。
  *

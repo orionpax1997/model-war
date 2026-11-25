@@ -4,8 +4,8 @@
  * ── 为什么落 `unit` 而不是 `gates` ──
  * 它一条测试都不 spawn(只读两份入库 JSON、过一遍 `git check-ignore`、读几行源码),
  * 放在 `packages/tools/src/scope/` 就落进 `unit`,跟着默认链 `pnpm run test` 在 PR 上生效,
- * 而不是等人想起 `pnpm run test:gates`。门禁入口本身(`run-ignored-inputs-gate.ts`)在
- * `gate:static` 上;两侧跑的是同一份判据,这里额外负责「反例真的会红」。
+ * 而不是等人想起 `pnpm run test:gates`。门禁入口本身有名字(`gate:ignored-inputs`),由
+ * `gate:static` 组合;两侧跑的是同一份判据,这里额外负责「反例真的会红」。
  *
  * ── 这一份盯的是什么 ──
  * 1. **两类不许一刀切**:派生必须放行,本机状态必须红。
@@ -15,7 +15,7 @@
  * 3. **登记表口径**:幽灵条目(行号漂了 / 字面量不在 / 文件没了)、过期条目(不再覆盖任何命中)、
  *    空理由,三种都红。
  * 4. **入库事实**:真实 map + 真实登记表 + 真实 git 判下来是干净的;派生白名单非空、每条探针
- *    今天仍被忽略;并且这道门禁真的挂在 `gate:static` 上。
+ *    今天仍被忽略;并且这道门禁有自己的 `gate:*` 名、且真的被 `gate:static` 组合进去。
  *
  * ── 反例为什么改文本而不改文件 ──
  * 与 `gate/vacuous.test.ts` 同一条纪律:反例要能现做现验,但不该把仓库树弄脏。所以幽灵 /
@@ -341,17 +341,24 @@ describe("入库事实:真实 map + 真实登记表 + 真实 git", () => {
     }
   });
 
-  it("门禁挂在 gate:static 上(快链),且没被挪进按需链", () => {
+  it("门禁有自己的 gate:* 名,被 gate:static 组合进快链,且没被挪进按需链", () => {
     const manifest = JSON.parse(read("package.json")) as {
       scripts?: Record<string, string>;
     };
     const scripts = manifest.scripts ?? {};
-    expect(scripts["gate:static"] ?? "", "门禁不在 gate:static 里").toContain(
+    // 名字是「单独跑这一道」的唯一入口:裸路径内联进 gate:static 时它没有名字,
+    // 清单里看不出这条链里有几道判据,也跑不动单道。
+    expect(scripts["gate:ignored-inputs"] ?? "", "门禁没有自己的 gate:* 名").toContain(
       "packages/tools/src/scope/run-ignored-inputs-gate.ts",
     );
-    // 它不进 check 自己的链:选择器不为一道静态门禁付一次进程钱(判据住在脚本清单里)。
-    expect(scripts["check"] ?? "", "门禁被塞进了 check").not.toContain(
+    expect(scripts["gate:static"] ?? "", "门禁不在 gate:static 里").toContain(
+      "node --run gate:ignored-inputs",
+    );
+    // 复合脚本里只剩名字:路径只许出现在它自己那条脚本里。
+    expect(scripts["gate:static"] ?? "", "gate:static 又内联了门禁的裸路径").not.toContain(
       "run-ignored-inputs-gate.ts",
     );
+    // 它不进 check 自己的链:选择器不为一道静态门禁付一次进程钱(判据住在脚本清单里)。
+    expect(scripts["check"] ?? "", "门禁被塞进了 check").not.toContain("gate:ignored-inputs");
   });
 });
