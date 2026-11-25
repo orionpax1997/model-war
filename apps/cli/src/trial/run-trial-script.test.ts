@@ -8,47 +8,43 @@
  * 「入口这一层」：缺参数怎么退、`--plan` 打印什么、预期计划不符时退出 2 并指名哪一处、以及
  * 什么都不写（不覆盖既有证据）。
  *
- * ── 为什么 `--plan` 那两条要 `skipIf` ──
+ * ── `--plan` 那两条读的是入库 fixture，不是本机 `archive/` ──
  *
- * 造计划要把四份陪练解析到 `archive/<slug>/<runId>/script.js` 并比对**钉死的内容摘要**。
- * 夹具造不出「摘要刚好等于钉死值」的字节（那正是摘要的意义），所以这两条只在本地有真存档时跑；
- * 计划的形状与摘要覆盖由 `packages/runner/src/trial-plan.test.ts` 无盘覆盖。
+ * 造计划要把四份陪练解析到 `archive/<slug>/<runId>/script.js` 并比对**钉死的内容摘要**，而
+ * `archive/` 不入库：此前这两条靠 `it.skipIf(!archivePresent)` 在本机跑、在干净克隆与 CI 上
+ * 静默跳过（不是断言弱，是零条断言）。现在四份 `script.js` 的**逐字节副本**入库在
+ * `apps/cli/src/fixtures/archive/`（见那里的 README：摘要钉的是字节，所以不能裁剪），
+ * 由 `sparringInstallRoot` 拼成一个只差档案的安装根，两条用例在任何机器上都跑、结论逐字相同。
+ * 计划形状本身的覆盖仍在 `packages/runner/src/trial-plan.test.ts`。
  */
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, expect, it } from "vitest";
 import {
-  RULESET_VERSION,
   TRIAL_GRID_MAP_NAMES,
   TRIAL_GRID_SEED_BASE,
   TRIAL_MATCHES_PER_CANDIDATE,
   TRIAL_SPARRING_LADDER,
+  TRIAL_SPARRING_SUBSTITUTE,
   type JsonValue,
   type TrialPlan,
 } from "@model-war/schema";
 import { hashOf } from "@model-war/runner";
 
+import { sparringInstallRoot } from "../sparring-fixture.js";
+
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-trial-entry-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-const archivePresent = TRIAL_SPARRING_LADDER.every((identity) =>
-  existsSync(join(repoRoot, "archive", identity.id, identity.runId, "script.js")),
-);
+/** 装得起四份陪练的安装根：除 `archive/`（那里只有入库 fixture）之外全部指回仓库。 */
+const fixtureRoot = sparringInstallRoot({ scratch, sparring: "fixture" });
 
 const invoke = (args: readonly string[]) =>
   spawnSync(
@@ -58,23 +54,12 @@ const invoke = (args: readonly string[]) =>
   );
 
 /** 一个**没有归档陪练**的安装面：四份陪练缺档，装载必须指名失败而不是静默降级。 */
-const installWithoutSparring = (): string => {
-  const root = mkdtempSync(join(scratch, "root-"));
-  for (const name of ["packages", "node_modules", "maps", "apps"]) {
-    symlinkSync(join(repoRoot, name), join(root, name), "dir");
-  }
-  mkdirSync(join(root, "rulesets"));
-  writeFileSync(
-    join(root, "rulesets", `${RULESET_VERSION}.json`),
-    readFileSync(join(repoRoot, "rulesets", `${RULESET_VERSION}.json`)),
-  );
-  return root;
-};
+const installWithoutSparring = (): string => sparringInstallRoot({ scratch, sparring: "none" });
 
 const MODEL = "gpt-6.1-sol";
 
 it("缺 --model 即退出 2 并给出用法：在位陪练随模型而定，不能猜", () => {
-  const result = invoke(["--plan", "--root", repoRoot]);
+  const result = invoke(["--plan", "--root", fixtureRoot]);
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(2);
   expect(result.stdout).toBe("");
@@ -83,7 +68,7 @@ it("缺 --model 即退出 2 并给出用法：在位陪练随模型而定，不�
 });
 
 it("缺候选产物即退出 2 并给出用法", () => {
-  const result = invoke(["--root", repoRoot, "--model", MODEL]);
+  const result = invoke(["--root", fixtureRoot, "--model", MODEL]);
   expect(result.status).toBe(2);
   expect(result.stdout).toBe("");
   expect(result.stderr).toContain("缺候选产物参数");
@@ -114,11 +99,11 @@ it("陪练缺档即退出 2 并指名是哪一份：装载失败不是计划、�
   expect(existsSync(observations)).toBe(false);
 });
 
-it.skipIf(!archivePresent)(
+it(
   "--plan 打印网格计划：32 场、两张图、四份角色限定陪练、摘要可由正文复算，两次逐字相同",
   { timeout: 60_000 },
   () => {
-    const first = invoke(["--plan", "--root", repoRoot, "--model", MODEL]);
+    const first = invoke(["--plan", "--root", fixtureRoot, "--model", MODEL]);
     expect(first.error).toBeUndefined();
     expect(first.status, first.stderr).toBe(0);
     const plan = JSON.parse(first.stdout) as TrialPlan;
@@ -144,6 +129,16 @@ it.skipIf(!archivePresent)(
       expect(script.source.startsWith("archive:")).toBe(true);
       expect(script.scriptSha256).toMatch(/^[0-9a-f]{64}$/);
     }
+    // 来源与摘要逐份对上 fixture：三份榜单档按钉死身份，在位走代位（fixture 里**没有**候选模型
+    // 自己的档，所以这条分支在任何机器上都一样，不随本机 `archive/` 有无而变）。
+    expect(plan.scripts.map((script) => script.source)).toEqual([
+      ...TRIAL_SPARRING_LADDER.map((identity) => `archive:${identity.id}/${identity.runId}`),
+      `archive:${TRIAL_SPARRING_SUBSTITUTE.id}/${TRIAL_SPARRING_SUBSTITUTE.runId}#substitute`,
+    ]);
+    expect(plan.scripts.map((script) => script.scriptSha256)).toEqual([
+      ...TRIAL_SPARRING_LADDER.map((identity) => identity.scriptSha256),
+      TRIAL_SPARRING_SUBSTITUTE.scriptSha256,
+    ]);
     // 候选四个座位各 8 场；每张图 16 场。
     const seats = new Map<number, number>();
     const maps = new Map<string, number>();
@@ -156,16 +151,16 @@ it.skipIf(!archivePresent)(
     // 摘要只覆盖正文：剥掉它再复算必须逐字相等；同一次安装面两次打印逐字相同。
     const { planSha256, ...body } = plan;
     expect(planSha256).toBe(hashOf(JSON.parse(JSON.stringify(body)) as JsonValue));
-    const second = invoke(["--plan", "--root", repoRoot, "--model", MODEL]);
+    const second = invoke(["--plan", "--root", fixtureRoot, "--model", MODEL]);
     expect(second.stdout).toBe(first.stdout);
   },
 );
 
-it.skipIf(!archivePresent)(
+it(
   "--expected-plan 与现场事实不符 → 退出 2、指名具体路径、一个字都不写",
   { timeout: 60_000 },
   () => {
-    const printed = invoke(["--plan", "--root", repoRoot, "--model", MODEL]);
+    const printed = invoke(["--plan", "--root", fixtureRoot, "--model", MODEL]);
     expect(printed.status, printed.stderr).toBe(0);
     const plan = JSON.parse(printed.stdout) as TrialPlan;
     const candidatePath = join(scratch, "candidate.js");
@@ -181,7 +176,7 @@ it.skipIf(!archivePresent)(
     const ran = invoke([
       candidatePath,
       "--root",
-      repoRoot,
+      fixtureRoot,
       "--model",
       MODEL,
       "--observations",
@@ -206,7 +201,7 @@ it.skipIf(!archivePresent)(
     const rehashed = invoke([
       candidatePath,
       "--root",
-      repoRoot,
+      fixtureRoot,
       "--model",
       MODEL,
       "--observations",

@@ -15,15 +15,7 @@
  */
 
 import { createHash } from "node:crypto";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,7 +47,6 @@ import { buildArchiveGridSelection } from "./selection-grid.js";
 import { trialGridPlanFixture } from "./trial-grid.fixture.js";
 import { trialMatchInputSha256 } from "./trial-plan.js";
 
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "modelwar-report-v2-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const rootOf = (): string => mkdtempSync(join(scratch, "root-"));
@@ -708,29 +699,37 @@ it("同一 root 下 v1 与 v2 存档同时出报告（两版分流，互不误�
   expect(markdown).toContain("选拔计划：v1");
 });
 
-const realV1 = join(repoRoot, "archive", "claude-opus-5-5", "2026-10-16T08-40-12-578Z");
-it.skipIf(!existsSync(join(realV1, "meta.json")))(
-  "真实 v1 档（本地有才跑）：照原形状出报告，存档字节不变",
-  { timeout: 30_000 },
-  () => {
-    const metaPath = join(realV1, "meta.json");
-    const before = readFileSync(metaPath);
-    const reports = readArchiveReports(repoRoot, { model: "claude-opus-5-5" });
-    const report = reports.find((entry) => entry.runId === "2026-10-16T08-40-12-578Z");
-    expect(report?.plan).toBeNull();
-    expect(report?.selection?.version).toBe(1);
-    expect(report?.selection?.plan.kind).toBe("legacy-selection");
-    expect(report?.scores.map((score) => score.generation.state)).toEqual([
-      "not-applicable",
-      "not-applicable",
-      "not-applicable",
-    ]);
-    expect(report?.scores.map((score) => score.season.state)).toEqual([
-      "not-applicable",
-      "not-applicable",
-      "not-applicable",
-    ]);
-    expect(report?.scores.map((score) => score.selection.countedMatches)).toEqual([12, 12, 12]);
-    expect(readFileSync(metaPath)).toEqual(before);
-  },
+/**
+ * v1 历史档的入库副本：`fixtures/archive/legacy-v1-selection/` 是
+ * `archive/claude-haiku-5-5/2026-10-13T13-48-45-710Z` 的瘦身副本（来源与改写清单见那里的 README）。
+ *
+ * 这里读的是**副本**而不是本机 `archive/`：同一份断言在有没有本机档案的机器上都跑，读数也不分叉。
+ */
+const V1_FIXTURE_ROOT = fileURLToPath(
+  new URL("./fixtures/archive/legacy-v1-selection", import.meta.url),
 );
+const V1_FIXTURE_MODEL = "fixture-v1-selection";
+const V1_FIXTURE_RUN = "2026-01-01T00-00-00-001Z";
+
+it("v1 历史档（入库副本）：照原形状出报告，且读侧不改写档案字节", () => {
+  const metaPath = join(V1_FIXTURE_ROOT, "archive", V1_FIXTURE_MODEL, V1_FIXTURE_RUN, "meta.json");
+  const before = readFileSync(metaPath);
+  const reports = readArchiveReports(V1_FIXTURE_ROOT, { model: V1_FIXTURE_MODEL });
+  const report = reports.find((entry) => entry.runId === V1_FIXTURE_RUN);
+  expect(report?.plan).toBeNull();
+  expect(report?.selection?.version).toBe(1);
+  expect(report?.selection?.plan.kind).toBe("legacy-selection");
+  expect(report?.scores.map((score) => score.generation.state)).toEqual([
+    "not-applicable",
+    "not-applicable",
+    "not-applicable",
+  ]);
+  expect(report?.scores.map((score) => score.season.state)).toEqual([
+    "not-applicable",
+    "not-applicable",
+    "not-applicable",
+  ]);
+  expect(report?.scores.map((score) => score.selection.countedMatches)).toEqual([12, 12, 12]);
+  // 读侧只读不写：入库副本被写坏等于仓库里的凭据被写坏，所以这条断言在副本上比在本机档案上更该有。
+  expect(readFileSync(metaPath)).toEqual(before);
+});

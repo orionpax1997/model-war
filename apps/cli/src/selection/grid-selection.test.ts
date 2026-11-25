@@ -6,21 +6,15 @@
  * 谁跑出来的读数都要过那几关。夹具写的观测行用的是执行器同一个渲染器（`trialObservationLines`），
  * 所以「生成阶段的行」与「复算的行」是同一种东西。
  *
- * 真安装面（`archive/` 四份陪练档）在本机存在时才跑一次真子进程 e2e（`skipIf`）：它跑的是
- * 同一份计划、真实引擎与真实协议，代价是 32 场复算；`archive/` 不入库，别的机器上跳过。
+ * 真安装面（`archive/` 四份陪练档）跑一次真子进程 e2e：它跑的是同一份计划、真实引擎与
+ * 真实协议，代价是 32 场复算。`archive/` 不入库，所以安装面由入库 fixture 拼（见
+ * `sparring-fixture.ts`）：四份 `script.js` 的逐字节副本，`--plan` 那一条因此在干净克隆与 CI 上
+ * 也跑，而不是 `skipIf` 静默跳过。
  */
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +40,7 @@ import {
 } from "@model-war/runner";
 
 import { gridSummaryPathOf, writeTrialGridSummary } from "../trial/grid.js";
+import { sparringInstallRoot } from "../sparring-fixture.js";
 import { trialObservationLines, writeTrialObservations } from "../trial/observations.js";
 import {
   executeGridSelection,
@@ -436,10 +431,8 @@ it("--validate 只校不跑：记录被改（逐场摘要 / 分数 / 胜者）�
   ).toThrow(/不同源/);
 });
 
-/** 真安装面（`archive/`）在不在：不在就跳过真子进程用例（`archive/` 不入库）。 */
-const archivePresent = TRIAL_SPARRING_LADDER.every((identity) =>
-  existsSync(join(repoRoot, "archive", identity.id, identity.runId, "script.js")),
-);
+/** 装得起四份陪练的安装根：除 `archive/`（那里只有入库 fixture）之外全部指回仓库。 */
+const fixtureRoot = sparringInstallRoot({ scratch, sparring: "fixture" });
 
 const MODEL = "gpt-6.1-sol";
 
@@ -474,7 +467,7 @@ it(
   },
 );
 
-it.skipIf(!archivePresent)(
+it(
   "--plan 打印的是生成阶段那张网格（32 场、四份角色限定陪练、两张图、逐格种子）",
   { timeout: 60_000 },
   () => {
@@ -483,7 +476,7 @@ it.skipIf(!archivePresent)(
       [
         join(repoRoot, "apps/cli/dist/selection/run-selection.js"),
         "--root",
-        repoRoot,
+        fixtureRoot,
         "--plan",
         "--model",
         MODEL,
@@ -509,8 +502,18 @@ it.skipIf(!archivePresent)(
     expect(printedPlan.scripts.every((script) => script.id.startsWith(`${script.role}:`))).toBe(
       true,
     );
+    // 来源与摘要逐份对上 fixture：三份榜单档按钉死身份，在位走代位（fixture 里**没有**候选模型
+    // 自己的档，所以这条分支在任何机器上都一样，不随本机 `archive/` 有无而变）。
+    expect(printedPlan.scripts.map((script) => script.source)).toEqual([
+      ...TRIAL_SPARRING_LADDER.map((identity) => `archive:${identity.id}/${identity.runId}`),
+      `archive:${TRIAL_SPARRING_SUBSTITUTE.id}/${TRIAL_SPARRING_SUBSTITUTE.runId}#substitute`,
+    ]);
+    expect(printedPlan.scripts.map((script) => script.scriptSha256)).toEqual([
+      ...TRIAL_SPARRING_LADDER.map((identity) => identity.scriptSha256),
+      TRIAL_SPARRING_SUBSTITUTE.scriptSha256,
+    ]);
     // 同一安装面两次构造的计划逐字相同（计划由事实派生，没有随机成分）。
-    expect(planForGridSelection(repoRoot, MODEL)).toEqual(printedPlan);
+    expect(planForGridSelection(fixtureRoot, MODEL)).toEqual(printedPlan);
   },
 );
 

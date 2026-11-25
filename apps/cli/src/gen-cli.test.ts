@@ -13,8 +13,11 @@
  * 混成一条红。所以它和那条真会话一起归 `sandbox`(`pnpm run verify:kernel` 的 `--project sandbox`)。
  *
  * 这条归属是**被内核探针抓出来的**(`vitest.kernel-guard.setup.ts` 落地后的第一例):在此之前它
- * 一直挂在 `unit` 上,而 `it.skipIf(!archivePresent)` 让它在「没有冻档的机器」上静默 skip——
+ * 一直挂在 `unit` 上,而且靠 `it.skipIf(!archivePresent)` 让它在「没有冻档的机器」上静默 skip——
  * `archive/` 不入库,于是本机与 CI 两边都不报红,一条要内核能力的用例就这么藏住了。
+ *
+ * 那四份陪练 `script.js` 现在入库在 `apps/cli/src/fixtures/archive/`(逐字节副本,摘要钉的就是
+ * 字节),`mkRoot` 只从那里取,所以本文件不再有任何 `skipIf`:在任何机器上两条都跑。
  *
  * ── 移走不等于丢掉覆盖 ──
  *
@@ -74,6 +77,8 @@ import {
 } from "@model-war/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { sparringScriptPathIn } from "./sparring-fixture.js";
+
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const entry = fileURLToPath(new URL("./index.ts", import.meta.url));
 
@@ -104,16 +109,12 @@ const AGENT_SYSTEM_TEMPLATE = "# 协议:每一步一次工具调用\n\n恰好一
 const VALID_SCRIPT = `var ticks = 0;\nfunction loop() {\n  ticks += 1;\n  return ticks;\n}\n`;
 
 /**
- * 评测网格要四份**真存档陪练**（钉死内容摘要），而 `archive/` 不入库：没有本地冻结档案的机器上
- * 这两条端到端跑不起来（陪练池装载会明确拒绝，这正是它该做的事）。所以按仓库既有纪律
- * （`sparring-pool.test.ts` 同款）显式跳过，而不是把摘要校验放宽成「有就用」。
+ * 评测网格要四份**真存档陪练**（钉死内容摘要）。它们的 `script.js` 字节入库在
+ * `apps/cli/src/fixtures/archive/`（来源与「为什么不能裁剪」写在那里的 README），所以本文件
+ * 读 fixture 而不读仓库根的 `archive/`——后者不入库，过去让这两条在干净克隆与 CI 上静默 skip。
  */
 const substituteSlug = TRIAL_SPARRING_SUBSTITUTE.id;
 const substituteRunId = TRIAL_SPARRING_SUBSTITUTE.runId;
-const archivePresent = [
-  ...TRIAL_SPARRING_LADDER.map((identity) => [identity.id, identity.runId] as const),
-  [substituteSlug, substituteRunId] as const,
-].every(([slug, runId]) => existsSync(join(repoRoot, "archive", slug, runId, "script.js")));
 
 /** 本次冒烟用的假凭证环境变量:取唯一名,避免与宿主已有变量撞车(loadEnvFile 不该依赖覆盖语义)。 */
 const CREDENTIAL_ENV_VAR = `GEN_CLI_SMOKE_KEY_${String(Date.now())}`;
@@ -251,18 +252,19 @@ const mkRoot = (baseUrl: string): string => {
   symlinkSync(join(repoRoot, "benchmarks"), join(root, "benchmarks"), "dir");
   // 四份存档陪练：只把 `script.js` 符号链接进来（**不要**链接整个 archive 目录——
   // 那是读盘面的根，gen 会往 `<root>/archive/<slug>/` 里写候选与证据）。
+  // 源是**入库 fixture**，不是仓库根的 `archive/`（后者不入库，见文件头注）。
   for (const identity of TRIAL_SPARRING_LADDER) {
     const dir = join(root, "archive", identity.id, identity.runId);
     mkdirSync(dir, { recursive: true });
     symlinkSync(
-      join(repoRoot, "archive", identity.id, identity.runId, "script.js"),
+      sparringScriptPathIn({ slug: identity.id, runId: identity.runId }),
       join(dir, "script.js"),
     );
   }
   const substituteDir = join(root, "archive", substituteSlug, substituteRunId);
   mkdirSync(substituteDir, { recursive: true });
   symlinkSync(
-    join(repoRoot, "archive", substituteSlug, substituteRunId, "script.js"),
+    sparringScriptPathIn({ slug: substituteSlug, runId: substituteRunId }),
     join(substituteDir, "script.js"),
   );
 
@@ -345,7 +347,7 @@ const runCli = (
     });
   });
 
-it.skipIf(!archivePresent)(
+it(
   "冒烟:假端点后端到端跑通一次会话(真网格 32 场,有候选即成功档)",
   { timeout: 120_000 },
   async () => {
@@ -489,7 +491,7 @@ it.skipIf(!archivePresent)(
 /** 死循环惯犯：过得了 tsc 与静态校验，但每 tick 必然触碰事件计数上限。 */
 const HABITUAL_SCRIPT = `function loop() {\n  while (true) {\n  }\n}\n`;
 
-it.skipIf(!archivePresent)(
+it(
   "试跑拦下惯犯:死循环脚本退出非零,失败记录分类 contract 且诊断含试跑明细",
   { timeout: 120_000 },
   async () => {
