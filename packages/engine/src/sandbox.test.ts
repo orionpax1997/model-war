@@ -1,8 +1,17 @@
 /**
  * 真沙箱路径的集成验收。
  *
- * 它与 `determinism.test.ts` 的四条用例**同口径**(那里跑桩策略,这里跑真 QuickJS VM):
- * 十次重跑逐 tick `stateHash` 全等、十列不是常量、回放可复算、反向自证。
+ * 它与 `determinism.test.ts` 的四条用例是**同一组不变量、两种执行器**(那里跑桩策略,这里跑真
+ * QuickJS VM):逐 tick `stateHash` 全等、列不是常量、回放可复算、反向自证。
+ *
+ * 重跑次数两边**不同**(桩侧十次、这里三次),这不是口径分叉:「同口径」指的是被验的不变量,
+ * 不是那个循环上限。每次重跑都新造四个 VM 与一份全新引擎状态(`handle.dispose()` 逐个释放,
+ * 局与局之间没有可累积的东西),于是「第四次以后才分岔」这类缺陷没有生长的地方;而宿主真钟、
+ * 宿主随机这类真正的非确定性源**第二次就会分岔**——下面那条反向自证正是靠这一点才成立。
+ * 一局真 VM 约 6.7s,桩侧一局 0.8s 且是 hld §11 点名的验收落点,所以十次留在桩侧。
+ *
+ * 另外三条用例要的「第一场回放」「列不是常量」「单位真的动了」都在同一批标准场里,它们原本
+ * 各自再跑一局——同一份入参跑第二遍买到的不是证据。现在这批场只跑一次,三条共用。
  *
  * ── 为什么夹具是入库的脚本、而不是一次性探针 ──
  *
@@ -118,31 +127,66 @@ const runOnce = async (scriptCode: string, clockMs: number): Promise<readonly Re
   return lines.map((line) => JSON.parse(line) as ReplayLine);
 };
 
-it("真沙箱:同配置重跑 10 次,每 tick 的 stateHash 十列全等(与桩路径同口径)", async () => {
-  const columns: (readonly string[])[] = [];
-  for (let run = 0; run < 10; run++) {
-    const parsed = await runOnce(MARCH_SCRIPT, WASI_CLOCK_MS);
-    // 1 + tickLimit + 1:meta + 每个 tick 一行 + result。
-    expect(parsed).toHaveLength(1 + RULESET.tickLimit + 1);
-    columns.push(stateHashesOf(parsed));
+/** 标准场的重跑次数(理由见文件头注:次数随执行器成本走,不变量不随次数变)。 */
+const REPEAT_RUNS = 3;
+
+let repeated: readonly (readonly ReplayLine[])[] | undefined;
+
+/**
+ * 标准场(同一份脚本、同一份冻钟)的 `REPEAT_RUNS` 次重跑,只跑一次。
+ *
+ * 后三条用例要的「第一场回放」与「第二次执行」都从这批里取,不再各自重跑。`-t` 单跑某一条时
+ * 缓存为空,走的仍是真的 `runOnce`。
+ */
+const repeatedRuns = async (): Promise<readonly (readonly ReplayLine[])[]> => {
+  if (repeated !== undefined) {
+    return repeated;
   }
-  const first = columns[0];
-  expect(first).toHaveLength(RULESET.tickLimit);
-  for (const [run, column] of columns.entries()) {
-    expect(column, `第 ${String(run + 1)} 次重跑的 stateHash 列与第一次不一致`).toEqual(first);
+  const runs: (readonly ReplayLine[])[] = [];
+  for (let run = 0; run < REPEAT_RUNS; run++) {
+    const parsed = await runOnce(MARCH_SCRIPT, WASI_CLOCK_MS);
+    // 1 + tickLimit + 1:meta + 每个 tick 一行 + result。少一格就说明某一 tick 没写出来。
+    expect(parsed).toHaveLength(1 + RULESET.tickLimit + 1);
+    runs.push(parsed);
+  }
+  repeated = runs;
+  return runs;
+};
+
+it("真沙箱:同配置重跑 3 次,每 tick 的 stateHash 列全等(与桩路径同一不变量)", async () => {
+  const [first, ...rest] = await repeatedRuns();
+  if (first === undefined) {
+    throw new Error("重跑没有产出任何一场");
+  }
+  const firstColumn = stateHashesOf(first);
+  expect(firstColumn).toHaveLength(RULESET.tickLimit);
+  // 逐列比:不是「第一列像」,是每一列都与第一列相等。任何一列与别的列岔开,这里就红。
+  for (const [run, parsed] of rest.entries()) {
+    expect(
+      stateHashesOf(parsed),
+      `第 ${String(run + 2)} 次重跑的 stateHash 列与第一次不一致`,
+    ).toEqual(firstColumn);
   }
 }, 240_000);
 
-it("真沙箱:那十列不是一片常量", async () => {
-  const column = stateHashesOf(await runOnce(MARCH_SCRIPT, WASI_CLOCK_MS));
-  expect(new Set(column).size).toBeGreaterThan(1);
+it("真沙箱:那些列不是一片常量", async () => {
+  // 「全等」若发生在「每 tick 哈希都一样」的退化回放上,它证明不了什么。
+  const [first] = await repeatedRuns();
+  if (first === undefined) {
+    throw new Error("重跑没有产出任何一场");
+  }
+  expect(new Set(stateHashesOf(first)).size).toBeGreaterThan(1);
 }, 240_000);
 
 it("真沙箱:回放可复算(读回来的哈希列与重新执行逐字相同)", async () => {
-  const landed = await runOnce(MARCH_SCRIPT, WASI_CLOCK_MS);
+  // 第一次跑的行序列化成「已落盘回放」的那一份字节,再解析回来——读盘端手上有的就是它。
+  const [landed, rerun] = await repeatedRuns();
+  if (landed === undefined || rerun === undefined) {
+    throw new Error("重跑场次不足两场");
+  }
   const landedBytes = landed.map((line) => JSON.stringify(line)).join("\n");
   const reparsed = landedBytes.split("\n").map((line) => JSON.parse(line) as ReplayLine);
-  const rerun = await runOnce(MARCH_SCRIPT, WASI_CLOCK_MS);
+  // 两次是独立的执行(第 2 场),所以这条仍然在比「读回来的」与「重新跑的」,不是自己比自己。
   expect(stateHashesOf(reparsed)).toEqual(stateHashesOf(rerun));
 }, 240_000);
 
@@ -155,7 +199,10 @@ it("真沙箱反向自证:换一个冻钟读数,同一条十列断言会红", as
 }, 240_000);
 
 it("真沙箱端到端:脚本产出的意图经步 0 → 校验 → 结算进入状态(单位真的动了)", async () => {
-  const parsed = await runOnce(MARCH_SCRIPT, WASI_CLOCK_MS);
+  const [parsed] = await repeatedRuns();
+  if (parsed === undefined) {
+    throw new Error("重跑没有产出任何一场");
+  }
   const ticks = parsed.filter((line): line is ReplayTickLine => line.type === "tick");
   const firstTick = ticks[0];
   const lastTick = ticks[ticks.length - 1];

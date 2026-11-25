@@ -291,6 +291,9 @@ const BENCH_HEAD = {
   wasiTimezoneOffset: "0",
 } as const;
 
+/** 最近一次 cell-a 整场回放:供下一条复用第 1 场(见那边注释)。 */
+let firstCellA: readonly ReplayLine[] | undefined;
+
 /** 真沙箱跑一场 cell-a:四个座位各一个 VM,规则集灌进 `__setup`;跑完逐个释放。 */
 const runCellA = async (): Promise<readonly ReplayLine[]> => {
   const lines: string[] = [];
@@ -326,6 +329,9 @@ const runCellA = async (): Promise<readonly ReplayLine[]> => {
 
 it("真实基准脚本(cell-a)在沙箱里跑完整场:不报未定义名、产出可复算回放", async () => {
   const parsed = await runCellA();
+  // 下一条要的「第 1 场」就是这一场:同脚本同配置,它只比两次跑是否全等,再跑一遍拿第 1 场
+  // 买到的是重复而不是证据。
+  firstCellA = parsed;
   // meta + tickLimit 个 tick + result:一场跑到底(没有在 loop() 里抛未捕获异常而中断)。
   expect(parsed).toHaveLength(1 + RULESET.tickLimit + 1);
   expect(parsed[0]?.type).toBe("meta");
@@ -336,7 +342,9 @@ it("真实基准脚本(cell-a)在沙箱里跑完整场:不报未定义名、产�
 }, 240_000);
 
 it("真实基准脚本(cell-a)可复算:两次跑逐 tick stateHash 全等", async () => {
-  const first = stateHashesOf(await runCellA());
+  // 第 1 场复用上一条那一次真实执行(单跑本条时它是 `undefined`,走真跑);第 2 场现跑。
+  // 两次仍然是两次独立执行,不是自己比自己。
+  const first = stateHashesOf(firstCellA ?? (await runCellA()));
   const second = stateHashesOf(await runCellA());
   expect(second).toEqual(first);
 }, 240_000);
