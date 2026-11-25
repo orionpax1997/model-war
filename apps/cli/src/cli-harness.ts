@@ -22,6 +22,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import type { MapDefinition } from "@model-war/schema";
+// 直接 import 入口(ADR-0038 第一条)。两件事:
+// 1. 依赖图上多一条**最直接的边**:测试文件 → 入口源码。跨包的边指向产物(`dist/`),而
+//    `git diff` 给的是 `src/`——所以选择器(scope/)还要把源码展开成产物才看得见跨包依赖;
+//    这条边省掉的那一跳是「包内」。两者互补,不是替代。
+// 2. 让 `runInProcess` 成立:同一条命令面能在同进程里跑,不必为拿一个退出码打一份 bundle。
+// 入口末尾有 `argv[1]` 判定守卫,所以这个 import 不会触发执行。
+import { main } from "./index.js";
 import {
   QUICKJS_WASI_WASM_PATH,
   SANDBOX_RUNTIME_ARTIFACT_PATH,
@@ -39,6 +46,42 @@ export const sha256Hex = (bytes: Buffer | string): string =>
 
 /** 真沙箱 runtime 的实测哈希 = 入库产物字节的 sha256(真源在 `@model-war/schema`,由 gate:runtime 盯住)。 */
 export const sandboxRuntimeHash = SANDBOX_RUNTIME_HASH;
+
+export interface InProcessResult {
+  readonly status: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * 在**同一个进程里**跑一次命令行:断言「命令面的行为」,不付 esbuild 的账。
+ *
+ * 与 `run`(spawn 打好的 bundle)分工:本函数证「解析、路由、退出码、输出」这些行为,
+ * `run` 证「进程边界成立」(退出码真的传出去、bundle 真的打得出来)。
+ *
+ * 捕获方式是替换 `process.stdout/stderr.write`——所以**同一个文件里的用例必须串行**,
+ * 并行会互相截获对方的输出。vitest 的并行单位是文件,文件内的用例默认串行,这个前提成立。
+ */
+export const runInProcess = async (args: readonly string[]): Promise<InProcessResult> => {
+  const out: string[] = [];
+  const err: string[] = [];
+  const realStdout = process.stdout.write.bind(process.stdout);
+  const realStderr = process.stderr.write.bind(process.stderr);
+  process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+    out.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+    err.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    return { status: await main(args), stdout: out.join(""), stderr: err.join("") };
+  } finally {
+    process.stdout.write = realStdout;
+    process.stderr.write = realStderr;
+  }
+};
 
 /** 落库那张开阔对攻图(进程级断言的原料;它本身是合规的)。 */
 export const openMap = (): MapDefinition => JSON.parse(readFileSync(mapPath, "utf8"));

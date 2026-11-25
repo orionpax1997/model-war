@@ -9,6 +9,7 @@
  * 子命令各自解析自己的参数(`--config models.yaml` 之类),本文件不猜它们的选项。
  */
 
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { RULESET_VERSION } from "@model-war/schema";
 import { COMMANDS, findCommand, handlerOf, type CommandSpec } from "./commands.js";
@@ -54,7 +55,19 @@ const splitAtCommand = (argv: readonly string[]): { head: string[]; tail: string
     : { head: argv.slice(0, at), tail: argv.slice(at) };
 };
 
-const main = async (argv: readonly string[]): Promise<number> => {
+/**
+ * 命令面的入口,**可被 import**。返回退出码而不是写 `process.exitCode`。
+ *
+ * 拆成「函数 + 薄壳」是 ADR-0038 的第一条:测试文件 import 它,于是「测试 → 命令面 → 各包
+ * → 引擎」在依赖图上连成一条**真实的边**。在这之前,进程级用例只是 `spawn` 一个路径字符串,
+ * 图上没有边——改引擎的 tick 循环,选择器不会选中任何一个 CLI 用例,而输出是全绿。
+ *
+ * 因此本文件**import 时不得有任何副作用**:跑不跑由文件末尾那条 `argv[1]` 判定决定。
+ * 不用 `import.meta.main`——Node 22 上它是 `undefined`(CI 用的是 22),而 `argv[1]` 的
+ * 路径比较在 22 与 24 上行为一致;打包成单文件后 `import.meta.url` 与 `argv[1]` 都是
+ * 产物路径,判定照样成立。
+ */
+export const main = async (argv: readonly string[]): Promise<number> => {
   const { head, tail } = splitAtCommand(argv);
   const { values } = parseArgs({
     args: head,
@@ -128,9 +141,18 @@ const unknownCommand = (name: string): number => {
   return 1;
 };
 
-try {
-  process.exitCode = await main(process.argv.slice(2));
-} catch (cause) {
-  process.stderr.write(`modelwar: ${cause instanceof Error ? cause.message : String(cause)}\n`);
-  process.exitCode = 1;
+/**
+ * 薄壳:只负责进程边界(取 argv、写退出码、兜住未捕获的异常)。
+ *
+ * 判定用 `argv[1]` 的路径比较:`import.meta.main` 在 Node 22 上是 `undefined`,而本仓 CI 用 22。
+ * 被 import 时这个条件为假,于是「测试通过 import 拿到依赖图上的边」与「真跑一遍进程」这两件事
+ * 互不干扰。
+ */
+if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) {
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (cause) {
+    process.stderr.write(`modelwar: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+    process.exitCode = 1;
+  }
 }
