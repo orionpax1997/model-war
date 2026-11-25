@@ -31,12 +31,12 @@ ADR-0030 把 `/contract` 钉成四条只读文件，但没说清其中两条的�
 
 ### 四条与各自的真源
 
-| 挂载路径 | 源（同一批字节） | 真源 | 谁守 |
-|---|---|---|---|
-| `/contract/README.md` | `docs/rules-v2/README.md` | 手写（模型向） | `gate:contract` + `gate:prose` |
-| `/contract/rules.md` | `docs/rules-v2/rules.md` | 表格区块：取值文件 + 键清单；散文：手写 | `gate:drift` |
-| `/contract/api.md` | `docs/rules-v2/api.md` | 表格区块：注入面符号表、后果行、取值；散文：手写 | `gate:drift` |
-| `/contract/examples/minimal.ts` | `docs/rules-v2/examples/minimal.ts` | `api.md` §6 的 `ts` 围栏块 | `pnpm run generate` + `gate:contract` |
+| 挂载路径                        | 源（同一批字节）                    | 真源                                             | 谁守                                  |
+| ------------------------------- | ----------------------------------- | ------------------------------------------------ | ------------------------------------- |
+| `/contract/README.md`           | `docs/rules-v2/README.md`           | 手写（模型向）                                   | `gate:contract` + `gate:prose`        |
+| `/contract/rules.md`            | `docs/rules-v2/rules.md`            | 表格区块：取值文件 + 键清单；散文：手写          | `gate:drift`                          |
+| `/contract/api.md`              | `docs/rules-v2/api.md`              | 表格区块：注入面符号表、后果行、取值；散文：手写 | `gate:drift`                          |
+| `/contract/examples/minimal.ts` | `docs/rules-v2/examples/minimal.ts` | `api.md` §6 的 `ts` 围栏块                       | `pnpm run generate` + `gate:contract` |
 
 目录说明的读者从此是模型。人向的两条断言各有家，删掉开头的「它为什么不能删」不丢事实：「契约不可删」在 `AGENTS.md` 与根 `README.md`，「自包含：模型仅凭它们即可写出能过校验的脚本」在 hld §6.1；缺的只是那句**理由**（模型读不到代码 ⇒ 契约是投影而非第二套事实），它补进 hld §6.1。
 
