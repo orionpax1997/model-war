@@ -133,7 +133,7 @@ const requestWith = (
   runId: "r1",
   now: () => FIXED_NOW,
   agentPrompt: { user: FIRST_USER, system: SYSTEM },
-  // 试跑桩与计划桩:这些用例验的是 loop 与落档,不是网格本身(真网格在 `gate:gen-grid` 与
+  // 试跑桩与计划桩:这些用例验的是 loop 与落档,不是网格本身(真网格在 `gen-cli.test.ts` 与
   // `agent-real-session` 那一侧)。桩写的是**形状真实**的一整张网格(32 行观测 + 旁挂汇总):
   // 「跑满一场不少」是候选的入场券,写空会把这些用例变成在验一条不存在的路径。
   trial: completeGridTrial(),

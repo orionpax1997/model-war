@@ -46,7 +46,6 @@
     "gate:selfproof": "node --run build && node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "gate:cross-process": "node --disable-warning=ExperimentalWarning packages/tools/src/cross-process/run-cross-process-gate.ts",
     "gate:limits": "node --disable-warning=ExperimentalWarning packages/tools/src/limits/run-limits-gate.ts",
-    "gate:gen-grid": "node --run build && node --disable-warning=ExperimentalWarning packages/tools/src/gen-grid/run-gen-grid-gate.ts",
     "test": "vitest run --project unit --project property",
     "observe:inputs": "node packages/tools/src/scope/run-inputs.ts",
     "observe:inputs:accept": "node packages/tools/src/scope/run-inputs.ts --accept",
@@ -78,7 +77,8 @@
     "mutate:runner": "node --run build && stryker run stryker/runner.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=runner",
     "mutate:tools": "node --run build && stryker run stryker/tools.mjs && node packages/tools/src/mutation/run-mutation-ratchet-gate.ts --shard=tools",
     "mutate:baseline": "node packages/tools/src/mutation/accept-baseline.ts",
-    "gate:static": "node --run gate:toolchain && node --run gate:toolchain:quickjs && node --run gate:prose && node --run gate:contract && node --run gate:prompt:commands && node --run gate:prompt:tools && node --run gate:rootfs && node packages/tools/src/scope/run-ignored-inputs-gate.ts"
+    "gate:ignored-inputs": "node packages/tools/src/scope/run-ignored-inputs-gate.ts",
+    "gate:static": "node --run gate:toolchain && node --run gate:toolchain:quickjs && node --run gate:prose && node --run gate:contract && node --run gate:prompt:commands && node --run gate:prompt:tools && node --run gate:rootfs && node --run gate:ignored-inputs"
   },
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",

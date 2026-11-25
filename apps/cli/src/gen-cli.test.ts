@@ -28,7 +28,9 @@
  *   `agent-session-archive.test.ts` 用**同一份** `withRealBash` 替身验同一条链;
  * - HTTP 适配器真的打了那个端点、带上了 Bearer 鉴权:`packages/gen/src/http/client.test.ts`
  *   直接对着假端点验;
- * - 真网格 32 场跑满:`gate:gen-grid`(它要冻档,所以自己是命名脚本)。
+ * - 真网格 32 场跑满:**本文件上面那两条**(真 bwrap + 真 CLI 子进程 + 真 32 场)。原来这条挂在
+ *   `gate:gen-grid` 上,那条门禁已删除:它读 gitignored 的 `archive/`(干净克隆跑不起来)、桩停在
+ *   代码块协议上(每轮被拒成 `no-tool-call`,kind=failed 却没人跑),又不在任何链上。
  * 本文件不可替代的那一样是「这四层同时在一条 CLI 进程里成立」——它仍然被验,只是在对的那条链上。
  *
  * ── 为什么不给子进程 CLI 注入假执行器 ──

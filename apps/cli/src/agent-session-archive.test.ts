@@ -122,7 +122,7 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
         workspaceDir,
         now: () => new Date(),
         // 试跑桩:形状真实的一整张网格(32 行观测 + 旁挂汇总)。真子进程那张网格由
-        // `gate:gen-grid` 验,这里验的是「有候选 → 成功档 → 报告读得出」。
+        // `gen-cli.test.ts` 验,这里验的是「有候选 → 成功档 → 报告读得出」。
         trial: completeGridTrial(),
         trialPlan: () => gridPlanFixture(),
       },
