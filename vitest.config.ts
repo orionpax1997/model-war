@@ -37,6 +37,46 @@ const SANDBOX_TEST = "apps/cli/src/agent-real-session.test.ts";
  */
 const GEN_CLI_TEST = "apps/cli/src/gen-cli.test.ts";
 
+/**
+ * 进程级 e2e:**spawn 打好的 CLI 单文件产物**,跑真链路(真规则集、真 quickjs-wasi、真回放)。
+ *
+ * 它们不进 `unit` 的理由**不是环境**(不需要 bwrap,CI 上照跑),是**成本**:每一条都要起
+ * 一个子进程、跑满 600 tick。而 `unit` 是编辑循环里被反复调用的那一档,让每次业务改动都付这
+ * 200s 的账,代价是 agent 会开始"写完一起跑"(反馈回路断掉,与 `gate:types` 不进 `verify`
+ * 是同一条理由)。
+ *
+ * 它们证的是"整条链路在一条命令行里成立",这个性质**只有这些用例能证**——所以是分层,不是删除:
+ * 默认 `test` 不含它们,`test:e2e` 单独跑,`verify` 用 `test:all` 一次跑全(并行不丢)。
+ */
+const E2E_TESTS = [
+  "apps/cli/src/cli.test.ts",
+  "apps/cli/src/cli-match.test.ts",
+  "apps/cli/src/cli-benchmark.test.ts",
+  "apps/cli/src/cli-observation.test.ts",
+  "apps/cli/src/cli-season.test.ts",
+  "apps/cli/src/cli-verify.test.ts",
+  "apps/cli/src/selection/selection.test.ts",
+  "apps/cli/src/selection/grid-selection.test.ts",
+  "apps/cli/src/trial/run-trial-script.test.ts",
+  "apps/cli/src/optimization-cli.test.ts",
+];
+
+/**
+ * 进程内真沙箱:**同进程里起 quickjs-wasi VM 跑整场对局**。不起子进程、不要 bwrap。
+ *
+ * 与 `e2e` 同一条理由分开:它们证的是引擎在**真 VM** 上的行为(确定性、预算轨、注入面),
+ * 而不是"命令行能把整条链路串起来"。同样属于"贵但只有它能证",进默认 `test` 会让
+ * 每次业务改动都付 90s。
+ */
+const VM_TESTS = [
+  "packages/engine/src/sandbox.test.ts",
+  "packages/engine/src/sandbox-runtime/api-surface.test.ts",
+  "packages/engine/src/budget-mismatch.test.ts",
+  "packages/engine/src/determinism.test.ts",
+  "packages/engine/src/fixtures/fixtures.test.ts",
+  "packages/engine/src/runner/probe-harness.test.ts",
+];
+
 /** 各 project 通用的排除项:`tsc -b` 会把测试一并编译进各包的 dist,产物绝不能被二次拾取。 */
 const NEVER_TEST = ["**/node_modules/**", "**/dist/**"];
 
@@ -59,10 +99,36 @@ export default defineConfig({
     // 编译产物绝不能被二次拾取(hld §2.2.4 的禁令同样适用于测试范围)。
     projects: [
       {
+        // 收口用的**单池**全量:与 `unit` 同一批文件,但**不**排除 e2e / vm。
+        //
+        // 为什么不直接把四个 project 串在一次 `vitest run` 里(`--project unit --project e2e
+        // --project vm`):实测那样反而慢 7s(74.9s vs 67.9s)——分片会打乱排布,长文件挤在一起
+        // 起跑。收口要的是"少花时间",不是"多一个 project"。
+        // 于是分成两种跑法:`unit`/`e2e`/`vm` 服务**子集**(编辑循环/改到哪跑哪),
+        // `all` + `property` 服务**收口**(`test:all`、`verify`)。
+        //
+        // 同一批文件在两个 project 里出现不是重复定义:`all` 与 `unit ∪ e2e ∪ vm` 是同一个集合,
+        // 由 `packages/tools/src/scope/test-layers.test.ts` 盯着,谁走散就红。
+        test: {
+          name: "all",
+          include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
+          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST, GEN_CLI_TEST],
+          setupFiles: ["./vitest.kernel-guard.setup.ts"],
+        },
+      },
+      {
         test: {
           name: "unit",
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
-          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST, GEN_CLI_TEST],
+          exclude: [
+            ...NEVER_TEST,
+            GATES_TEST,
+            SLOW_TEST,
+            SANDBOX_TEST,
+            GEN_CLI_TEST,
+            ...E2E_TESTS,
+            ...VM_TESTS,
+          ],
           setupFiles: ["./vitest.kernel-guard.setup.ts"],
         },
       },
@@ -100,6 +166,29 @@ export default defineConfig({
           exclude: NEVER_TEST,
           testTimeout: 900_000,
           hookTimeout: 900_000,
+        },
+      },
+      {
+        // 进程级 e2e:打好的 CLI 产物 + 真链路。入口是 `test:e2e`,`verify` 用 `test:all` 带上它。
+        test: {
+          name: "e2e",
+          include: [...E2E_TESTS],
+          exclude: NEVER_TEST,
+          // 一条用例要 spawn 子进程跑满 600 tick,赛季那条要跑 4 局;给足,别让"跑不完"报成"失败"。
+          testTimeout: 300_000,
+          hookTimeout: 300_000,
+          setupFiles: ["./vitest.kernel-guard.setup.ts"],
+        },
+      },
+      {
+        // 进程内真沙箱:同进程起 quickjs-wasi VM 跑整场。入口是 `test:vm`。
+        test: {
+          name: "vm",
+          include: [...VM_TESTS],
+          exclude: NEVER_TEST,
+          testTimeout: 300_000,
+          hookTimeout: 300_000,
+          setupFiles: ["./vitest.kernel-guard.setup.ts"],
         },
       },
       {
