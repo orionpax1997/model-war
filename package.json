@@ -46,7 +46,6 @@
     "gate:selfproof": "node --run build && node --disable-warning=ExperimentalWarning packages/tools/src/selfproof/run-selfproof-gate.ts",
     "gate:cross-process": "node --disable-warning=ExperimentalWarning packages/tools/src/cross-process/run-cross-process-gate.ts",
     "gate:limits": "node --disable-warning=ExperimentalWarning packages/tools/src/limits/run-limits-gate.ts",
-    "gate:gen-grid": "node --run build && node --disable-warning=ExperimentalWarning packages/tools/src/gen-grid/run-gen-grid-gate.ts",
     "test": "vitest run --project unit --project property",
     "observe:inputs": "node packages/tools/src/scope/run-inputs.ts",
     "observe:inputs:accept": "node packages/tools/src/scope/run-inputs.ts --accept",

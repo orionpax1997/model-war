@@ -106,7 +106,7 @@ it("gen 产出的存档过 `validateArchiveMeta`:三件套齐、哈希与版本�
         ]),
       agentPrompt: { user: "任务:写 script.ts", system: "协议:每一步一个动作块" },
       workspaceDir,
-      // 本文件不断言真试跑（真试跑由 `gen-cli` e2e 与 `gate:gen-grid` 覆盖），这里走
+      // 本文件不断言真试跑（真试跑由 `gen-cli.test.ts` 的 sandbox 用例覆盖），这里走
       // 「形状真实」的假网格：32 行观测 + 旁挂汇总。成绩走**缺省**评分（真网格那一支：
       // 从旁挂 `.grid.json` 读），所以这条链上的分数来源与生产同一条。
       trial: completeGridTrial(),

@@ -40,6 +40,7 @@ import {
   unobservedGap,
   unobservedHalves,
 } from "./check.js";
+import { scriptProjects } from "./plan.js";
 import { STRUCTURAL_TESTS } from "./related-probe.js";
 import {
   classifyInput,
@@ -1215,6 +1216,23 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
       expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(true);
     },
   );
+
+  /**
+   * **真网格 32 场那条腿的家,从 `gate:gen-grid` 挪到了 `gen-cli.test.ts`。**
+   *
+   * 删掉 `gate:gen-grid` 的理由写在 hld §2.2.7 与那次提交里,不在这里重复。这里钉的是
+   * **替代品还在夜间可达链上**——`gen-cli.test.ts` 归 `sandbox` 族(上一条用例钉族归属),
+   * 而 `sandbox` 族只由 `test:kernel` 拾取,`test:kernel` 在 `verify:kernel` 里,
+   * `verify:kernel` 在 `nightly` 里。判据读的是 `package.json` 的 `nightly` 内容并**展开跟随**
+   * `node --run`(不读文档、不抄链):链中间少一环,这里就红。
+   */
+  it("真网格 32 场的接住方在 nightly 可达链上(sandbox 族 ← test:kernel ← verify:kernel ← nightly)", () => {
+    const { scripts } = manifest();
+    expect(
+      [...scriptProjects(scripts, "nightly")],
+      "nightly 走不到 sandbox 族:真网格那条腿、以及真 bwrap 的会话用例从此没人跑",
+    ).toContain("sandbox");
+  });
 
   it("`decide([packages/tools/src/ci.test.ts])` 不含 test:gates(本票的起因)", () => {
     const decision = decideOn(["packages/tools/src/ci.test.ts"]);
