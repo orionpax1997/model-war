@@ -36,7 +36,14 @@ import { buildOutputsOf, isSourceFile, sourceOf, type Workspace } from "./build-
 export const ALWAYS: readonly string[] = ["quick", "gate:static"];
 
 /** 全部测试族。除 `quick` / `gate:static` 之外的每个测试入口都要在这里登记一次。 */
-export const SUITES: readonly string[] = ["test", "test:vm", "test:e2e", "test:gates", "test:all"];
+export const SUITES: readonly string[] = [
+  "test",
+  "test:vm",
+  "test:e2e",
+  "test:gates",
+  "test:slow",
+  "test:all",
+];
 
 export interface Radius {
   /** 相对仓库根的路径前缀;`p === area || p.startsWith(area + "/")` 命中。 */
@@ -86,6 +93,11 @@ export const RADIUS: readonly Radius[] = [
     why: "vitest 侧接线(报告汇总、内核探针)的判据是同目录的 `.test.ts`,在 `unit` 池子里——这一档只补 `test`,不牵扯门禁自测",
   },
   {
+    area: "packages/tools/src/gates-slow.test.ts",
+    suites: ["test:slow"],
+    why: "它属于 `slow` project(nightly 的那一半),兜底会把改它的人送去 `test:gates`:既多跑了不该跑的族,又**没跑它自己**——跑错族比多跑更贵",
+  },
+  {
     area: "packages/tools",
     suites: ["test:gates"],
     fallback: true,
@@ -100,6 +112,12 @@ export const RADIUS: readonly Radius[] = [
     area: "packages/runner/src/fixtures",
     suites: ["test"],
     why: "单测的夹具(黄金档等),被读成文本而不是 import——图对它没有边",
+  },
+  {
+    area: "packages/engine/src/fixtures/guest",
+    mustObserve: true,
+    suites: ["test:vm"],
+    why: "guest 侧夹具脚本:被 `readFileSync` 读成文本塞进 VM,不是 import——图对它没有边;读它的两条用例(`sandbox` / `quickjs`)都在 vm 族。模块加载期读盘(票 T6 修好了归属)才让它被观测到,而没规则的输入会让选择器抛错",
   },
   {
     area: "packages/schema/script-api",
@@ -313,6 +331,10 @@ const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(p
  *
  * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 `all` 块重新
  * 推导一遍再对账——谁单方面改了都会红。
+ *
+ * 清单只说"图看不见它",**不说"该跑哪一族"**。后者由各文件自己的规则决定(`RADIUS` 顺序即
+ * 优先级):`gates-slow.test.ts` 住在 `slow` project,于是它有自己的那条(`test:slow`),
+ * 而不是被兜底送去门禁自测——跑错族与少跑一样是错的,只是它多跑的那一半不报错。
  */
 export const GRAPH_BLIND_TESTS: readonly string[] = [
   "packages/tools/src/gates.test.ts",
@@ -423,7 +445,10 @@ const isManifest = (path: string): boolean =>
   path === "package.json" ||
   path.endsWith("/package.json") ||
   path === "pnpm-lock.yaml" ||
-  path.endsWith("/pnpm-lock.yaml");
+  path.endsWith("/pnpm-lock.yaml") ||
+  // 嵌套包的 `tsconfig.json` 同属仓库事实:`rootDir` / `outDir` 是选择器映射的**唯一真源**
+  // (`build-outputs.ts` 靠读它算产物路径),改了它等于换了所有包的产物位置。根那份在表里。
+  path.endsWith("/tsconfig.json");
 
 /**
  * 门禁自测的子集:`test:gates` 被选中时,把命中的门禁实现文件翻成 `-t` 模式。
@@ -542,3 +567,36 @@ export const mustObserve = (input: {
   if (rule?.mustObserve === true) return true;
   return isSourceFile(input.path, input.workspaces);
 };
+
+/**
+ * **Input Root**:观测快照的盲区边界(票 T5)。
+ *
+ * 观测 map 是历史快照——它只认识**录制那天存在**的输入文件。往 `rulesets/` 里新加一个文件,
+ * map 里没有它,`invert()` 自然查不到任何测试,于是选择器对它的判断是"没人读它",一分钱不花
+ * 就绿了。这是 map 唯一的失效方向:**少记 = 少跑 = 绿**。
+ *
+ * 所以一个区域一旦被声明为"它的内容必须被观测到"(`mustObserve`),它同时就声明了另一半:
+ * **这个区域里新出现的输入文件,退回该区域的 `suites`**——还没被观测到的东西按多跑处理。
+ *
+ * ── 与 `mustObserve` 不是同一件事 ──
+ *
+ * - `mustObserve`(输入侧,即"已有的关键输入有没有人看"):关键输入必须有观测记录,没有就红。
+ *   它回答「**这条路**改了会不会没人看」。
+ * - `INPUT_ROOTS`(覆盖侧,即"这个区域的新文件往哪退"):该区域的新输入文件必须有保守回退,
+ *   没有回退就报错。它回答「**这类新文件**进来时先跑什么」。
+ *
+ * 一条规则同时给出两者,是因为它们是同一句话的两面("这个区域的内容必须有人看着");
+ * 但判据各用各的:前者在 `check.ts` 的未观测红线上,后者在快照过期与 Input Root 回退上。
+ *
+ * 由 `RADIUS` 推导而不是另写一张表:两份手写清单必然腐烂成不一样的边界(ADR-0038)。
+ */
+export interface InputRoot {
+  /** 区域前缀,语义同 `Radius.area`。 */
+  readonly area: string;
+  /** 该区域新输入文件的保守回退(非空:空集合等于"回退到什么都不跑",那是静默少选)。 */
+  readonly suites: readonly string[];
+}
+
+export const INPUT_ROOTS: readonly InputRoot[] = RADIUS.filter(
+  (rule) => rule.mustObserve === true,
+).map((rule) => ({ area: rule.area, suites: rule.suites }));
