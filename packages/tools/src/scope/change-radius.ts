@@ -1,5 +1,5 @@
 /**
- * **改动 → 该跑什么**。`verify:scoped` 的唯一真源。
+ * **改动 → 该跑什么**。`check` 的表那一半(另两半是依赖图与观测 map)。
  *
  * ── 两个半边,分工明确 ──
  *
@@ -37,6 +37,13 @@ export interface Radius {
   readonly area: string;
   /** 除 `ALWAYS` 之外还要跑的命名脚本(必须是 `package.json` 里真实存在的名字)。 */
   readonly suites: readonly string[];
+  /**
+   * 这条规则下的改动**必须**被观测到(有测试读过它),否则红。
+   *
+   * 只给"行为输入"开:参数取值、地图、runtime 字节、guest 契约。散文与仓库事实不开——它们由
+   * 静态门禁读,`RADIUS` 里 `suites: []` 的声明本身就是覆盖。
+   */
+  readonly mustObserve?: boolean;
   /** 为什么是这几条,或者为什么一条都不需要。 */
   readonly why: string;
 }
@@ -44,11 +51,13 @@ export interface Radius {
 export const RADIUS: readonly Radius[] = [
   {
     area: "rulesets",
+    mustObserve: true,
     suites: ["test:vm"],
     why: "参数取值改一条就是换了一套规则,整场行为与结算都要在真 VM 上重算",
   },
   {
     area: "maps",
+    mustObserve: true,
     suites: ["test:vm"],
     why: "地图是引擎的输入,地形判据与整场行为都在 VM 侧",
   },
@@ -69,11 +78,13 @@ export const RADIUS: readonly Radius[] = [
   },
   {
     area: "packages/schema/script-api",
+    mustObserve: true,
     suites: ["test:vm"],
     why: "入库的 guest 侧声明:被读进 wasm VM 当契约,不是模块 import",
   },
   {
     area: "packages/engine/sandbox-runtime",
+    mustObserve: true,
     suites: ["test:vm"],
     why: "入库的 runtime IIFE 产物:被读成字节塞进 wasm VM,不是 import——图对它没有边",
   },
@@ -81,6 +92,11 @@ export const RADIUS: readonly Radius[] = [
     area: "packages/gen/sandbox-rootfs",
     suites: [],
     why: "生成期沙箱的入库 rootfs;漂移由 gate:static 里的 gate:rootfs 盯,不牵扯对局",
+  },
+  {
+    area: "coverage-debt.txt",
+    suites: [],
+    why: "未覆盖改动登记表;`check` 的红线指向它,所以它必须存在——改它不需要跑测试",
   },
   {
     area: "test-inputs",
@@ -374,3 +390,20 @@ export class UnregisteredPathError extends Error {
     this.name = "UnregisteredPathError";
   }
 }
+
+/**
+ * 这次改动**必须**有人看着吗?
+ *
+ * 两类:代码(能映射出产物的源码),以及表里开了 `mustObserve` 的行为输入。判据是"改了行为却
+ * 没有判据"这件事必须有声音——散文、`package.json`、`docs/` 不在其中,它们有静态门禁读。
+ */
+export const mustObserve = (input: {
+  readonly path: string;
+  readonly workspaces: readonly Workspace[];
+}): boolean => {
+  const rule = RADIUS.find(
+    (candidate) => input.path === candidate.area || input.path.startsWith(`${candidate.area}/`),
+  );
+  if (rule?.mustObserve === true) return true;
+  return isSourceFile(input.path, input.workspaces);
+};

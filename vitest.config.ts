@@ -143,7 +143,7 @@ export default defineConfig({
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
           exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST, GEN_CLI_TEST],
           setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
-          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
+          execArgv: RECORD_EXEC_ARGV,
         },
       },
       {
@@ -160,7 +160,7 @@ export default defineConfig({
             ...VM_TESTS,
           ],
           setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
-          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
+          execArgv: RECORD_EXEC_ARGV,
         },
       },
       {
@@ -171,7 +171,7 @@ export default defineConfig({
           include: ["packages/*/src/**/*.prop.ts", "apps/*/src/**/*.prop.ts"],
           exclude: NEVER_TEST,
           setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
-          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
+          execArgv: RECORD_EXEC_ARGV,
           testTimeout: 30_000,
         },
       },
@@ -210,7 +210,7 @@ export default defineConfig({
           testTimeout: 300_000,
           hookTimeout: 300_000,
           setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
-          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
+          execArgv: RECORD_EXEC_ARGV,
         },
       },
       {
@@ -222,7 +222,7 @@ export default defineConfig({
           testTimeout: 300_000,
           hookTimeout: 300_000,
           setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
-          poolOptions: { forks: { execArgv: RECORD_EXEC_ARGV } },
+          execArgv: RECORD_EXEC_ARGV,
         },
       },
       {

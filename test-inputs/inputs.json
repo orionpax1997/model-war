@@ -1585,7 +1585,9 @@
       "packages/schema/src/sandbox-rootfs.ts"
     ],
     "packages/tools/src/scope/test-layers.test.ts": [
+      "coverage-debt.txt",
       "package.json",
+      "test-inputs/inputs.json",
       "vitest.config.ts"
     ],
     "packages/tools/src/script-api-type-surface.test.ts": [

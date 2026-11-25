@@ -50,16 +50,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # 一步跑完整条收口链(`verify` = `quick` + `test`)。
+      # 一步跑完整条收口链。
       #
       # 曾经拆成 `quick` / `test` 两个 step 为了归因,但 GitHub 不能单独重跑某个 step(只能重跑整个
       # job),两个 step 的实际作用只是「一眼看出哪类挂了」——日志同样给得出。代价却是链定义有两份:
       # 链的家在 `package.json`(ADR-0010「CI 失败等价于命名脚本失败」),而 yaml 里再展开一遍,
-      # 于是给 `verify` 加一条腿 CI 不会跟、也没有断言会红。本地收口与 CI 现在跑的是同一个命令。
-      - name: verify
-        run: pnpm run verify
-
-      # 类型感知 lint(`tsc -b` + `oxlint --type-aware`)。它只挂这条链,不进 `verify`:
-      # 本地每轮跑会断反馈回路(hld §2.2.7)。仍是命名脚本,不直调 tsc / oxlint。
-      - name: gate:types
-        run: pnpm run gate:types
+      # 于是给链加一条腿 CI 不会跟、也没有断言会红。
+      #
+      # 现在 yaml 只出现一个名字 `check --full`;这条链自己住 `scope/check.ts` 的 `FULL_CHAIN`,
+      # 本地与 CI 同一个定义、同一措辞(ADR-0038「一条命令,没有档位」)。
+      - name: check --full
+        run: pnpm run check -- --full
