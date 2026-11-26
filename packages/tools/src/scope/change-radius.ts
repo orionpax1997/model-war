@@ -512,14 +512,31 @@ export interface DecisionInput {
    *
    * 口径与 `check.ts` 的 `probeTargets` 同源:同一路径若另有一条非删除的条目(删了又建),它
    * 不算删除,产物照旧必须存在。调用方直接递 `probeTargets(...).deleted`,不要另算一份。
+   *
+   * 它们**不要求表里有规则**:规则是给"还在盘上的东西"登记该跑哪些测试的,而删除之后没有东西
+   * 可跑。要求一条指向已消失路径的规则是写不出来的判据——表里加了它,`test-layers.test.ts` 的
+   * 「每条规则指向的路径真实存在」会立刻把它判成拼错,于是那条红没有出口。可见性不靠这里保:
+   * `probeTargets` 会把它们逐条打印出来(谁被放过、由谁兜)。
    */
   readonly deleted?: readonly string[];
+  /**
+   * 这些路径**是被重命名走的旧名字**(`git` 的 `R` 条目的 `from`)。
+   *
+   * `ChangeSet.files` 把旧路径两端都留着,好让观测 map 里按旧路径记的条目仍能被解释;但一个
+   * 不再存在的旧名字**不该要求表里有一条指向它的规则**——表里那条规则会随改名一起搬走,而
+   * 「盘上必须有一个叫旧名字的文件」是写不出来的判据(改一次名就多一条永远为假的行)。
+   *
+   * 与 `deleted` 同一档:两者都是"已经不在盘上"。这里单独留一份,是因为 `probeTargets` 会把改名
+   * 的旧侧从 `deleted` 里剔掉(旧路径仍可能被观测 map 记着,测试照跑),口径不能共用。
+   */
+  readonly renamedFrom?: readonly string[];
 }
 
 /**
  * 把一组改动路径翻成一份执行计划。
  *
- * 抛 `UnregisteredPathError` 的条件**只有一个**:既映射不到产物、也没有表规则。
+ * 抛 `UnregisteredPathError` 的条件**只有一个**:还在盘上、却既映射不到产物、也没有表规则。
+ * 已经消失的路径(删除的、改名搬走的旧名字)不在此列——那条红没有出口,见 `DecisionInput.deleted`。
  */
 /**
  * 任何层级的 `package.json` 与锁文件都是**仓库事实**:改它可能换掉一整棵依赖树。
@@ -570,6 +587,16 @@ export const decide = (input: DecisionInput): Decision => {
   /** 命中的、且规则要求跑门禁自测的改动文件(`-t` 模式只能逐个文件查)。 */
   const gatesFiles = new Set<string>();
   const deleted = new Set(input.deleted ?? []);
+  const renamedFrom = new Set(input.renamedFrom ?? []);
+  /**
+   * **已经不在盘上的路径**:删除的、以及被改名搬走的旧名字。
+   *
+   * 不变量是「**还在盘上的**路径必须有归属」,不是「表里出现过的每个名字都必须还在」。把存在性
+   * 当归属的前提,就会得到一条**没有出口**的红:处方是往表里加规则,而「规则指向的路径必须
+   * 存在」把这条处方判红。可见性另有其处——`probeTargets` 与 `describeRenamed` 会把它们点名
+   * 打印出来。
+   */
+  const gone = new Set([...deleted, ...renamedFrom]);
 
   for (const path of input.paths) {
     const rule = ruleFor(path);
@@ -583,7 +610,7 @@ export const decide = (input: DecisionInput): Decision => {
     if (isManifest(path) && rule === undefined && !explainable) {
       // 嵌套包的 `package.json` 不在表里,但它换掉的是整棵依赖树。
       chosen.add("test:all");
-    } else if (!explainable && rule === undefined) {
+    } else if (!explainable && rule === undefined && !gone.has(path)) {
       throw new UnregisteredPathError(path);
     }
     if (rule !== undefined && !hits.includes(rule)) hits.push(rule);

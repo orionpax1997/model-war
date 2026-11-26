@@ -295,6 +295,26 @@ export interface ProbeTargets {
  * 措辞要点:先说**谁被放过**(点名路径),再说**由谁兜**。只说"跳过"会让读报的人以为这块没人管;
  * 说明里必须出现 `tsc -b` 与全量测试,那才是这条口径的兜底,也是唯一的兜底。
  */
+/**
+ * 改名那几行的说明。与 `describeDeleted` 分开写,因为两件事**不是**同一个理由:
+ *
+ * - 删除:`vitest related` 对它答不出任何东西,兜底是 `tsc -b` 与全量测试;
+ * - 改名:旧名字**仍要被问**(观测 map 是按旧路径记的,test:related 要靠它把改动翻成候选),
+ *   变的只是「不再要求表里有一条指向它的规则」——表项随改名搬走了,而盘上没有旧名字可指。
+ *
+ * 只印计数不印名字的后果是:读报的人看见「重命名 1」,却不知道被放宽的是哪一个。
+ */
+export const describeRenamed = (entries: readonly ChangeEntry[]): string => {
+  const renamed = entries.flatMap((entry) =>
+    entry.from === undefined ? [] : [`${entry.from} → ${entry.path}`],
+  );
+  return renamed.length === 0
+    ? ""
+    : `改名 ${String(renamed.length)} 处:${renamed.join(", ")}\n` +
+        "    旧名字不要求表里有规则(表项随改名搬走),但它照样进 `test:related` 的候选:\n" +
+        "    观测 map 按旧路径记过东西,把它丢出去就是静默少跑。\n";
+};
+
 export const describeDeleted = (deleted: readonly string[]): string =>
   deleted.length === 0
     ? ""
@@ -474,6 +494,9 @@ const main = async (argv: readonly string[]): Promise<number> => {
   // 是同一句话,而它们的处方完全相反(前者无事可做,后者要补用例)。判据与措辞都在 `probeTargets`。
   const targets = probeTargets({ entries: changeSet.entries, files });
   if (targets.note !== "") process.stdout.write(targets.note);
+  // 改名的旧名字也要点名:它被放宽了(不再要求表规则),而"被放宽"必须读得出来。
+  const renamedNote = describeRenamed(changeSet.entries);
+  if (renamedNote !== "") process.stdout.write(renamedNote);
 
   const decideNow = (): ReturnType<typeof decide> =>
     decide({
@@ -483,6 +506,10 @@ const main = async (argv: readonly string[]): Promise<number> => {
       // 删除的路径**没有产物可言**:它们不进 `notBuilt`(否则删一个源码文件就把计划退回全量)。
       // 口径只有一份——就在 `probeTargets` 里,这里递过去而不另算。
       deleted: targets.deleted,
+      // 改名走的旧名字:不再存在,也就不该要求表里有一条指向它的规则(纯删除仍红)。
+      renamedFrom: changeSet.entries.flatMap((entry) =>
+        entry.from === undefined ? [] : [entry.from],
+      ),
     });
 
   let decision: ReturnType<typeof decide>;

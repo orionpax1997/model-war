@@ -37,6 +37,7 @@ import {
 import {
   PROBE_CONCURRENCY,
   describeDeleted,
+  describeRenamed,
   mapLimit,
   probeOnceThenRetry,
   probeTargets,
@@ -464,6 +465,56 @@ describe("decide:图与表各管半边", () => {
 
   it("前缀不会误吞相邻名字(apps/cli 不该吃掉 apps/cli-tools)", () => {
     expect(() => decideOn(["apps/cli-tools/src/index.ts"])).toThrow(UnregisteredPathError);
+  });
+
+  /**
+   * **不变量是「还在盘上的路径必须有归属」,不是「表里出现过的每个名字都必须还在」。**
+   *
+   * 消失的路径(删除的、改名搬走的旧名字)要是也要求表规则,就会得到一条**没有出口**的红:
+   * 处方是往表里加规则,而「每条规则指向的路径真实存在」把这条处方判红。放宽之后可见性由打印
+   * 承担——`describeDeleted` / `describeRenamed` 必须点名。
+   *
+   * 反方向钉住:**还在盘上的**未登记路径照旧抛(下面 `future-pkg` 那条)。
+   */
+  it("消失的路径(删除 / 改名旧名)不要求表规则;还在盘上的未登记路径照旧抛", () => {
+    const old = "GLOSSARY-FORMER-NAME.md";
+    const renamed = "GLOSSARY.md";
+    expect(existsSync(join(repoRoot, old)), "这条断言要一个盘上不存在的旧名字").toBe(false);
+    // 改名:旧名字不进 `deleted`(probeTargets 会剔掉它),走的是 `renamedFrom`。
+    expect(
+      decide({ paths: [renamed, old], workspaces, exists: () => true, renamedFrom: [old] }).scripts,
+    ).not.toContain("test:all");
+    // 删除:走的是 `deleted`。两个入口必须给出同一个结论——都是"不抛,也不因此退回全量"。
+    const asDeleted = decide({ paths: [old], workspaces, exists: () => true, deleted: [old] });
+    expect(asDeleted.scripts).not.toContain("test:all");
+    expect(asDeleted.graphFiles, "盘上不存在的路径进不了图").toEqual([]);
+    // 谁都没说它消失了:它就是一条没人登记的路径,照旧抛。
+    expect(() => decide({ paths: [old], workspaces, exists: () => true })).toThrow(
+      UnregisteredPathError,
+    );
+  });
+
+  /**
+   * 放宽的前提是**说得出来**:被放过的路径必须点名打印,只印计数等于没印。
+   *
+   * 两句话的理由不同,所以分两处印:删除是「`vitest related` 答不出东西」,改名是「旧名字仍要
+   * 进候选,只是不再要求表规则」。合成一句会让读报的人以为改名也不跑测试。
+   */
+  it("被放宽的路径必须点名打印,而且删除与改名的理由分得开", () => {
+    expect(describeDeleted([])).toBe("");
+    expect(describeRenamed([])).toBe("");
+
+    const deletedNote = describeDeleted(["docs/agents/old-domain.md"]);
+    expect(deletedNote).toContain("docs/agents/old-domain.md");
+    expect(deletedNote, "没人兜的跳过等于静默跳过").toContain("tsc -b");
+
+    const renamedNote = describeRenamed([
+      { status: "R", path: "GLOSSARY.md", from: "CONTEXT.md" },
+      { status: "M", path: "README.md" },
+    ]);
+    expect(renamedNote).toContain("CONTEXT.md → GLOSSARY.md");
+    expect(renamedNote, "计数不够,要名字").not.toContain("README.md");
+    expect(renamedNote, "改名仍要进候选,不能读成“不用跑”").toContain("test:related");
   });
 });
 
