@@ -1622,6 +1622,9 @@
       "packages/schema/tsconfig.json",
       "packages/tools/tsconfig.json"
     ],
+    "packages/tools/src/scope/related-probe.test.ts": [
+      "package.json"
+    ],
     "packages/tools/src/scope/test-inputs.test.ts": [
       "apps/cli/tsconfig.json",
       "packages/engine/tsconfig.json",

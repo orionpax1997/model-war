@@ -49,7 +49,7 @@
     "test": "vitest run --project unit --project property",
     "observe:inputs": "node packages/tools/src/scope/run-inputs.ts",
     "observe:inputs:accept": "node packages/tools/src/scope/run-inputs.ts --accept",
-    "test:related": "vitest related --run --project all",
+    "test:related": "vitest related --run --project all --project property",
     "test:all": "vitest run --project all --project property",
     "test:e2e": "vitest run --project e2e",
     "test:vm": "vitest run --project vm",

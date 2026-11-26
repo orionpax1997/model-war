@@ -340,15 +340,19 @@ export const ruleFor = (path: string): Radius | undefined =>
 const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(path);
 
 /**
- * **依赖图看不见的测试文件。**
+ * **依赖图看不见的测试文件 = related pool 之外的测试文件。**
  *
- * "改测试文件就交给依赖图"这句话有个前提:图看得见它。改一个测试文件时,`vitest related` 会
- * 把它自己选出来(实测:`ci.test.ts` → 1 个文件 / 17 条 / 1.06s);但这几个文件被 `all` 显式
- * 排除(`gates` / `slow` project),或者压根不在 `all` 的 include 里(`.prop.ts` 归 `property`)
- * ——改它们的时候图会一条都不选,所以仍由兜底规则补整族。
+ * `test:related`（以及逐文件探针）问的是同一份 project 集(`all` + `property`)。`all` 收
+ * `*.test.ts`、`property` 收 `*.prop.ts`，这两道 include 合起来覆盖了几乎全部测试文件——所以
+ * 改一份测试文件时图会把它自己选出来（实测:`ci.test.ts` → 1 个文件 / 25 条 / 1.06s;
+ * `invariants.prop.ts` → 1 个文件 / 16 条）。
  *
- * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 `all` 块重新
- * 推导一遍再对账——谁单方面改了都会红。
+ * 剩下的只有这几个:它们被 `all` 显式 exclude(`gates` / `slow` / `sandbox` project),而
+ * `property` 的 include 又不收 `.test.ts`——两组 include 都不抬它们。改它们的时候图会一条
+ * 都不选,所以仍由各文件自己的规则补整族。
+ *
+ * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 project 表与控制
+ * `test:related` 的脚本**重新推导**一遍再双向对账——谁单方面改了都会红。
  *
  * 清单只说"图看不见它",**不说"该跑哪一族"**。后者由各文件自己的规则决定(`RADIUS` 顺序即
  * 优先级):`gates-slow.test.ts` 住在 `slow` project,于是它有自己的那条(`test:slow`),
@@ -357,34 +361,44 @@ const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(p
 export const GRAPH_BLIND_TESTS: readonly string[] = [
   "packages/tools/src/gates.test.ts",
   "packages/tools/src/gates-slow.test.ts",
-  "packages/tools/src/rules/no-float.prop.ts",
+  "apps/cli/src/agent-real-session.test.ts",
+  "apps/cli/src/gen-cli.test.ts",
 ];
+
+/**
+ * 这个**测试文件**在 `test:related` 问的池子里吗?
+ *
+ * 池子的两道 include 分别收 `*.test.ts`(`all`)与 `*.prop.ts`(`property`),合起来覆盖了几乎全部
+ * 测试文件;剩下的只有 `GRAPH_BLIND_TESTS` 那几份。源码恒不在这个函数的问题范围内(它问的是
+ * 测试文件的归属)——`probeApplies` 把源码那一半自己接上。
+ *
+ * 这里**故意不看** `suitesFor`:那张表对池子里的测试文件返回空数组(它们不该再被兜底拖一族),
+ * 拿它推池子归属会得到一条恒真的判据——上一版的 `probeApplies` 就是这么错的。
+ */
+export const inRelatedPool = (path: string): boolean =>
+  isTestCaseFile(path) && !GRAPH_BLIND_TESTS.includes(path);
 
 /** 一条路径该补哪些族。选择与 `--print` 的依据行共用这一份,两处不各算一次。 */
 export const suitesFor = (path: string): readonly string[] => {
   const rule = ruleFor(path);
   if (rule === undefined) return [];
-  // 兜底不对测试文件本身负责:它的判据是它自己(依赖图选得出来),而门禁自测是另一件事。
-  if (rule.fallback === true && isTestCaseFile(path) && !GRAPH_BLIND_TESTS.includes(path))
-    return [];
+  // 兜底不对**图看得见的**测试文件负责:它的判据就是它自己(`vitest related` 选得出来),
+  // 而门禁自测是另一件事。池子外的测试文件不在豁免里——图看不见它们,只能由表指名。
+  if (rule.fallback === true && inRelatedPool(path)) return [];
   return rule.suites;
 };
 
 /**
  * **逐文件探针答得出这个路径吗?**
  *
- * 探针问的是 `vitest related --project all`(见 `check.ts`),它只对**在 `all` 的池子里**的
- * 文件答得出候选。表把某个**池子外**的族指给这个文件时(改一个 `sandbox` / `gates` / `slow`
- * 的测试文件),那条命令结构上只能答「0 条」——而 0 条在这里会被读成「确知为零,没人看着
- * 它」,那是一句假话:问错了池子,不是没人看。
+ * 探针与依赖图问的是同一个池子(`test:related` 的 project 集)。池子外的测试文件(`sandbox` /
+ * `gates` / `slow` 那几份)那条命令结构上只能答「0 条」——而 0 条在这里会被读成「确知为零,
+ * 没人看着它」,那是一句假话:问错了池子,不是没人看。这类文件的判据是它自己那一族,而那一族
+ * **就是 `check` 会真的执行的那一条**(`decide` 已经把名字算进计划)。
  *
- * 这类文件的判据是它自己那一族,而那一族**就是 `check` 会真的执行的那一条**(`decide` 已经
- * 把名字算进计划)。所以探针在这里不适用,红线仍由族本身承担:跑不起来就红。
- *
- * 别的路径一视同仁地问图——源码,以及没有族可指的测试文件。
+ * 其余路径一视同仁地问图——源码恒问(它的候选由 import 它的测试提供),池子里的测试文件也问。
  */
-export const probeApplies = (path: string): boolean =>
-  !(isTestCaseFile(path) && suitesFor(path).some((suite) => !SUPERSEDED_BY_ALL.includes(suite)));
+export const probeApplies = (path: string): boolean => !isTestCaseFile(path) || inRelatedPool(path);
 
 /** 顶层里**允许不登记**的条目:仓库元数据与产物,改了不影响任何判据。 */
 export const IGNORED_AREAS: readonly string[] = [

@@ -603,15 +603,21 @@ const main = (argv: readonly string[]): number => {
     );
   }
   const gaps: { readonly path: string; readonly why: string }[] = [];
+  /** 只有「被改的测试文件自己」出庭的路径:绿,但它是**它自己的**判据。 */
+  const selfObserved: string[] = [];
+  // 探针与依赖图必须问**同一个池子**,而池子的定义只有一处:`test:related` 的 project 集。
+  // 写死 `all` 会让 `.prop.ts` 在两边同时恒 0——图漏选、探针再把「问错池子」读成「确知为零」。
+  const relatedProjects = [...scriptProjects(scripts, "test:related")];
   for (const path of blindCode) {
     const outputs = buildOutputsOf(path, workspaces);
     const outcome = probeRelated({
       repoRoot,
       paths: [path, ...outputs.filter((output) => existsSync(join(repoRoot, output)))],
-      project: "all",
+      projects: relatedProjects,
     });
     switch (outcome.kind) {
       case "ran":
+        if (outcome.selfOnly) selfObserved.push(path);
         break;
       case "failed":
         // 候选红了不是"没有判据",是"判据在喊":先修它,别把两种红混成一条。
@@ -634,6 +640,15 @@ const main = (argv: readonly string[]): number => {
     }
   }
   if (gaps.length > 0) return reportUnobserved(gaps, "code");
+
+  if (selfObserved.length > 0) {
+    // 说清楚这一条绿是什么:测试文件自己跑过了,而它没有证明**别的东西**的行为。
+    process.stdout.write(
+      `\n改动落在测试文件自己身上,选中并跑过的是它自己的断言(不是生产代码的行为覆盖):\n${selfObserved
+        .map((path) => `  ${path}\n`)
+        .join("")}`,
+    );
+  }
 
   process.stdout.write(`\n按改动半径要跑的都绿了。收口用 \`pnpm run check -- --full\`。\n`);
   return 0;
