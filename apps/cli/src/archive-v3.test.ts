@@ -1,5 +1,5 @@
 /**
- * 档案形状 v3（ADR-0031）的**写 → 装载 → 报告读出**往返，外加对旧档（v1 / v2）的读兼容。
+ * 档案形状 v3的**写 → 装载 → 报告读出**往返，外加对旧档（v1 / v2）的读兼容。
  *
  * ── 为什么这个往返测试住在 `apps/cli` ──
  *
@@ -10,7 +10,7 @@
  *
  * ── 旧档 fixture 从真实 `archive/` 抽出来 ──
  *
- * `archive/` 不在版本控制里（`.gitignore`），而 ADR-0031 要求「删生成侧、留读侧」之后那些
+ * `archive/` 不在版本控制里（`.gitignore`），而「删生成侧、留读侧」之后那些
  * 分支仍有人跑。所以四份真实记录被抽进 `packages/runner/src/fixtures/archive/`（改写了模型名、
  * runId 与 prompt 正文，形状与哈希关系逐字保留，改写清单见该目录的 README.md）。
  *
@@ -19,7 +19,7 @@
  * 1. v3 的 1 个候选与 3 个候选都能被装载、被报告读出，且**同一份候选只列一次**；
  * 2. v3 的零步失败档与成功档同形（过程记录为空、起始 prompt 为空、协议轮数为零）；
  * 3. v1 / v2 旧档照旧装载、照旧出报告（不迁移、不回填）；
- * 4. 每个版本的落盘键集按**自己那一版**的契约断言（ADR-0031：不能用一个数字代表所有档案）。
+ * 4. 每个版本的落盘键集按**自己那一版**的契约断言（不能用一个数字代表所有档案）。
  */
 
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -252,7 +252,7 @@ it("v3 成功档（3 候选）：键集、装载、报告读出，且报告不�
     termination: "max-steps",
   });
 
-  // 1. 落盘键集是**这一版**的契约（ADR-0031：不能拿一个数字代表所有档案）。
+  // 1. 落盘键集是**这一版**的契约（不能拿一个数字代表所有档案）。
   const stored = storedMetaOf(root, "v3three", "2026-01-02T00-00-00-001Z");
   expect(Object.keys(stored as Record<string, unknown>)).toEqual([...V3_SUCCESS_KEYS]);
 

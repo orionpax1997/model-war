@@ -2,7 +2,7 @@
  * 参赛脚本可见面的名表**读取点**——名表本身不在本包里,规则也不在这里。
  *
  * 真源在 `@model-war/schema` 的 `script-surface.ts`(hld §6.2:白名单由 `schema` 提供,
- * 与沙箱 runtime 暴露的 API 面同源;ADR-0003 把「同源」落成同一套生成器机制)。
+ * 与沙箱 runtime 暴露的 API 面同源; 把「同源」落成同一套生成器机制)。
  * 本文件 import 的是**生成物**(`generated/script-surface.ts`,由 `pnpm run generate` 从真源产出),
  * 与 `allowlist.ts` 走的是同一条分发通道——没有为「注入面需要的名字」另开一条。
  *

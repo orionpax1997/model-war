@@ -36,7 +36,7 @@
  * ── 零构建:读源码文本,不 import 真源包 ──
  *
  * 本门禁挂在 `quick` 上,而快门禁必须零构建(`@model-war/gen` 与 `@model-war/schema` 的
- * `exports` 都指向 `dist/`,import 就让这条链依赖一次 `tsc -b`,hld §2.2.8、ADR-0003)。
+ * `exports` 都指向 `dist/`,import 就让这条链依赖一次 `tsc -b`,hld §2.2.8)。
  * 所以工具名与探针场数都按**源码文本**取(`rootfs-drift.ts` 的 `literalBody` 那一套)。
  * 抽不出来时**按失败处理并说明原因**,不静默放行——那正是「判据失明但门禁全绿」的形态。
  *

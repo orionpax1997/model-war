@@ -99,7 +99,7 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.str
 const legacySelectionOf = (value: unknown): Exclude<ArchiveSelection, { version: 3 }> => {
   const selection = validateSelection(value);
   if (selection.version === SELECTION_AGENT_VERSION)
-    throw new Error("v3 选拔的生产侧不在这一条路径上（ADR-0031：A1 可缺席，选拔归 A2）");
+    throw new Error("v3 选拔的生产侧不在这一条路径上（A1 可缺席，选拔归 A2）");
   return selection;
 };
 

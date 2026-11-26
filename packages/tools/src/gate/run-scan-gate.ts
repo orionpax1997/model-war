@@ -2,11 +2,11 @@
  * `observe:scan` 观测的入口:scc 可选,装了就落盘、没装就写跳过标记,退出码如实反映观测命令本身。
  *
  * 用 `node packages/tools/src/gate/run-scan-gate.ts` 直接跑(根脚本 `pnpm run observe:scan`),
- * 与现有 `run-*-gate.ts` 同形——流水线内只调命名脚本,不裸 shell 一句 `scc ...`(ADR-0010)。
+ * 与现有 `run-*-gate.ts` 同形——流水线内只调命名脚本,不裸 shell 一句 `scc ...`(hld §2.2.7)。
  * 本包以源码形式由 Node 的类型擦除执行,不产出 dist、也不设 bin,所以包内相对 import 写 `.ts`。
  *
  * ── 这不是门禁,是一条观测 ──
- * 没有任何分数或行数红线(ADR-0010)。成或败都进 meta.json 落盘,供三夜基线对比;
+ * 没有任何分数或行数红线(hld §2.2.7)。成或败都进 meta.json 落盘,供三夜基线对比;
  * 它红不红不该阻断别的 leg(夜间流水线按 `continue-on-error` 处理)。
  *
  * ── scc 是手动装的外部工具(无 npm 分发) ──

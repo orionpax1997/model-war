@@ -1,6 +1,6 @@
 /**
  * AC1 的源码级那一半：gen 不直接执行引擎或读取正式对局产物。
- * ADR-0019 允许经 CLI/schema 接收试跑行动与终局纯数据摘要；这不开放引擎结果类型、产物路径或跨包边。
+ * 反馈只经 CLI/schema 收试跑行动与终局纯数据摘要；这不开放引擎结果类型、产物路径或跨包边。
  *
  * 与 `dependency-boundary.test.ts` 的那一半互不可替代:depcruise 看的是**编译产物里的 import 边**,
  * 而 `"runs/…/result.json"` 这样的字符串、或从别处抄来的一个 `RunMatchResult` 类型名,

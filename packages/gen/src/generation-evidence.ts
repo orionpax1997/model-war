@@ -94,7 +94,7 @@ export type AttemptEvidence = {
   readonly attempt: number;
   readonly outcome: "response" | "transport-error";
   /**
-   * 传输失败的细分(ADR-0036);只有 `outcome === "transport-error"` 的尝试带它。
+   * 传输失败的细分;只有 `outcome === "transport-error"` 的尝试带它。
    *
    * 为什么不用原始状态码:读侧要的是「这是限流还是服务端坏了」,不是「哪个号段」。而它必须落盘
    * ——否则「重试救回来了」在数据里不存在,而「限流压力」恰恰主要由它体现。

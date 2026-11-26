@@ -316,7 +316,7 @@ const readRecord = (value: unknown, path: string): Record<string, unknown> => {
 };
 
 /**
- * 计划的单份 JSON 形状由共享 JSON Schema 定（ADR-0003：TypeScript 是真源，Schema 手工对齐）。
+ * 计划的单份 JSON 形状由共享 JSON Schema 定（TypeScript 是真源，Schema 手工对齐）。
  * 这里把 Schema 投影成 zod 校验器——跨字段关系（座位/种子/场序能否由事实重建）不住在 Schema 里，
  * 由 `checkTrialPlan` 补，两者合起来才是「读得进、且说得通」。
  */

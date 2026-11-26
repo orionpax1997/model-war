@@ -44,8 +44,9 @@
  * `vitest run`,而这里会 spawn `check`。见 vitest.config.ts 的 GATES_TEST 常量,
  * 以及本文件末尾那条盯着该不变量的用例。
  *
- * **这里只放门禁自测**(同机实测:本文件约 43s),由 `pnpm run test:gates` 按需运行,不属于默认快速 `test`。
+ * **这里只放门禁自测**(同机实测:本文件约 43s → 拆出变异真跑后约 20s),由 `pnpm run test:gates` 按需运行,不属于默认快速 `test`。
  * 契约自证门禁的四问与三个反例、以及会 spawn 全量 `check` 的那一条在 `gates-slow.test.ts`(约 350s),由 `pnpm run test:slow` 按需运行。
+ * 真跑一次 `stryker run` 验基线字节的那一条在 `gates-mutation.test.ts`(约 50s),由 `pnpm run test:mutation` 运行。
  * 快慢拆分的理由写在 `gates-slow.test.ts` 的头注里。
  * 两个文件共用的那一层观察手段(`script` / `withProbeFile` / 末尾复核清单)在 `gates-harness.ts`,
  * 清单只有一份,分叉的后果是「一道门禁既不在末尾又被断言在末尾」而两处断言都绿。
@@ -611,7 +612,7 @@ it("生成物漂移检查挂在全量门禁末尾,且不进快门禁", () => {
   // 挂在末尾而不是中间:前面几道各自独立,末尾那几道是「提交内容对不对」的复核(清单见上)。
   expect(tailSteps(), "漂移检查不在全量门禁末尾那一组复核里").toContain("node --run gate:drift");
 
-  // 不进快门禁的理由是它需要一次 `tsc -b`,而快门禁的零构建性质不能破(ADR-0003 的混合传输)。
+  // 不进快门禁的理由是它需要一次 `tsc -b`,而快门禁的零构建性质不能破(混合传输)。
   // 「零构建」没法直接断言,能断言的是它没被挂进快门禁这条链里。
   expect(manifest().scripts["quick"]).not.toContain("gate:drift");
   expect(manifest().scripts["gate:types"]).not.toContain("gate:drift");
@@ -1025,11 +1026,11 @@ it("预算结构门禁挂在 quick,且没被挪进按需 / 慢链", () => {
 
 // ── 散文禁抄取值门禁:静态陈述变红,变更记账放行,ADR 目录被扫 ──────────────────
 //
-// 这道判据早就实现、也有自测,但一直没挂到任何命名脚本上(ADR-0008 因此把它叫「待接线判据」)。
+// 这道判据早就实现、也有自测,但一直没挂到任何命名脚本上(因此把它叫「待接线判据」)。
 // 这里断言的是**接线之后**的外部可观察行为:命名脚本的退出码与报告文本。
 //
 // 反例的探针落在 `docs/adr/` 里:那个目录是整目录扫的,所以探针不必另进清单就会进视野。
-// 这一条同时证明「ADR 不是按文件豁免」与「静态陈述会红」——按文件豁免正是 ADR-0008 明文否决的修法。
+// 这一条同时证明「ADR 不是按文件豁免」与「静态陈述会红」——按文件豁免正是 明文否决的修法。
 
 /**
  * 改一份**门禁按源码文本读**的真源,跑 body,无论成败都按字节还原。
@@ -1114,7 +1115,7 @@ it("散文禁抄取值门禁挂在 gate:static,且没被挪进按需 / 慢链", 
 /** 那份生成出来的骨架。它没有生成头注释(必须逐字节等于 §6),所以手改它看起来就像改普通文件。 */
 const SKELETON_FILE = "docs/rules-v2/examples/minimal.ts";
 
-/** 那四条共用的目录说明。它同时是首条消息的全部内容(ADR-0030)。 */
+/** 那四条共用的目录说明。它同时是首条消息的全部内容。 */
 const CONTRACT_INDEX_FILE = "docs/rules-v2/README.md";
 
 /** 契约包身份的入库常量。它的书写真源是那四条的字节,门禁证明「现算 == 入库」。 */
@@ -1139,7 +1140,7 @@ it("契约挂载门禁:骨架被手改时变红,还原变绿", () => {
 });
 
 it("契约挂载门禁:入库整树身份常量与现算不一致时变红", () => {
-  // 身份(ADR-0037)是「档案里那串 hex 还指不指得到眼前的字节」的唯一凭据。改契约字节、改挂载清单、
+  // 身份是「档案里那串 hex 还指不指得到眼前的字节」的唯一凭据。改契约字节、改挂载清单、
   // 或改生成骨架的 §6 都会让它漂——而漂了没人拦,档案就会被一个错的版本号“背书”。反例改的是常量本身
   // (最能代表「档案指向了另一批字节」),同时兼验门禁从真源包**源码文本**抽取常量那条缝没退化。
   const violated = withPatchedText(
@@ -2365,7 +2366,7 @@ it("engine-processor 分片仍限定结算管线,且棘轮不设绝对阈值", (
   expect(source, "没有排掉 processor 下的测试文件").toContain(
     "!packages/engine/src/processor/**/*.test.ts",
   );
-  // 不设绝对红线:`break: null` 是可 grep、可 review 的那一条证据。绝对阈值仍被否决(ADR-0010),
+  // 不设绝对红线:`break: null` 是可 grep、可 review 的那一条证据。绝对阈值仍被否决(hld §2.2.7),
   // 棘轮换进来的是相对退化(ADR-0026)。它在共享底座里一份,不在每个分片里各写一遍。
   const base = readFileSync(STRYKER_BASE, "utf8");
   expect(base, "共享底座里没有把阈值显式关掉").toContain(
@@ -2626,9 +2627,13 @@ it("反例:抬基线命令被塞进 quick → 断言红,还原 → 绿(纯文本
 });
 
 // 两条字节不变的必测,分两半:
-//   ① 入口的**后半段**(棘轮门禁)跑遍全部分片,喂夹具报告——不跑真实变异,零成本;
+//   ① 入口的**后半段**(棘轮门禁)跑遍全部分片,喂夹具报告——不跑真实变异,零成本，就是下面这条;
 //   ② 入口的**全部**(`stryker run` + 棘轮门禁)真跑最小的 `replay` 分片。
-// 只有①会留下一道缝:`stryker run` 那一半到底会不会碰基线没人验。② 把这道缝堵上。
+// 只有①会留下一道缝:`stryker run` 那一半到底会不会碰基线没人验。
+//
+// ② 曾经也在这里,而它是本族最贵的一条(约 50s):改 `packages/tools` 任何文件都整族跑,
+// 换来的信息却只在 `stryker/**` 变了时才更新。现在它住 `gates-mutation.test.ts`
+// （独立 project + `test:mutation`）,由半径指名。分工的判据写在那份文件头注里。
 it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
   const gate = "packages/tools/src/mutation/run-mutation-ratchet-gate.ts";
   // 夹具报告 10/10(Killed 9 + Timeout 1),高于每一片的入库基线;全程不跑真实变异。
@@ -2661,35 +2666,6 @@ it("跑完变异入口的棘轮比较后,入库基线的字节不变", () => {
     ).toBe(true);
   }
 });
-
-// ticket 08 的字面要求是「跑完**变异入口**后基线文件字节不变」:上面那条只跑了入口的棘轮那半。
-// 这一条真跑一次完整的命名入口(`stryker run` + 棘轮门禁)。
-// 之所以可以是 replay:它是全仓最小的分片(338 个变异体,本机实测约 30s),而这条断言只证明
-// 「字节不变」,不证明「分数没退」——后者靠夹具报告已经验过,不需要真跑一次半夜的变异。
-// 大分片(engine / runner / tools:半小时到一小时)不在门禁自测的预算里;抬基线命令更不跑。
-it("真实跑一次 mutate:replay 之后,stryker/baseline/replay.json 的字节逐字不变", () => {
-  const baseline = "stryker/baseline/replay.json";
-  const before = readFileSync(`${repoRoot}${baseline}`);
-
-  const mutation = script("mutate:replay");
-
-  // 0 = 不低于基线,1 = 退化(棘轮红了)——两个退出码都说明变异跑完了、比较也跑了。
-  // spawn 失败(没有 stryker、进程起不来)会由 `run` 直接抛出,不会落在下面的 allowlist 里。
-  // 分数高低不是这条用例的断言对象:那一半由夹具报告那条用例负责。
-  expect(
-    [0, 1],
-    `mutate:replay 的退出码不是棘轮的两种判决(0/1):${String(mutation.status)}\n${mutation.output}`,
-  ).toContain(mutation.status);
-  // 「跑完了」这件事得在输出里有痕迹:没有它,一个什么都没跑的命令也能退 0。
-  expect(mutation.output, `mutate:replay 没有跑完棘轮比较:\n${mutation.output}`).toContain(
-    "变异棘轮 [replay]",
-  );
-
-  expect(
-    readFileSync(`${repoRoot}${baseline}`).equals(before),
-    `真实跑完 mutate:replay 之后入库基线被改写了:${baseline}`,
-  ).toBe(true);
-}, 180_000);
 
 it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线", () => {
   const entry = "packages/tools/src/mutation/accept-baseline.ts";
@@ -2729,7 +2705,7 @@ it("抬基线命令:缺分片非零、未知分片非零、已知分片只写临
     // `source` 如实记下「这个数字打哪来」。
     expect((written as { readonly source?: string }).source).toBe(fixture("report-higher.json"));
 
-    // 历史(ADR-0027):抬升把这一次的数字记进基线文件里的 `history`。
+    // 历史:抬升把这一次的数字记进基线文件里的 `history`。
     // 首次抬升(旧基线不在场)→ 历史从这一条开始。
     const firstHistory = (written as { readonly history?: readonly { detected: number }[] })
       .history;

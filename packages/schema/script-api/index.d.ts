@@ -9,7 +9,7 @@
  * 放在 `packages/schema/script-api/` 而不是 `packages/schema/src/`:src 下的一切都进 `tsc -b packages/schema`
  * 的 program,一份 ambient 的全局声明进去之后,整个仓库的构建都会看见 `getTick` / `move` / `Snapshot`
  * 这些名字——于是仓库代码可以引用它们,而脚本侧引不引得到它们反倒没人管了。本目录在 src 之外,
- * 从不进任何 program(hld §3.2「本包无运行时代码」),对外的模块面也不受它影响(ADR-0003:
+ * 从不进任何 program(hld §3.2「本包无运行时代码」),对外的模块面也不受它影响(
  * 模块面只有 `packages/schema/src/index.ts` 一个入口,本文件不是其中之一,因为它根本不是模块)。
  *
  * ── 与那张符号表是同源的两张脸,不是两处定义 ─────────────────────────────────

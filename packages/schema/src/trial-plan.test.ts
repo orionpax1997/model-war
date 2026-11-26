@@ -1,6 +1,6 @@
 /**
  * 计划与网格汇总的合同（**单份 JSON 的形状**）：TypeScript 是形状真源，JSON Schema 手工对齐
- * （ADR-0003），跨字段关系不住在这里（归 runner 的 `checkTrialPlan` 与消费端的装载期断言）。
+ * ，跨字段关系不住在这里（归 runner 的 `checkTrialPlan` 与消费端的装载期断言）。
  *
  * 断言对象是外部可观察的形状：必填键集合与类型键集合一致、`additionalProperties: false`、
  * 版本/场数/座位域的常量与类型对齐。正例与缺字段/额外字段反例在 runner 侧的读入测试里跑

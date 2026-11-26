@@ -586,7 +586,7 @@ it("options.tools:请求体带上 `tools` 与 `tool_choice: auto`,响应把 `too
   const body = ep.requests[0]?.body as Record<string, unknown>;
   expect(body.tool_choice).toBe("auto");
   expect((body.tools as unknown[]).length).toBe(AGENT_TOOLS.length);
-  // 不发 `parallel_tool_calls`:那是 OpenAI 专有键,别的渠道可能 400(ADR-0032 落选段)。
+  // 不发 `parallel_tool_calls`:那是 OpenAI 专有键,别的渠道可能 400(落选段)。
   expect("parallel_tool_calls" in body).toBe(false);
   // 工具调用那一轮 content 是 `null`,产物在 tool_calls 里。
   expect(response.text).toBe("");

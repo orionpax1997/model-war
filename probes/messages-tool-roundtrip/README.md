@@ -39,7 +39,7 @@ node probes/messages-tool-roundtrip/probe.mjs --json /tmp/messages-tool-roundtri
 
 - 键是 `id` / `name` / `input` 三个,没有 chat 族那种 `{type:"function", function:{…}}` 包裹。
 - **`input` 是对象,不是 JSON 字符串。** chat 族的 `arguments` 是原文字符串,本仓 `ToolCall.argumentsJson`
-  刻意存原文以保住逐字性(ADR-0031);本族没有那个位置,`argumentsJson` 到这里必须先 `JSON.parse`。
+  刻意存原文以保住逐字性;本族没有那个位置,`argumentsJson` 到这里必须先 `JSON.parse`。
   这是「模型看到的字节 = 落盘的字节」在 `messages` 族上**不成立**的地方,不是实现疏漏。
 - `caller` 是网关额外给的,不在本仓的类型里,不必回传。
 
@@ -54,7 +54,7 @@ node probes/messages-tool-roundtrip/probe.mjs --json /tmp/messages-tool-roundtri
 
 ## 这份证据推翻了什么
 
-ADR-0032 的 2026-11-20 修订段记的是:`claude-haiku-5-5` 在 `/messages` 上**带不带 `tools` 都是
+ 原文(2026-11-20 修订)记的是:`claude-haiku-5-5` 在 `/messages` 上**带不带 `tools` 都是
 HTTP 403 `permission_error`**,于是判「该席位整体被渠道拒 → `tool_result` 能否配对零证据 → 按
 fail-closed 不声明工具」。2026-11-21 同一 key、同一端点、同一请求体形状复测,三步全部 200。
 
@@ -62,7 +62,7 @@ fail-closed 不声明工具」。2026-11-21 同一 key、同一端点、同一�
 `claude-haiku-4-5-20251001` 返的是另一句明确的 `MODEL_NOT_IN_PLAN: … available in Pro and above
 plans`,两个措辞不同。据操作者说明,那两次是**代理/链路故障**,不是席位与账号档位的事实。
 
-于是判据从「零证据」变成「证据在,翻译待实现」。ADR-0032 已补修订段,`endpoints.ts` 里三处
+于是判据从「零证据」变成「证据在,翻译待实现」。 已补修订段,`endpoints.ts` 里三处
 「零证据所以不写翻译」的注释也一并订正了。
 
 ## 一条旁证:渠道自己说必须走 `/messages`

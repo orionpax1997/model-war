@@ -178,14 +178,11 @@ it("扫描集里的文档现在没有手抄的第二份取值", () => {
   }
 });
 
-it("现有的三处变更记账命中靠箭头例外放行,而不是靠不扫那份文件", () => {
-  // 这三处是接线前就存在的散文(ADR-0011 与基准说明),一个字都不改。
-  // 断言分两半:①它们确实被扫到,且判据放行;②把箭头改成 `=` 之后同一条判据立刻判红——
+it("变更记账命中靠箭头例外放行,而不是靠不扫那份文件", () => {
+  // 这一处是接线前就存在的散文（基准说明），一个字都不改。
+  // 断言分两半:①它确实被扫到,且判据放行;②把箭头改成 `=` 之后同一条判据立刻判红——
   // 证明放行来自形态判定,而不是「这份文件压根没进视野」。
-  for (const target of [
-    "docs/adr/0011-v1-scripts-migrate-to-v2-without-regen.md",
-    "benchmarks/README.md",
-  ]) {
+  for (const target of ["benchmarks/README.md"]) {
     const file = read(target);
     expect(handCopiedValuesIn(file, NAMES), `${target} 里的变更记账被误判`).toEqual([]);
     const flattened = file.replaceAll("\n", " ");

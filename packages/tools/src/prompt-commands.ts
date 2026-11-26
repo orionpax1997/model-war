@@ -24,7 +24,7 @@
  *
  * ── 为什么判的是模板文本,不是渲染结果 ──
  *
- * 挂在 `quick` 上的门禁必须零构建(hld §2.2.8、ADR-0003):渲染器住在 `@model-war/gen`,
+ * 挂在 `quick` 上的门禁必须零构建(hld §2.2.8):渲染器住在 `@model-war/gen`,
  * import 它就让快门禁依赖一次 `tsc -b`。而模板里的清单是**剧本文本**——渲染只替换
  * `{{contractIndex}}` / `{{contractDigest}}` 两处,不碰这份清单。所以判模板等于判模型看到的那段
  * 文本,不需要跑渲染器。常量侧同样读源码文本(`rootfs-drift.ts` 的取法),理由相同。
@@ -34,7 +34,7 @@
  * 这条路径在本仓有三处字面量:`AGENT_TEMPLATE_PATH`(本文件)、`AGENT_TEMPLATE_NAME`
  * (`packages/gen/src/agent-prompt.ts`,渲染器的读盘点)、`AGENT_TEMPLATE_FILE`
  * (`gates.test.ts`,反例探针要改那份真实模板)。**它是被迫重复,不是第二份真源**:
- * 零构建纪律下工具包不能 import `@model-war/gen`(hld §2.2.8、ADR-0003),而渲染器住在那里;
+ * 零构建纪律下工具包不能 import `@model-war/gen`(hld §2.2.8),而渲染器住在那里;
  * 反过来 gen 也不该为了一条路径去 import 一个门禁包。与 `SCHEMA_CONSTANTS_SOURCE` 同类——
  * 那份 schema 源码路径也不得不由门禁自己写一遍。
  *

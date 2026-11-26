@@ -192,7 +192,7 @@ it("一场会话:写出可装载的 v3 档案,报告读得出候选", { timeout:
   expect(report?.protocolRounds).toBe(4);
   expect(report?.rounds).toHaveLength(4);
   expect(report?.kind).toBe("success");
-  // 只有一个候选:它既是首候选也是末候选(没有 selection 时胜者取末位,ADR-0030/0031)。
+  // 只有一个候选:它既是首候选也是末候选(没有 selection 时胜者取末位)。
   expect(report?.intermediateCandidates).toHaveLength(0);
   expect(report?.initialCandidate?.scriptFile).toBe(candidate.scriptFile);
   expect(report?.initialCandidate?.scriptState).toBe("verified");
@@ -212,7 +212,7 @@ it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产
   const workspaceDir = join(root, "ws");
   mkdirSync(workspaceDir, { recursive: true });
 
-  // 只 done、不 evaluate:一个候选都没有(ADR-0030「失败 = 一个候选都没有」)。
+  // 只 done、不 evaluate:一个候选都没有(「失败 = 一个候选都没有」)。
   const model = stubClient([bashOf("ls /contract"), toolOf("finish")]);
 
   const outcome = await withRealBash(workspaceDir, () =>
@@ -233,7 +233,7 @@ it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产
 
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") return;
-  // 失败档与成功档**同键集合**:过程记录、身份、终止原因都在(ADR-0031)。
+  // 失败档与成功档**同键集合**:过程记录、身份、终止原因都在。
   expect(outcome.agent.steps).toHaveLength(2);
   expect(outcome.agent.termination).toBe("done");
   expect(outcome.agent.atStep).toBe(2);
@@ -244,7 +244,7 @@ it("零候选会话:落成同形失败档,且 archive/<slug>/ 里不留旁挂产
 });
 
 it("429 两次:实测退避落进日志行,报告受污染读数读到同一个合计", { timeout: 120_000 }, async () => {
-  // ADR-0036 的两段判据（累计退避 / 429 次数）里，前一段原先没有落点：报告写着「生成侧日志行
+  // 退避与 429 两段判据（累计退避 / 429 次数）里，前一段原先没有落点：报告写着「生成侧日志行
   // 还不记退避时延」。这条用例是那段判据的写→读往返：会话真撞两次 429、真退避，报告读到合计。
   //
   // 「真退避」靠注入的时钟与 `sleep` 达成（不真坐 1s / 2s，否则这条用例会跟机器负载赛跑）：

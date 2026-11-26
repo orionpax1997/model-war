@@ -1,11 +1,11 @@
 /**
- * 首条消息渲染的自测(ADR-0030「首条消息只给目录」、ADR-0037「身份落末行」)。
+ * 首条消息渲染的自测(「首条消息只给目录」「身份落末行」)。
  *
  * ── 最要紧的一条是「不含契约正文」 ──
  *
- * 这条判据不靠注释、也不靠 review:它由用例钉住。理由在 ADR-0030——分步形态的全部意义是让模型
+ * 这条判据不靠注释、也不靠 review:它由用例钉住。理由在 ——分步形态的全部意义是让模型
  * **自己去查**它需要的那一小块;正文一旦被内联进首条消息,「先读什么」就不再是模型的策略决策,
- * 而且那些字节会跟着档案冻结(ADR-0031),改契约也改不动它们。
+ * 而且那些字节会跟着档案冻结,改契约也改不动它们。
  *
  * 反面钉法有两层:整份文档的全文不得出现(最强、也最不容易误报),以及若干条正文特征串不得出现
  * (它们让失败信息直接指到「哪一段漏进来了」)。目录说明则相反,它是**全量内联**的那一份。
@@ -42,7 +42,7 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const scratch = mkdtempSync(`${tmpdir()}/modelwar-agent-prompt-`);
 afterAll(() => rmSync(scratch, { force: true, recursive: true }));
 
-/** ADR-0030 的四条挂载路径。写死是对的:它断言的是契约,不是「README 与它自己一致」。 */
+/**  的四条挂载路径。写死是对的:它断言的是契约,不是「README 与它自己一致」。 */
 const MOUNT_PATHS = [
   "/contract/README.md",
   "/contract/rules.md",
@@ -65,7 +65,7 @@ it("两个占位符各自替换:目录说明全量内联,身份进末行", () =>
   expect(rendered).toBe(`目录说明正文\n\n---\n\ncontract: v1 tree=sha256:${"0".repeat(64)}`);
 });
 
-it("身份行的形状是 `contract: <版本号> tree=sha256:<hex>`(口径在 ADR-0037)", () => {
+it("身份行的形状是 `contract: <版本号> tree=sha256:<hex>`", () => {
   expect(contractIdentityTrailer({ version: "v2", treeHash: "ab".repeat(32) })).toBe(
     `v2 tree=sha256:${"ab".repeat(32)}`,
   );
@@ -170,7 +170,7 @@ it("`system` 原样用 `prompts/agent-system.md`:不渲染、无占位符", () =
   const system = prompt().system;
   expect(system).toBe(loadAgentSystemTemplate(repoRoot));
   expect(system).not.toContain("{{");
-  // 协议那一半与任务那一半是两条消息(ADR-0032):system 里不写任务,首条消息里不写协议。
+  // 协议那一半与任务那一半是两条消息:system 里不写任务,首条消息里不写协议。
   expect(system).not.toContain("你的任务");
 });
 

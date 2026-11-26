@@ -6,7 +6,7 @@
  *
  * ── 为什么它必须在 `quick` 里,而生成物漂移检查不在 ──
  *
- * 漂移检查(`gate:drift`)要 `packages/schema/dist`,只能挂在全量门禁末尾(ADR-0003:快门禁
+ * 漂移检查(`gate:drift`)要 `packages/schema/dist`,只能挂在全量门禁末尾(快门禁
  * 零构建)。本道门禁判的东西恰好**一个构建都不需要**:读两份文本、抽一个围栏块、比对、
  * 再查两条正则。而它守的是本次唯一新增的、最容易被当成普通文件手改的那份生成物
  * (`examples/minimal.ts` 没有生成头注释——它必须逐字节等于 API 文档 §6,多一行注释就不再相等)。
@@ -17,11 +17,11 @@
  * - **字节**:骨架 == `api.md` §6 那一块。抽不出来(小节标题被改写 / 骨架被移走)、抽出两块
  *   (又贴了一段完整脚本),都按失败报——抽取器不替人猜「哪个才是骨架」。
  * - **身份**:那四条的整树 sha256 == `packages/schema/src/contract-identity.ts` 的入库常量
- *   (口径见 ADR-0037,算法在同包的 `contract-tree.ts`)。它守的是「档案里记的身份还指不指得到眼前的
+ *   (口径与算法都在同包的 `contract-tree.ts`)。它守的是「档案里记的身份还指不指得到眼前的
  *   字节」——改契约字节、改挂载清单都会让它红,而它红是**对的**。它读真源包的**源码文本**而不是
  *   import 它:快门禁零构建(`@model-war/schema` 的 exports 指向 `dist`)。
  * - **散文**:详见 `contract-package.ts` 头注的三条。它们守的是「模型读到的目录说明」,
- *   而它同时是首条消息的全部内容(ADR-0030),档案里只存这一条(ADR-0031)。
+ *   而它同时是首条消息的全部内容,档案里只存这一条。
  *
  * **防假绿**:契约目录读到 0 个文件、目录说明为空、挂载清单为空、入库身份常量读不出来,四条都按
  * 失败处理——此时报「干净」什么也没断言(空转检测的共享件在 `gate/vacuous.ts`)。
@@ -130,7 +130,7 @@ const contractTreeEntries = (): readonly ContractTreeEntry[] | undefined => {
   return entries;
 };
 
-/** 判据「身份」:现算的整树哈希 == 入库常量。口径见 ADR-0037,算法在 `contract-tree.ts`。 */
+/** 判据「身份」:现算的整树哈希 == 入库常量。口径与算法在 `contract-tree.ts`。 */
 const identityFindings = (): readonly ContractFinding[] => {
   const entries = contractTreeEntries();
   if (entries === undefined) {

@@ -319,7 +319,7 @@ export const TRIAL_PLAN_JSON_SHAPE = {
 } as const;
 
 /**
- * 计划的**单份 JSON 形状**（TypeScript 是形状真源，此处手工对齐，ADR-0003）。
+ * 计划的**单份 JSON 形状**（TypeScript 是形状真源，此处手工对齐）。
  *
  * 只管形状：座位/种子/地图/场序是否与事实自洽归 runner 的 `checkTrialPlan`（跨字段关系
  * 不住在 JSON Schema 里，见 `archive-meta.ts` 头注）。

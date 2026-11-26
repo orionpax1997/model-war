@@ -28,8 +28,3 @@ flowchart LR
 
 ## 相关决策
 
-- [ADR-0003](../adr/0003-schema-single-source-distribution.md)：schema 真源与分发边界。
-- [ADR-0001](../adr/0001-sandbox-quickjs-wasi.md) 与 [ADR-0005](../adr/0005-runner-seam-is-the-two-bridge-calls.md)：沙箱选型与执行器接口。
-- [ADR-0006](../adr/0006-script-api-type-surface-lands-in-engine.md)：脚本 API 类型面的归属。
-- [ADR-0007](../adr/0007-runtime-bundle-artifact-is-committed.md)：运行时产物的入库边界。
-- [ADR-0009](../adr/0009-budget-final-values-are-revocable.md)：预算终值的复核与失效条件。

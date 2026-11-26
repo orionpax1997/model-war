@@ -1,7 +1,7 @@
 /**
  * `evaluate` 服务:宿主侧的**提交 + 整张网格 + 观测外置**,由 `evaluate` 工具调用交给模型。
  *
- * ── `evaluate` 就是提交(ADR-0030) ──
+ * ── `evaluate` 就是提交 ──
  *
  * 模型写文件、叫 `evaluate`,宿主读**当前** `/workspace/script.ts` 送去跑整张网格;成绩取
  * **最后一次** `evaluate` 评的那个版本。所以本服务的第一步是把「当前这份文件」定下来:
@@ -14,14 +14,14 @@
  * `evaluate &` 再改 `script.ts` 时(或短会话里有后台写句柄时),快照拿到的是第二份字节,而
  * 产物来自第一份——「快照就是被评的那份字节」当场变成假话。
  *
- * ── 快照沿用既有命名族,不新建目录(ADR-0031) ──
+ * ── 快照沿用既有命名族,不新建目录 ──
  *
  * `observed-<runId>-round-<步号>{.jsonl,.jsonl.candidate.ts,.jsonl.candidate.js}` 就是既有逐候选
  * 产物的那一族:观测旁挂 + 候选源码/产物。报告侧按它判完整性(`scriptFile` 必须恰为
  * `${observationsFile}.candidate.js`、`observationsFile` 必须以 `-round-<step>.jsonl` 结尾),
  * 所以这里一行名字都不许自造。`COPYFILE_EXCL`:已有同名证据即整次拒绝,不覆盖、不静默复用。
  *
- * ── 观测出口:stdout 只给聚合对差表与一行路径(ADR-0030「外置,而不是压缩」) ──
+ * ── 观测出口:stdout 只给聚合对差表与一行路径(「外置,而不是压缩」) ──
  *
  * 常驻上下文只放**聚合对差表**(座位 × 地图的八格)与一行指向完整观测的路径;逐场一行与最差
  * 三场的展开落 `/workspace/.observations/<n>.md`,模型按需读。派生视图**不进档案**:它由落盘的
@@ -366,7 +366,7 @@ export const createEvaluateService = (deps: EvaluateServiceDeps): EvaluateServic
       const earlier = previous;
       const readings = readTrialObservations(observationsHostPath, productSha256, plan);
       const missing = missingTrialGridMatches(readings ?? [], plan);
-      // 派生视图照写:被拦下或缺场的那一次同样值得读,而它不进档案(ADR-0030/0031)。
+      // 派生视图照写:被拦下或缺场的那一次同样值得读,而它不进档案。
       if (readings !== undefined && readings.length > 0) {
         writeFileSync(
           observationsViewPath,

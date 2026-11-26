@@ -7,7 +7,7 @@
  * (`SANDBOX_ROOTFS_FILES`)、那些字节合起来是什么(`SANDBOX_ROOTFS_TREE_HASH`)。
  * 它们被两侧读:`packages/gen` 的执行器(把 rootfs 挂成 `/`)与 `packages/tools` 的漂移门禁
  * (现算 == 入库)。本包是两边都已能 import 的共享常量之家,形状与 `sandbox-runtime.ts` 同款
- * (ADR-0007)。
+ * 。
  *
  * ── 这个哈希与契约包身份不是同一个数 ──
  * 两边口径同源(`按路径排序 → path\0bytes 串接 → sha256`),但**范围不同**:这里是

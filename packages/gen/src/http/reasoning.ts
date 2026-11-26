@@ -1,7 +1,7 @@
 /**
  * 推理回传的**读法与写法**:三族各一份,生产者与序列化者都是本文件。
  *
- * ── 为什么这件事不能由 loop 或档案负责(ADR-0032「reasoning 按端点族分家」) ──
+ * ── 为什么这件事不能由 loop 或档案负责(「reasoning 按端点族分家」) ──
  *
  * 签名与加密块对 loop、档案、报告都是无意义的字节:只有**产出它的那一族端点**知道它该以什么
  * 形状带回去。所以通道是一个不透明字段(`ReasoningEcho`),本文件是它唯一的解释者——读进来
@@ -14,7 +14,7 @@
  * | `messages` | `content` 里 `type:"thinking"` 的块 + 它的 `signature` | **签名回传**:连签名原样送回;缺签名的块送回时不带它,并记一条丢块计数 |
  * | `responses` | `output` 里 `type:"reasoning"` 的条目(含 `encrypted_content`) | **加密回传**:条目原样送回 |
  * | `chat-completions` | `message.reasoning_details` 数组 | 普通推理内容(含 `reasoning_content`、`reasoning.text`)**丢弃**;`{type:"reasoning.encrypted"}` 原样回传 |
- * | `generate-content` | `parts[].thought` 的思维链 | 显式 `drop`:ADR-0032 只裁了三族,这一族的思考段没有签名也没有加密块,不发明一种回传 |
+ * | `generate-content` | `parts[].thought` 的思维链 | 显式 `drop`: 只裁了三族,这一族的思考段没有签名也没有加密块,不发明一种回传 |
  *
  * `glyph-cluster` 的 `{type:"reasoning.encrypted", data:"gwst1.…", format:"stealth-v1"}` 属于
  * chat 族那一格:它是该族里**唯一有东西可回传**的形态,丢掉等于主动放弃跨步连续性。
@@ -41,7 +41,7 @@
 import type { ReasoningCarry, ReasoningEcho } from "../model-client.js";
 import { isRecord } from "../record.js";
 
-/** chat 族的加密条目类型名(ADR-0032 点名的形态)。 */
+/** chat 族的加密条目类型名(点名的形态)。 */
 export const CHAT_ENCRYPTED_ENTRY_TYPE = "reasoning.encrypted";
 
 /** messages 族的推理块类型名。 */

@@ -10,7 +10,7 @@
  *
  * ── 为什么这里没有「评测探针」这个缝 ──
  *
- * 一次 `evaluate` 是模型在 bash 块里叫人跑的,不是 loop 主动发起的(ADR-0030「没有提交动作,
+ * 一次 `evaluate` 是模型在 bash 块里叫人跑的,不是 loop 主动发起的(「没有提交动作,
  * `evaluate` 就是提交」)。所以网格挂在**宿主服务**后面(`agent/host/evaluate-service.ts`),
  * loop 只从执行器的回包里搬运「这一步真评出成绩了」这个事实(`AgentExecResult.submission`)。
  * 给它另开一条 loop 侧的注入缝,等于给「谁执行 `evaluate`」造第二个答案。
@@ -25,7 +25,7 @@ import type { ArchiveStep, ArchiveStepResult, ArchiveTermination } from "@model-
 
 import type { ToolCall } from "./tools.js";
 
-/** 会话的终止原因(ADR-0032):六个取值,与落档判据正交。 */
+/** 会话的终止原因:六个取值,与落档判据正交。 */
 export type AgentTermination = ArchiveTermination;
 
 /** 一步的过程记录条目,形状由票 01 的档案契约定死。 */
@@ -104,7 +104,7 @@ export type AgentExecResult = {
 export type AgentExecutor = (request: AgentExecRequest) => Promise<AgentExecResult>;
 
 /**
- * 一步的发送侧证据(轮号等于步号,ADR-0031/0035)。
+ * 一步的发送侧证据(轮号等于步号)。
  *
  * 生成日志行的完整形状归接线的票;本段只留「这一次调用几枪、被谁停的、多少钱」——
  * 那是 loop 唯一知道的东西,也是 `attempts` 归并(截断重试不占步)唯一能被观察到的地方。
@@ -125,7 +125,7 @@ export type AgentTurnEvidence =
       /**
        * 传输重试耗尽的那一次调用。
        *
-       * 它**不进过程记录、不进协议轮数**(ADR-0031):轮号给的是「本来要成为第几步」,只为让
+       * 它**不进过程记录、不进协议轮数**:轮号给的是「本来要成为第几步」,只为让
        * 生成日志那一行有位置可挂。
        */
       readonly kind: "transport";

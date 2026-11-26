@@ -1,7 +1,7 @@
 /**
  * 允许名单的**读取点**——名单本身不在本包里。
  *
- * 真源在 `@model-war/schema`(hld §6.2、ADR-0003)。本文件 import 的是**生成物**
+ * 真源在 `@model-war/schema`(hld §6.2)。本文件 import 的是**生成物**
  * (`generated/builtin-globals.ts`,由 `pnpm run generate` 从真源产出)。
  * 「生成物与手写表不得并存」自此兑现:曾经躺在这里的那张手写表已退役,本包内**零手写副本**,
  * 名单只有一个出处。

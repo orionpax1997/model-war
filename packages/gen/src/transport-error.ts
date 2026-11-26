@@ -19,7 +19,7 @@
  *
  * 它比 `retryable` 粗一级、比状态码粗得更多:读侧要的是「这是什么性质的事」,不是「哪个号段」。
  * 两个字段各管一件事——`retryable` 是**事实**(重发可能成功吗),这一条是**性质**(谁的问题)。
- * 两者不重合正是本仓库需要策略层的理由:5xx 是 `retryable: true` 但按裁决不重试(ADR-0036)。
+ * 两者不重合正是本仓库需要策略层的理由:5xx 是 `retryable: true` 但按裁决不重试。
  */
 export type TransportFailureKind = "rate-limited" | "server" | "network" | "timeout";
 
@@ -65,7 +65,7 @@ export class TransportError extends Error {
  * 传输失败的细分判定:状态码能说话时听状态码,不能说话时才看 `timedOut`。
  *
  * 429 与 5xx **不共用**一档——前者是「服务端还好,只是现在不给你」,后者是「服务端自己坏了」;
- * 这条界线就是 ADR-0036 里「等一等有没有意义」的判据。
+ * 这条界线就是「等一等有没有意义」的判据。
  */
 export const transportFailureKindOf = (cause: TransportError): TransportFailureKind => {
   if (cause.status === 429) {

@@ -48,7 +48,7 @@ import {
 } from "./reasoning.js";
 
 /**
- * 一条端点族的**推理回传能力声明**(ADR-0032)。
+ * 一条端点族的**推理回传能力声明**。
  *
  * 三族三份策略,写成声明而不是调用点上的条件分支:谁要回传、回传什么形状,由族自己说;
  * 序列化动作仍只在那族的 `buildBody` 里发生(读法/写法在 `reasoning.ts`)。
@@ -69,13 +69,13 @@ export type ReasoningCapability = {
  * `{type:"function", function:{name, description, parameters}}` + `tool_calls`,Anthropic 是
  * `{name, description, input_schema}` + `tool_use` / `tool_result` 块),而只有 `chat-completions`
  * 的工具读法被**真实会话**验证过。给没被验证过的族写一版翻译,只会造出「看起来支持」的假象
- * (ADR-0032 已经否过一次这个形状)。所以缺省即「本族不支持工具调用」,用它的席位在**会话
+ * (已经否过一次这个形状)。所以缺省即「本族不支持工具调用」,用它的席位在**会话
  * 起跑之前**拒跑(`pipeline.ts` 的 `assertToolSurface`),而不是发一个上游认不出的请求。
  *
  * `messages` 族的现状:协议事实已有(2026-11-21 三步探针,`probes/messages-tool-roundtrip/`:
  * 声明形状被接受、返回 `tool_use`、`tool_result` 配对也被接受),但**翻译还没写**,所以这里
  * 仍然不声明。原先写在这里的理由是「带不带 `tools` 都是 403,所以零证据」——那两次 403 是
- * 链路故障而非档位事实,复测不再现,订正与原文都记在 ADR-0032 的 2026-11-21 修订段。
+ * 链路故障而非档位事实,复测不再现,订正与原文都记在 git 历史里。
  * 「翻译没写」与「没有证据」是两件事,别再写成一个。
  */
 export type ToolCapability = {
@@ -130,7 +130,7 @@ export type EndpointSpec = {
    */
   readonly tools?: ToolCapability;
   /**
-   * 推理回传的能力声明(ADR-0032「reasoning 按端点族分家」)。**每族必填**。
+   * 推理回传的能力声明(「reasoning 按端点族分家」)。**每族必填**。
    *
    * 必填而不是可选:可选会让「这一族忘了声明」与「这一族声明了丢弃」在代码里长得一样,
    * 而前者是一个应该当场响的接错。
@@ -208,7 +208,7 @@ const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ?
  * `arguments` **原样交出字符串**,不在这里 `JSON.parse`:解析失败是模型可自我修复的格式失败
  * (`malformed-arguments`,归动作层判、计一步、回纠正消息),放进传输层就变成了端点错误。
  * 同一个道理要求它**不重编码**——`JSON.stringify(JSON.parse(x))` 会改掉缩进与转义写法,而发回
- * 历史时用的就是这串字节(ADR-0031「与发回去的字节同源」)。
+ * 历史时用的就是这串字节(「与发回去的字节同源」)。
  *
  * 缺 `function.name` 或 `function.arguments` 的那一格**丢掉**,不折成空名字的调用:
  * 「说不出调了什么」不是一个可判定的动作,凑空名字只会把上游的呲变成下游的 `unknown-tool`。
@@ -225,7 +225,7 @@ const toolCallsOf = (message: Record<string, unknown>): readonly ToolCall[] => {
   return calls;
 };
 
-// ── 推理回传的能力声明(ADR-0032「reasoning 按端点族分家」)────────────────────
+// ── 推理回传的能力声明(「reasoning 按端点族分家」)────────────────────
 //
 // 三份声明跟在族的那一节之前,`buildBody`、累积器、`parseResponse` 都从它们取策略:
 // 「这一族怎么回传」因此只有一个家,而不是「声明一处、写死另一处」。
@@ -262,7 +262,7 @@ const RESPONSES_REASONING: ReasoningCapability = {
 /**
  * generate-content 族:显式丢弃。
  *
- * ADR-0032 只裁了三族(签名回传 / 加密回传 / 普通推理丢弃),这一族的思考段(`part.thought`)
+ *  只裁了三族(签名回传 / 加密回传 / 普通推理丢弃),这一族的思考段(`part.thought`)
  * 既没有签名也没有加密块,所以不发明一种回传:声明成 `drop`,让「这一族不回传」成为一条
  * 写下来的事实,而不是一处省略。
  */
@@ -316,7 +316,7 @@ const chatToolsField = (tools: readonly ToolDeclaration[]): readonly unknown[] =
  * 工具声明与 `tool_choice` 排在 `...params` **之后**。
  *
  * 这是「工具声明是一等参数」的物理实现点:`params` 是生成策略的产出面,把它写在后面就是让
- * `generationPolicy` 能意外覆盖协议。``tool_choice: "auto"` 而不是 `"required"` 的理由在 ADR-0032
+ * `generationPolicy` 能意外覆盖协议。``tool_choice: "auto"` 而不是 `"required"` 的理由在
  * 的落选段:强制调用会把「我想先想想」变成一条被强迫的命令,而`auto` 下「零次调用」照旧是
  * 一条计步的拒绝档。
  */
@@ -477,7 +477,7 @@ const messagesToolsField = (tools: readonly ToolDeclaration[]): readonly unknown
  *
  * ── 本族没有「原文」这个位置 ──
  *
- * chat 族的 `arguments` 就是原文字符串,发回去的字节与落档的字节同源(ADR-0032)。本族的 `input`
+ * chat 族的 `arguments` 就是原文字符串,发回去的字节与落档的字节同源。本族的 `input`
  * 是**对象**,翻译必须解析,于是逐字性在这一族上没有落点——解析成功的那份对象才是本族能保住的东西。
  *
  * ── 所以兜底必须是确定的,不许抛 ──
@@ -710,7 +710,7 @@ const messagesStreamBody: EndpointSpec["buildBody"] = (config, messages, params,
 
 /**
  * 逐帧累积 Anthropic SSE:正文只拼 `text_delta`,推理 `thinking_delta` / `signature_delta` 不进 `text`,
- * 而是拼回可回传的签名块（ADR-0032「签名回传」）；停止原因取 `message_delta` 的
+ * 而是拼回可回传的签名块（「签名回传」）；停止原因取 `message_delta` 的
  * `stop_reason`（与非流式同一归一表）；usage 把起止两处合并。
  *
  * 收尾认 `message_stop` 事件（Anthropic 流没有 `[DONE]`）,由 `done()` 告诉读流循环提前结束。
@@ -824,7 +824,7 @@ const parseMessages: EndpointSpec["parseResponse"] = (json) => {
       // 变成下游的 `unknown-tool`)。
       if (name === undefined) continue;
       // 本族的 `input` 是对象,没有原文字节可取——`JSON.stringify` 是这里唯一能做的事,
-      // 因此本族的逐字性只能保住「解析成功的那份对象」(ADR-0032 的 2026-11-21 修订段)。
+      // 因此本族的逐字性只能保住「解析成功的那份对象」( 2026-11-21 修订段)。
       toolCalls.push({ name, argumentsJson: JSON.stringify(block.input ?? {}) });
     }
   }

@@ -13,7 +13,6 @@
  * **版本库里那串确切字节**。所以产物是提交物,下面的常量是它的字节 sha256;门禁
  * (`packages/tools/src/sandbox-runtime/run-runtime-drift-gate.ts`)钉住
  * 「入库产物字节 == 本常量」与「现打一次 == 入库产物」。判据锚定确切字节,不随环境漂移。
- * 依据见 `docs/adr/0007-runtime-bundle-artifact-is-committed.md`。
  */
 
 /** `quickjs-wasi` 的锁定版本。与根 `package.json` 的精确钉版同源,随升级一并改写。 */

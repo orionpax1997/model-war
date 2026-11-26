@@ -119,7 +119,7 @@ describe("快照即提交:两份字节在跑之前落定", () => {
       outcome.submission?.productSha256,
     );
 
-    // 会话结束后的改动不影响快照:模型评完之后改坏文件,成绩仍是那一版(ADR-0030)。
+    // 会话结束后的改动不影响快照:模型评完之后改坏文件,成绩仍是那一版。
     writeFileSync(join(dir, "script.ts"), "改坏了\n", "utf8");
     expect(readFileSync(join(archiveDir, candidateSourceFile(observationsFile)), "utf8")).toBe(
       SOURCE,

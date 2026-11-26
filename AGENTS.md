@@ -70,7 +70,7 @@ hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 
 | 文档           | 唯一拥有                                                             | 不写（留指针）                         |
 | -------------- | -------------------------------------------------------------------- | -------------------------------------- |
-| CONTEXT.md     | 领域词汇与容易误用的概念                                             | 规则、架构、决策                       |
+| GLOSSARY.md    | 领域词汇与容易误用的概念                                             | 规则、架构、决策                       |
 | docs/vision.md | 定位、服务对象、核心差异、非目标与产品取舍、长期风险                 | 规则机制、工程方案、验收条款           |
 | docs/gdd.md    | 玩法设计意图、不可从代码推导的约束、规则侧决策记录                   | 精确规则与结算顺序、参数取值、工程实现 |
 | docs/hld.md    | 架构与包拓扑、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 | 玩法规则、参数取值、需求条目           |
@@ -80,12 +80,12 @@ hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 - 参数取值真源是 `rulesets/*.json`;`docs/rules-vN` 的数值表由它生成，文档里不复制取值。
 - **代码是真源，但契约不可删**：`docs/rules-vN/` 是模型唯一能读到的规则输入（相当于公开 API 文档），由代码、schema 与 `rulesets/` 生成，由漂移门禁保证不漂移。
 - **验收不由需求编号承担**：验收条款写在能被跑出来的东西上（命令、测试、门禁）；`docs/hld.md` §11 是那张落点表。
-- 文档之间冲突时：先看真源（代码 / `rulesets/` / 生成物），再看 ADR 的裁决；发现冲突就修矛盾的一方（删除或改指针），不要两边各留一份。
+- 文档之间冲突时：先看真源（代码 / `rulesets/` / 生成物），再看 ADR 与代码头注的裁决；发现冲突就修矛盾的一方（删除或改指针），不要两边各留一份。
 - 变更历史由 git 承载，文档头部不写逐版本变更记录。
 
 ## Domain docs
 
-When exploring a domain area, read the relevant `CONTEXT.md` and ADRs first. See [docs/agents/domain.md](docs/agents/domain.md) for the lookup rules.
+When exploring a domain area, read the relevant `GLOSSARY.md` and ADRs first. See [docs/agents/domain.md](docs/agents/domain.md) for the lookup rules.
 
 <!-- CODEGRAPH_START -->
 

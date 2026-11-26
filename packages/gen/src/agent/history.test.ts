@@ -51,7 +51,7 @@ it("每步一对:assistant 原文 + tool 观测,顺序与步号一致,`toolCallI
 
 it("工具调用那一轮:assistant 的 `toolCalls` 原样搭车,`argumentsJson` 逐字不改写(不重编码)", () => {
   // 渠道给的是原始 JSON 文本,含它自己的空格与转义写法。`JSON.parse` 再 `stringify` 会改掉它,
-  // 而发回下一轮用的就是这串字节——重编码等于「发回去的 ≠ 落盘的」(ADR-0031)。
+  // 而发回下一轮用的就是这串字节——重编码等于「发回去的 ≠ 落盘的」。
   const argumentsJson = '{ "command" : "ls -la /contract" }';
   const history = buildHistory(seed, [
     {

@@ -24,11 +24,12 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { scriptProjects } from "./plan.ts";
 import {
   STRUCTURAL_TESTS,
   classify,
@@ -36,6 +37,7 @@ import {
   messageOf,
   parseReport,
   probeRelated,
+  probeRelatedAsync,
   type ProbeOutcome,
   type ProbeReport,
 } from "./related-probe.ts";
@@ -90,6 +92,27 @@ const gitStatus = (): string =>
 const SMALL_TARGET = "packages/tools/src/scope/fixtures/probe-target.ts";
 
 /**
+ * 探针问的 project 集:**与生产同一条推导**(`test:related` 的定义),不在这里写一份字面量。
+ *
+ * 手写 `["all"]` 就是这次修复前的 bug:`.prop.ts` 住在 `property` project,问 `all` 结构上只能
+ * 答 0 条。两处必须同源,否则「探针说没人看」与「计划真的跑了」会同时成立。
+ */
+const PROBE_PROJECTS = (): readonly string[] => {
+  const manifest = JSON.parse(
+    readFileSync(new URL("../../../../package.json", import.meta.url), "utf8"),
+  ) as { scripts: Record<string, string> };
+  return [...scriptProjects(manifest.scripts, "test:related")];
+};
+
+/**
+ * `classify` 的 `subjects`:这一次被探的路径。
+ *
+ * 用一个和 `STRUCTURAL_TESTS` 不交的普通路径,是因为绝大多数用例要问的是「只有结构测试在看
+ * 别人」——被探的路径若在清单里,那条结构测试就不再算「别人」。自指那一条自己传自己。
+ */
+const SUBJECT = "packages/a/target.ts";
+
+/**
  * 全文件共用**一次**小靶子真探针。
  *
  * 两条"有候选"的用例看的是同一次运行:一次 spawn 里绝大部分是 vitest 自己的启动(~3.3 秒,
@@ -114,7 +137,7 @@ const runSmallProbe = (): typeof smallProbe => {
     const outcome = probeRelated({
       repoRoot,
       paths: [SMALL_TARGET],
-      project: "all",
+      projects: PROBE_PROJECTS(),
       reportPath,
     });
     return { outcome, dir, reportPath, statusBefore };
@@ -169,7 +192,7 @@ describe("parseReport:报告的计数与文件列表", () => {
 
 describe("classify:六种状态", () => {
   it("0 条用例 → no-tests(退出码是 1 也还是 no-tests,不是 failed)", () => {
-    const outcome = classify(report([], { tests: 0 }), STRUCTURAL_TESTS, 1);
+    const outcome = classify(report([], { tests: 0 }), STRUCTURAL_TESTS, 1, []);
     expect(outcome.kind).toBe("no-tests");
   });
 
@@ -178,6 +201,7 @@ describe("classify:六种状态", () => {
       report(["packages/a/x.test.ts"], { tests: 3, pending: 3 }),
       STRUCTURAL_TESTS,
       0,
+      [SUBJECT],
     );
     expect(outcome.kind).toBe("all-skipped");
     expect(isRed(outcome)).toBe(true);
@@ -188,12 +212,15 @@ describe("classify:六种状态", () => {
       report(["packages/a/x.test.ts"], { tests: 4, failed: 2 }),
       STRUCTURAL_TESTS,
       1,
+      [SUBJECT],
     );
     expect(failed.kind).toBe("failed");
     expect(failed.kind === "failed" && failed.failed).toBe(2);
 
     // 计数看起来正常、进程红过(套件级错误)也算红:退出码是"跑完了没有"的信号。
-    const crashed = classify(report(["packages/a/x.test.ts"], { tests: 4 }), STRUCTURAL_TESTS, 1);
+    const crashed = classify(report(["packages/a/x.test.ts"], { tests: 4 }), STRUCTURAL_TESTS, 1, [
+      SUBJECT,
+    ]);
     expect(crashed.kind).toBe("failed");
   });
 
@@ -204,7 +231,8 @@ describe("classify:六种状态", () => {
     }
 
     const structural = STRUCTURAL_TESTS[0] ?? "";
-    const outcome = classify(report([structural], { tests: 2 }), STRUCTURAL_TESTS, 0);
+    // 被探的是一个**不在**结构测试清单里的路径:这条结构测试就是那个「别人」。
+    const outcome = classify(report([structural], { tests: 2 }), STRUCTURAL_TESTS, 0, [SUBJECT]);
 
     expect(outcome.kind).toBe("structural-only");
     expect(outcome.kind === "structural-only" && outcome.structural).toEqual([structural]);
@@ -213,9 +241,43 @@ describe("classify:六种状态", () => {
     expect(messageOf(outcome)).toContain("别的文件的形状");
   });
 
+  /**
+   * **被改的文件自己就在 `STRUCTURAL_TESTS` 里时,它不是「别人」。**
+   *
+   * 改一份结构测试自己的注释,`vitest related` 选出来的就是它自己。旧判据把 `files − structural`
+   * 为空一律读成 `structural-only`,于是「谁看着这份文件」的答案——“它自己”——被判成“没人”。
+   *
+   * 绿不代表覆盖了生产代码:`selfOnly` 把它说清楚(见下一条)。
+   */
+  it("被探的路径就是结构测试自己时,不判 structural-only", () => {
+    const self = STRUCTURAL_TESTS[0] ?? "";
+    const outcome = classify(report([self], { tests: 2 }), STRUCTURAL_TESTS, 0, [self]);
+
+    expect(outcome.kind).toBe("ran");
+    expect(isRed(outcome)).toBe(false);
+    expect(outcome.kind === "ran" && outcome.selfOnly).toBe(true);
+    // 「它自己的判据」不能被说成生产代码的行为覆盖。
+    expect(messageOf(outcome)).toContain("不是生产代码的行为覆盖");
+  });
+
+  it("结构测试自己 + 一份真行为测试一起被选中时,不算 selfOnly", () => {
+    const self = STRUCTURAL_TESTS[0] ?? "";
+    const outcome = classify(
+      report([self, "packages/a/x.test.ts"], { tests: 5 }),
+      STRUCTURAL_TESTS,
+      0,
+      [self],
+    );
+
+    expect(outcome.kind).toBe("ran");
+    expect(outcome.kind === "ran" && outcome.selfOnly).toBe(false);
+    // 被探的路径自己不算「别人」:它既不是行为证据,也不该被列成「看着这块代码的结构测试」。
+    expect(outcome.kind === "ran" && outcome.structural).toEqual([]);
+  });
+
   it("报告 undefined → no-report(不是 no-tests),且与 no-tests 的消息不同", () => {
-    const missing = classify(undefined, STRUCTURAL_TESTS, null);
-    const empty = classify(report([], { tests: 0 }), STRUCTURAL_TESTS, 1);
+    const missing = classify(undefined, STRUCTURAL_TESTS, null, [SUBJECT]);
+    const empty = classify(report([], { tests: 0 }), STRUCTURAL_TESTS, 1, []);
 
     expect(missing.kind).toBe("no-report");
     expect(missing.kind).not.toBe("no-tests");
@@ -245,7 +307,7 @@ describe("classify:六种状态", () => {
       const outcome = probeRelated({
         repoRoot,
         paths: [SMALL_TARGET],
-        project: "all",
+        projects: PROBE_PROJECTS(),
         reportPath: join(occupied, "report.json"),
       });
       expect(outcome.kind).toBe("no-report");
@@ -265,7 +327,7 @@ describe("classify:六种状态", () => {
       join(repoRoot, "packages", "tools", "report.json"),
     ]) {
       expect(() =>
-        probeRelated({ repoRoot, paths: [SMALL_TARGET], project: "all", reportPath }),
+        probeRelated({ repoRoot, paths: [SMALL_TARGET], projects: PROBE_PROJECTS(), reportPath }),
       ).toThrow(/tmpdir/u);
       expect(existsSync(reportPath), `探针在仓库里留了文件:${reportPath}`).toBe(false);
     }
@@ -290,7 +352,7 @@ describe("真探针:报告是唯一的判据", () => {
       const outcome = probeRelated({
         repoRoot,
         paths: [orphan.slice(repoRoot.length)],
-        project: "all",
+        projects: PROBE_PROJECTS(),
       });
       expect(outcome.kind).toBe("no-tests");
     } finally {
@@ -329,10 +391,64 @@ describe("真探针:报告是唯一的判据", () => {
       probeRelated({
         repoRoot,
         paths: [SMALL_TARGET],
-        project: "all",
+        projects: PROBE_PROJECTS(),
         reportPath: join(repoRoot, "related-probe-report.json"),
       }),
     ).toThrow(/tmpdir/u);
     expect(existsSync(join(repoRoot, "related-probe-report.json"))).toBe(false);
   });
+
+  /**
+   * 异步版与同步版**必须给出同一个结论**:`check` 走异步(并发),这里走同步。
+   *
+   * 差一步就会是“探针说的”与“计划跑的”不一致——而两处都很安静。只拿同一个靶子跑一遍异步、
+   * 跟共用那次同步的结果逐字比:两个版本的命令行与 `classify` 是同一份(`vitestArgs` / `finish`),
+   * 这条用例的职责是钉住这个共用。
+   */
+  it("集成:异步版与同步版对同一个靶子给出逐字相同的结论", { timeout: 240_000 }, async () => {
+    const { outcome } = runSmallProbe();
+    const asyncOutcome = await probeRelatedAsync({
+      repoRoot,
+      paths: [SMALL_TARGET],
+      projects: PROBE_PROJECTS(),
+    });
+    expect(asyncOutcome).toEqual(outcome);
+  });
+
+  /**
+   * **`check` 不再逐文件探池内测试文件的那条前提,在这里真跑一遍。**
+   *
+   * 前提是:被改的路径本身是池内的测试文件时,`test:related` 会把它选出来并跑掉——所以再探
+   * 一遍等于把同一个文件执行两遍(重的那些是自己的测试,实测每个几十秒,而它们已经在计划
+   * 里那条腿上跑过)。
+   *
+   * 这是**别人(Vitest)的行为**,不能靠推理也不靠配置告状:只能真跑。样本取**磁盘上的两份**
+   * (池子的两道 include 各一份:一个 `*.test.ts`、一个 `*.prop.ts`),不取 include 里的 glob
+   * ——拿它当样本会变成自证。
+   *
+   * 前提不成立时的形状很安静:那个文件根本不会被跑(`selfOnly` 也就不再出现),而 `check`
+   * 已经把它的那一半交给这条腿了。所以这里红的意思是“对池内测试文件,`check` 无事可做”。
+   */
+  it(
+    "集成:池内的测试文件去问相关腿,选中的是它自己(探针不再探它们的前提)",
+    { timeout: 240_000 },
+    async () => {
+      for (const sample of [
+        "packages/tools/src/scope/fixtures/probe-target.test.ts",
+        "packages/tools/src/rules/no-float.prop.ts",
+      ]) {
+        const outcome = await probeRelatedAsync({
+          repoRoot,
+          paths: [sample],
+          projects: PROBE_PROJECTS(),
+        });
+        expect(outcome.kind, `${sample} 不在计划的池子里?`).toBe("ran");
+        if (outcome.kind !== "ran") continue;
+        expect(outcome.behavior, `${sample} 没被相关腿拾取`).toEqual([sample]);
+        // 只有它自己:没有别人观测到它,而这正是那个前提要说的。
+        expect(outcome.selfOnly).toBe(true);
+        expect(outcome.tests).toBeGreaterThan(0);
+      }
+    },
+  );
 });

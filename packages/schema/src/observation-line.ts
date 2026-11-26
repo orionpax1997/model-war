@@ -1,7 +1,7 @@
 /**
  * 观测行:回放**之外**那份 `observations.jsonl` 的一行(hld §5.3 / §7.5)。
  * **类型与 JSON Schema 同文件、同一次书写**,纪律与 `map.ts` / `replay-line.ts` 一致
- * (ADR-0003:TypeScript 是真源,JSON Schema 手工对齐)。
+ * (TypeScript 是真源,JSON Schema 手工对齐)。
  *
  * ── 为什么它单独一个文件、单独一种行 ──
  *

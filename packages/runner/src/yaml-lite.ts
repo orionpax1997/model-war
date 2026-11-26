@@ -5,7 +5,7 @@
  *
  * runner 与 gen 之间不得有依赖边:hld §3.2 的依赖规则明写 `runner → schema` 单向、
  * 「不新增 `runner → gen` 的边」;`packages/runner` 的 `package.json` 也只声明 `@model-war/schema`。
- * 下沉到 `@model-war/schema` 同样不行——ADR-0003 与 hld §3.1 把 schema 限定为「无运行时代码」。
+ * 下沉到 `@model-war/schema` 同样不行—— 与 hld §3.1 把 schema 限定为「无运行时代码」。
  * 于是唯一的家只有 runner 自己。本文件与 `packages/gen/src/yaml-lite.ts` **行为逐字相同**
  * (同样的 `parseYamlSubset(source, filePath)` 签名、同样的错误文案、同样的受支持子集),
  * 便于日后读者直接 diff 两份、也便于将来有一次真正的抽取时合并。

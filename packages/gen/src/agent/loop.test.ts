@@ -159,7 +159,7 @@ it("`action.kind` 是工具名的投影:check / probe / evaluate 各归各档", 
 
 it("`toolCall` 原样落步:`argumentsJson` 逐字不改写,`raw` 可以是空串", async () => {
   // 渠道给的是原始 JSON 文本,含它自己的空格与转义写法。重编码会改掉它,而发回下一轮用的就是
-  // 这串字节——重编码等于「发回去的 ≠ 落盘的」(ADR-0031)。
+  // 这串字节——重编码等于「发回去的 ≠ 落盘的」。
   const argumentsJson = '{ "command" : "ls -la /contract" }';
   const model = stubClient([toolCall("bash", argumentsJson)]);
   const result = await runAgentSession(
@@ -317,7 +317,7 @@ it("连续三次 `malformed-arguments` 即停:每步都是 none + 退出码 64,�
     expect(step.action).toEqual({ kind: "none", rejectReason: "malformed-arguments" });
     expect(step.exitCode).toBe(ACTION_REJECT_EXIT_CODE);
     expect(step.stderr).toContain("arguments 不能用");
-    // 被拒的那一次调用的字节仍落档:读侧看得见模型当时写的到底是什么(ADR-0031)。
+    // 被拒的那一次调用的字节仍落档:读侧看得见模型当时写的到底是什么。
     expect(step.toolCall).toBeDefined();
   }
   // 纠正消息进了历史,模型下一步能看见自己违反了哪一条(逐次累积)。信封是 `tool`(观测消息

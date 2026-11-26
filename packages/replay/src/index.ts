@@ -2,7 +2,7 @@
  * replay 包:回放的解析/序列化(stateHash 原语)+ 回放**文件格式版本**常量(hld §3.1)。
  * 依赖方向单向:replay → schema,不得反向(hld §3.2)。
  *
- * 行的**形状**归真源包 `packages/schema` 所有(hld §7.5,ADR-0003):meta / tick / result
+ * 行的**形状**归真源包 `packages/schema` 所有(hld §7.5):meta / tick / result
  * 三行的类型与 JSON Schema 在那里,本包只做编解码、不再声明行的类型,故这里不复述字段。
  * 唯一留在本包的是 `CURRENT_SCHEMA_VERSION`——它是回放**文件格式的版本**,不是行的形状。
  *
@@ -107,7 +107,7 @@ export { FORBIDDEN_GLOBAL_NAMES, SANDBOX_INJECTED_API_SYMBOLS } from "@model-war
  * 回放**文件格式**的版本(hld §7.5 末段)。跨版本兼容性以它为准。
  *
  * 它是格式的版本,不是行的形状:行(meta / tick / result 三类)的类型与 JSON Schema 归真源包
- * 所有(ADR-0003),本包只做编解码。取值从 1 起,格式发生不兼容变更时递增。
+ * 所有,本包只做编解码。取值从 1 起,格式发生不兼容变更时递增。
  */
 export const CURRENT_SCHEMA_VERSION = 1;
 

@@ -1,7 +1,7 @@
 /**
  * 回放 JSONL **行**的形状(hld §7.5:第 1 行 `meta` / 第 n 行 `tick` / 末行 `result`)。
  * **类型与 JSON Schema 同文件、同一次书写**,纪律与 `map.ts` 一致
- * (ADR-0003:TypeScript 是真源,JSON Schema 手工对齐)。
+ * (TypeScript 是真源,JSON Schema 手工对齐)。
  *
  * ── 这一格为什么现在能定死 ────────────────────────────────────────────────────
  *

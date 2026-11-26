@@ -1,5 +1,5 @@
 /**
- * 执行器缝与 `StubRunner`(hld §4.5,ADR-0005)。
+ * 执行器缝与 `StubRunner`(hld §4.5)。
  *
  * 钉住三件事:桥名由 `HOST_BRIDGE_PREFIX` 拼出(不是手写字面量)、缝只有两次桥调用
  * (没有基类/工厂/生命周期)、`StubRunner` 同样做「拷一份快照、拿到 intent 数组」两件事。
@@ -31,7 +31,7 @@ it("两个桥名由真源包的宿主桥前缀拼出,与静态校验器那条 `_
 
 it("缝只有两个方法:没有 load / dispose / turn,没有 Runner 基类", () => {
   const runner: SeatRunner = stubRunner(() => []);
-  // 「顺手加一个生命周期方法」的反例:这一条红。ADR-0005 逐条裁掉的正是这一类。
+  // 「顺手加一个生命周期方法」的反例:这一条红。hld §4.5 的缝没有这一类。
   expect(Object.keys(runner).sort()).toEqual(["drainIntents", "setSnapshot"]);
 });
 

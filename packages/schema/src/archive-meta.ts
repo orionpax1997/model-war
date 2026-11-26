@@ -1,6 +1,6 @@
 /**
  * 冻结脚本存档的 `meta.json` 形状(hld §7.4)。**类型与 JSON Schema 同文件、同一次书写**,
- * 纪律与 `map.ts` 一致:TypeScript 是真源、JSON Schema 手工对齐(ADR-0003),
+ * 纪律与 `map.ts` 一致:TypeScript 是真源、JSON Schema 手工对齐,
  * 漂移由 `apps/cli` 校验器那条缝的双过 fixture 与「必填键集合 === 键联合」的类型级断言兜住。
  *
  * ── 十一项逐项来自 hld §7.4(`docs/hld.md` 的冻结脚本存档一节),不是本文件的取舍 ────────────
@@ -32,7 +32,7 @@
  *
  * ── 档案形状版本:一档一读法,不靠猜 ────────────────────────────────────────
  *
- * 本文件里有**三个版本号,各管一件事**(ADR-0031):
+ * 本文件里有**三个版本号,各管一件事**:
  *
  * | 版本号 | 管什么 | 落在哪个键 |
  * |---|---|---|
@@ -100,10 +100,10 @@ import type { JsonValue } from "./index.js";
 export const OPTIMIZATION_VERSION = 1 as const;
 export const OPTIMIZATION_GRID_VERSION = 2 as const;
 /**
- * v3 = 分步（agent）形态的候选序（ADR-0031）。
+ * v3 = 分步（agent）形态的候选序。
  *
  * 只有 `{version, candidates}`：候选条数 1..3、**没有 `stage`**。`stage` 连同它对应的
- * 阶段机制一起消失（ADR-0032），候选的数组下标就是「第几次评测」，末位即最终候选。
+ * 阶段机制一起消失，候选的数组下标就是「第几次评测」，末位即最终候选。
  * 阶段概念的其余下游（反馈轮数、跨阶段复用、网格计划与陪练身份）也随之作废，所以 v3 的
  * 优化段里既不写 `feedbackRounds`，也不写 `plan` / `sparring` / `reusedFromStage`。
  */
@@ -119,7 +119,7 @@ export const OPTIMIZATION_STAGES = [0, 1, 2] as const;
  * 真源在 harness 侧：`tool-channel.ts` 的 `EVALUATE_CALL_LIMIT`（dispatcher 执行的那个数）。
  * 「一次会话最多几次真评测」与「一份档案最多几个候选」是同一个事实的两种读法——候选就是真评出
  * 成绩的 `evaluate`——所以这里只做投影，不另写一个字面量。方向不能反过来：档案形状是消费侧的
- * 记录格式，让它去带动 harness 配额，等于「改 JSON 排版就让榜断代」（ADR-0029）。
+ * 记录格式，让它去带动 harness 配额，等于「改 JSON 排版就让榜断代」。
  *
  * 与 `OPTIMIZATION_STAGES.length` 数值相同是巧合而不是同一个事实：那张表是 v1/v2 的
  * 三阶段下标，本常量是分步形态的调用配额。改一个不意味着改另一个。
@@ -127,7 +127,7 @@ export const OPTIMIZATION_STAGES = [0, 1, 2] as const;
 export const OPTIMIZATION_CANDIDATE_LIMIT = EVALUATE_CALL_LIMIT;
 
 /**
- * 档案形状版本（ADR-0031「三个版本号各管一件事」的第一件：档案级的**读兼容契约**）。
+ * 档案形状版本（「三个版本号各管一件事」的第一件：档案级的**读兼容契约**）。
  *
  * 它必填于**新档**、缺席于历史档；装载器与报告按它分派，不认识的版本**拒读**而不是猜。
  * 它是唯一能覆盖「失败档没有优化段」的版本号——优化段版本回答不了「这份文件按哪种形状读」。
@@ -223,7 +223,7 @@ export type ArchiveOptimization =
 
 /**
  * 一步**被拒**的那一档（`action.kind === "none"` 里 `rejectReason` 的值域）：零次调用、多于一次
- * 调用、工具名不在声明集合里、`arguments` 不是合法 JSON 或形状不符（ADR-0032）。
+ * 调用、工具名不在声明集合里、`arguments` 不是合法 JSON 或形状不符。
  *
  * ── 为什么这里有一份，而真源在 `packages/gen/src/agent/action.ts` ──
  *
@@ -249,10 +249,10 @@ export const ARCHIVE_STEP_REJECT_REASONS = [
 export type ArchiveStepRejectReason = (typeof ARCHIVE_STEP_REJECT_REASONS)[number];
 
 /**
- * 一步（一次模型调用）的过程记录条目（ADR-0031 / ADR-0032）。
+ * 一步（一次模型调用）的过程记录条目。
  *
  * 最小键集合现在定死：装载器要靠它判完整性。`raw`（模型原文）与 `result`（结果侧证据）
- * 是可选键——ADR-0031 已裁决「条目可选键不升形状版本」，ADR-0036 沿用同一条先例。
+ * 是可选键—— 已裁决「条目可选键不升形状版本」 沿用同一条先例。
  */
 export type ArchiveStepAction =
   /**
@@ -288,20 +288,20 @@ export type ArchiveStepAction =
    * v3 档仍**拒读**这一档（v3 的世界里没有这个工具）。
    */
   | { readonly kind: "probe" }
-  /** 这一步调用了 `evaluate` 工具：这一次评测产出一个候选（ADR-0030「`evaluate` 即提交」）。 */
+  /** 这一步调用了 `evaluate` 工具：这一次评测产出一个候选（「`evaluate` 即提交」）。 */
   | { readonly kind: "evaluate" }
   /**
    * 这一步以**收工工具**结束：模型调用了 `finish`，会话在这一步之后停下。
    *
    * 枚举值仍叫 `done`：那是 v3 档案形状里的常量，语义是「这一步以收工工具结束」，与工具叫什么
    * 名字无关（工具叫 `finish`，而 `done` 是 bash 保留字）。改名在 v4 上已无版本代价，但读侧与
-   * 报告的改动量为零收益——那处不一致已在 ADR-0032 修订②写在唯一需要读它的地方。
+   * 报告的改动量为零收益——那处不一致已写在唯一需要读它的地方。
    */
   | { readonly kind: "done" }
   /**
    * 这一步**没有可执行的动作**：零次工具调用 / 多于一次 / 工具名不在声明集合里 / `arguments`
    * 不是合法 JSON 或形状不符，或者响应两次都被输出上限截断而转了格式反馈。一条命令都没跑，
-   * 但这一步照样计入步数与过程记录（ADR-0032「`done` 不是免费出口」的同一条计数口径：一次
+   * 但这一步照样计入步数与过程记录（「`done` 不是免费出口」的同一条计数口径：一次
    * 模型调用就是一步）。
    *
    * 为什么不复用 `bash` 加一个空 `command`：空命令在 `bash` 那一格是不合法的（`minLength: 1`），
@@ -320,7 +320,7 @@ export type ArchiveStepAction =
   | { readonly kind: "none"; readonly rejectReason?: ArchiveStepRejectReason };
 
 /**
- * 这一步发起的**那一次工具调用**（v4 新增）：逐字字节的家（ADR-0031「模型看到的字节 = 落盘的
+ * 这一步发起的**那一次工具调用**（v4 新增）：逐字字节的家（「模型看到的字节 = 落盘的
  * 字节」）。
  *
  * ── 为什么它必须存在 ──
@@ -407,7 +407,7 @@ export type ArchiveOptimizationCandidateAgent = {
 /**
  * 两种形态的候选：one-shot（带 `stage` / `protocolRound`）与 v3（带 `step`）。
  *
- * 失败记录是**两种形态共用**的一份文件（ADR-0031「失败档与成功档同形」），所以它的候选栏
+ * 失败记录是**两种形态共用**的一份文件（「失败档与成功档同形」），所以它的候选栏
  * 必须容得下两版；读入端按档案形状版本分派（见 runner 的 `failureCandidatesOf`）。
  */
 export type AnyArchiveOptimizationCandidate =
@@ -472,7 +472,7 @@ export type ArchiveMeta = {
   readonly optimization?: ArchiveOptimization;
   readonly selection?: ArchiveSelection;
   /**
-   * 档案形状版本。**新档必写**、历史档缺席（ADR-0031）。
+   * 档案形状版本。**新档必写**、历史档缺席。
    *
    * `additionalProperties: false` 与「一档一读法」的冲突由它解开：装载器先看这一格分派，
    * 带 agent 字段却没有它、或写了个不认识的数字，一律拒读（不猜、不降级）。
@@ -482,9 +482,9 @@ export type ArchiveMeta = {
   readonly contextLength?: number;
   /** harness 的叙事版本（如 `bash-mini/0.1`）：人维护的「模型面对的世界」的代号。 */
   readonly harnessVersion?: string;
-  /** harness 行为清单的 sha256（ADR-0029）：动作语法、挂载、配额、观测出口、截断上限…… */
+  /** harness 行为清单的 sha256：动作语法、挂载、配额、观测出口、截断上限…… */
   readonly harnessDigest?: string;
-  /** 这一次会话是怎么停的（ADR-0032）。与落档判据正交：停止原因不决定是否成功。 */
+  /** 这一次会话是怎么停的。与落档判据正交：停止原因不决定是否成功。 */
   readonly termination?: ArchiveTermination;
   /** 终止发生在第几步（0 = 一次模型调用都没有成功）。 */
   readonly atStep?: number;
@@ -493,7 +493,7 @@ export type ArchiveMeta = {
 };
 
 /**
- * 终止原因（ADR-0032）：`done` / 步数耗尽 / 总墙钟耗尽 / 上下文守卫 / 连续三次动作解析失败 /
+ * 终止原因：`done` / 步数耗尽 / 总墙钟耗尽 / 上下文守卫 / 连续三次动作解析失败 /
  * 传输重试耗尽。它只决定循环怎么停，不决定落档——有候选就是成功档。
  *
  * `done` 这一格读作「模型用收工工具结束了会话」（模型侧那条命令叫 `finish`）；名字留在档案形状
@@ -707,7 +707,7 @@ const ARCHIVE_STEP_ACTION_JSON_SCHEMA = {
       required: ["kind"],
       properties: {
         kind: { type: "string", const: "none" },
-        // 可选键(ADR-0031 先例:可选键不升形状版本);`enum` 与 gen 侧的
+        // 可选键(先例:可选键不升形状版本);`enum` 与 gen 侧的
         // `ACTION_REJECT_REASONS` 同源,漂移由 gen 的类型级断言兜住。
         rejectReason: { type: "string", enum: ARCHIVE_STEP_REJECT_REASONS },
       },
@@ -722,7 +722,7 @@ export const V4_ONLY_STEP_ACTION_KINDS = ["check", "probe"] as const;
  * 一步发起的那一次工具调用（v4 新增）：逐字字节的家。
  *
  * `argumentsJson` **不重编码**——它必须与 `tool_calls[0].function.arguments` 逐字相同，否则
- * 「发回去的 == 落盘的」（ADR-0031）立刻不成立。它不写 `minLength`：空串是常见形状（不收参数的
+ * 「发回去的 == 落盘的」立刻不成立。它不写 `minLength`：空串是常见形状（不收参数的
  * 工具），而它到底有没有被解析成合法参数由 `action.kind` 回答。
  */
 const ARCHIVE_STEP_TOOL_CALL_JSON_SCHEMA = {
@@ -750,7 +750,7 @@ const ARCHIVE_STEP_RESULT_JSON_SCHEMA = {
  * 一步的过程记录条目：最小键集合现在定死（装载器要靠它判完整性）。
  *
  * `stdout` / `stderr` 不写 `minLength`：空输出是合法事实。`raw` 与 `result` 可选，
- * 且它们的缺席不是「不完整」——ADR-0031 已把「可选键不升形状版本」定成先例。
+ * 且它们的缺席不是「不完整」—— 已把「可选键不升形状版本」定成先例。
  */
 export const ARCHIVE_STEP_JSON_SCHEMA = {
   type: "object",

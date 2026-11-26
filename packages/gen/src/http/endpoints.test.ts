@@ -177,7 +177,7 @@ it("chat-completions 响应:`content: null` + `finish_reason: tool_calls` → te
 
 it("chat-completions 响应:同时说话与调用时两个键各盖一件事,`arguments` 逐字不重编码", () => {
   // 渠道给的原始字节里带它自己的空格与转义写法;`JSON.parse` 再 `JSON.stringify` 会改掉它,
-  // 而下一轮发回历史用的就是这串字节(ADR-0031「与发回去的字节同源」)。
+  // 而下一轮发回历史用的就是这串字节(「与发回去的字节同源」)。
   const argumentsJson = '{ "command" : "printf \\u003cb\\u003e" }';
   const response = endpointSpec("chat-completions").parseResponse({
     ...TOOL_CALL_RESPONSE,

@@ -20,7 +20,7 @@
 import type { ToolCall, ToolDeclaration } from "./agent/tools.js";
 
 /**
- * 这一族怎么把推理带回去(ADR-0032「reasoning 按端点族分家」)。
+ * 这一族怎么把推理带回去(「reasoning 按端点族分家」)。
  *
  * 它是**能力声明**而不是调用点上的条件分支:每族声明自己那一种,别处一律不判断族名。
  */
@@ -140,7 +140,7 @@ export type ModelResponse = {
  */
 export type SendOptions = {
   /**
-   * 会话总墙钟到点(ADR-0029/0035):**进行中的调用必须真的被打断**。
+   * 会话总墙钟到点:**进行中的调用必须真的被打断**。
    *
    * ── 为什么这条必须存在 ──
    *

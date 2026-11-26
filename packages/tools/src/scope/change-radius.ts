@@ -42,6 +42,10 @@ export const SUITES: readonly string[] = [
   "test:e2e",
   "test:gates",
   "test:slow",
+  // 变异棘轮的真跑那一半(`mutation` project)。与 `test:slow` 同形:它**不在** `all` 的
+  // 池子里、也不在收口链上,但它是真实存在的验证族——改变异入口或 `stryker/**` 时只有它能
+  // 证明「跑完入口基线没被改写」。
+  "test:mutation",
   "test:all",
   // 真 bwrap 那一族(`sandbox` project)。它**不在**常跑链上,也不在 `all` 的池子里——但它是
   // 一条真实存在的验证族:改它自己的用例文件时,只有它能证明「改完还跑得起来」。
@@ -94,6 +98,17 @@ export const RADIUS: readonly Radius[] = [
     area: "packages/tools/src/vitest",
     suites: ["test"],
     why: "vitest 侧接线(报告汇总、内核探针)的判据是同目录的 `.test.ts`,在 `unit` 池子里——这一档只补 `test`,不牵扯门禁自测",
+  },
+  {
+    area: "packages/tools/src/gates-mutation.test.ts",
+    suites: ["test:mutation"],
+    why: "它住在 `mutation` project 里(跑一次真 `stryker run`,约 50s),兜底会把它送去 `test:gates`:既多跑一整族,又**没跑它自己**",
+  },
+  {
+    area: "packages/tools/src/mutation",
+    suites: ["test:mutation", "test:gates"],
+    fallback: true,
+    why: "变异棘轮的实现:一半的判据在门禁自测里(喂夹具报告验三态判决),另一半要真跑一次 `mutate:replay` 才能证明跑完入口基线没被改写。兜底标志是因为它的测试文件本身(`diagnose` / `history` / `ratchet` / `diagnose-html`)住在 `all` 的池子里——它们自己的判据就是它自己",
   },
   {
     area: "packages/tools/src/gates-slow.test.ts",
@@ -181,8 +196,8 @@ export const RADIUS: readonly Radius[] = [
   },
   {
     area: "stryker",
-    suites: [],
-    why: "变异测试配置,只在 mutate:* 里生效",
+    suites: ["test:mutation"],
+    why: "改变异分片配置后要真跑一次最小的那一片,证明跑完入口入库基线没被改写(`mutate:*` 本身不在常跑链上)",
   },
   {
     area: "probes",
@@ -306,8 +321,8 @@ export const RADIUS: readonly Radius[] = [
   },
   {
     area: "stryker.config.mjs",
-    suites: [],
-    why: "变异测试总配置,只在 mutate:* 里生效",
+    suites: ["test:mutation"],
+    why: "变异测试总配置,只在 mutate:* 里生效;但那一条真跑入口的断言会读它展开出来的分片",
   },
   {
     area: "AGENTS.md",
@@ -315,7 +330,7 @@ export const RADIUS: readonly Radius[] = [
     why: "agent 指令,按路径读,没有判据依赖它",
   },
   {
-    area: "CONTEXT.md",
+    area: "GLOSSARY.md",
     suites: [],
     why: "领域词汇,按路径读,没有判据依赖它",
   },
@@ -340,15 +355,19 @@ export const ruleFor = (path: string): Radius | undefined =>
 const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(path);
 
 /**
- * **依赖图看不见的测试文件。**
+ * **依赖图看不见的测试文件 = related pool 之外的测试文件。**
  *
- * "改测试文件就交给依赖图"这句话有个前提:图看得见它。改一个测试文件时,`vitest related` 会
- * 把它自己选出来(实测:`ci.test.ts` → 1 个文件 / 17 条 / 1.06s);但这几个文件被 `all` 显式
- * 排除(`gates` / `slow` project),或者压根不在 `all` 的 include 里(`.prop.ts` 归 `property`)
- * ——改它们的时候图会一条都不选,所以仍由兜底规则补整族。
+ * `test:related`（以及逐文件探针）问的是同一份 project 集(`all` + `property`)。`all` 收
+ * `*.test.ts`、`property` 收 `*.prop.ts`，这两道 include 合起来覆盖了几乎全部测试文件——所以
+ * 改一份测试文件时图会把它自己选出来（实测:`ci.test.ts` → 1 个文件 / 25 条 / 1.06s;
+ * `invariants.prop.ts` → 1 个文件 / 16 条）。
  *
- * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 `all` 块重新
- * 推导一遍再对账——谁单方面改了都会红。
+ * 剩下的只有这几个:它们被 `all` 显式 exclude(`gates` / `slow` / `sandbox` project),而
+ * `property` 的 include 又不收 `.test.ts`——两组 include 都不抬它们。改它们的时候图会一条
+ * 都不选,所以仍由各文件自己的规则补整族。
+ *
+ * 这份清单是**输入**,不是判据:`test-layers.test.ts` 从 `vitest.config.ts` 的 project 表与控制
+ * `test:related` 的脚本**重新推导**一遍再双向对账——谁单方面改了都会红。
  *
  * 清单只说"图看不见它",**不说"该跑哪一族"**。后者由各文件自己的规则决定(`RADIUS` 顺序即
  * 优先级):`gates-slow.test.ts` 住在 `slow` project,于是它有自己的那条(`test:slow`),
@@ -357,34 +376,56 @@ const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(p
 export const GRAPH_BLIND_TESTS: readonly string[] = [
   "packages/tools/src/gates.test.ts",
   "packages/tools/src/gates-slow.test.ts",
-  "packages/tools/src/rules/no-float.prop.ts",
+  "packages/tools/src/gates-mutation.test.ts",
+  "apps/cli/src/agent-real-session.test.ts",
+  "apps/cli/src/gen-cli.test.ts",
 ];
+
+/**
+ * 这个**测试文件**在 `test:related` 问的池子里吗?
+ *
+ * 池子的两道 include 分别收 `*.test.ts`(`all`)与 `*.prop.ts`(`property`),合起来覆盖了几乎全部
+ * 测试文件;剩下的只有 `GRAPH_BLIND_TESTS` 那几份。源码恒不在这个函数的问题范围内(它问的是
+ * 测试文件的归属)——`probeApplies` 把源码那一半自己接上。
+ *
+ * 这里**故意不看** `suitesFor`:那张表对池子里的测试文件返回空数组(它们不该再被兜底拖一族),
+ * 拿它推池子归属会得到一条恒真的判据——上一版的 `probeApplies` 就是这么错的。
+ */
+export const inRelatedPool = (path: string): boolean =>
+  isTestCaseFile(path) && !GRAPH_BLIND_TESTS.includes(path);
 
 /** 一条路径该补哪些族。选择与 `--print` 的依据行共用这一份,两处不各算一次。 */
 export const suitesFor = (path: string): readonly string[] => {
   const rule = ruleFor(path);
   if (rule === undefined) return [];
-  // 兜底不对测试文件本身负责:它的判据是它自己(依赖图选得出来),而门禁自测是另一件事。
-  if (rule.fallback === true && isTestCaseFile(path) && !GRAPH_BLIND_TESTS.includes(path))
-    return [];
+  // 兜底不对**图看得见的**测试文件负责:它的判据就是它自己(`vitest related` 选得出来),
+  // 而门禁自测是另一件事。池子外的测试文件不在豁免里——图看不见它们,只能由表指名。
+  if (rule.fallback === true && inRelatedPool(path)) return [];
   return rule.suites;
 };
 
 /**
  * **逐文件探针答得出这个路径吗?**
  *
- * 探针问的是 `vitest related --project all`(见 `check.ts`),它只对**在 `all` 的池子里**的
- * 文件答得出候选。表把某个**池子外**的族指给这个文件时(改一个 `sandbox` / `gates` / `slow`
- * 的测试文件),那条命令结构上只能答「0 条」——而 0 条在这里会被读成「确知为零,没人看着
- * 它」,那是一句假话:问错了池子,不是没人看。
+ * 只答源码。测试文件一律不探,理由一半在探针的适用范围、一半在代价:
  *
- * 这类文件的判据是它自己那一族,而那一族**就是 `check` 会真的执行的那一条**(`decide` 已经
- * 把名字算进计划)。所以探针在这里不适用,红线仍由族本身承担:跑不起来就红。
+ * - **池内**(`inRelatedPool`)的测试文件:它的判据就是它自己的断言,而 `test:related` 那条腿
+ *   会把它选出来并跑掉——不要再问一次图,那等于把同一个文件执行两遍。这条前提不是推理,
+ *   是实测的(`related-probe.test.ts` 里那条集成用例:池内的测试文件去问相关腿,选中的
+ *   是它自己)。改一份 `check.test.ts` 原先要探它一遍(~3s,重的那些是自己的测试,**几十秒**,
+ *   而它们已经在计划里的那条腿上跑过),这条分支整条砍掉。
+ * - **池外**(`GRAPH_BLIND_TESTS`)的测试文件:那条命令结构上只会答「0 条」,而 0 条会被读成
+ *   「确知为零」,那是假话。它们的判据是它自己那一族,而那一族由 `decide` 算进了计划。
  *
- * 别的路径一视同仁地问图——源码,以及没有族可指的测试文件。
+ * 代价必须写清楚:**这个函数现在恒等于「不是测试文件」**,所以它不携带任何池子信息了——池子
+ * 归属由 `inRelatedPool`(兜底豁免)与 `related-probe.test.ts` 那条实测前提各自看着。
+ * `GRAPH_BLIND_TESTS` 的改动不再会因为「要不要探」而在探针那一侧静默变形。
+ *
+ * 什么时候要重新评估:相关腿不再把被改的测试文件自己选进去(`related-probe.test.ts` 会红),
+ * 或“没有任何 `it` 的测试文件”不能被 `gate:vacuous` 拦住。两边漏一条,池内测试文件的
+ * 「零断言」就从“看得见的绿”变成“看不见的绿”。
  */
-export const probeApplies = (path: string): boolean =>
-  !(isTestCaseFile(path) && suitesFor(path).some((suite) => !SUPERSEDED_BY_ALL.includes(suite)));
+export const probeApplies = (path: string): boolean => !isTestCaseFile(path);
 
 /** 顶层里**允许不登记**的条目:仓库元数据与产物,改了不影响任何判据。 */
 export const IGNORED_AREAS: readonly string[] = [
@@ -431,7 +472,7 @@ export const GATES_CASES: Readonly<Record<string, readonly string[]>> = {
   "packages/tools/src/gate/run-quickjs-coupling-gate.ts": ["quickjs-wasi 版本耦合断言"],
   // `gate/*.test.ts` 不在表里:测试文件本身由豁免交给依赖图(改它就是跑它),
   // 只有它们的**被测试物**上面那几行才需要 `-t`。
-  // `scan` 不是门禁而是一条观测(ADR-0010):用例名也写成了观测的样子,两处都得跟上。
+  // `scan` 不是门禁而是一条观测(hld §2.2.7):用例名也写成了观测的样子,两处都得跟上。
   "packages/tools/src/gate/scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
   "packages/tools/src/gate/run-scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
 };
@@ -471,14 +512,31 @@ export interface DecisionInput {
    *
    * 口径与 `check.ts` 的 `probeTargets` 同源:同一路径若另有一条非删除的条目(删了又建),它
    * 不算删除,产物照旧必须存在。调用方直接递 `probeTargets(...).deleted`,不要另算一份。
+   *
+   * 它们**不要求表里有规则**:规则是给"还在盘上的东西"登记该跑哪些测试的,而删除之后没有东西
+   * 可跑。要求一条指向已消失路径的规则是写不出来的判据——表里加了它,`test-layers.test.ts` 的
+   * 「每条规则指向的路径真实存在」会立刻把它判成拼错,于是那条红没有出口。可见性不靠这里保:
+   * `probeTargets` 会把它们逐条打印出来(谁被放过、由谁兜)。
    */
   readonly deleted?: readonly string[];
+  /**
+   * 这些路径**是被重命名走的旧名字**(`git` 的 `R` 条目的 `from`)。
+   *
+   * `ChangeSet.files` 把旧路径两端都留着,好让观测 map 里按旧路径记的条目仍能被解释;但一个
+   * 不再存在的旧名字**不该要求表里有一条指向它的规则**——表里那条规则会随改名一起搬走,而
+   * 「盘上必须有一个叫旧名字的文件」是写不出来的判据(改一次名就多一条永远为假的行)。
+   *
+   * 与 `deleted` 同一档:两者都是"已经不在盘上"。这里单独留一份,是因为 `probeTargets` 会把改名
+   * 的旧侧从 `deleted` 里剔掉(旧路径仍可能被观测 map 记着,测试照跑),口径不能共用。
+   */
+  readonly renamedFrom?: readonly string[];
 }
 
 /**
  * 把一组改动路径翻成一份执行计划。
  *
- * 抛 `UnregisteredPathError` 的条件**只有一个**:既映射不到产物、也没有表规则。
+ * 抛 `UnregisteredPathError` 的条件**只有一个**:还在盘上、却既映射不到产物、也没有表规则。
+ * 已经消失的路径(删除的、改名搬走的旧名字)不在此列——那条红没有出口,见 `DecisionInput.deleted`。
  */
 /**
  * 任何层级的 `package.json` 与锁文件都是**仓库事实**:改它可能换掉一整棵依赖树。
@@ -529,6 +587,16 @@ export const decide = (input: DecisionInput): Decision => {
   /** 命中的、且规则要求跑门禁自测的改动文件(`-t` 模式只能逐个文件查)。 */
   const gatesFiles = new Set<string>();
   const deleted = new Set(input.deleted ?? []);
+  const renamedFrom = new Set(input.renamedFrom ?? []);
+  /**
+   * **已经不在盘上的路径**:删除的、以及被改名搬走的旧名字。
+   *
+   * 不变量是「**还在盘上的**路径必须有归属」,不是「表里出现过的每个名字都必须还在」。把存在性
+   * 当归属的前提,就会得到一条**没有出口**的红:处方是往表里加规则,而「规则指向的路径必须
+   * 存在」把这条处方判红。可见性另有其处——`probeTargets` 与 `describeRenamed` 会把它们点名
+   * 打印出来。
+   */
+  const gone = new Set([...deleted, ...renamedFrom]);
 
   for (const path of input.paths) {
     const rule = ruleFor(path);
@@ -542,7 +610,7 @@ export const decide = (input: DecisionInput): Decision => {
     if (isManifest(path) && rule === undefined && !explainable) {
       // 嵌套包的 `package.json` 不在表里,但它换掉的是整棵依赖树。
       chosen.add("test:all");
-    } else if (!explainable && rule === undefined) {
+    } else if (!explainable && rule === undefined && !gone.has(path)) {
       throw new UnregisteredPathError(path);
     }
     if (rule !== undefined && !hits.includes(rule)) hits.push(rule);

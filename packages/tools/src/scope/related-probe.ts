@@ -21,6 +21,12 @@
  * | 状态              | 含义                                   | 处方                          |
  * | ----------------- | -------------------------------------- | ----------------------------- |
  * | `ran`             | 选中并跑过(至少一个行为测试文件)       | 绿                            |
+
+`ran` 里还有一个 `selfOnly`:选中的**只有被改的那些路径自己**。它确实有判据(那个测试真的跑过、
+它的断言就是这份文件的判据),但它不是**生产代码的行为覆盖**——消息里不许把它说成后者。
+
+结构测试的剔除按**被探的路径**做:被改的文件自己就在 `STRUCTURAL_TESTS` 里时,看着它的那个
+结构测试就是它自己——那不算「只有别的文件的形状在看」。
  * | `structural-only` | 只有结构测试被选中                     | 红:那是别的文件的形状         |
  * | `no-tests`        | 确知为零                               | 红:补用例或登记 coverage-debt |
  * | `all-skipped`     | 选中的全部 `skip`                      | 红:跳过不是证据               |
@@ -35,7 +41,7 @@
  * 探针的报告文件落在 `tmpdir()` 下、用完即删;探针不往仓库里写文件。
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -71,10 +77,12 @@ export interface ProbeReport {
 export type ProbeOutcome =
   | {
       readonly kind: "ran";
-      /** 行为测试文件(结构测试已剔除),升序。 */
+      /** 行为测试文件(structural 已剔除),升序。 */
       readonly behavior: readonly string[];
       readonly structural: readonly string[];
       readonly tests: number;
+      /** 选中的只有被探的路径自己(它们本身就是测试文件)。 */
+      readonly selfOnly: boolean;
     }
   | { readonly kind: "structural-only"; readonly structural: readonly string[] }
   | { readonly kind: "no-tests" }
@@ -96,7 +104,11 @@ export const isRed = (outcome: ProbeOutcome): boolean => outcome.kind !== "ran";
 export const messageOf = (outcome: ProbeOutcome): string => {
   switch (outcome.kind) {
     case "ran":
-      return `选中 ${String(outcome.behavior.length)} 个测试文件 / ${String(outcome.tests)} 条用例`;
+      return outcome.selfOnly
+        ? `选中的只有被改的测试文件自己(${outcome.behavior.join(", ")}) / ${String(
+            outcome.tests,
+          )} 条用例:那是它自己的判据,不是生产代码的行为覆盖`
+        : `选中 ${String(outcome.behavior.length)} 个测试文件 / ${String(outcome.tests)} 条用例`;
     case "structural-only":
       return `只选中了结构测试(${outcome.structural.join(", ")}):那是别的文件的形状,不是被改模块的行为证据`;
     case "no-tests":
@@ -162,11 +174,16 @@ export const parseReport = (json: string, repoRoot: string): ProbeReport | undef
  * 4. `pending === tests` 且 `tests > 0` → `all-skipped`。跳过不是证据,不能算 `ran`;
  * 5. 行为测试文件为空 → `structural-only`;
  * 6. 其余 `ran`。
+ *
+ * `subjects` 是**这一次被探的路径**。它自己不算「别的文件的形状」:被改的测试文件就是结构测试
+ * 时,看着它的那个结构测试就是它自己。剔除按集合做,不取 `paths[0]`——探针一次递进去的可能
+ * 是「源码 + 它的产物」多个路径。
  */
 export const classify = (
   report: ProbeReport | undefined,
   structural: readonly string[],
   exit: number | null,
+  subjects: readonly string[],
 ): ProbeOutcome => {
   if (report === undefined) return { kind: "no-report", exit };
   if (report.tests === 0) return { kind: "no-tests" };
@@ -174,14 +191,16 @@ export const classify = (
     return { kind: "failed", files: report.files, failed: report.failed };
   }
   if (report.pending === report.tests) return { kind: "all-skipped", files: report.files };
-  const structuralFiles = report.files.filter((path) => structural.includes(path));
-  const behavior = report.files.filter((path) => !structural.includes(path));
+  const observing = structural.filter((path) => !subjects.includes(path));
+  const structuralFiles = report.files.filter((path) => observing.includes(path));
+  const behavior = report.files.filter((path) => !observing.includes(path));
   if (behavior.length === 0) return { kind: "structural-only", structural: structuralFiles };
   return {
     kind: "ran",
     behavior,
     structural: structuralFiles,
     tests: report.tests,
+    selfOnly: behavior.every((path) => subjects.includes(path)),
   };
 };
 
@@ -229,10 +248,13 @@ const clearReport = (path: string): boolean => {
 export interface ProbeInput {
   /** 仓库根(报告里的绝对路径靠它相对化)。 */
   readonly repoRoot: string;
-  /** 交给依赖图的路径(源码 + 产物)。 */
+  /** 交给依赖图的路径(被改的路径 + 产物)。**它同时是 `classify` 的 `subjects`。** */
   readonly paths: readonly string[];
-  /** 要问的 project(`all` / `gates` …)。 */
-  readonly project: string;
+  /**
+   * 要问的 project 集。真源是 `test:related` 的定义(`scriptProjects(scripts, "test:related")`):
+   * 探针与依赖图必须问**同一个池子**,否则两边会对同一个路径给出两种结论。
+   */
+  readonly projects: readonly string[];
   /** 报告落点;不传就自己在 `tmpdir()` 下开一个。 */
   readonly reportPath?: string;
 }
@@ -253,33 +275,91 @@ export const probeRelated = (input: ProbeInput): ProbeOutcome => {
   // 这条不归 `no-tests` 管,两者的处方相反:一个要补用例,一个要先修探针。
   if (!clearReport(reportPath)) return { kind: "no-report", exit: null };
   try {
-    const result = spawnSync(
-      process.execPath,
-      [
-        join(input.repoRoot, "node_modules", "vitest", "vitest.mjs"),
-        "related",
-        "--run",
-        "--project",
-        input.project,
-        "--passWithNoTests=false",
-        "--reporter=json",
-        `--outputFile=${reportPath}`,
-        ...input.paths,
-      ],
-      { cwd: input.repoRoot, stdio: "ignore" },
-    );
-    let json: string | undefined;
-    try {
-      json = readFileSync(reportPath, "utf8");
-    } catch {
-      // 报告没写出来(目录不可写、进程没跑起来、报告器没装):交给 classify 判 no-report。
-      json = undefined;
-    }
-    const report = json === undefined ? undefined : parseReport(json, input.repoRoot);
-    return classify(report, STRUCTURAL_TESTS, result.status);
+    const result = spawnSync(process.execPath, vitestArgs(input, reportPath), {
+      cwd: input.repoRoot,
+      stdio: "ignore",
+    });
+    return finish(input, reportPath, result.status);
   } finally {
-    // 清理是尽力而为:判据已经算完,清理失败不改结论(最坏是 tmpdir 里多留一个文件)。
-    clearReport(reportPath);
-    if (owned) rmSync(dirname(reportPath), { recursive: true, force: true });
+    cleanup(reportPath, owned);
   }
+};
+
+/**
+ * 同一条探针的**异步**版本:`check` 用它把多个文件并行问(`check` 里有十四个文件时要等 40s)。
+ *
+ * 判据一个字都没变:两个版本跑的是同一条命令行、同一份 `classify`(见 `vitestArgs` 与
+ * `finish`)。并行能在观察上成立的原因只有一个:`spawn` 的 `stdio` 是 `ignore`、报告落在
+ * 各自的临时目录里——不共享 stdout,也不共享落点。
+ *
+ * 差异只在失败形状:`spawnSync` 在进程起不来时返回 `status: null`(交给 `classify` 判
+ * `no-report`),`spawn` 则发 `error` 事件。这里把两者折回同一个值,null——“进程没跑起来”
+ * 与“报告读不到”本来就是同一条处方:先修探针。
+ */
+export const probeRelatedAsync = async (input: ProbeInput): Promise<ProbeOutcome> => {
+  const owned = input.reportPath === undefined;
+  const reportPath = input.reportPath ?? tempReportPath();
+  assertUnderTemp(reportPath);
+  if (!clearReport(reportPath)) return { kind: "no-report", exit: null };
+  try {
+    const status = await spawnStatus(
+      process.execPath,
+      vitestArgs(input, reportPath),
+      input.repoRoot,
+    );
+    return finish(input, reportPath, status);
+  } finally {
+    cleanup(reportPath, owned);
+  }
+};
+
+const spawnStatus = (
+  command: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<number | null> =>
+  new Promise((settle) => {
+    const child = spawn(command, [...args], { cwd, stdio: "ignore" });
+    child.on("error", () => settle(null));
+    child.on("close", (code) => settle(code));
+  });
+
+/** 探针的命令行。两个版本共用一份:命令行分叉过一次(`--project all` 写死),代价是整族漏选。 */
+/**
+ * 探针的命令行。两个版本共用一份:命令行分叉过一次(`--project all` 写死),代价是整族漏选。
+ *
+ * `--maxWorkers=1` 不是省资源,是**修假红**:`check` 同时跑 4 路探针,而 vitest 默认按核数
+ * 起 worker——4 路 × N 个 worker 在 8 核机器上互抢,最先抳不住的是带超时的用例
+ * (实测:`apps/cli/src/selection/grid-selection.ts` 那 13 条里一条 30s 超时的子进程用例
+ * 在 4 路下红、单跑全绿)。假红比慢坏得多:它叫人去“先修它”,而那东西没坏。
+ */
+const vitestArgs = (input: ProbeInput, reportPath: string): readonly string[] => [
+  join(input.repoRoot, "node_modules", "vitest", "vitest.mjs"),
+  "related",
+  "--run",
+  "--maxWorkers=2",
+  ...input.projects.flatMap((project) => ["--project", project]),
+  "--passWithNoTests=false",
+  "--reporter=json",
+  `--outputFile=${reportPath}`,
+  ...input.paths,
+];
+
+/** 读报告 → 解析 → 分类。命名与退出码已定,判据只有 `classify` 一处。 */
+const finish = (input: ProbeInput, reportPath: string, status: number | null): ProbeOutcome => {
+  let json: string | undefined;
+  try {
+    json = readFileSync(reportPath, "utf8");
+  } catch {
+    // 报告没写出来(目录不可写、进程没跑起来、报告器没装):交给 classify 判 no-report。
+    json = undefined;
+  }
+  const report = json === undefined ? undefined : parseReport(json, input.repoRoot);
+  return classify(report, STRUCTURAL_TESTS, status, input.paths);
+};
+
+/** 清理是尽力而为:判据已经算完,清理失败不改结论(最坏是 tmpdir 里多留一个文件)。 */
+const cleanup = (reportPath: string, owned: boolean): void => {
+  clearReport(reportPath);
+  if (owned) rmSync(dirname(reportPath), { recursive: true, force: true });
 };

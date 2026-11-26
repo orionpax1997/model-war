@@ -1059,7 +1059,7 @@ it("meta schema 的必填键集合就是 hld §7.4 那一栏的十一项,另有�
     "sandboxRuntimeHash",
   ]);
   // 统一两轮优化新增可选 `optimization`（跨进程候选契约，见 two-feedback spec D3）；
-  // 档案形状 v3（ADR-0031）再新增七个可选键，必填仍是十一项——新档写、老档不迁移。
+  // 档案形状 v3再新增七个可选键，必填仍是十一项——新档写、老档不迁移。
   // 注意这七个键**在 v3 档里是必写的**：JSON Schema 表达不了条件必填，那条断言在装载期
   // （runner 的 `archiveShapeIssuesOf`），这里只断言它们不会挤进 `required`。
   expect(Object.keys(ARCHIVE_META_JSON_SCHEMA.properties).sort()).toEqual(

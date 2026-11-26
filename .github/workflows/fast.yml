@@ -2,11 +2,11 @@
 #
 # ── 只调命名脚本 ──
 # 每个 run 步都是 `pnpm run <script>`:CI 的失败信号只有一个来源——那条命名脚本本身
-# (ADR-0010「CI 失败等价于命名脚本失败」)。yaml 里不写裸命令,也不设「CI 专属」断言。
+# (hld §2.2.7「CI 失败等价于命名脚本失败」)。yaml 里不写裸命令,也不设「CI 专属」断言。
 #
 # ── 无凭证、离线可跑 ──
 # 全部 step 只有 checkout / setup / `pnpm install` / 命名脚本,没有一处凭证引用。
-# 版本与写法见 ADR-0010;pnpm 版本由 packageManager 决定。
+# 版本与写法见 hld §2.2.7;pnpm 版本由 packageManager 决定。
 
 name: fast
 
@@ -61,7 +61,7 @@ jobs:
       #
       # 曾经拆成 `quick` / `test` 两个 step 为了归因,但 GitHub 不能单独重跑某个 step(只能重跑整个
       # job),两个 step 的实际作用只是「一眼看出哪类挂了」——日志同样给得出。代价却是链定义有两份:
-      # 链的家在 `package.json`(ADR-0010「CI 失败等价于命名脚本失败」),而 yaml 里再展开一遍,
+      # 链的家在 `package.json`(hld §2.2.7「CI 失败等价于命名脚本失败」),而 yaml 里再展开一遍,
       # 于是给链加一条腿 CI 不会跟、也没有断言会红。
       #
       # 现在 yaml 只出现一个名字 `check --full`;这条链自己住 `scope/check.ts` 的 `FULL_CHAIN`,

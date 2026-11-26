@@ -31,17 +31,22 @@ import {
   SUITES,
   UnregisteredPathError,
   decide,
+  inRelatedPool,
   probeApplies,
 } from "./change-radius.js";
 import {
+  PROBE_CONCURRENCY,
   describeDeleted,
+  describeRenamed,
+  mapLimit,
+  probeOnceThenRetry,
   probeTargets,
   runsFor,
   unobservedGap,
   unobservedHalves,
 } from "./check.js";
 import { scriptProjects } from "./plan.js";
-import { STRUCTURAL_TESTS } from "./related-probe.js";
+import { STRUCTURAL_TESTS, type ProbeOutcome } from "./related-probe.js";
 import {
   classifyInput,
   currentFingerprint,
@@ -244,7 +249,9 @@ const repoTestFiles = (): readonly string[] =>
     )
     .filter(
       (file) =>
-        file.endsWith(".test.ts") && !file.includes("/dist/") && !file.includes("/node_modules/"),
+        (file.endsWith(".test.ts") || file.endsWith(".prop.ts")) &&
+        !file.includes("/dist/") &&
+        !file.includes("/node_modules/"),
     )
     .sort();
 
@@ -459,9 +466,130 @@ describe("decide:图与表各管半边", () => {
   it("前缀不会误吞相邻名字(apps/cli 不该吃掉 apps/cli-tools)", () => {
     expect(() => decideOn(["apps/cli-tools/src/index.ts"])).toThrow(UnregisteredPathError);
   });
+
+  /**
+   * **不变量是「还在盘上的路径必须有归属」,不是「表里出现过的每个名字都必须还在」。**
+   *
+   * 消失的路径(删除的、改名搬走的旧名字)要是也要求表规则,就会得到一条**没有出口**的红:
+   * 处方是往表里加规则,而「每条规则指向的路径真实存在」把这条处方判红。放宽之后可见性由打印
+   * 承担——`describeDeleted` / `describeRenamed` 必须点名。
+   *
+   * 反方向钉住:**还在盘上的**未登记路径照旧抛(下面 `future-pkg` 那条)。
+   */
+  it("消失的路径(删除 / 改名旧名)不要求表规则;还在盘上的未登记路径照旧抛", () => {
+    const old = "GLOSSARY-FORMER-NAME.md";
+    const renamed = "GLOSSARY.md";
+    expect(existsSync(join(repoRoot, old)), "这条断言要一个盘上不存在的旧名字").toBe(false);
+    // 改名:旧名字不进 `deleted`(probeTargets 会剔掉它),走的是 `renamedFrom`。
+    expect(
+      decide({ paths: [renamed, old], workspaces, exists: () => true, renamedFrom: [old] }).scripts,
+    ).not.toContain("test:all");
+    // 删除:走的是 `deleted`。两个入口必须给出同一个结论——都是"不抛,也不因此退回全量"。
+    const asDeleted = decide({ paths: [old], workspaces, exists: () => true, deleted: [old] });
+    expect(asDeleted.scripts).not.toContain("test:all");
+    expect(asDeleted.graphFiles, "盘上不存在的路径进不了图").toEqual([]);
+    // 谁都没说它消失了:它就是一条没人登记的路径,照旧抛。
+    expect(() => decide({ paths: [old], workspaces, exists: () => true })).toThrow(
+      UnregisteredPathError,
+    );
+  });
+
+  /**
+   * 放宽的前提是**说得出来**:被放过的路径必须点名打印,只印计数等于没印。
+   *
+   * 两句话的理由不同,所以分两处印:删除是「`vitest related` 答不出东西」,改名是「旧名字仍要
+   * 进候选,只是不再要求表规则」。合成一句会让读报的人以为改名也不跑测试。
+   */
+  it("被放宽的路径必须点名打印,而且删除与改名的理由分得开", () => {
+    expect(describeDeleted([])).toBe("");
+    expect(describeRenamed([])).toBe("");
+
+    const deletedNote = describeDeleted(["docs/agents/old-domain.md"]);
+    expect(deletedNote).toContain("docs/agents/old-domain.md");
+    expect(deletedNote, "没人兜的跳过等于静默跳过").toContain("tsc -b");
+
+    const renamedNote = describeRenamed([
+      { status: "R", path: "GLOSSARY.md", from: "CONTEXT.md" },
+      { status: "M", path: "README.md" },
+    ]);
+    expect(renamedNote).toContain("CONTEXT.md → GLOSSARY.md");
+    expect(renamedNote, "计数不够,要名字").not.toContain("README.md");
+    expect(renamedNote, "改名仍要进候选,不能读成“不用跑”").toContain("test:related");
+  });
 });
 
 describe("链的组成:编辑循环窄,收口宽", () => {
+  /**
+   * 探针的**重试**:判据是“真红要两次都红”,而且“它红过”的事不能埋。
+   *
+   * 为什么需要它:4 路探针自己会起 worker,带超时的子进程用例在互抢下偶发红。假红输出的是
+   * 「先修它」,而那东西没坏。反面也同样要钉:不能因为多给一次机会就把真红放成绿。
+   */
+  it("探针重试:只重试失败,真红两次都红,偶发红被标出来", async () => {
+    const failed: ProbeOutcome = { kind: "failed", files: ["packages/a/x.test.ts"], failed: 1 };
+    const ran: ProbeOutcome = {
+      kind: "ran",
+      behavior: ["packages/a/x.test.ts"],
+      structural: [],
+      tests: 3,
+      selfOnly: true,
+    };
+    const noTests: ProbeOutcome = { kind: "no-tests" };
+
+    let calls = 0;
+    const sequence = (...outcomes: readonly ProbeOutcome[]): (() => Promise<ProbeOutcome>) => {
+      calls = 0;
+      return async () => {
+        const outcome = outcomes[Math.min(calls, outcomes.length - 1)] as ProbeOutcome;
+        calls += 1;
+        return outcome;
+      };
+    };
+
+    // 真红:两次都红才红,且只问两次(不多问)。
+    const both = await probeOnceThenRetry(sequence(failed, failed));
+    expect(both.outcome.kind).toBe("failed");
+    expect(both.flaky).toBe(false);
+    expect(calls).toBe(2);
+
+    // 偶发:第一次红、重跑绿 → 绿,但打出“它红过”。
+    const once = await probeOnceThenRetry(sequence(failed, ran));
+    expect(once.outcome.kind).toBe("ran");
+    expect(once.flaky).toBe(true);
+
+    // 不红的结论不重试:重试只针对“判据在喊”那一种,`no-tests` 是算出来的,不是抳出来的。
+    const cheap = await probeOnceThenRetry(sequence(noTests));
+    expect(cheap.outcome.kind).toBe("no-tests");
+    expect(cheap.flaky).toBe(false);
+    expect(calls, "不红的结论不该再 spawn 一次").toBe(1);
+  });
+
+  /**
+   * 探针的并发器:限流与**顺序**。
+   *
+   * 顺序是判据的一部分,不是实现细节。探针的两种红(候选红了 / 读不到报告)带着路径给出处方，
+   * 并发之后若按完成顺序上报,同一棵树两次跑会得到两张不同的脸——而“哪一条先红”对人读日志
+   * 是有意义的:`work` 故意让前面的慢、后面的快,顺序错了立刻能看出来。
+   */
+  it("探针并发器:不超上限、结果按输入顺序", async () => {
+    const items = [3, 1, 2, 5, 4];
+    let peak = 0;
+    let live = 0;
+    const results = await mapLimit(items, 2, async (delay) => {
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((settle) => setTimeout(settle, delay * 5));
+      live -= 1;
+      return `done-${String(delay)}`;
+    });
+    expect(results, "结果没按输入顺序回:红的先后就变成不确定的了").toEqual(
+      items.map((item) => `done-${String(item)}`),
+    );
+    expect(peak, "并发超了上限").toBeLessThanOrEqual(2);
+    // 空集不是错:没有盲文件时这条路径本来就不跑。
+    expect(await mapLimit([], PROBE_CONCURRENCY, async () => 1)).toEqual([]);
+  });
+
   it("默认 test 不含真 VM / 进程级 e2e(否则每次业务改动都付 290s 的账)", () => {
     const test = manifest().scripts["test"] ?? "";
     expect(test).not.toContain("--project e2e");
@@ -780,7 +908,13 @@ describe("结构测试不算行为证据", () => {
 
   it("真跑过就不登记;确知为零 / 全 skip 都算红(只有 `ran` 是绿)", () => {
     expect(
-      unobservedGap("x.ts", { kind: "ran", behavior: ["a.test.ts"], structural: [], tests: 3 }),
+      unobservedGap("x.ts", {
+        kind: "ran",
+        behavior: ["a.test.ts"],
+        structural: [],
+        tests: 3,
+        selfOnly: false,
+      }),
     ).toBeUndefined();
     expect(unobservedGap("x.ts", { kind: "no-tests" })).toBeDefined();
     expect(unobservedGap("x.ts", { kind: "all-skipped", files: ["a.test.ts"] })).toBeDefined();
@@ -1148,7 +1282,6 @@ describe("门禁自测的粒度:按文件缩到 -t 子集", () => {
         "三个观测入口都在场,但不在任何常跑入口与流水线上,且不改判据",
         "反例:抬基线命令被塞进 quick → 断言红,还原 → 绿(纯文本,不真改 package.json)",
         "跑完变异入口的棘轮比较后,入库基线的字节不变",
-        "真实跑一次 mutate:replay 之后,stryker/baseline/replay.json 的字节逐字不变",
         "抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线",
         "抬基线命令只抬本分片:指到别的分片的基线上 → 非零,且那份文件原样不动",
         "棘轮门禁:低一分夹具 → 红,等于/高于 → 绿,无基线 → 首次,判不了 → 红",
@@ -1245,14 +1378,56 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
     return project as ProjectConfig;
   };
 
-  it("图看不见的测试文件清单,与 `all` project 的 include/exclude 一致(清单会腐烂,所以对账)", async () => {
-    const all = await allProject();
-    const derived = toolsTestFiles().filter((file) => !picks(all, file));
-    expect(derived.length, "一个都没推出来:下面的对账会静默成立").toBeGreaterThan(0);
+  /**
+   * `test:related` 问的那几个 project:**从 `package.json` 的脚本 + 求值后的 project 表推导**。
+   *
+   * 两者必须是同一个池子:探针与依赖图各问一个 project 集的时候,同一个路径会在两边得到相反
+   * 的结论(`.prop.ts` 问 `all` 恒 0,而计划里它真的跑了)。
+   */
+  const relatedPoolPicks = async (file: string): Promise<boolean> => {
+    const names = [...scriptProjects(manifest().scripts, "test:related")];
     expect(
-      [...GRAPH_BLIND_TESTS].sort(),
-      "GRAPH_BLIND_TESTS 与 `all` project 的拾取结果不一致(改 project 划分就得跟)",
-    ).toEqual(derived);
+      names.length,
+      "`test:related` 一个 project 都没展开出来:下面的对账会静默成立",
+    ).toBeGreaterThan(1);
+    const projects = await projectsOf();
+    return names.some((name) => {
+      const project = projects.find((candidate) => candidate.name === name);
+      expect(project, `vitest.config.ts 里没有 project ${name}`).toBeDefined();
+      return project === undefined ? false : picks(project, file);
+    });
+  };
+
+  /**
+   * **池子判据的对账:一份声明,两个真源。**
+   *
+   * `inRelatedPool` 是生产路径上的判据(它不能 import `vitest.config.ts`),它的两个真源分别是
+   * project 表的两道 include 与控制 `test:related` 的脚本。这道对账从**求值后的配置**重算一遍:
+   * 只验声明本身、不验实际配置的断言在这里过不去。
+   *
+   * 样本取磁盘(含 `.prop.ts`——上一版只数 `.test.ts`,于是属性测试的池子归属一直没人验),
+   * 两个方向都数一遍:池子判据比配置宽→ 多跑;比配置窄→ 少跑。
+   */
+  it("池子判据与真实 project 配置双向一致", async () => {
+    const files = repoTestFiles();
+    expect(files.length, "一个测试文件都没数到:这条断言会静默成立").toBeGreaterThan(100);
+    expect(
+      files.filter((file) => file.endsWith(".prop.ts")).length,
+      "样本里没有属性测试:`.prop.ts` 那一半等于没验",
+    ).toBeGreaterThan(5);
+    const inPool: string[] = [];
+    const outOfPool: string[] = [];
+    for (const file of files) {
+      const picked = await relatedPoolPicks(file);
+      expect(
+        inRelatedPool(file),
+        `${file} 的池子判据与配置不一致(配置${picked ? "收" : "不收"})`,
+      ).toBe(picked);
+      (picked ? inPool : outOfPool).push(file);
+    }
+    // 两边都必须有样本:全空时上面的等集也在两边都空的时候成立。
+    expect(inPool.length, "池子里一个测试文件都没有").toBeGreaterThan(50);
+    expect(outOfPool, "池子外的测试文件清单变了").toEqual([...GRAPH_BLIND_TESTS].sort());
   });
 
   it("图看得见的测试文件一律不走兜底(改它只跑它自己,不拖 89 条门禁自测)", async () => {
@@ -1276,6 +1451,44 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
       (file) => !decideOn([file]).scripts.some((script) => !bare.has(script)),
     );
     expect(missing, `这些文件改了就没人跑了:${missing.join(", ")}`).toEqual([]);
+  });
+
+  /**
+   * **属性测试的改动必须真的跑起来。**
+   *
+   * 这条断言的是那次真误判的完整形状:改一份 `.prop.ts` 时,计划里曾经只有 `quick` +
+   * `gate:static`——零测试执行——而探针又把「问错了池子」读成「确知为零」,把处方指向了
+   * 补用例。两个错连着发生,所以两端都钉:计划里有一条 asked 到它的 related 腿,而那条腿的
+   * project 集里包含**从配置推出来的**拾取者(不手写 `property`)。
+   */
+  it("改一份属性测试:related 腿真的会拾取它", async () => {
+    const file = "packages/engine/src/processor/invariants.prop.ts";
+    const decision = decideOn([file]);
+    const runs = runsFor({ scripts: manifest().scripts, decision });
+    const related = runs.filter((item) => item.kind === "related");
+    expect(related.length, "改一份属性测试没有 related 腿:它一条测试都不会跑").toBe(1);
+    const leg = related[0];
+    expect(leg?.kind === "related" && leg.files).toContain(file);
+
+    const pickers = (await projectsOf())
+      .filter((project) => picks(project, file))
+      .map((project) => project.name);
+    expect(pickers.length, "没有任何 project 拾取它:那它一条都不会跑").toBeGreaterThan(0);
+    const missed = pickers.filter(
+      (name) => !(leg?.kind === "related" && leg.projects.includes(name)),
+    );
+    expect(
+      missed,
+      `related 腿没有问会拾取它的 project(腿上是 ${String(
+        leg?.kind === "related" ? leg.projects.join(", ") : "无",
+      )})`,
+    ).toEqual([]);
+
+    // 另一头:表不该为池子里的测试文件补整族——那会把一份属性测试挂到整条 `test` 上。
+    expect(
+      decision.scripts.filter((script) => script.startsWith("test")),
+      "表给池子里的测试文件补了整族:它与 related 腿会跑两遍",
+    ).toEqual([]);
   });
 
   /**
@@ -1345,10 +1558,15 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
         `计划里没有拾取它的那一族(实际:${decision.scripts.join(", ")})`,
       ).toBe(true);
 
-      // 探针写死问 `--project all`:它答不出这个文件的候选,而 0 条会被读成「确知为零」。
+      // 探针只答源码:池外的测试文件去问它结构上只能得到「0 条」(被读成「确知为零」——假话)。
       expect(probeApplies(file), `${file} 仍会进逐文件探针,而它不在 all 的池子里`).toBe(false);
-      // 反方向:池子里的测试文件照旧问图——豁免只对池子外的那几族开。
-      expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(true);
+      // 反方向也变了:池内的测试文件**也不探**。池内探一遍等于把同一个文件执行两遍(它白
+      // `test:related` 那条腿已经跑过),而那条腿一定选中它这个前提由 `related-probe.test.ts`
+      // 里真跑一遍的那条用例看着——不在这里靠推理。
+      expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(false);
+      expect(inRelatedPool("packages/tools/src/ci.test.ts"), "豁免仍然只对池内的测试文件开").toBe(
+        true,
+      );
     },
   );
 

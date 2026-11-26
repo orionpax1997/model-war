@@ -3,7 +3,7 @@
  * 唯一允许联网的包,**永不进对局进程**;禁 import 任何 result 类型。
  * 依赖方向单向:gen → schema。
  *
- * 对外面按域分文件,本文件是唯一入口(同 ADR-0003 的纪律):
+ * 对外面按域分文件,本文件是唯一入口(同 schema 包的纪律):
  * 契约读入(`contract`)、prompt 模板(`prompt`)、模型配置(`config`)、模型客户端端口与桩
  * (`model-client` / `stub-client`)、真实 HTTP 客户端(`http/client`)、编排与 CLI 处理器(`run`)。
  * CLI 从 `@model-war/gen` 取 `generateAndFreeze`;后续只**追加**导出,不改既有名字。

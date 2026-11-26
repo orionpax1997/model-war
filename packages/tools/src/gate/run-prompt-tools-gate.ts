@@ -8,7 +8,7 @@
  *
  * - **声明侧**:`packages/gen/src/agent/tools.ts` 的**源码文本**(`AGENT_TOOLS` 里逐个
  *   `name: "…"`)。不 import `@model-war/gen`:它的 `exports` 指向 `dist/`,import 就让这条快门禁
- *   依赖一次 `tsc -b`(hld §2.2.8、ADR-0003)。
+ *   依赖一次 `tsc -b`(hld §2.2.8)。
  * - **文案侧**:`prompts/agent.md`(宿主工具那一节)与 `prompts/agent-system.md`(点了哪些工具名)
  *   的**模板文本**。渲染器只替换两个占位符、不碰这两段,判模板等于判模型真的读到的那段。
  * - **常量侧**:`packages/schema/src/probe-limits.ts` 的 `PROBE_MATCH_LIMIT`。工具声明里的

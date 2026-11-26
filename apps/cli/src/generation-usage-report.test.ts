@@ -212,7 +212,7 @@ it.each(fixtures)("真实 HTTP 响应→生成冻结记录→公开报告：$nam
         {
           message: {
             // 写脚本与 evaluate 必须是**两次工具调用**(一步恰好一次):`evaluate` 那一次才算提交;
-            // 把两件事塞进同一次 `bash` 的 `command` 里只是跑了一个 shell(ADR-0032 的动作边界)。
+            // 把两件事塞进同一次 `bash` 的 `command` 里只是跑了一个 shell(动作边界)。
             content: "",
             tool_calls: [
               {
@@ -373,7 +373,7 @@ it("未声明工具能力的族：起跑前拒跑并点名「本族未声明工�
     // 会话在**起跑前**被拒(`assertToolSurface`),而不是花 20 分钟跑到 0 候选才发现。
     //
     // 订正:这里原先写「该席位带不带 `tools` 都是 403,零证据」——那两次 403 是链路故障,
-    // 复测三步全 200,详见 ADR-0032 的 2026-11-21 修订段。
+    // 复测三步全 200。
     //
     // 它原先覆盖的三件事仍然各有自己的家,没有丢:
     // - 缓存断点进请求体 → `packages/gen/src/http/endpoints.test.ts`(messages 族 buildBody);

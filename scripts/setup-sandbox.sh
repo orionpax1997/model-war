@@ -4,7 +4,7 @@
 #
 # 谁该跑它:`verify:kernel` 那条腿(以及任何要真跑 bwrap 的环境)。命名脚本是
 # `pnpm run setup:sandbox`,于是 CI 的 workflow 里只出现一个 `pnpm run <script>`——
-# **不写裸 apt-get / sysctl**(ADR-0010「CI 只调命名脚本」、ADR-0033「CI 里只调命名脚本」)。
+# **不写裸 apt-get / sysctl**(hld §2.2.7「CI 只调命名脚本」、ADR-0033)。
 #
 # ── 为什么要这些步骤,而不是「装个包就完了」 ──
 # Ubuntu 24.04 起默认打开 `kernel.apparmor_restrict_unprivileged_userns=1`:用户命名空间对所有

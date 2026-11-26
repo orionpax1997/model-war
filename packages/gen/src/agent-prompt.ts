@@ -1,5 +1,5 @@
 /**
- * 首条消息与 system 的渲染(ADR-0030「首条消息只给目录」、ADR-0037「契约包的身份」)。
+ * 首条消息与 system 的渲染(「首条消息只给目录」「契约包的身份」)。
  *
  * ── 两份模板,两种待遇 ──
  *
@@ -7,7 +7,7 @@
  *   (`docs/rules-<版本>/README.md`),`{{contractDigest}}` 落在末行,给出契约包的身份。
  * - `prompts/agent-system.md` = `system` 消息:**原样**用,没有占位符、也没有任何加工。
  *
- * 分界的理由在 ADR-0032:`system` 说协议(每一步恰好一次工具调用、被拒怎么办、怎么收工),首条 `user` 说这次会话的任务与硬约束。
+ * 分界的理由在 :`system` 说协议(每一步恰好一次工具调用、被拒怎么办、怎么收工),首条 `user` 说这次会话的任务与硬约束。
  * 混成一体的代价是两者只能一起改。
  *
  * ── 两份模板与工具声明的关系 ──
@@ -19,13 +19,13 @@
  * ── 为什么内联的是整整一份 README,不是它的某一节 ──
  *
  * 只内联一节会引入一条「内联的这段 == 文件的那一节」的同源判据,那是不划算的:目录说明只有二十来行,
- * 全量内联让「重复但不一致」在物理上不可能(ADR-0030 的原话)。而**契约正文不进首条消息**——
+ * 全量内联让「重复但不一致」在物理上不可能(原话)。而**契约正文不进首条消息**——
  * 读契约要花几步,这是设计的一部分:把「先读什么」变成模型的策略决策。
  *
- * ── 末行的形状是 ADR-0037 写死的那一句 ──
+ * ── 末行的形状是 写死的那一句 ──
  *
  * `contract: <版本号> tree=sha256:<hex>`。两个前缀回答两个不同的问题:版本号「哪一套取值」(它只锚
- * 规则集取值,ADR-0008),整树哈希「哪一份字节」。所以版本号取自 `RULESET_VERSION`(真源包常量,
+ * 规则集取值),整树哈希「哪一份字节」。所以版本号取自 `RULESET_VERSION`(真源包常量,
  * 不新造第二个真源),哈希取自 `CONTRACT_TREE_HASH`(入库常量,由 `gate:contract` 证明现算一致)。
  *
  * ── 渲染是纯函数,读盘另有其人 ──
@@ -46,7 +46,7 @@ import { ruleDocsDir } from "./contract.js";
  *
  * 路径字面量(`prompts/agent.md`)在仓库里共三份:本文件的 `AGENT_TEMPLATE_NAME`、
  * 门禁包的 `AGENT_TEMPLATE_PATH`、`gates.test.ts` 的探针路径。**这是被迫重复**:零构建的门禁
- * 不得 import `@model-war/gen`(hld §2.2.8、ADR-0003),而本文件住在那里。它靠「读不到即抛」
+ * 不得 import `@model-war/gen`(hld §2.2.8),而本文件住在那里。它靠「读不到即抛」
  * 兜底:任一处写错就是读一个不存在的文件,当场红,不会静默放过。
  */
 export const AGENT_TEMPLATE_NAME = "agent.md";
@@ -111,7 +111,7 @@ export const readContractIndex = (root: string): string =>
   readText(join(ruleDocsDir(root), CONTRACT_INDEX_NAME), "契约目录说明");
 
 /**
- * 身份行:ADR-0037 写死的 `contract: <版本号> tree=sha256:<hex>` 的后半段。
+ * 身份行: 写死的 `contract: <版本号> tree=sha256:<hex>` 的后半段。
  *
  * 模板里写的是 `contract: {{contractDigest}}`,所以这里出去的是「版本号 + 整树哈希」两段,
  * 而 `contract:` 这个前缀留在模板里(它是固定文本,不该由两处各写一遍)。
@@ -123,7 +123,7 @@ export const contractIdentityTrailer = (identity: ContractIdentity): string =>
  * 渲染首条消息。
  *
  * 纯函数——不读盘、不碰环境。两处抛错都是「这条消息不再是它该是的那个样子」:
- * - 目录说明是空的:首条消息的全部内容就是它(ADR-0030),空的那条等于什么都没说;
+ * - 目录说明是空的:首条消息的全部内容就是它,空的那条等于什么都没说;
  * - 模板缺任一占位符:说明模板被改过而渲染器没跟上,渲染出的消息会悄悄少掉目录或身份。
  *
  * 替换顺序:先身份、后目录说明。反过来则目录说明正文里若出现 `{{contractDigest}}` 字样也会被替换,
@@ -150,7 +150,7 @@ export const renderAgentTemplate = (
 /**
  * 组装首条消息与 system:模板与目录说明读盘,身份缺省取真源包常量。
  *
- * 返回的是两段**文本**而不是 `ChatMessage[]`:角色分工是传输层(与 ADR-0032 的 system / user 分界)
+ * 返回的是两段**文本**而不是 `ChatMessage[]`:角色分工是传输层(与契约里的 system / user 分界)
  * 的事,本函数只负责「那两段字节长什么样」。接线(把这两段塞进 loop 的第一轮)归 A1。
  */
 export const loadAgentPrompt = (

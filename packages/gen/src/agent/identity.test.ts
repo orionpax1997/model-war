@@ -69,7 +69,7 @@ it("清单里的数字取自真源,不是在本文件里抄的第二份", () => 
   // 动作语法只有「一步恰好一次工具调用」这一种;围栏标记与拒绝退出码两格已删。
   expect(current.actionSyntax.blocks).toBe("exactly-one-tool-call");
   expect(current.actionSyntax.multiLine).toBe("one-command-string");
-  // 有 `tool_call_id` 可配对了,观测就是标准的 `tool` 消息(ADR-0032 修订③)。
+  // 有 `tool_call_id` 可配对了,观测就是标准的 `tool` 消息(修订③)。
   expect(current.actionSyntax.observationRole).toBe("tool");
   // 被拒的四种形状都在清单里,且逐项来自真源:「拒过什么」下一次调协议时有据可查。
   expect(current.actionSyntax.rejects).toEqual([...ACTION_REJECT_REASONS]);

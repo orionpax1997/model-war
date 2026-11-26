@@ -1,7 +1,7 @@
 /**
  * 单个对局的输入物化件 `input.json` 的形状(hld §7.4 末条:「4 × 存档路径 + 地图 + 种子 +
  * ruleset 版本 + 各文件 hash」)。**类型与 JSON Schema 同文件、同一次书写**,纪律与
- * `map.ts` 一致(ADR-0003:TypeScript 是真源,JSON Schema 手工对齐)。
+ * `map.ts` 一致(TypeScript 是真源,JSON Schema 手工对齐)。
  *
  * ── 这一格是「形状定死,不加 PENDING_SHAPES 条目」 ────────────────────────────
  *

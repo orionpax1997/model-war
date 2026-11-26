@@ -1,5 +1,5 @@
 /**
- * 传输韧性:把「发一次」包成「发到成功或到上限」(hld §2.2.6 / §7.4;契约 §2.1 / §4;ADR-0036)。
+ * 传输韧性:把「发一次」包成「发到成功或到上限」(hld §2.2.6 / §7.4;契约 §2.1 / §4)。
  *
  * ── 为什么重试层在 `send` 之外,而不是让每个适配器自己退避 ──
  *
@@ -8,7 +8,7 @@
  * `TransportError{retryable, status, timedOut, retryAfterMs}` 或 `ModelResponse`,退避策略收在这里一处;
  * 四个端点族共享同一套重试语义,不必各写一份。
  *
- * ── 三套预算,互不侵占(ADR-0036) ──
+ * ── 三套预算,互不侵占 ──
  *
  * 原先只有一套预算,429 / 5xx / 网络失败 / 截断都从里面取号。agent 形态把每模型的调用数从 ~15
  * 抬到 30–60,「一次 429 花掉了本该留给网络抖动的耐心」这件事从理论变成常态,所以拆成三类:
@@ -17,7 +17,7 @@
  * |---|---|---|
  * | `rate-limited`(429) | 服务端还好,只是现在不给你 | 长预算 + 听 `Retry-After` + 抖动 |
  * | `connection`(网络失败 / 空闲超时) | 无语义的抖动 | 两枪,`1s → 2s` |
- * | `truncated`(`finishReason=length`) | 模型的输出形状,不是传输失败 | 一枪(ADR-0032) |
+ * | `truncated`(`finishReason=length`) | 模型的输出形状,不是传输失败 | 一枪 |
  *
  * **5xx 不在这张表里**——它 `retryable: true`(事实:重发可能成功),但按裁决**不重试**:
  * 服务端自己坏了,重发只是撞同一堵墙。事实与策略因此分开住:`TransportError.retryable` 不撒谎,
@@ -31,7 +31,7 @@
  * ── 退避是工程参数,不进规则集 ──
  *
  * 退避参数(初始间隔 / 倍数 / 上限 / 最大重试 / 抖动)是 **gen 内部常量**:它们是运行韧性参数,
- * 不描述任何对局规则,因此**不进 `rulesets/*.json`**,也不进 `harnessDigest`(ADR-0036):
+ * 不描述任何对局规则,因此**不进 `rulesets/*.json`**,也不进 `harnessDigest`:
  * 它们是**测量条件的抗噪设置**,不是模型能感知的行为面。
  */
 
@@ -53,7 +53,7 @@ export type RetryBudget = {
 };
 
 /**
- * 退避参数(**工程参数,不进 `rulesets/*.json`**,见 ADR-0036)。
+ * 退避参数(**工程参数,不进 `rulesets/*.json`**)。
  *
  * 第 n 次重试(1 起)前等 `min(initialDelayMs × multiplier^(n-1), maxDelayMs)` 毫秒,
  * 429 另取 `max(上式, Retry-After)` 并叠加向上抖动。
@@ -81,7 +81,7 @@ export const RETRY = {
     multiplier: 2,
     maxDelayMs: 2_000,
   },
-  /** 截断:一枪(ADR-0032)。one-shot 下第二次仍截断即判传输失败;agent 形态改为格式反馈。 */
+  /** 截断:一枪。one-shot 下第二次仍截断即判传输失败;agent 形态改为格式反馈。 */
   truncation: {
     maxRetries: 1,
     initialDelayMs: 500,
@@ -158,7 +158,7 @@ export const classifyCause = (cause: unknown): RetryClassification | "fatal" => 
   }
   const kind = transportFailureKindOf(cause);
   if (kind === "server") {
-    // 事实是「重发可能成功」,裁决是「不值得等」:服务端自己坏了。ADR-0036 的界线。
+    // 事实是「重发可能成功」,裁决是「不值得等」:服务端自己坏了:这就是那条界线。
     return "fatal";
   }
   return kind === "rate-limited" ? "rate-limited" : "connection";
@@ -199,11 +199,11 @@ export const retryTransport = async (options: {
    * 截断的处置:**默认由本层重试一枪**(`RETRY.truncation`,one-shot 形态)。
    *
    * 传 `"caller"` 时本层**不碰**截断:响应原样交回调用方。这是 agent 形态要的那一格
-   * (ADR-0032)——那时模型能自我修正,所以第一次截断的重试归 loop(它要在第二次仍截断时
+   * ——那时模型能自我修正,所以第一次截断的重试归 loop(它要在第二次仍截断时
    * 转格式反馈,而不是继续退避)。
    *
    * 为什么是选项而不是改全局默认:one-shot 路径没有「格式反馈」这条腿,第二次仍截断即判
-   * 传输失败(ADR-0036 残余风险 2)。两条形态的策略不同,而这里是唯一同时看得见两方的地方。
+   * 传输失败(残余风险 2)。两条形态的策略不同,而这里是唯一同时看得见两方的地方。
    */
   readonly truncation?: "retry" | "caller";
 }): Promise<RetryOutcome> => {

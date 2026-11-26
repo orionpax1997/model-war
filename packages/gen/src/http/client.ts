@@ -91,7 +91,7 @@ const isRetryableStatus = (status: number): boolean => status === 429 || status 
  *
  * RFC 9110 允许两种形态:秒数,或 HTTP-date。读不懂时**静默作废**而不是抛错——这个头是服务端的
  * 建议,不是请求的一部分;因为一个畸形的头打断一次已经花了几十分钟的生成,不划算。
- * 策略层(ADR-0036)只把它当「下限 + 单次封顶」的输入,所以读不到就退化成纯指数退避。
+ * 策略层只把它当「下限 + 单次封顶」的输入,所以读不到就退化成纯指数退避。
  */
 const retryAfterMsOf = (headers: Headers): number | undefined => {
   const raw = headers.get("retry-after")?.trim();

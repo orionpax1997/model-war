@@ -7,7 +7,7 @@
  * 工具链里不该做的事:读 `/workspace/script.ts`、把结果压成**前若干条 + 总数**、把全文落进
  * 工作区(`/workspace/.check.txt`)。
  *
- * ── 为什么 stdout 只给前 20 条 + 总数(ADR-0030「观测外置」) ──
+ * ── 为什么 stdout 只给前 20 条 + 总数(「观测外置」) ──
  * 分步形态里每一步的观测都会被后续每一步重复付费,而 tsc 一次能吐几百行诊断。所以常驻 stdout
  * 只给最要紧的那一小段与一个总数,全文落在工作区由模型按需 `sed -n`/`grep` 去取。**一分信息
  * 没丢**,丢的只是「默认全部塞进上下文」。派生视图(`.check.txt`)**不进档案**:它由落盘的
@@ -39,7 +39,7 @@ import {
   type ValidateResult,
 } from "../../validate.js";
 
-/** stdout 里最多给多少条诊断(ADR-0030 那一档的取值;改动它是换 harness,见 ADR-0032)。 */
+/** stdout 里最多给多少条诊断(那一档的取值;改动它是换 harness)。 */
 export const CHECK_DIAGNOSTIC_LIMIT = 20;
 
 /** 全文落点(工作区里的文件名)。它**不进档案**,只是模型按需读的那份派生视图。 */

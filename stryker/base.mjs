@@ -1,6 +1,6 @@
 // StrykerJS 变异测试：全仓分片配置的共享底座。
 //
-// 归属:hld §2.2.7 门禁表的「按需 → 夜间」层;ADR-0010(ADR-0002「不装 Stryker」条款已 supersede)。
+// 归属:hld §2.2.7 门禁表的「按需 → 夜间」层。Stryker 当初不在工具链里,是随变异棘轮一起装进来的(ADR-0026)。
 // 从仓库根跑(`pnpm run mutate:<package>`):Stryker 只在 cwd 找配置,mutate 的 glob 与插件解析
 // 也都相对 cwd。分片配置文件在 `stryker/*.mjs`,一个文件 = 一次 `stryker run`。
 //
@@ -81,7 +81,7 @@
 // **决定每变异体成本的不是 mutate 范围,是 testFiles 的宽度。**
 // 同一个文件、同 73 个变异体:
 //   testFiles = 11 个 processor 测试(engine-processor 分片)→ 233ms/个
-//   testFiles = 31 个 engine 测试(engine 分片)→ 9.9s/个    (42 倍)
+//   testFiles = 31 个 engine 测试(engine 分片)→ 9.9s/个 (42 倍)
 // 原因是 `related` 过滤:QuickJS / probe-harness 那几个慢测试 import 了几乎每个 engine 模块,
 // 于是它们对所有变异体都算「相关」,把每一次变异体重跑拖成几十秒。
 // 所以 engine / gen 各按「快测试集 / 慢测试集」切两片,效果是把全仓从外推的 ~17 小时压到 ~3 小时:
@@ -109,7 +109,7 @@ const shared = {
   },
 
   // 不设阈值:`break: null` 决定退出码(恒 0),high/low 只影响 reporter 配色。
-  // 三个值一起给是为了让「这条门禁不设红线」在配置里可 grep、可 review(ADR-0010)。
+  // 三个值一起给是为了让「这条门禁不设红线」在配置里可 grep、可 review(hld §2.2.7)。
   thresholds: { high: 0, low: 0, break: null },
 
   // 夜间 runner 是共享的,留一半核给同机的其它 job。

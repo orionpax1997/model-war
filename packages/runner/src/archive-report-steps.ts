@@ -1,5 +1,5 @@
 /**
- * 档案 v3（agent 形态）的报告读模型：过程记录、步级度量与受污染分层（ADR-0035 / ADR-0036）。
+ * 档案 v3（agent 形态）的报告读模型：过程记录、步级度量与受污染分层。
  *
  * ── 这里为什么是一份独立的读模型，而不是塞进 `archive-report.ts` ──
  *
@@ -7,16 +7,16 @@
  * 分派」这条线淹没在别的分支里。本文件只回答三个新问题，且每个都写成**纯函数**（不读盘、不碰
  * gen）：
  *
- * 1. `steps` 怎么读、`round == step` 的左连接成不成立（ADR-0035：不匹配要**显式数出来**，
+ * 1. `steps` 怎么读、`round == step` 的左连接成不成立（不匹配要**显式数出来**，
  *    不许静默通过——静默会把「证据缺失」渲染成「这一步没有失败原因」）；
- * 2. 步级耗时 / prompt 大小 / 增长怎么算（ADR-0035：`stepMs = sendMs + harnessMs`，
+ * 2. 步级耗时 / prompt 大小 / 增长怎么算（`stepMs = sendMs + harnessMs`，
  *    总墙钟由 `max(atMs + sendMs + harnessMs)` 跨步聚合，不往 `meta` 顶层另放一份）；
- * 3. 受污染会话怎么判（ADR-0036：判据落在**报告侧**，阈值写在报告脚注）。
+ * 3. 受污染会话怎么判（判据落在**报告侧**，阈值写在报告脚注）。
  *
  * ── 缺数据一律 null，不是 0 ──
  *
  * 三个「没有」是三种事实，形状上也分得开：`steps: null` = 这一档没有过程记录（v1 / v2）；
- * `entries: []` = 零步会话（合法形状，ADR-0031）；`null` 字段 = 这一步这一格没记到。
+ * `entries: []` = 零步会话（合法形状）；`null` 字段 = 这一步这一格没记到。
  * `errorCodes: []` 与 `result` 缺席也不混用——前者是「跑过了，没有错误」，后者是「没有结果」。
  */
 
@@ -43,7 +43,7 @@ export type ReportPercentiles = {
   readonly count: number;
 };
 
-/** v3 档的形状事实（ADR-0029 / ADR-0031）：旧档一律 `null`，不迁移、不回填。 */
+/** v3 档的形状事实：旧档一律 `null`，不迁移、不回填。 */
 export type ReportArchiveShape = {
   /** `"legacy"` = 没有 `archiveSchemaVersion` 的历史档；报告按它分派整张表。 */
   readonly archiveSchemaVersion: ArchiveShapeVersion;
@@ -59,7 +59,7 @@ export type ReportArchiveShape = {
 };
 
 /**
- * 过程记录里那一步的**动作**（ADR-0031 的闭集，v4 起六档）。`null` = 档案里的取值不在闭集里。
+ * 过程记录里那一步的**动作**（闭集，v4 起六档）。`null` = 档案里的取值不在闭集里。
  *
  * ── 它不是第二份枚举 ──
  *
@@ -107,7 +107,7 @@ export type ReportStep = {
    * 这一步交给 `bash` 的那条命令串：`steps[i].action.command` 的解析值（只有 `bash` 那一档有）。
    *
    * 它**不是**从 `toolCall.argumentsJson` 重解一份。v4 的逐字字节住在 `toolCall`，这一格是写侧
-   * 解析出来给人读的值——ADR-0031 的两个家。两者可以不同形（`\u003c` 与 `<`、多余空格），所以
+   * 解析出来给人读的值—— 的两个家。两者可以不同形（`\u003c` 与 `<`、多余空格），所以
    * 报告两个都给：读者看得出「发回去的字节」与「我们实际跑的命令」在哪里分岔，也就能一眼看出
    * `raw` 为空串的那一步到底做了什么。
    */
@@ -115,7 +115,7 @@ export type ReportStep = {
   /**
    * 这一步发起的那一次工具调用（v4 才有）：`name` 与**逐字**的 `argumentsJson`。
    *
-   * 它是 ADR-0031「模型看到的字节 = 落盘的字节」在读侧的落点：发回历史的
+   * 它是 「模型看到的字节 = 落盘的字节」在读侧的落点：发回历史的
    * `tool_calls[0].function.arguments` 就是这串字节。所以报告只搬它、**不按 `action.command`
    * 重编码**——两者可以不同形（转义写法、空格），而重编码等于悄悄换掉发回去的东西。
    * v3 档（那时还没有工具调用信封）与 `action.kind === "none"` 的步都是 `null`。
@@ -132,11 +132,11 @@ export type ReportStepToolCall = {
 };
 
 /**
- * 「轮号 = 步号」这条左连接的体检（ADR-0035「报告必须显式数不匹配的次数」）。
+ * 「轮号 = 步号」这条左连接的体检（「报告必须显式数不匹配的次数」）。
  *
  * `stepsWithoutRound` 是**真会出现**的那一侧：日志行缺一条（截断重试被当成独立一步、或某行
  * 解析不过被剔掉），步号就找不到它的发送侧证据。`roundsWithoutStep` 是另一侧；传输末行
- * （`responseConverged: false`）**不算**不匹配——它本来就不占步（ADR-0031）。
+ * （`responseConverged: false`）**不算**不匹配——它本来就不占步。
  */
 export type ReportStepJoin = {
   readonly state: "complete" | "mismatched";
@@ -145,7 +145,7 @@ export type ReportStepJoin = {
   readonly roundsWithoutStep: readonly number[];
 };
 
-/** 步级统计：分位 + 两个跨步聚合（ADR-0035：会话级读数由聚合得出，不另立字段）。 */
+/** 步级统计：分位 + 两个跨步聚合（会话级读数由聚合得出，不另立字段）。 */
 export type ReportStepStats = {
   readonly steps: number;
   readonly stepMs: ReportPercentiles;
@@ -167,10 +167,10 @@ export type ReportSteps = {
 };
 
 /**
- * 受污染会话的判定阈值（ADR-0036）。
+ * 受污染会话的判定阈值。
  *
  * **它在这里是命名的，不是藏起来的**：报告脚注由这两个数渲染，读者不必猜「60 s 是哪来的」。
- * 两个数都是估值而不是实测（ADR-0036 残余风险 4），回第一季数据时改的只是这里。
+ * 两个数都是估值而不是实测（残余风险 4），回第一季数据时改的只是这里。
  */
 export const CONTAMINATION_THRESHOLDS = {
   /** 累计退避超过它 = 不是抖动。 */
@@ -182,11 +182,11 @@ export const CONTAMINATION_THRESHOLDS = {
 export type ReportContaminationReason = "rate-limited>=3" | "backoff>60s";
 
 /**
- * 「这个会话撞过限流」——数据的分层，不是数据的注解（ADR-0036）。
+ * 「这个会话撞过限流」——数据的分层，不是数据的注解。
  *
  * 成绩不因此作废：受污染会话照常进报告（成绩、步数、被挡几次、等了多少秒都在），只是单列。
  * one-shot 档这一格恒 `null`：`readFailureRecords` 刻意跳过参赛模型，本报告不为封存的历史榜
- * 改那条口径（ADR-0036 的代价条款）。
+ * 改那条口径（代价条款）。
  */
 export type ReportContamination = {
   readonly state: "clean" | "contaminated";
@@ -239,7 +239,7 @@ const stringOf = (value: unknown): string | null => (typeof value === "string" ?
  * `steps[i].toolCall` 的读入。
  *
  * **缺席是合法的**（v3 档、以及没有动作的步），而在场就必须两个键都是字符串：把它降级成
- * `null` 会让「读不出」与「没有过这次调用」同形——那正是 ADR-0031 那一格要防的事。
+ * `null` 会让「读不出」与「没有过这次调用」同形——那正是 那一格要防的事。
  */
 const toolCallOf = (raw: unknown): ReportStepToolCall | null => {
   if (raw === undefined) return null;
@@ -266,7 +266,7 @@ const commandOf = (raw: unknown): string | null => stringOf(objectOf(raw).comman
  *
  * `undefined` = 这一步没有结果（超时、被杀、配额在动作执行前就切断），是**合法**的缺席；
  * 而**在场但形状不对**必须拒读：把它降级成「没有结果」会让「读不出」与「没跑过」同形，
- * 那正是 ADR-0035 把结果包一层要防的事。
+ * 那正是 把结果包一层要防的事。
  */
 const resultOf = (raw: unknown): ReportStepResult | null => {
   if (raw === undefined) return null;
@@ -298,7 +298,7 @@ export const archiveShapeOf = (
     termination !== undefined &&
     !(ARCHIVE_TERMINATIONS as readonly unknown[]).includes(termination)
   )
-    throw new Error("终止原因不在 ADR-0032 的闭集里：拒读，不猜");
+    throw new Error("终止原因不在闭集里：拒读，不猜");
   return {
     archiveSchemaVersion: shape,
     harnessVersion: stringOf(record.harnessVersion),
@@ -312,7 +312,7 @@ export const archiveShapeOf = (
 /**
  * 过程记录 → 报告读模型（v3 才有；旧档返回 `null` = 这一档没有步）。
  *
- * 步号的规则是 ADR-0031 的「步号 1 起、与轮号同义」：`1..n` 连续、`n` 等于协议轮数。
+ * 步号的规则是「步号 1 起、与轮号同义」：`1..n` 连续、`n` 等于协议轮数。
  * 不连续就拒读——那意味着某一步丢了或者号编错了，无论哪种，按号数的左连接都不再成立。
  */
 export const stepsOf = (input: {
@@ -331,7 +331,7 @@ export const stepsOf = (input: {
       `档案形状版本 ${String(input.shape)} 的过程记录步号不是 1..协议轮数 的连续序列：拒读`,
     );
 
-  // 传输末行不占步（ADR-0031）：它没有过程记录条目，也不该被数成「轮号多余」。
+  // 传输末行不占步：它没有过程记录条目，也不该被数成「轮号多余」。
   const converged = input.rounds.filter((round) => round.responseConverged);
   const byStep = new Map(converged.map((round) => [round.round, round]));
   let previousInput: number | null = null;
@@ -406,7 +406,7 @@ export const stepsOf = (input: {
 };
 
 /**
- * 受污染判定（ADR-0036）。判据在**报告侧**，采集侧只负责把 `failureKind` 写进尝试证据。
+ * 受污染判定。判据在**报告侧**，采集侧只负责把 `failureKind` 写进尝试证据。
  *
  * `null` = 这一档不属本口径：one-shot 档读不到「不完整会话」（`readFailureRecords` 跳过参赛
  * 模型），所以这一列在历史档上恒为 `null`，不是「没有撞过限流」。
@@ -437,9 +437,9 @@ export const contaminationOf = (input: {
 };
 
 /**
- * 步级分位按 `modelVersion + harnessDigest` 分组（ADR-0035：与榜键同一套维度）。
+ * 步级分位按 `modelVersion + harnessDigest` 分组（与榜键同一套维度）。
  *
- * **受污染会话不参与分位**（ADR-0036「主排名只放干净会话」），但分组里仍报出被单列了几场——
+ * **受污染会话不参与分位**（「主排名只放干净会话」），但分组里仍报出被单列了几场——
  * 把排除做可见，而不是让读者以为这一组就只有这么多会话。没有步的档（v1 / v2）不进任何分组。
  */
 export const stepGroupsOf = (reports: readonly ArchiveReport[]): readonly ReportStepGroup[] => {

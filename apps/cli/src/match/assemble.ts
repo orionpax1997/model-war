@@ -11,7 +11,7 @@
  *
  * wasm 字节、runtime bundle 字节、脚本源码都由本模块读盘后交给 `createQuickJsRunner`;引擎侧
  * 一次读盘都没有(它只允许 `node:crypto` 一个内置模块)。VM 的建与释放(`dispose`)也归这里,
- * 引擎不持 VM(ADR-0005)。
+ * 引擎不持 VM(hld §4.5)。
  *
  * ── 为什么 `match` 与 `verify` 共用这一套 ──
  *
