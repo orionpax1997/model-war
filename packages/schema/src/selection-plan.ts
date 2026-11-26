@@ -312,7 +312,7 @@ const GRID_CANDIDATE_JSON_SCHEMA = {
 } as const;
 
 /**
- * v2 选拔记录的单份 JSON 形状（TypeScript 是形状真源，手工对齐，ADR-0003）。
+ * v2 选拔记录的单份 JSON 形状（TypeScript 是形状真源，手工对齐）。
  *
  * 计划直接嵌 `TRIAL_PLAN_JSON_SHAPE`（与存档 `optimization.plan` 同一处写法）：选拔用的计划
  * 与生成阶段的网格是同一份，形状不该有第二个家。「能否由事实重建」归 runner 的
@@ -343,7 +343,7 @@ export const ARCHIVE_GRID_SELECTION_JSON_SCHEMA = {
 } as const;
 
 /**
- * v3 选拔：**胜者指向候选序里的某一位**，而不是某个阶段（ADR-0031）。
+ * v3 选拔：**胜者指向候选序里的某一位**，而不是某个阶段。
  *
  * 它只是**读形状**：A1 可以整段缺席（缺席时胜者 = 末位候选），生产侧的复算与选拔不在 A1
  * 的范围里。形状按 v2 的同一套语义裁出来——计划仍是生成阶段那张评测网格（`TrialPlan`，

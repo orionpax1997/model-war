@@ -148,7 +148,7 @@ it("gen 产出的存档过 `validateArchiveMeta`:三件套齐、哈希与版本�
     expect(validation.meta.model).toBe("alpha");
     expect(validation.meta.ruleset).toBe(RULESET_VERSION);
     // v3 的公式不再成立「轮数 == prompt 条数」:轮数等于过程记录条数,prompt 恒为一条
-    // (ADR-0031「断言合并成一个公式」的两种形态各一份)。
+    // (「断言合并成一个公式」的两种形态各一份)。
     expect(validation.meta.protocolRounds).toBe(3);
     expect(validation.meta.prompts).toHaveLength(1);
     expect(validation.meta.steps).toHaveLength(3);

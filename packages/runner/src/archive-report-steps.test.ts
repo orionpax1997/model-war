@@ -1,5 +1,5 @@
 /**
- * 档案 v3 的报告读侧：过程记录、步级度量与受污染分层（ADR-0035 / ADR-0036）。
+ * 档案 v3 的报告读侧：过程记录、步级度量与受污染分层。
  *
  * ── 为什么这些用例住在 runner，而不是 CLI 的 v3 往返测试里 ──
  *
@@ -146,7 +146,7 @@ const gridSummaryOf = (options: {
  * 的 `scriptState` 是 `verified`——那是「候选按位置可读」里最要紧的一半。
  *
  * `grids` 给那几步真写一份旁挂网格汇总（`<观测文件>.grid.json`）：v3 档的 `meta` 不装计划，
- * 所以「这 32 场跟谁打」只在那里（ADR-0035）。
+ * 所以「这 32 场跟谁打」只在那里。
  */
 const writeV3 = (root: string, input: V3Input): void => {
   const slugDir = join(root, "archive", input.slug);
@@ -218,7 +218,7 @@ const writeV3 = (root: string, input: V3Input): void => {
   writeFileSync(join(runDir, "meta.json"), `${JSON.stringify(record, null, 2)}\n`);
 };
 
-/** 零步失败档：过程记录为空、协议轮数为零、无优化段（ADR-0031 的合法形状）。 */
+/** 零步失败档：过程记录为空、协议轮数为零、无优化段（合法形状）。 */
 const writeZeroStepFailure = (
   root: string,
   input: { readonly slug: string; readonly logs: readonly unknown[] },
@@ -784,7 +784,7 @@ it("候选序从 --json 可读：两次 evaluate 之间改了同一份 script.ts
     termination: "done",
   });
   const [report] = readArchiveReports(root);
-  // 步列给出「哪几步是 evaluate」（`evaluate` 就是提交，ADR-0030）。
+  // 步列给出「哪几步是 evaluate」（`evaluate` 就是提交）。
   const evaluateSteps = (report?.steps?.entries ?? [])
     .filter((entry) => entry.action === "evaluate")
     .map((entry) => entry.step);
@@ -1079,7 +1079,7 @@ it("步号不是 1..协议轮数 的连续序列：拒读（按号数的左连�
   expect(issues).toHaveLength(1);
 });
 
-// ── 日志行的证据分家（ADR-0031） ───────────────────────────────────────────────
+// ── 日志行的证据分家 ───────────────────────────────────────────────
 
 it("agent 形状的日志行带结果侧 errorCodes：显式拒读那一行，不静默忽略", () => {
   const root = rootOf();
@@ -1125,7 +1125,7 @@ it("agent 形状日志行的 kind 只能是行类型标记：写成结果侧驱�
   ]);
 });
 
-// ── 受污染分层（ADR-0036） ────────────────────────────────────────────────────
+// ── 受污染分层 ────────────────────────────────────────────────────
 
 const rateLimitAttempts = (count: number): readonly Record<string, unknown>[] =>
   Array.from({ length: count }, (_, index) => ({
@@ -1171,7 +1171,7 @@ it("受污染会话：429 次数达到阈值即单列，成绩与步数保留", 
   // 成绩不作废：候选与步数照旧可读。
   expect(report?.candidateStages).toBe(1);
   expect(report?.steps?.entries).toHaveLength(2);
-  // 尝试细分进了报告（ADR-0036「失败必须可读」）。
+  // 尝试细分进了报告（「失败必须可读」）。
   expect(report?.rounds[0]?.attempts.map((attempt) => attempt.failureKind)).toEqual([
     "rate-limited",
     "rate-limited",
@@ -1232,7 +1232,7 @@ it("受污染会话：累计退避超过阈值同样单列（日志行记了 bac
 
 /**
  * 受污染读数里的「累计退避」有三态，**一张表**走同一条读路径：日志行 → 轮读数 → 会话合计 →
- * Markdown 那一格。三行差别只在 `backoffMs` 这一键在不在、是多少（ADR-0036 的采集口径：没有退避
+ * Markdown 那一格。三行差别只在 `backoffMs` 这一键在不在、是多少（采集口径：没有退避
  * 写 0、旧档缺这一格读成 null，两者不混）。拆成三套用例写，那条「不补零」的口径就会各自漂一份。
  */
 const BACKOFF_READOUT: readonly {

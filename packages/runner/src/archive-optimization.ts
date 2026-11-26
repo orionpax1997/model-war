@@ -3,7 +3,7 @@
  *
  * ── 分派的第一层是**档案形状版本**，不是优化段版本 ──
  *
- * `archiveSchemaVersion`（ADR-0031 的第一件版本号）回答「这份文件按哪种形状读」。它缺席 =
+ * `archiveSchemaVersion`（第一件版本号）回答「这份文件按哪种形状读」。它缺席 =
  * 历史（one-shot）档，按 `optimization.version` 判 v1 / v2；它是 `3` = agent 形态，优化段
  * 只能是 v3（或整个缺席——零候选的失败档就是那个形状）。两条混淆路径都拒读：
  *
@@ -66,7 +66,7 @@ const archiveMetaSchema = z.fromJSONSchema(
 export type ArchiveShapeVersion = import("@model-war/schema").ArchiveShapeVersion;
 
 /**
- * 按 `archiveSchemaVersion` 分派（ADR-0031）：旧档、v3 / v4、其余拒读。
+ * 按 `archiveSchemaVersion` 分派：旧档、v3 / v4、其余拒读。
  *
  * ── 读侧 3 与 4 都认，写侧只写 4 ──
  *
@@ -108,7 +108,7 @@ export const isAgentShape = (
 ): shape is Exclude<ArchiveShapeVersion, "legacy"> => shape !== "legacy";
 
 /**
- * 形状版本与协议轮数的那几条判据（ADR-0031「断言合并成一个公式」）。
+ * 形状版本与协议轮数的那几条判据（「断言合并成一个公式」）。
  *
  * v3：轮数 = 过程记录条数，起始 prompt 零步为零条、否则一条；历史档：轮数 = 逐轮 prompt 条数。
  * 写入侧的同一条公式在 `packages/gen/src/archive.ts` 的 `archiveRoundFieldsOf`，两处同源。
@@ -237,7 +237,7 @@ export const archiveShapeIssuesOf = (meta: ArchiveMeta): readonly ArchiveShapeIs
  * v3 的候选关系：条数 1..3（三次评测是配额，不是下限）、**无 `stage`**、步号严格递增且不越过
  * 总步数、旁挂文件同源且两两互异、末位即最终候选。
  *
- * 「末位即最终候选」是 ADR-0030「`evaluate` 即提交」的直接推论：成绩取最后一次 `evaluate`
+ * 「末位即最终候选」是 「`evaluate` 即提交」的直接推论：成绩取最后一次 `evaluate`
  * 评的那个版本，所以冻结的 `script.js` 必须等于末位候选的字节。它不是「第三阶段」——
  * 候选可能只有一个，那时它就是末位。
  */

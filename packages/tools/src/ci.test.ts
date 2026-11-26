@@ -42,7 +42,7 @@ const fast = workflowText("fast.yml");
 const nightly = workflowText("nightly.yml");
 
 /**
- * 主链成员(ADR-0010:PR/合入触发的快链 = `verify` + `gate:types`)。
+ * 主链成员(hld §2.2.7:PR/合入触发的快链 = `verify` + `gate:types`)。
  *
  * **链本身不在这里展开**:链的家是 `package.json` 的 `verify`。这条断言只钉「CI 调的是哪几个
  * 命名脚本」,不钉「verify 里串了哪几步」——后者改了由 `package.json` 与运行结果自证,在这里
@@ -67,7 +67,7 @@ const NIGHTLY_HARD_GATES = [
   "mutate:engine:processor",
 ] as const;
 
-/** 夜间观测项:只落盘不设红线,红不阻断(ADR-0010、ADR-0026:后者的棘轮只管 `mutate:*`,`observe:scan` 仍只观测)。 */
+/** 夜间观测项:只落盘不设红线,红不阻断(hld §2.2.7、ADR-0026:后者的棘轮只管 `mutate:*`,`observe:scan` 仍只观测)。 */
 const NIGHTLY_OBSERVATIONS = ["observe:scan"] as const;
 
 const sorted = (values: readonly string[]): readonly string[] => [...values].sort();
@@ -136,7 +136,7 @@ it("主链成员 = `check --full` 一条", () => {
 it("主链只有一个执行步,且它就是 `pnpm run check -- --full <基准>`", () => {
   // 装依赖那步不算"执行项目代码":除此之外,跑什么全部由那一条命名脚本决定。
   // 两个 step 的实际作用是「一眼看出哪类挂了」,代价却是链定义在 yaml 里再展开一份
-  // (ADR-0010:CI 失败等价于命名脚本失败;ADR-0038:一条命令,没有档位)。
+  // (hld §2.2.7:CI 失败等价于命名脚本失败;ADR-0038:一条命令,没有档位)。
   // 尾部那个 `$SINCE` 是同一 step 的 env(见下面的"基线比哪个对象"),不是第二个档位。
   const steps = extractRunCommands(fast).filter((command) => !command.startsWith("pnpm install"));
   expect(steps).toEqual(["pnpm run check -- --full $SINCE"]);

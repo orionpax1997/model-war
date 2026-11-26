@@ -255,7 +255,7 @@ const ERROR_COUNTS_JSON_SCHEMA = {
   },
 } as const;
 
-/** TypeScript 是真源，JSON Schema 手工对齐（ADR-0003）。 */
+/** TypeScript 是真源，JSON Schema 手工对齐。 */
 export const TRIAL_OBSERVATION_JSON_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   title: "model-war 试跑逐对局观测",

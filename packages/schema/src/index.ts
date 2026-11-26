@@ -3,12 +3,12 @@
  * 约束:本包无运行时代码(hld §3.2),不依赖任何包。
  *
  * **本文件是对外唯一入口**:包里按域分文件,
- * 公共面一律从这里再导出。做成多入口等于对外承诺,将来想收窄就晚了(ADR-0003)。
+ * 公共面一律从这里再导出。做成多入口等于对外承诺,将来想收窄就晚了。
  * 因此域文件之间也只经本文件互相看见(仅类型 import,编译后不留痕)。
  */
 
 // 名单类数据(hld §6.2:静态校验器与沙箱 runtime 消费同一份)。经生成器分发到工具包,
-// 规则层读的是生成物而不是本包——分界线是「能不能 afford 构建」,见 ADR-0003。
+// 规则层读的是生成物而不是本包——分界线是「能不能 afford 构建」。
 export { ALLOWED_MATH_MEMBERS, BUILTIN_GLOBAL_NAMES } from "./builtin-globals.js";
 
 // 参赛脚本可见面的名单:宿主桥前缀 / 禁列全局名 / 沙箱注入 API 符号表(hld §6.2)。
@@ -44,14 +44,14 @@ export {
   SANDBOX_RUNTIME_HASH,
 } from "./sandbox-runtime.js";
 
-// 契约包身份(ADR-0037):`/contract` 四条挂载字节的整树 sha256。形状与 `SANDBOX_RUNTIME_HASH` 同款
+// 契约包身份:`/contract` 四条挂载字节的整树 sha256。形状与 `SANDBOX_RUNTIME_HASH` 同款
 // ——入库常量 + 门禁证明「现算 == 入库」;算法在 `packages/tools/src/contract-tree.ts`(本包不许有依赖,
 // 而它要 `node:crypto`)。消费方是生成侧渲染的首条消息末行。
 export { CONTRACT_TREE_HASH } from "./contract-identity.js";
 
 // 入库沙箱 rootfs 的工程常量:产物路径 / 期望文件清单 / 整棵树的哈希。
 // 供 `packages/gen` 的执行器(rootfs 就是沙箱的根)与 `packages/tools` 的漂移门禁共享;
-// 形状照 ADR-0007 对 runtime bundle 的处理:产物以字节为准,哈希是手写回来的常量。
+// 形状照 对 runtime bundle 的处理:产物以字节为准,哈希是手写回来的常量。
 export {
   SANDBOX_ROOTFS_BIN_DIR,
   SANDBOX_ROOTFS_CONTRACT_DIR,
@@ -60,7 +60,7 @@ export {
   SANDBOX_ROOTFS_TREE_HASH,
 } from "./sandbox-rootfs.js";
 
-// `evaluate` 的会话配额真源(ADR-0030)。它以前和一条 fd 3 通道的协议体住在一起,通道已删
+// `evaluate` 的会话配额真源。它以前和一条 fd 3 通道的协议体住在一起,通道已删
 // (票 03):现在这里只剩这个数,理由与「为什么没跟着通道一起删」写在那个文件头注里。
 export { EVALUATE_CALL_LIMIT } from "./tool-channel.js";
 

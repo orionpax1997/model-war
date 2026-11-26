@@ -1,5 +1,5 @@
 /**
- * 单模型生成:**一个单会话 loop**,一次模型调用一步(ADR-0032)。
+ * 单模型生成:**一个单会话 loop**,一次模型调用一步。
  *
  * ── 外循环是**替换**,不是包裹 ──
  *
@@ -7,7 +7,7 @@
  * 身份)在 v3 里一个都不剩:它们是 one-shot 形态的产物,留着等于每加一个字段、每条断言都要
  * 维护两遍。这里只有一条线性链:送历史 → 解析动作 → 执行 → 记一步 → 再送。
  *
- * 于是「阶段」这个概念整个消失(ADR-0031):`evaluate` 就是提交,三次是配额上限而不是时序,
+ * 于是「阶段」这个概念整个消失:`evaluate` 就是提交,三次是配额上限而不是时序,
  * 候选的数组下标就是「第几次评测」。`stage` / `protocolRound` / `feedbackRounds` / `plan` /
  * `reusedFromStage` 都不进 v3 的优化段。
  *
@@ -119,7 +119,7 @@ import { scriptSizeLimit, validateScript } from "./validate.js";
 export type { FailureClassification } from "@model-war/schema";
 
 /**
- * 生成日志一行:一次模型调用一行,只装**发送侧**证据(ADR-0031)。
+ * 生成日志一行:一次模型调用一行,只装**发送侧**证据。
  *
  * 「这一轮被什么驱动」「编译错误码」属于结果侧,真源在过程记录的条目里——日志不再复写一份。
  * 唯一保留的行内判别符是 `kind`:传输末行与收敛行形状本就不同,它需要说明「这一行按哪种形状读」。
@@ -135,26 +135,26 @@ export type GenerationLogEntry = {
   /**
    * 这一步用了几次模型调用。
    *
-   * 第二次只可能是**截断重试**(ADR-0035):它作为同一步的第二个尝试,日志仍一行。传输重试的
-   * 枪数另记在 `attemptEvidence` 里——那是另一件事(退避与状态码分类,ADR-0036)。
+   * 第二次只可能是**截断重试**:它作为同一步的第二个尝试,日志仍一行。传输重试的
+   * 枪数另记在 `attemptEvidence` 里——那是另一件事(退避与状态码分类)。
    */
   readonly attempts?: number;
   /**
    * 收敛标记:`true` = 这一行是收敛行,`false` = 传输末行。
    *
    * 读侧靠它区分「未收敛日志只能是传输失败末行」这条判据(报告侧 `archive-report.ts` 的那一条
-   * 与 `kind` 一起用)。ADR-0031 已裁「行类型」是唯一保留的行内判别符;它是那个判别的既有形状,
+   * 与 `kind` 一起用)。 已裁「行类型」是唯一保留的行内判别符;它是那个判别的既有形状,
    * 不是第二个事实。
    */
   readonly responseConverged: boolean;
   readonly requestEvidence?: ReturnType<typeof generationRequestEvidence>;
   readonly attemptEvidence?: readonly AttemptEvidence[];
-  /** 模型段墙钟(含退避)。只作记录,deadline 按不含退避的口径判(ADR-0036)。 */
+  /** 模型段墙钟(含退避)。只作记录,deadline 按不含退避的口径判。 */
   readonly sendMs: number;
   /**
    * 这一步的退避等待**实测**累计毫秒(整数)。
    *
-   * 为什么是实测:ADR-0036 的受污染判据第一段是「累计退避 > 60 s」,而“等了多久”只能测——
+   * 为什么是实测: 的受污染判据第一段是「累计退避 > 60 s」,而“等了多久”只能测——
    * `retryTransport` 给出的是一次等待的**请求值**,`setTimeout` 只会更晚。所以这一格是进出各读
    * 一次钟的差,不是入参 `ms` 的和。
    *
@@ -170,7 +170,7 @@ export type GenerationTransportLogEntry = GenerationLogEntry & { readonly kind: 
 /**
  * 失败结论。
  *
- * agent 形态下 `prompts` **恒为空**:轮数与起始 prompt 由 `steps` 与首条消息推导(ADR-0031 的
+ * agent 形态下 `prompts` **恒为空**:轮数与起始 prompt 由 `steps` 与首条消息推导(
  * 同一个公式)。这一栏留在类型里是因为 `FailureRecord` 的形状共用,而 `buildFailureRecord` 会
  * 把「agent 形态又填了 prompts」当成两份会漂的奇据拒掉——所以这里只放空数组。
  */
@@ -207,7 +207,7 @@ const FAILURE_CLASSIFICATION_OF_TERMINATION: Record<ArchiveTermination, FailureC
 /**
  * v3 档案里那组「模型面对的世界」与「这次会话怎么走完」的字段。
  *
- * 成功档与失败档**同键集合**(ADR-0031):「零候选」是这次会话的结论,不是「少写几个键」的
+ * 成功档与失败档**同键集合**:「零候选」是这次会话的结论,不是「少写几个键」的
  * 理由。所以失败档也带这一组,写盘由 `run.ts` 交给 `writeFailureRecord({ agent })`。
  */
 export type AgentArchiveFields = {
@@ -256,7 +256,7 @@ export type ModelOutcome =
  *
  * `scoreFromCandidateEvidence` 从候选证据旁的 `.grid.json` 读成绩(算术真源在 runner,生成侧只搬运)。
  * 测试注入假实现,把「成绩」与「网格」拆开验;注入 `async () => undefined` 就是「一次都不产出
- * 候选」的那条路径(零候选即失败档,ADR-0030)。
+ * 候选」的那条路径(零候选即失败档)。
  */
 export type EvaluateScoring = (
   submission: EvaluateSubmission,
@@ -303,7 +303,7 @@ type StepFacts = {
   /**
    * 评测基础设施失败的一句话(计划重建不符 / 试跑子进程异常)。
    *
-   * 它不是「模型写错了」,所以**不进这一步的观测**:环境故障解释了模型也没用(ADR-0030
+   * 它不是「模型写错了」,所以**不进这一步的观测**:环境故障解释了模型也没用(
    * 残余风险 3 的同一条理由)。记在这里,由执行器在沙箱返回后大声失败。
    */
   infra?: string;
@@ -472,7 +472,7 @@ const createExecutor =
   };
 
 /**
- * 会话起跑前的**工具能力拒跑**(ADR-0032「未验证的翻译不写」)。
+ * 会话起跑前的**工具能力拒跑**(「未验证的翻译不写」)。
  *
  * ── 为什么在起跑前,而不是第一步 ──
  *
@@ -488,7 +488,7 @@ const createExecutor =
  *
  * 这条边界在 `messages` 族上被真事试过一次:2026-11-20 该族带不带 `tools` 都 403,当时判成
  * 「席位被渠道整体拒」。2026-11-21 复测三步全 200(那两次 403 是链路故障),证据有了、翻译
- * 仍没写——ADR-0032 的 2026-11-21 修订段记着这件事。`403` 与 `没写翻译` 是两条独立的判据,
+ * 仍没写—— 的 2026-11-21 修订段记着这件事。`403` 与 `没写翻译` 是两条独立的判据,
  * 任一条都能让本函数抛错,但混成一句就会指错方向。
  */
 const assertToolSurface = (config: ModelConfig): void => {
@@ -501,12 +501,12 @@ const assertToolSurface = (config: ModelConfig): void => {
 };
 
 /**
- * 一次 `send` 的传输层包装:`retryTransport` 负责 429 / 连接级两套预算(ADR-0036)。
+ * 一次 `send` 的传输层包装:`retryTransport` 负责 429 / 连接级两套预算。
  *
  * ── 截断**不**在这里重试 ──
  *
  * 传输层的截断重试是「半截响应直接丢掉、重发同一份 messages」,它不知道模型能不能自我修正。
- * 而 ADR-0032 要求 agent 形态在**第二次仍截断**时转格式反馈而不是继续退避——所以截断被摘出来
+ * 而 agent 形态要求**第二次仍截断**时转格式反馈而不是继续退避——所以截断被摘出来
  * 原样交回 loop,由 loop 的「重试一枪 → 转格式反馈」承担。两条裁决因此各落在自己的家里。
  */
 const sendWithTransportRetry = async (options: {
@@ -517,9 +517,9 @@ const sendWithTransportRetry = async (options: {
   readonly caliber: UsageCaliber | undefined;
   /** 本会话的工具声明;缺席即不带 `tools` 发请求。 */
   readonly tools?: readonly ToolDeclaration[];
-  /** 会话总墙钟的中止信号(ADR-0029/0035):到点即打断进行中的调用。 */
+  /** 会话总墙钟的中止信号:到点即打断进行中的调用。 */
   readonly signal: AbortSignal;
-  /** 退避等待的实现(会话预算在这里停表,ADR-0036)。 */
+  /** 退避等待的实现(会话预算在这里停表)。 */
   readonly sleep: RetrySleep;
 }): Promise<
   | { readonly ok: true; readonly response: ModelResponse }
@@ -613,7 +613,7 @@ export const scoreFromCandidateEvidence = (deps: {
  * 单模型生成:读首条 prompt、跑单会话、按「有没有候选」落成功档或失败档。
  *
  * 与旧形态的入参差异:`GenerationRequest` 不再需要 `template` 与 `docs`——契约正文**不进首条
- * 消息**(读契约要花几步,这是设计的一部分,ADR-0030),首条 user 与 system 改成由
+ * 消息**(读契约要花几步,这是设计的一部分),首条 user 与 system 改成由
  * `agentPrompt` 直接给出(`loadAgentPrompt(root, identity)` 的返回值)。
  */
 export const generateOneModel = async (
@@ -636,7 +636,7 @@ export const generateOneModel = async (
   assertToolSurface(config);
   // ── 工作区不住在 `archive/` 里 ──
   //
-  // 那个目录的发布不变量是「目录存在 ⇔ 三件套完整」(ADR-0031),而工作区是一个**中途"留下来**的
+  // 那个目录的发布不变量是「目录存在 ⇔ 三件套完整」,而工作区是一个**中途"留下来**的
   // 子目录。让它们同层会让那条不变量当场变成假话——失败档那一次尤其明显:删掉失败文件之后
   // `archive/<slug>/` 里剐下一个 `.workspace-*`,
   // 而读侧把它当成一份没有三件套的档。
@@ -707,14 +707,14 @@ export const generateOneModel = async (
   const caliber =
     config.generationPolicy === undefined ? undefined : usageCaliberOf(config.endpointFamily);
 
-  // ── 会话总墙钟:active 口径,且能在调用**进行中**收口(ADR-0029/0035) ──
+  // ── 会话总墙钟:active 口径,且能在调用**进行中**收口 ──
   //
   // 退出条件原先只有「步与步之间」那一处检查,于是一次慢慢吐 token 的调用可以合法地吃光整个
   // 预算(`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z`:两次调用各 816 s / 928 s,
   // 全是 reasoning token,1800 s 就这么没了)。空闲超时挡不住它——每读到一段字节就重置。
   //
   // 所以预算自己有一只表:到点就把**当前在途**那次调用 abort 掉。退避等待期间这只表停表
-  // (`backoffSleep`),那是 ADR-0036 的口径:退避是测量条件的抗噪设置,不是模型的耗时。
+  // (`backoffSleep`),那是重试层的口径:退避是测量条件的抗噪设置,不是模型的耗时。
   let inFlight: AbortController | undefined;
   const budget = createBudgetClock({
     limitMs: totalWallClockMs,
@@ -726,7 +726,7 @@ export const generateOneModel = async (
   budget.start();
 
   /**
-   * 退避等待:不进 active 墙钟(ADR-0036);预算已到点时干脆不再等。
+   * 退避等待:不进 active 墙钟;预算已到点时干脆不再等。
    *
    * **等多久是测出来的**:入参 `ms` 是 `retryTransport` 算出的**请求值**(退避序列本身由
    * `retry.test.ts` 判),而 `setTimeout` 只会晚不会早——所以进出各读一次注入的钟,差多少记多少。
@@ -750,7 +750,7 @@ export const generateOneModel = async (
    * 每次 loop 侧 `send` 的一桶尝试证据 + 这一次 send 里退避实测等了多少,按发生序。
    *
    * 一桶 = 一次 `model.send`(里面可能有若干传输重试),而**一步**可能有两次 `send`
-   * (截断重试,ADR-0035)。所以桶与日志行不是一一对应:切行时必须按 `turn.attempts` 数,
+   * (截断重试)。所以桶与日志行不是一一对应:切行时必须按 `turn.attempts` 数,
    * 不能拿 turn 的下标去取——那样截断那一步的日志会拿到上一步的证据,而第二枪直接丢掉。
    */
   const sends: SendRecord[] = [];
@@ -786,7 +786,7 @@ export const generateOneModel = async (
               // 到点被打断的那一次不是「传输运气不好」:终止原因归 `wall-clock`,而那一行日志
               // 与本步的尝试证据照旧留着(半截响应没有别的落法,见 loop 的那条 catch)。
               if (controller.signal.aborted) throw new WallClockExhausted(outcome.message);
-              // 抛给 loop 就是「传输重试耗尽」:那次调用不进过程记录、不进协议轮数(ADR-0031)。
+              // 抛给 loop 就是「传输重试耗尽」:那次调用不进过程记录、不进协议轮数。
               throw new Error(outcome.message);
             }
             return outcome.response;
@@ -810,7 +810,7 @@ export const generateOneModel = async (
       activeElapsedMs: () => totalWallClockMs - budget.remainingMs(),
     });
 
-    // 生成日志:**一个日志行 = 一步 = 一组 attempts**(ADR-0032)。
+    // 生成日志:**一个日志行 = 一步 = 一组 attempts**。
     //
     // 轮号 = 步号;`attempts` 是截断重试的枪数(不占步)。所以这一行要装上**这一步全部**的
     // 发送侧证据:按 `turn.attempts` 从发生序里切一段。逐 turn 下标取(`sends[index]`)
@@ -862,7 +862,7 @@ export const generateOneModel = async (
     //
     // 快照本身已经由 `evaluate` 服务在评测那一刻落进 `archive/<slug>/`(「快照即提交」),
     // 这里只做三件事:找它、读它的**字节**算产物摘要、把成绩拼进候选条目。重读工作区会把
-    // 「评完之后又改过」混进成绩里,而模型可能只是想清理一下(ADR-0030)。
+    // 「评完之后又改过」混进成绩里,而模型可能只是想清理一下。
     // 会话失败时这一族旁挂产物在 `finally` 里被撤掉:没有 commit 就没有留下的理由。
     const scoring =
       request.evaluateScoring ??
@@ -924,7 +924,7 @@ export const generateOneModel = async (
       };
     }
 
-    // 成绩取最后一次 evaluate 的那一版:候选序的末位(ADR-0030)。
+    // 成绩取最后一次 evaluate 的那一版:候选序的末位。
     //
     // 冻结的是**评估时那份快照**,不是会话停下时的工作区:模型在最后一次 `evaluate` 之后又改坏
     // 文件不影响成绩(它可能只是想清理一下)。屏幕上的 `script.ts` / `script.js` 与候选条目的
@@ -1038,7 +1038,7 @@ const submissionOfStep = (
  *
  * ── 搬快照,不重读工作区 ──
  *
- * 成绩取**最后一次 `evaluate` 评的那个版本**(ADR-0030):模型可能在评完之后又改坏文件,而它
+ * 成绩取**最后一次 `evaluate` 评的那个版本**:模型可能在评完之后又改坏文件,而它
  * 可能只是想清理一下。所以冻结的字节只能是那次评测当场落下来的两份快照(「快照即提交」),
  * 不是会话停下时工作区里躺着的东西。
  *

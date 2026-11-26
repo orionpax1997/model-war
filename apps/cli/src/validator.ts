@@ -203,7 +203,7 @@ const checkObservationShape = ajv.compile(OBSERVATION_LINE_JSON_SCHEMA as Schema
 const checkExceptionShape = ajv.compile(EXCEPTION_LINE_JSON_SCHEMA as SchemaObject);
 const checkTrialObservationShape = ajv.compile(TRIAL_OBSERVATION_JSON_SCHEMA as SchemaObject);
 // 网格汇总（`<观测文件>.grid.json`）：生成侧执行器写、选拔侧当证据读。读入端一律过同一份
-// 派生验证器，不在消费端手写形状 if（ADR-0016）。
+// 派生验证器，不在消费端手写形状 if。
 const checkTrialGridSummaryShape = ajv.compile(TRIAL_GRID_SUMMARY_JSON_SCHEMA as SchemaObject);
 
 const MAJOR_OF_VERSION = /^v([0-9]+)$/;

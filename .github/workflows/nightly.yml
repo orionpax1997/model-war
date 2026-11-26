@@ -9,7 +9,7 @@
 # 单 job matrix + 矩阵项级 continue-on-error(不是 job 级!job 级会把红吞成 success)。
 #   硬门禁(check / test:gates / test:slow / test:mutation / gate:selfproof / gate:cross-process /
 #           gate:limits / gate:budget:recheck / mutate):红 = 该 job 红。
-#   观测项(scan):只落盘不设红线(ADR-0010、spec §7),红了不阻断别的 leg,
+#   观测项(scan):只落盘不设红线(hld §2.2.7、spec §7),红了不阻断别的 leg,
 #           但 steps.run.outcome 会写进产物——「今晚观测项自己红了」不被抹掉。
 # `mutate:*` 从观测项转成硬门禁的理由是 ADR-0026:变异分数改成棘轮,不设绝对阈值,
 # 但「同一分片比入库基线低」就是退化,而退化即红。它的红线单位是分片,基线在
@@ -73,7 +73,7 @@ jobs:
           - { script: "verify:kernel", slug: "verify-kernel", advisory: false, timeout: 30 }
           # 棘轮:变异跑完就地比入库基线,低于基线即红(ADR-0026;不设绝对阈值)。
           - { script: "mutate:engine:processor", slug: "mutate-engine-processor", advisory: false, timeout: 300 }
-          # ---- 观测项:红不阻断,只把 outcome 落盘(ADR-0010:只落盘不设红线)----
+          # ---- 观测项:红不阻断,只把 outcome 落盘(hld §2.2.7:只落盘不设红线)----
           - { script: "observe:scan", slug: "observe-scan", advisory: true, timeout: 30 }
     steps:
       - name: Checkout
@@ -91,7 +91,7 @@ jobs:
 
       # 沙箱前置只对真跑 bwrap 的那条腿做:bubblewrap 不在 runner 镜像的预装清单里,而
       # Ubuntu 24.04 起默认限制非特权 user namespace。仍然只调命名脚本——apt-get / sysctl
-      # 都在 `scripts/setup-sandbox.sh` 里,workflow 里一个裸命令都没有(ADR-0033、ADR-0010)。
+      # 都在 `scripts/setup-sandbox.sh` 里,workflow 里一个裸命令都没有(ADR-0033、hld §2.2.7)。
       # 放在 install 之前:环境准备好之前不装依赖,失败点更靠前。
       - name: Setup sandbox
         if: matrix.script == 'verify:kernel'

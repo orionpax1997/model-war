@@ -1,5 +1,5 @@
 /**
- * 推理回传的**往返**单测:响应 → 历史 → 请求体(ADR-0032「reasoning 按端点族分家」)。
+ * 推理回传的**往返**单测:响应 → 历史 → 请求体(「reasoning 按端点族分家」)。
  *
  * ── 为什么三条用例都写成「往返」而不是三条「解析」加三条「拼装」 ──
  *
@@ -163,7 +163,7 @@ it("四条端点族的能力声明各自钉死", () => {
   expect(endpointSpec("messages").reasoning.carry).toBe("signed");
   expect(endpointSpec("chat-completions").reasoning.carry).toBe("encrypted");
   expect(endpointSpec("responses").reasoning.carry).toBe("encrypted");
-  // ADR-0032 只裁了三族:google 的思考段没有签名也没有加密块,显式声明为丢弃。
+  // 推理控制只裁了三族:google 的思考段没有签名也没有加密块,显式声明为丢弃。
   expect(endpointSpec("generate-content").reasoning.carry).toBe("drop");
   expect(
     endpointSpec("generate-content").reasoning.read({

@@ -157,7 +157,7 @@ interface ReportParamObject {
   readonly [key: string]: ReportParamValue;
 }
 const EFFORTS = ["high", "medium", "low", "none", "minimal", "xhigh"] as const;
-/** Google 族的三级思考档位（ADR-0022 只生产 `high`，读旧档时按同一白名单判）。 */
+/** Google 族的三级思考档位（本仓只生产 `high`，读旧档时按同一白名单判）。 */
 const THINKING_LEVELS = ["high", "medium", "low", "minimal"] as const;
 
 /**
@@ -445,7 +445,7 @@ export const failureClassificationOf = (value: unknown) =>
   enumOf(value, FAILURE_CLASSIFICATIONS) ?? "unknown";
 
 /**
- * 一次传输尝试的细分（ADR-0036 的 `AttemptEvidence.failureKind`）：429 / 服务端 / 网络 / 超时。
+ * 一次传输尝试的细分（ `AttemptEvidence.failureKind`）：429 / 服务端 / 网络 / 超时。
  *
  * 真源在 `packages/gen/src/transport-error.ts`，而 runner **不得 import gen**（hld §3.2），
  * 日志行又是外部字节——所以这里按白名单独立验证：未知文本不猜成一个分类，也不折进别的格。

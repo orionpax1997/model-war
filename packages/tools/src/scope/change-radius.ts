@@ -472,7 +472,7 @@ export const GATES_CASES: Readonly<Record<string, readonly string[]>> = {
   "packages/tools/src/gate/run-quickjs-coupling-gate.ts": ["quickjs-wasi 版本耦合断言"],
   // `gate/*.test.ts` 不在表里:测试文件本身由豁免交给依赖图(改它就是跑它),
   // 只有它们的**被测试物**上面那几行才需要 `-t`。
-  // `scan` 不是门禁而是一条观测(ADR-0010):用例名也写成了观测的样子,两处都得跟上。
+  // `scan` 不是门禁而是一条观测(hld §2.2.7):用例名也写成了观测的样子,两处都得跟上。
   "packages/tools/src/gate/scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
   "packages/tools/src/gate/run-scan-gate.ts": ["变异 / 扫描只在夜间", "scan 观测可调通"],
 };

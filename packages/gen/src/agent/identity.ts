@@ -1,5 +1,5 @@
 /**
- * harness 身份:人维护的叙事版本 + 对**显式行为清单**取的 sha256(ADR-0029)。
+ * harness 身份:人维护的叙事版本 + 对**显式行为清单**取的 sha256。
  *
  * ── 为什么哈希的是清单,不是源码 ──
  *
@@ -14,7 +14,7 @@
  *    混进来之后,任何纯序列化的重构都会让榜断代,把「换了 harness」稀释成「改了 JSON 排版」;
  *    而真正的读兼容问题它又解决不了(装载器没法靠一个叙事哈希判断「这份档案能不能读」)。
  * 2. **退避参数**(`RETRY` 的枪数与等待):那是测量条件的抗噪设置,不是模型能感知的行为面。
- *    把 `maxRetries` 从 3 调到 5 就让所有模型的历史成绩不可比,是荒谬的(ADR-0036)。
+ *    把 `maxRetries` 从 3 调到 5 就让所有模型的历史成绩不可比,是荒谬的。
  *
  * 单测把这两条写成断言(清单序列化后不含那些名字),因为「清单里没有它」是一件会被人顺手
  * 加回来而没人发现的事。
@@ -55,7 +55,7 @@ import {
  *
  * 旧代号里的 `bash-mini` 到后期只剩「一步一个 shell」这一层意思(`mini` 指抄 mini-swe-agent 的
  * 三条铁律),但读者会把它读成「协议还是 bash 那套文本协议」——而协议已经换成原生的工具调用
- * (ADR-0032 修订)。代号是给人看的那一半身份,它撒谎与清单撒谎同性质。
+ * (修订)。代号是给人看的那一半身份,它撒谎与清单撒谎同性质。
  *
  * 读侧**不按它分派**:`harnessVersion` 只是记录,所以换代号不会让任何旧档读不出来;断代的是
  * digest。
@@ -70,7 +70,7 @@ export const HARNESS_VERSION = "tool-call/1.0";
  * 集合的两个投影,所以只留声明那一份。
  *
  * 新世界里宿主受理的是**四个**名字(`check` / `probe` / `evaluate` / `finish`),它们都不在沙箱
- * 的 `bin/` 里——「敲不到」升级成「没有那个路径」(ADR-0029 修订②)。
+ * 的 `bin/` 里——「敲不到」升级成「没有那个路径」(修订②)。
  */
 export { HOST_SERVICE_TOOLS };
 
@@ -101,11 +101,11 @@ export type HarnessManifest = {
    * 而不是 shell 退出码、一次调用就是一个动作所以没有「之后的行」。留着任何一格就是清单在说谎。
    */
   readonly actionSyntax: {
-    /** 零次被执行、两次以上也被拒:一步就是一次调用(理由见 ADR-0032 修订)。 */
+    /** 零次被执行、两次以上也被拒:一步就是一次调用(理由见本文件的头注)。 */
     readonly blocks: "exactly-one-tool-call";
     /** `bash` 的 `command` 是**一条命令串**:换行、`&&`、`for … do … done` 都交给同一个 shell。 */
     readonly multiLine: "one-command-string";
-    /** 观测回给模型的角色。有 `tool_call_id` 可配对了,所以是 `tool`(ADR-0032 修订)。 */
+    /** 观测回给模型的角色。有 `tool_call_id` 可配对了,所以是 `tool`(修订)。 */
     readonly observationRole: "tool";
     /** 被拒的形状族:真源在 `action.ts` 的 `ACTION_REJECT_REASONS`,清单不另抄一份。 */
     readonly rejects: readonly ActionRejectReason[];
@@ -145,10 +145,10 @@ export type HarnessManifest = {
    *
    * 三格各自回答一件事:
    * - `tools` / `acceptsArguments`:声明了什么(`AGENT_TOOLS` 派生,不手写第二份);
-   * - `parallelCalls`:一步多次调用的**判据**是拒绝(不是排版偏好,见 ADR-0032 修订);
+   * - `parallelCalls`:一步多次调用的**判据**是拒绝(不是排版偏好);
    * - `probe`:探针的读数事实。它属于**工具面**而不是配额面:模型要知道的不是「能调几次」,
    *   而是「它回的是最坏占用读数、不是二值判定」——后者把「探针绿 = 整张网格通过」变成了
-   *   一句假安心(漏检率 2/4,见 ADR-0030 残余风险)。
+   *   一句假安心(漏检率 2/4)。
    */
   readonly toolSurface: {
     readonly tools: readonly string[];
@@ -283,7 +283,7 @@ export const harnessManifest = (): HarnessManifest => {
       ratio: ratioOf(CONTEXT_GUARD.numerator, CONTEXT_GUARD.denominator),
       basis: "previous-usage.input-tokens",
     },
-    // 工具链只写形状:`check` 用哪一版 tsc 由 harnessVersion 吸收(ADR-0029)。
+    // 工具链只写形状:`check` 用哪一版 tsc 由 harnessVersion 吸收。
     toolchain: { check: "tsc + static-validator" },
   };
 };

@@ -112,7 +112,7 @@ export const TRIAL_GRID_SCORE_JSON_SCHEMA = {
   },
 } as const;
 
-/** 汇总的单份 JSON 形状（TypeScript 是形状真源，手工对齐，ADR-0003）。 */
+/** 汇总的单份 JSON 形状（TypeScript 是形状真源，手工对齐）。 */
 export const TRIAL_GRID_SUMMARY_JSON_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   title: "model-war 评测网格汇总",

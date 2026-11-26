@@ -1,62 +1,42 @@
 # ADR 索引
 
-决策记录。**每份 ADR 只回答五个问题**:遇到了什么问题 / 为什么选这个方案 / 为什么没选别的 / 带来什么长期约束 / 什么情况下重新评估。
+只留三份。
 
-**它们不记录**:现在代码里有多少个类、某个函数在哪个文件、当前参数取值是多少。那些属于代码与 `rulesets/*.json`,会过期。
+准入判据两头都要成立:**这条约束看起来可以去掉,而真的去掉之后是静默的。**
 
-## 状态与取代关系
+- 「看起来可以去掉」——有人会想反过来做,反过来的理由通常是「更快/更省事」。
+- 「静默」——反过来之后没有任何门禁、测试或读数会响,绿着坏掉。
 
-| 状态                 | 含义                                       |
-| -------------------- | ------------------------------------------ |
-| accepted             | 现行决策                                   |
-| superseded           | 已被后来的 ADR 取代(正文里写明取代者)      |
-| partially superseded | 主体仍现行,某一部分边界已被后来的 ADR 取代 |
+缺一头就不是 ADR:机制与形状归 [hld](../hld.md),玩法意图与规则侧裁决归 [gdd](../gdd.md),被否掉的方案留在 git 历史里。
 
-取代关系写在 ADR 的抬头与正文里(「取代 ADR-XXXX」/「superseded by ADR-XXXX」),本表只登记当前状态。
+## 保留的三份
 
-| #                                                                     | 标题                                                                                   | 状态                 | 取代关系                                                                                                                                                                                                                                                   |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [0001](./0001-sandbox-quickjs-wasi.md)                                | 沙箱选型:quickjs-wasi,且不为「未来换 VM」预留抽象层                                    | accepted             | —                                                                                                                                                                                                                                                          |
-| [0002](./0002-toolchain.md)                                           | 工具链:pnpm 12 + TypeScript 7 + oxc 三件套,包间类型引用走 exports + project references | superseded           | 被 ADR-0010 取代(CI 条款作废)                                                                                                                                                                                                                              |
-| [0003](./0003-schema-single-source-distribution.md)                   | schema 真源:形状归属与跨包分发                                                         | accepted             | —                                                                                                                                                                                                                                                          |
-| [0004](./0004-contract-api-surface-lands-in-rules-landing.md)         | 规则文档的表格由真源包生成,而它的真源时点在规则落库那一格                              | accepted             | —                                                                                                                                                                                                                                                          |
-| [0005](./0005-runner-seam-is-the-two-bridge-calls.md)                 | 执行器的缝就是那两次宿主桥调用,中间不设任何表示                                        | accepted             | 收窄 ADR-0001 里的执行器缝表述                                                                                                                                                                                                                             |
-| [0006](./0006-script-api-type-surface-lands-in-engine.md)             | 脚本 API 的类型面归对局内核,注入面归沙箱执行器                                         | accepted             | —                                                                                                                                                                                                                                                          |
-| [0007](./0007-runtime-bundle-artifact-is-committed.md)                | 沙箱 runtime bundle 以确切字节进版本库,漂移门禁判「现算 == 入库」                      | accepted             | —                                                                                                                                                                                                                                                          |
-| [0008](./0008-contract-prose-revision-does-not-bump-version.md)       | 契约散文修订不升版本号,版本号只锚定规则集取值                                          | accepted             | —                                                                                                                                                                                                                                                          |
-| [0009](./0009-budget-final-values-are-revocable.md)                   | 预算终值可失效,但不可就地修改                                                          | accepted             | —                                                                                                                                                                                                                                                          |
-| [0010](./0010-minimal-ci-pipelines.md)                                | 最小主/夜间流水线建成,ADR-0002 的「不建 CI/CD」条款作废                                | partially superseded | `mutate` 只观测不设红线一条被 ADR-0026 取代(改为棘轮);主链成员、无凭证离线、`scan` 口径仍现行                                                                                                                                                              |
-| [0011](./0011-v1-scripts-migrate-to-v2-without-regen.md)              | v1 冻结脚本直迁 v2:只改版本标签,不重新生成                                             | accepted             | —                                                                                                                                                                                                                                                          |
-| [0012](./0012-strip-fence-before-compile.md)                          | 编译前剥模型输出的围栏包装:管线改,不动提示词                                           | accepted             | —                                                                                                                                                                                                                                                          |
-| [0013](./0013-free-strategy-no-injected-line.md)                      | 自由策略:本季起不再向模型注入统一策略句                                                | accepted             | —                                                                                                                                                                                                                                                          |
-| [0014](./0014-script-entry-checked-by-validator.md)                   | 脚本入口的「存在性」检查落在静态校验器:gen 不解析、也不执行模型产物                    | accepted             | —                                                                                                                                                                                                                                                          |
-| [0015](./0015-opt-in-score-source-feedback.md)                        | 无得分来源回喂仅作为显式有限实验                                                       | partially superseded | 机会分配口径被 ADR-0017 取代                                                                                                                                                                                                                               |
-| [0016](./0016-production-action-facts.md)                             | 行动事实沿现有桥采集,以完整性约束回喂                                                  | partially superseded | 反馈边界被 ADR-0017 / ADR-0019 取代                                                                                                                                                                                                                        |
-| [0017](./0017-uniform-two-fact-feedback.md)                           | 显式事实优化统一两轮,诊断修复按阶段独立计量                                            | accepted             | 反馈的内容与呈现口径由 ADR-0025 演进(机会分配与计量边界仍现行)                                                                                                                                                                                             |
-| [0018](./0018-generation-policy-and-candidate-selection.md)           | 规范生成意图与完整候选选拔分开审计                                                     | partially superseded | 选拔作为「另一次独立实验」的表述被 ADR-0024 取代(同字节复用一条被继承)                                                                                                                                                                                     |
-| [0019](./0019-terminal-match-facts-feedback.md)                       | 两次事实反馈纳入真实终局计分依据与四方结果                                             | partially superseded | 选拔按独立计划的语义被 ADR-0024 取代;逐场全展开的边界被 ADR-0025 取代                                                                                                                                                                                      |
-| [0020](./0020-selection-tiebreak-compatibility.md)                    | 选拔决胜更新与历史身份兼容                                                             | accepted             | 历史决胜语义的适用范围由 ADR-0024 的 v1/v2 分流限定(`earlier-stage` 只属 v1 档)                                                                                                                                                                            |
-| [0021](./0021-google-generate-content-family.md)                      | Google 线协议作为第四个端点族,并承认无收尾哨兵的流                                     | accepted             | —                                                                                                                                                                                                                                                          |
-| [0022](./0022-generate-content-thinking-level-and-params-evidence.md) | Google 族的推理控制用 `thinkingLevel`,候选的实际参数随存档落档                         | accepted             | 满足 ADR-0021 的重评条件                                                                                                                                                                                                                                   |
-| [0023](./0023-sparring-scripts-replace-benchmarks-as-opponents.md)    | 优化与选拔的对手换成能力阶梯,基准脚本退回契约回归                                      | accepted             | —                                                                                                                                                                                                                                                          |
-| [0024](./0024-single-evaluation-grid-and-selection-as-recompute.md)   | 一次生成只定义一张评测网格,选拔是排序加独立复算                                        | accepted             | 局部取代 ADR-0018 / ADR-0019 的选拔独立性表述;限定 ADR-0020 的版本适用范围                                                                                                                                                                                 |
-| [0025](./0025-feedback-aggregates-and-cross-stage-gap.md)             | 事实回喂分三层:聚合对差表、逐场一行、最差三场展开                                      | accepted             | 演进 ADR-0017;局部取代 ADR-0019 的逐场全展开边界                                                                                                                                                                                                           |
-| [0026](./0026-mutation-score-is-a-ratchet.md)                         | 变异分数是棘轮:不许比上次低,基线抬升必须显式为之                                       | accepted             | 取代 ADR-0010 的「`mutate` 只观测」条款                                                                                                                                                                                                                    |
-| [0027](./0027-mutation-history-lives-in-the-baseline.md)              | 变异分数的历史住在入库基线里,不住在产物里                                              | accepted             | 演进 ADR-0026 的「历史归基线」判断                                                                                                                                                                                                                         |
-| [0028](./0028-channel-identity-and-commandcode-migration.md)          | 渠道身份进榜键:同一个 baseUrl 下档位决定能跑什么                                       | accepted             | —                                                                                                                                                                                                                                                          |
-| [0029](./0029-bash-mini-harness-identity.md)                          | 自建 bash-only harness,且它的身份由行为清单而非源码定义                                | accepted             | 与 ADR-0028 合成四维榜键                                                                                                                                                                                                                                   |
-| [0030](./0030-agent-tool-surface.md)                                  | agent 的工具面：两档、无提交动作、观测外置                                             | accepted             | 演进 ADR-0025 的观测落点(三层不变,后两层从 stdout 移到文件);原冒烟档已删,理由见正文的落选条目                                                                                                                                                              |
-| [0031](./0031-agent-archive-shape.md)                                 | agent 形态的档案形状:过程记录、候选序与形状版本                                        | accepted             | 收窄 ADR-0029「档案不含模型原始输出」的适用范围;取代「候选恰好三个 + 阶段下标」的旧档案前提                                                                                                                                                                |
-| [0032](./0032-agent-loop-shape.md)                                    | agent loop 的形状:接缝、历史组成、动作边界与每步预算                                   | accepted             | 落实 ADR-0029 的单会话与宿主侧配额;补上 ADR-0031 移交给 loop 侧的四项(原文落盘、截断策略、步数口径、动作解析);结账 ADR-0030 的加密推理块重评条件                                                                                                           |
-| [0033](./0033-sandbox-executor.md)                                    | 生成期沙箱的执行器:bubblewrap,内容物以入库 rootfs 钉死                                 | accepted             | 落实 ADR-0030 的「禁令落在内容物」与 ADR-0032 的薄壳通道;与 hld §2.2.11「Docker 主路径不做」同向                                                                                                                                                           |
-| [0034](./0034-delivery-milestones.md)                                 | 生成侧的交付切法:两段,按模型第一次拿到什么反馈切                                       | accepted             | 废止 `M1`–`M4` 这套顺序记号,改称 `A1`/`A2`;钉死两段的内容、验收与依赖,以及档案形状版本与身份哈希的写入时机                                                                                                                                                 |
-| [0035](./0035-agent-metrics-under-steps.md)                           | agent 形态下的度量与报告:证据归属、步级计时与上下文口径                                | accepted             | 落实 ADR-0031 的「轮号等于步号」左连接并补上步级计时落点;结清 ADR-0032「重试等待只能看轮级耗时」并把它「不压缩」的裁决收缩成可测量的数;补上 ADR-0031 移交给度量侧的结果侧键与形状版本 bump                                                                 |
-| [0036](./0036-transport-failure-not-recoverable.md)                   | 传输失败不作为可恢复事件:三套预算、5xx 即时收口与受污染会话的报告分层                  | accepted             | 拆开 ADR-0032 与旧重试层共用的单一预算（429 / 连接级 / 截断各占一套）;把 5xx 从「可重试」里剔出;给 `AttemptEvidence` 补 `failureKind` 让 429 在报告侧可区分;钉住「单模型失败不中止同批」与墙钟两段记的口径                                                 |
-| [0037](./0037-contract-package.md)                                    | 契约包:一个目录、一个身份、一条生成链                                                  | accepted             | 收窄 ADR-0030「骨架由编译测试保证与文档一致」的表述(实测不成立,改由抽取保证);把 ADR-0008 的「版本号不锚文字」推到契约包身份上——身份是整树哈希,版本号仍只锚取值                                                                                             |
-| [0038](./0038-test-selection-computable.md)                           | 测试选择:判据靠计算与观测,不靠声明;agent 不留决策点                                    | accepted             | 实测依赖图看不见最贵的进程级用例(改 quickjs.ts 只选出 7 个 engine 测试);废止手写半径表作为判据(降级为文档);入口改成可 import 的 `main(argv)` + 薄壳,让边界上图可见;图看不见的输入靠 recorder 观测并入 `test-inputs/`;分层改按「谁负责跑」;改动无人观测即红 |
+| #                                           | 标题                                                       | 它守的静默失效                                                   |
+| ------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |
+| [0026](./0026-mutation-score-is-a-ratchet.md) | 变异分数是棘轮:不许比上次低,基线抬升必须显式为之            | 抬基线变成「让门禁变绿」的常规操作,然后所有门禁一起失信           |
+| [0033](./0033-sandbox-executor.md)          | 生成期沙箱的执行器:bubblewrap,内容物以入库 rootfs 钉死      | 「没装 bwrap 就先不分沙箱」这类善意降级,历史数据可比性当场作废     |
+| [0038](./0038-test-selection-computable.md) | 测试选择:判据靠计算与观测,不靠声明                         | 少跑不报错:`passWithNoTests: true` 连退出码都是绿的              |
+
+三份的共同形状:**能改判据的开关,不能出现在判据自己的正常路径上。**
+
+## 已归档
+
+编号不复用,正文留在 git 历史里。这里只回答「那个编号是什么」,不回答「它现在在哪」——它守的东西要么已经不在,要么被代码、测试与门禁承担。
+
+`0001` 沙箱选型 quickjs-wasi · `0002` 工具链与包间类型引用 · `0003` schema 真源与跨包分发 ·
+`0004` 规则文档表格的生成时点 · `0005` 执行器缝的协议 · `0006` 脚本 API 的类型面归属 ·
+`0007` runtime bundle 以字节入库 · `0008` 契约散文修订不升版本号 · `0009` 预算终值可失效 ·
+`0010` CI 复核链 · `0011` 一次性迁移 · `0012` 脚本文本围栏 · `0013` 办赛与配置缺省 ·
+`0014` 脚本入口判据 · `0015–0022` 阶段机器与两轮反馈(随 agent 形态整条删除)·
+`0023` 对手换成能力阶梯 · `0024` 一次生成一张评测网格 · `0025` 事实回喂分三层 ·
+`0027` 变异分数的历史住基线 · `0028` 渠道身份进榜键 · `0029` bash-only harness 的身份 ·
+`0030` agent 工具面 · `0031` agent 档案形状 · `0032` agent loop 形状 · `0034` 交付计划 ·
+`0035` 步级度量与报告 · `0036` 传输失败分层 · `0037` 契约包
+
+字节锁定、不随本次删改改写的产物里仍会看到 `ADR-00NN`(契约快照 `docs/rules-v1|v2`、入库 rootfs 与它的 PROVENANCE):那些数字查上表。
 
 ## 写一份新 ADR
 
-- 编号续接上表,文件名 `NNNN-<slug>.md`,抬头写 `status:`(必要时写 `superseded_by:` / `partially_superseded_by:`)。
-- 正文只回答那五个问题;被否掉的方案**也要写进正文**(为什么没选),不要另开一份「备选方案清单」。
-- 需要长期成立的东西(约束、口径、复核触发条件)写进 ADR;**会过期的东西**(当前实现、当前取值)不写。
+先反问:**它是不是 hld / gdd 里的一段?** 是就写那段——ADR 归档得比想象中快。
+
+确实要写时:编号续接现存最大编号(下一份 `0039`),文件名 `NNNN-<slug>.md`,抬头写 `status:`;正文只写三件——那条约束、去掉它之后会静默坏成什么样、什么信号出现时该重新审视它。不写当前实现与取值,不为被否掉的方案单独记账。不再满足准入判据时删掉它,在上表加一个编号与一句话——**不追加勘误段**:勘误段是它已经变成 hld 的信号。

@@ -26,7 +26,7 @@
  *
  * 证明:一条从「模型说要做什么」到「盘上有一份可装载的 v3 档案」的路是通的,而且中间每一站
  * 都是真的(隔离、通道、编译、校验、装载器)。
- * 不证明:模型行为。那是模型的属性,不是管线的属性(ADR-0029 已把这句话写进「等价这件事的
+ * 不证明:模型行为。那是模型的属性,不是管线的属性(已把这句话写进「等价这件事的
  * 能力边界」)。
  *
  * ── 判据是「装载器不红」 ──
@@ -225,7 +225,7 @@ it("真 bwrap 的一场会话:写出可装载的 v3 档案", { timeout: 180_000 
   expect(report?.rounds).toHaveLength(5);
   // 报告侧认得出这个候选:字节哈希对得上、观测行数等于计划场数(32)。
   expect(report?.kind).toBe("success");
-  // 只有一个候选:它既是首候选也是末候选(没有 selection 时胜者取末位,ADR-0030/0031)。
+  // 只有一个候选:它既是首候选也是末候选(没有 selection 时胜者取末位)。
   expect(report?.intermediateCandidates).toHaveLength(0);
   expect(report?.initialCandidate?.scriptFile).toBe(candidate.scriptFile);
   expect(report?.initialCandidate?.scriptState).toBe("verified");
@@ -245,7 +245,7 @@ it(
     const workspaceDir = join(root, "ws");
     mkdirSync(workspaceDir, { recursive: true });
 
-    // 只 done、不 evaluate:一个候选都没有(ADR-0030「失败 = 一个候选都没有」)。
+    // 只 done、不 evaluate:一个候选都没有(「失败 = 一个候选都没有」)。
     const model = stubClient([bashOf("ls /contract"), toolOf("finish")]);
 
     const outcome = await generateOneModel(
@@ -264,7 +264,7 @@ it(
 
     expect(outcome.kind).toBe("failed");
     if (outcome.kind !== "failed") return;
-    // 失败档与成功档**同键集合**:过程记录、身份、终止原因都在(ADR-0031)。
+    // 失败档与成功档**同键集合**:过程记录、身份、终止原因都在。
     expect(outcome.agent.steps).toHaveLength(2);
     expect(outcome.agent.termination).toBe("done");
     expect(outcome.agent.atStep).toBe(2);
@@ -283,7 +283,7 @@ it(
   "服务调用不占单步墙钟:慢评测不会被 124 杀掉,这一步照旧产出候选",
   { timeout: 180_000 },
   async () => {
-    // ADR-0029:「服务调用不受单步约束,只受总墙钟约束」。一次真网格实测约 75 s,叠上模型自己
+    // :「服务调用不受单步约束,只受总墙钟约束」。一次真网格实测约 75 s,叠上模型自己
     // 写脚本的时间就会撞上 `DEFAULT_STEP_WALL_CLOCK_MS`;票 08 的真会话里那一步就是这样拿到
     // `exitCode: 124` 的,而观测原料与网格汇总已经落盘——会话留下半个提交。
     const root = mkRoot();

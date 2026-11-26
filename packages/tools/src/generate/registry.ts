@@ -16,7 +16,7 @@
  *   为此工具包正式声明真源包为依赖并加了 project reference(hld §3.2:工具包只允许 import
  *   真源包这一个根包)——这条边指向依赖图的根,方向合法。反方向不合法:真源包是无运行时代码的
  *   根包,谁都不依赖它。相对路径 import 真源包已被排除:工具包 tsconfig 的 `rootDir` 写死,
- *   引进来会 TS6059 越界(ADR-0002 已实测记录)。
+ *   引进来会 TS6059 越界(已实测记录)。
  *
  * - **规则层读生成出来的源文件**:`rules/no-float.ts` → `allowlist.ts` / `script-surface.ts`
  *   → `src/generated/`。

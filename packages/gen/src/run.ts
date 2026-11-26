@@ -128,7 +128,7 @@ export type GenerationOptions = {
   readonly trialPlan?: (options: { readonly root: string; readonly model: string }) => TrialPlan;
   readonly evaluateScoring?: EvaluateScoring;
   /**
-   * 沙箱启动自证(ADR-0033「执行器启动时先自证」)。缺省即真的 `sandbox.preflight()`。
+   * 沙箱启动自证(ADR-0033「执行器启动时先自证」)。缺省即真的 `sandbox.preflight`。
    *
    * 缺省之外只有测试会注入它:自证要真跑 bwrap,而单测不允许依赖内核能力(常跑链不装
    * bubblewrap)。注入的失败实现是「不可用就整批失败」那条路径的唯一验法。
@@ -293,7 +293,7 @@ const parseGenArgs = (args: readonly string[]): GenArgs => {
     if (arg === undefined || !arg.startsWith("-")) {
       throw new Error(`gen 不接受位置参数:${String(arg)}`);
     }
-    // 阶段机器与它的两个开关一起消失(ADR-0032):agent 形态没有阶段,`evaluate` 就是提交。
+    // 阶段机器与它的两个开关一起消失:agent 形态没有阶段,`evaluate` 就是提交。
     // 传进来就明确拒掉,而不是静默忽略——一个被忽略的开关会让人以为它生效了。
     if (arg === "--select-best-candidate" || arg === "--score-source-feedback") {
       throw new Error(`${arg} 已随阶段机器一起移除(agent 形态下 evaluate 就是提交,没有阶段可推进)`);

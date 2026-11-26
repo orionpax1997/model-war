@@ -4,7 +4,7 @@
  * ── 守的是**依赖方向**,不是取值 ──
  *
  * 反过来写过一版(`EVALUATE_CALL_LIMIT = OPTIMIZATION_CANDIDATE_LIMIT`),后果是档案形状一旦
- * 放宽候选数,harness 配额与 `harnessDigest` 就跟着断代——正是 ADR-0029 把档案形状排除出清单
+ * 放宽候选数,harness 配额与 `harnessDigest` 就跟着断代——正是 把档案形状排除出清单
  * 要防的耦合。这种翻转在任何取值断言里都看不出来,所以判据只能看那条 import 边。
  *
  * ── 序列化与七条转义的用例整套删掉了(票 03) ──

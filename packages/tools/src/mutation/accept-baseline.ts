@@ -190,7 +190,7 @@ const main = (): number => {
   // ③ 造新基线并写盘。写只发生在这一处,且只在参数齐全、报告可用之后。
   const next = baselineFromCounts(shard.name, counts, display(reportPath));
   const previous = readPrevious(baselinePath);
-  // 历史也在这里落(ADR-0027):它是基线的一部分,随基线入库。
+  // 历史也在这里落:它是基线的一部分,随基线入库。
   // 写口只有这一处 —— 抬升是显式动作,所以历史不会被自动路径偷偷改写。
   const history = nextHistory(
     previous.kind === "stored" ? previous.baseline : undefined,
@@ -230,7 +230,7 @@ const main = (): number => {
   }
   out(`已写入 ${display(baselinePath)}。`);
   out(
-    `历史:${history.length} 条(基线文件里的 \`history\`,随仓库走;ADR-0027)。` +
+    `历史:${history.length} 条(基线文件里的 \`history\`,随仓库走)。` +
       `趋势读它:pnpm run observe:history。`,
   );
   out(

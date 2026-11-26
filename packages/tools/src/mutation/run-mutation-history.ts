@@ -53,7 +53,7 @@ const render = (
   lines.push("# 变异分数的趋势");
   lines.push("");
   lines.push(
-    "每片一条**片内**的时间序列。历史来自入库基线文件里的 `history` 字段(ADR-0027):",
+    "每片一条**片内**的时间序列。历史来自入库基线文件里的 `history` 字段:",
     "产物会过期(夜间 artifact 只留 14 天),基线不会——历史随仓库走,随 diff 可见。",
   );
   lines.push("");
@@ -95,7 +95,7 @@ const render = (
     lines.push("");
     if (shard.entries.length === 0) {
       lines.push(
-        "没有历史:这个分片的基线是在历史机制(ADR-0027)之前立的,",
+        "没有历史:这个分片的基线是在历史机制之前立的,",
         "下一次抬升会把当前值补成第一条。",
       );
       lines.push("");

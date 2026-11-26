@@ -109,7 +109,7 @@ const selectionCandidateScoreOf = (
 /**
  * v3 的候选 → 报告内部使用的同形候选：**位置读成 `stage`、步号读成 `protocolRound`**。
  *
- * 这是位次映射，不是把「阶段」这个概念偷回来：ADR-0031 定的是「候选的数组下标就是第几次
+ * 这是位次映射，不是把「阶段」这个概念偷回来： 定的是「候选的数组下标就是第几次
  * `evaluate`」，而报告这一侧需要的恰好是「第几个候选」。把 `stage` 这个**报告字段名**的收口
  * （换成步级列）留在度量票（07），本票只保证「候选按位置可读」。
  *
@@ -343,7 +343,7 @@ export type ArchiveReportRound = {
   readonly round: number;
   readonly sendMs: number | null;
   /**
-   * 这一轮的退避等待（毫秒）。ADR-0036 定的记账字段：`sendMs` 含退避，而 deadline 按不含退避的
+   * 这一轮的退避等待（毫秒）。 定的记账字段：`sendMs` 含退避，而 deadline 按不含退避的
    * 口径判，所以退避要单独可读。生成侧今天还不写这一格 → `null`，不补零。
    */
   readonly backoffMs: number | null;
@@ -363,7 +363,7 @@ export type ReportAttempt = {
   readonly attempt: number;
   readonly outcome: "response" | "transport-error";
   /**
-   * 传输失败的细分（ADR-0036）：`rate-limited` / `server` / `network` / `timeout`。
+   * 传输失败的细分：`rate-limited` / `server` / `network` / `timeout`。
    * 成功尝试与历史档为 `null`——**「重试救回来的 429」也带它**，否则限流压力在数据里不存在。
    */
   readonly failureKind: "rate-limited" | "server" | "network" | "timeout" | null;
@@ -439,7 +439,7 @@ export type ReportPlanScript = {
  * 一个候选**旁挂网格汇总**（`<观测文件>.grid.json`）里的陪练身份。
  *
  * ── 为什么报告要去读旁挂件 ──
- * v3 分步档的优化段不装计划（ADR-0035 / ADR-0031），于是「这 32 场跟谁打」在存档 `meta`
+ * v3 分步档的优化段不装计划，于是「这 32 场跟谁打」在存档 `meta`
  * 里根本没有。但执行器跑每一次 `evaluate` 都把整份计划写在了观测文件旁的 `.grid.json` 里
  * （`packages/gen/src/trial-grid.ts`）：报告只**读**它，不新增采集、不改档案形状。
  *
@@ -639,7 +639,7 @@ export type ArchiveReport = {
   readonly runId: string;
   readonly source: string;
   /**
-   * 档案形状的读法分派与形状事实（ADR-0031 / ADR-0029）。
+   * 档案形状的读法分派与形状事实。
    *
    * `archiveSchemaVersion: "legacy"` 是**分派结果**而不是历史档的一个字段：旧档没有这一格，
    * 报告按它决定「要不要渲染步列」。
@@ -647,11 +647,11 @@ export type ArchiveReport = {
   readonly shape: ReportArchiveShape;
   /**
    * 过程记录与步级度量。`null` = 这一档没有过程记录（v1 / v2 历史档）——**不是零步**：
-   * 零步会话是 `steps` 在场、`entries: []`（ADR-0031 的合法形状），两者不混用。
+   * 零步会话是 `steps` 在场、`entries: []`（合法形状），两者不混用。
    */
   readonly steps: ReportSteps | null;
   /**
-   * 受污染会话的分层（ADR-0036）。`null` = 这一档不属本口径（one-shot 档读不到不完整会话）。
+   * 受污染会话的分层。`null` = 这一档不属本口径（one-shot 档读不到不完整会话）。
    */
   readonly contamination: ReportContamination | null;
   readonly failure: {
@@ -1089,7 +1089,7 @@ const observationsOf = (
  *
  * ── 为什么只对 v3 读 ──
  * v1 / v2 的计划本来就在 `meta` 里（`optimization.plan`），那一节已经把四份身份列出来了；
- * 再到旁挂件读一遍就是第二个家。v3 的优化段不装计划（ADR-0035），旁挂件是唯一处——这一节
+ * 再到旁挂件读一遍就是第二个家。v3 的优化段不装计划，旁挂件是唯一处——这一节
  * 只补那个缺口。
  */
 const candidateSparringOf = (options: {
@@ -1251,7 +1251,7 @@ const candidateObservationsOf = (
  *
  * **条数上限按版本分派**：one-shot 失败档的候选只能是「已入档的有效阶段」（非选拔失败最多
  * 2 个、选拔失败 3 个），agent 失败档的候选则是 1..3 次 `evaluate` 的自然结果（三次是配额，
- * 不是下限）。拿一个数字代表两种档案，正是 ADR-0031 点名的那条散落判据。
+ * 不是下限）。拿一个数字代表两种档案，正是 点名的那条散落判据。
  */
 const failureCandidateSchema = z.fromJSONSchema(
   JSON.parse(
@@ -1553,7 +1553,7 @@ const readRecord = (
   const lines = Array.isArray(record.generationLog) ? record.generationLog : [];
   /**
    * 形状版本在这里就定下来（在**逐行解析之前**）：日志行的读法按版本分派——v3 的行只装发送侧
-   * 证据，结果侧（驱动来源 `kind` 与 `errorCodes`）的真源在过程记录里（ADR-0031）。
+   * 证据，结果侧（驱动来源 `kind` 与 `errorCodes`）的真源在过程记录里。
    */
   const shape = archiveShapeVersionOf(record);
   const issues: { line: number; reason: string }[] = [];
@@ -1569,7 +1569,7 @@ const readRecord = (
       }
       if (isAgentShape(shape)) {
         // 旧档的行里有这两个键，那时代它们就是结果侧证据；agent 形状不许再带——复写让同一个事实
-        // 有了两个家，而后者迟早是陈的（ADR-0031「一个事实一个家」）。显式拒读，不静默忽略。
+        // 有了两个家，而后者迟早是陈的（「一个事实一个家」）。显式拒读，不静默忽略。
         // 文案不写版本号：v3 与 v4 共用这条判据，写死一个会把另一版的拒读理由说错。
         if (Object.hasOwn(log, "errorCodes"))
           throw new Error("agent 形状的日志行不带结果侧 errorCodes 字段");
@@ -1651,7 +1651,7 @@ const readRecord = (
    * 观测行的期待口径：v2 网格档逐场由计划给（种子 / 候选座位 / 四座身份），v1 历史档查旧表。
    * 失败档没有 `optimization`，但 v2 的选拔失败旁证里带的是同一张计划。
    *
-   * v3 的优化段里**没有计划**（ADR-0031 定的形状），所以只有选拔段存在时才有网格计划可核；
+   * v3 的优化段里**没有计划**（定的形状），所以只有选拔段存在时才有网格计划可核；
    * 连它也没有时口径是 `self`：每行按自己的种子 / 座位 / 四座身份做**行内自洽**校验，不冒充
    * 独立核对。这条缺口的收口（计划要不要进档案）归度量票与网格票，不在这里发明。
    */
@@ -1666,7 +1666,7 @@ const readRecord = (
             ? { kind: "self" }
             : { kind: "legacy" };
   /**
-   * 冻结候选的**位置**：v3 = 选拔胜者所在的位置、选拔缺席时 = 候选序末位（ADR-0031）；
+   * 冻结候选的**位置**：v3 = 选拔胜者所在的位置、选拔缺席时 = 候选序末位；
    * one-shot 档保持原判据（选拔胜者的 `stage`、缺席时第三阶段 2），旧档照旧。
    */
   const frozenPosition =
@@ -2086,7 +2086,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     `- 逐场种子：${renderSeeds(plan.seeds)}`,
   ];
   /**
-   * 陪练一节（v3）：计划不进 `meta`（ADR-0035），四份身份只在候选旁挂的 `.grid.json` 里。
+   * 陪练一节（v3）：计划不进 `meta`，四份身份只在候选旁挂的 `.grid.json` 里。
    *
    * ── 为什么每候选一组，而不是合并成一份 ──
    * v3 每次 `evaluate` 各跑一张网格，各自那份旁挂件才是那一次的证据（真档里两次提交之间可能
@@ -2298,7 +2298,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       `- HTTP 尝试：已记录 ${report.budget.model.recordedAttempts}；完整尝试证据覆盖 ${report.budget.model.attemptEvidenceRounds}/${report.budget.model.expectedAttemptEvidenceRounds} 轮；带 token 统计响应 ${report.budget.model.responseAttemptsWithUsage}；传输错误 ${report.budget.model.transportErrors}；已记录但消费未知 ${report.budget.model.unknownConsumptionAttempts}`,
       `- 本地预算：有效候选优化观测 ${report.budget.local.optimizationObservedMatches ?? "null"} 场（不代表全部重跑/无效候选执行）；选拔上限 ${report.budget.local.selectionMaximumMatches ?? "null"} 场；已证实执行 ${report.budget.local.selectionExecutedMatches ?? "null"} 场；复用 ${report.budget.local.selectionReusedMatches ?? "null"} 场`,
       `- 日志：${report.log.state}（收敛可读 ${report.log.readableRounds}/${report.protocolRounds} 轮；记录 ${report.log.recordedLines} 行）`,
-      // 分组维度与形状事实：步级分位的分组键就是这两格（ADR-0035）。
+      // 分组维度与形状事实：步级分位的分组键就是这两格。
       `- 分组键：modelVersion=${escape(report.modelVersion ?? "null")}；harnessDigest=${escape(report.shape.harnessDigest ?? "null")}`,
       `- 形状：archiveSchemaVersion=${report.shape.archiveSchemaVersion}；harness=${escape(report.shape.harnessVersion ?? "null")}；上下文窗口=${report.shape.contextLength ?? "null"}；终止=${report.shape.termination ?? "null"}${report.shape.atStep === null ? "" : `（第 ${report.shape.atStep} 步）`}`,
       `- 受污染：${renderContamination(report.contamination)}`,
@@ -2355,10 +2355,10 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
        * 于是档案里有 2 个候选、报告只列出 1 条。动作标签是**人读的注解**，不能承担「有没有提交
        * 过」的判据——它现在只回答「这一步除提交之外还跑了什么」。
        *
-       * 这里**不猜模型命令写了什么**（那要 grep 自由文本，ADR-0036 已否掉那种分类法），只报
+       * 这里**不猜模型命令写了什么**（那要 grep 自由文本 已否掉那种分类法），只报
        * 结构事实：候选在第几步、两次之间过了几步、两次提交的字节同不同。
        */
-      // 一条候选描述符 = 一次提交（ADR-0030）；序按步号递增，装载期已核过。
+      // 一条候选描述符 = 一次提交；序按步号递增，装载期已核过。
       const commits = report.scores;
       if (commits.length > 0) {
         out.push(
@@ -2404,7 +2404,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
        * 工具调用：**逐字字节**与**解析值**并排（v4 才有这一格）。
        *
        * `argumentsJson` 必须**原样**出现：这条证据的全部意义是「发回历史的 `arguments` 与
-       * 这里逐字相同」（ADR-0031）。所以报告只搬 `steps[i].toolCall.argumentsJson`，**不按
+       * 这里逐字相同」。所以报告只搬 `steps[i].toolCall.argumentsJson`，**不按
        * `action.command` 重编码**——两者可以不同形（转义写法、多余空格），而重编码等于
        * 悄悄换掉发回去的东西。
        *
@@ -2641,7 +2641,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
     out.push("");
   }
   /**
-   * 跨记录的步级分位：分组维度是 `modelVersion + harnessDigest`（ADR-0035 与榜键一致）。
+   * 跨记录的步级分位：分组维度是 `modelVersion + harnessDigest`（与榜键一致）。
    * 没步的档（v1 / v2）不进任何分组——它们没有可比的步。
    */
   const groups = stepGroupsOf(reports);
@@ -2650,7 +2650,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       "",
       "## 步级分位（按 modelVersion + harnessDigest 分组）",
       "",
-      "> 分位按会话里每一步的读数汇总（最近秩，不插值）；会话中位数是各会话中位数的中位数。受污染会话按 ADR-0036 单列在下一张表、不参与本表分位——「已单列」一列把排除做成可见，而不是让它静默地少几行。步级成本全是诊断列，不是排名主指标。",
+      "> 分位按会话里每一步的读数汇总（最近秩，不插值）；会话中位数是各会话中位数的中位数。受污染会话按 单列在下一张表、不参与本表分位——「已单列」一列把排除做成可见，而不是让它静默地少几行。步级成本全是诊断列，不是排名主指标。",
       "",
       "| modelVersion | harnessDigest | 干净会话 | 步数 | stepMs p50/p95/max | sendMs p50/p95/max | 会话中位数 stepMs | 已单列（受污染） |",
       "| --- | --- | ---: | ---: | --- | --- | ---: | ---: |",
@@ -2667,7 +2667,7 @@ const renderArchiveMarkdown = (reports: readonly ArchiveReport[]): string => {
       "",
       "## 受污染会话（单列，成绩保留）",
       "",
-      `> 判据在报告侧（ADR-0036）：累计退避 > ${CONTAMINATION_THRESHOLDS.backoffMs} ms 或 429 次数 ≥ ${CONTAMINATION_THRESHOLDS.rateLimitedAttempts} 即受污染。两个数都是估值不是实测；返第一季数据时改的只是报告侧阈值，不动采集。撞过限流的会话**成绩不作废**：步数、被挡次数、等了多少秒、分数都在下面的表里。`,
+      `> 判据在报告侧：累计退避 > ${CONTAMINATION_THRESHOLDS.backoffMs} ms 或 429 次数 ≥ ${CONTAMINATION_THRESHOLDS.rateLimitedAttempts} 即受污染。两个数都是估值不是实测；返第一季数据时改的只是报告侧阈值，不动采集。撞过限流的会话**成绩不作废**：步数、被挡次数、等了多少秒、分数都在下面的表里。`,
       "> one-shot 档这一格恒 null：`readFailureRecords` 刻意跳过参赛模型（`reporter.ts`），本报告不为封存的历史榜改那条口径——所以「没有受污染会话」不等于「所有会话都干净」。累计退避读的是日志行的 `backoffMs`（生成侧按**实测**等待写：没有退避写 0）；旧档没有这一格时写 null 而不是 0：缺数据不补零，那些会话的判据仍只由 429 次数承担。",
       "",
     );

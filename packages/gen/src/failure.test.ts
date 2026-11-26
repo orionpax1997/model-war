@@ -6,7 +6,7 @@
  *
  * ── v3 失败档与 one-shot 那条的根本差别 ──
  *
- * 轮数与起始 prompt 不再由 `prompts` 数出来:它们由**过程记录**与首条消息推得(ADR-0031 的
+ * 轮数与起始 prompt 不再由 `prompts` 数出来:它们由**过程记录**与首条消息推得(
  * 同一个公式)。所以这里的判据是「`steps.length === protocolRounds`、`prompts` 至多一条」,
  * 而不是「每轮一条 prompt」。
  */
@@ -148,7 +148,7 @@ it("用尽步数:写失败记录(过程记录 + 逐步日志 + 诊断 + 分类),
   expect(record.termination).toBe("max-steps");
   // 步数用尽是预算耗尽:`budget`,不是「模型违反契约」(它每一轮都交了合协议的块)。
   expect(record.classification).toBe("budget");
-  // v3 的必写键一个不少(ADR-0034:身份从第一份 agent 档起就写)。
+  // v3 的必写键一个不少（身份从第一份 agent 档起就写）。
   for (const key of AGENT_ARCHIVE_REQUIRED_KEYS) {
     expect(record).toHaveProperty(key);
   }

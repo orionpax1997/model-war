@@ -1,5 +1,5 @@
 /**
- * 单会话 loop 的骨架:送历史 → 解析动作 → 执行 → 记一步 → 再送(ADR-0032)。
+ * 单会话 loop 的骨架:送历史 → 解析动作 → 执行 → 记一步 → 再送。
  *
  * ── 它是**替换**,不是包裹 ──
  *
@@ -14,7 +14,7 @@
  *
  * ── 一次模型调用 = 一步,截断重试不占步 ──
  *
- * 被输出上限截断时重发一次,两次调用挂在**同一步**的 `attempts` 上(ADR-0035):步钉在「一个
+ * 被输出上限截断时重发一次,两次调用挂在**同一步**的 `attempts` 上:步钉在「一个
  * 动作加一个观测」上,不是「一次 HTTP 调用」。第二次仍截断就转格式反馈,而不是继续退避——模型
  * 能自我修正,把一个可自我修正的截断升级成整次失败,正好违反上面那条正交性。
  *
@@ -80,7 +80,7 @@ export type AgentLoopRequest = {
   /** 覆盖总墙钟(默认 `AGENT_TOTAL_WALL_CLOCK_MS`)。 */
   readonly totalWallClockMs?: number;
   /**
-   * 总墙钟的 **active** 口径:已用掉多少该计的时间(退避等待不算,ADR-0035/0036)。
+   * 总墙钟的 **active** 口径:已用掉多少该计的时间(退避等待不算)。
    *
    * 由接线方注入,因为它才知道哪些时间该划掉(`pipeline.ts` 用 `BudgetClock` 在退避期间停表)。
    * 缺席时按注入的 `now()` 算,那一档**含**退避——只在没有接线方的单测里成立。
@@ -97,7 +97,7 @@ export type AgentLoopResult = {
   /** 终止发生在第几步(0 = 一次模型调用都没有成功)。 */
   readonly atStep: number;
   /**
-   * 起始 prompt:零步会话为空数组、否则一条(ADR-0031)。
+   * 起始 prompt:零步会话为空数组、否则一条。
    *
    * 它装的就是首条 `user` 的逐字文本(`request.firstUser`)。`system` 不在这里:那是**协议**,
    * 不是「这次会话的任务」,它的归属是 `harnessVersion` / `harnessDigest` 与
@@ -184,7 +184,7 @@ const observationOf = (executed: AgentExecResult): StepObservation => ({
  * 跑一场会话。
  *
  * 执行器起不来是**基础设施失败**:`executor` reject 直接向上抛,不折成一次「模型写错了」的
- * 观测——把环境故障解释给模型,等于把归因工作从人挪给模型(ADR-0030 残余风险 3)。
+ * 观测——把环境故障解释给模型,等于把归因工作从人挪给模型(残余风险 3)。
  */
 export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentLoopResult> => {
   const now = request.now ?? Date.now;
@@ -214,7 +214,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
   });
 
   for (let step = 1; step <= maxSteps; step += 1) {
-    // ① 总墙钟:两项硬约束之一。口径是 **active**(ADR-0035):退避等待不算。
+    // ① 总墙钟:两项硬约束之一。口径是 **active**:退避等待不算。
     //
     // 注入的 `activeElapsedMs` 由接线方给(它知道哪些时间该划掉);不给时退回实钟——那一档
     // **含**退避,只在没有外循环的测试里成立。
@@ -223,7 +223,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
       atStep = steps.length;
       break;
     }
-    // ② 上下文守卫:用上一轮的精确读数,不估算(ADR-0035)。
+    // ② 上下文守卫:用上一轮的精确读数,不估算。
     if (
       request.contextLength !== undefined &&
       lastInputTokens !== undefined &&
@@ -254,7 +254,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
       // 这一次调用不进过程记录、不进协议轮数。
       //
       // `attempts` 仍要记:一枪就死与「第一枪被截断、第二枪死在连接上」在诊断上是两件事,
-      // 而后者只有这里知道——它没有过程记录条目可挂(ADR-0031)。
+      // 而后者只有这里知道——它没有过程记录条目可挂。
       //
       // 两种收场共用**同一行日志**(`kind: "transport"`:这一行按传输末行的形状读),差别只在
       // 终止原因:预算到点不是传输运气不好,重跑一次同样的会话也不会更好。半截响应没有别的
@@ -267,7 +267,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
     const sendMs = now() - turnStart;
     const harnessStart = now();
     // 原文**只算一次**：落进 `steps.raw` 的字节与下一步发回历史里的字节必须是同一份
-    // （ADR-0032「与发回去的字节同源」）。分两处各取一次 `response.text` 会在病态保护边界上
+    // （「与发回去的字节同源」）。分两处各取一次 `response.text` 会在病态保护边界上
     // 悄悄造出两个字节串，而那种不一致在读侧根本看不出来。
     const raw = clampRaw(response.text);
     const observedInputTokens = inputTokensOf(response.usage);
@@ -343,7 +343,7 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
       // 逐字字节的家:那一次调用叫什么、`arguments` 原文是什么。**只在这一步恰好一次调用时**记。
       // 零次没有可记的;多于一次则「那一次」这个说法不成立(拒档的 `none` + 退出码 64 说明它们
       // 一次都没执行)。被拒的**单次**调用照样记:字节留下来,读侧才看得见模型当时到底写了什么
-      // (ADR-0031),而 `action.kind` 与退出码回答「它有没有被执行」。
+      // ,而 `action.kind` 与退出码回答「它有没有被执行」。
       ...(recorded === undefined ? {} : { toolCall: recorded }),
       ...(result === undefined ? {} : { result }),
     });
@@ -373,5 +373,5 @@ export const runAgentSession = async (request: AgentLoopRequest): Promise<AgentL
   return settle(termination, atStep);
 };
 
-/** 便于接线方判断「这一步是不是有候选」:候选为空即失败档(ADR-0030)。 */
+/** 便于接线方判断「这一步是不是有候选」:候选为空即失败档。 */
 export const hasCandidates = (result: AgentLoopResult): boolean => result.submissions.length > 0;

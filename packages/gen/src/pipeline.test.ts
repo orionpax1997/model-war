@@ -184,7 +184,7 @@ it("顺利路径:有候选就是成功档,step 数 = 协议轮数,首条 prompt 
   // 它装的是首条 `user` 的逐字文本:`system` 是协议,不进档案(归 harnessVersion / harnessDigest),
   // 否则同一份字节就有两个家。
   expect(meta.prompts[0]).not.toContain(SYSTEM);
-  // 身份字段成套(ADR-0034「身份从第一份 agent 档起就写」)。
+  // 身份字段成套（「身份从第一份 agent 档起就写」）。
   expect(meta.harnessVersion).toBe(HARNESS_VERSION);
   expect(meta.harnessDigest).toBe(HARNESS_DIGEST);
   expect(meta.contextLength).toBe(100_000);
@@ -205,7 +205,7 @@ it("工具调用的字节原样落 steps[i].toolCall,且与发回去的字节同
   const script = "function loop() {}\n";
   const command = `cat > /workspace/script.ts <<'EOF'\n${script}EOF`;
   // 渠道给的原始 JSON 文本(带它自己的空格),`JSON.parse` 再 `stringify` 会改掉它——而发回下一轮
-  // 用的就是这串字节,重编码等于「发回去的 ≠ 落盘的」(ADR-0031)。
+  // 用的就是这串字节,重编码等于「发回去的 ≠ 落盘的」。
   const argumentsJson = `{ "command" : ${JSON.stringify(command)} }`;
   const sent: string[][] = [];
   const stub = stubClient([toolCall("bash", argumentsJson), toolOf("evaluate"), toolOf("finish")]);
@@ -337,7 +337,7 @@ it("传输耗尽:那次调用不进 steps、不进协议轮数,生成日志留�
 });
 
 it("退避记账取实测:等待实现没真等就写 0,不按请求时长记", async () => {
-  // ADR-0036 的两段判据要有数据,而「等了多少」只能是实测:请求值(`backoffSleep` 的入参)是
+  // 退避与 429 两段判据要有数据,而「等了多少」只能是实测:请求值(`backoffSleep` 的入参)是
   // `retryTransport` 算出来的打算,`setTimeout` 只会更晚。这里把两者人为拉开——请求 1s + 2s,
   // 而钟一步没走——于是「估」与「测」在这条断言上会给出不同答案。
   const root = mkRoot();
@@ -538,7 +538,7 @@ it("总墙钟耗尽:已跑完的步留着,不判失败(终止与落档正交)", 
 });
 
 it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 wall-clock", async () => {
-  // ADR-0029/0035:预算是一项硬约束,而「等到步与步之间才发现」等于让一次调用随便超支
+  // :预算是一项硬约束,而「等到步与步之间才发现」等于让一次调用随便超支
   // (`archive/mimo-v2.6-flash/2026-11-18T08-12-18-087Z` 两次调用各 816 s / 928 s)。
   // 这里造的形状就是空闲超时挡不住的那一种:客户端一直不返回,只有在被 abort 时才结束。
   const root = mkRoot();
@@ -576,7 +576,7 @@ it("总墙钟在调用**进行中**就能收口:慢调用被 abort,终止原因 
   expect(outcome.kind).toBe("failed");
   if (outcome.kind !== "failed") return;
   expect(outcome.agent.termination).toBe("wall-clock");
-  // 半截响应不进过程记录、不进协议轮数(ADR-0031):它没有被执行的任何动作。
+  // 半截响应不进过程记录、不进协议轮数:它没有被执行的任何动作。
   expect(outcome.agent.steps).toEqual([]);
   expect(outcome.agent.atStep).toBe(0);
   // 调用进行中被打断也只是「预算用完」,不是传输运气不好。
@@ -929,7 +929,7 @@ it("候选一到三条:1 次 / 2 次 / 3 次评测各产出同等条数,下标�
     if (outcome.kind !== "frozen") return;
     const candidates = candidatesOf(outcome.meta);
     expect(candidates).toHaveLength(count);
-    // 有候选即成功档:优化段 version 3、一条 `stage` 都没有(ADR-0031)。
+    // 有候选即成功档:优化段 version 3、一条 `stage` 都没有。
     expect(outcome.meta.optimization).toMatchObject({ version: 3 });
     for (const [index, candidate] of candidates.entries()) {
       expect(candidate.stage).toBeUndefined();

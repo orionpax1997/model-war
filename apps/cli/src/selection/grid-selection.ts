@@ -147,8 +147,8 @@ const reasonOf = (modelDiagnostics: readonly string[]): string =>
 /**
  * 观测文件 → 逐行（解析后的 JSON 值）。空文件与坏行都拒：没有观测就没有证据。
  *
- * 每行先过**从共享 JSON Schema 派生的验证器**（`validator.ts` 的 `validateTrialObservation`，
- * ADR-0016），再交回原值：证据是外部数据，消费端不得靠裸 `JSON.parse` + 手写取字段当校验。
+ * 每行先过**从共享 JSON Schema 派生的验证器**（`validator.ts` 的 `validateTrialObservation`），
+ * 再交回原值：证据是外部数据，消费端不得靠裸 `JSON.parse` + 手写取字段当校验。
  * 「这份读数属于这一格」仍归 runner 的 `verifyGridSelectionEvidence`（它按计划判种子/座位/身份）。
  */
 const observationRowsOf = (path: string): readonly JsonValue[] => {
@@ -180,8 +180,8 @@ const observationRowsOf = (path: string): readonly JsonValue[] => {
 /**
  * 生成阶段的网格汇总 → 它的分数（并核对它说的就是这张网格、这份候选）。
  *
- * 读入先过**从共享 JSON Schema 派生的验证器**（`validator.ts` 的 `validateTrialGridSummary`，
- * ADR-0016）：版本、整份计划、候选摘要、分数三元组与逐场身份的形状由 schema 负责；显式化之后
+ * 读入先过**从共享 JSON Schema 派生的验证器**（`validator.ts` 的 `validateTrialGridSummary`）：
+ * 版本、整份计划、候选摘要、分数三元组与逐场身份的形状由 schema 负责；显式化之后
  * 只剩跨字段的同源性判据。生成侧不重算分数，选拔侧也不重算「生成阶段应该得多少分」：这一份
  * 分数就是排序依据，复算只负责证明它与重跑结果逐位相同。
  */

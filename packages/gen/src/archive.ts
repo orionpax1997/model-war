@@ -69,11 +69,11 @@ export const sha256Hex = (bytes: Buffer | string): string =>
 /**
  * agent（v3）形态的写入位：过程记录 + 身份 + 终止原因 + 上下文窗口。
  *
- * 它们成组出现而不是逐个可选：一份 v3 档案必须同批带齐（ADR-0034 的纪律——身份从第一份
+ * 它们成组出现而不是逐个可选：一份 v3 档案必须同批带齐（纪律——身份从第一份
  * agent 档起就写），拆成六个独立可选参数就会造出「只写一半」的档，而那种档没有读法。
  */
 export type AgentArchiveInput = {
-  /** 过程记录，一步一条。条数就是协议轮数（ADR-0031 的同一个公式）。 */
+  /** 过程记录，一步一条。条数就是协议轮数（同一个公式）。 */
   readonly steps: readonly ArchiveStep[];
   /**
    * 起始 prompt：首条 `user` 消息的逐字文本。
@@ -93,14 +93,14 @@ export type AgentArchiveInput = {
 };
 
 /**
- * 轮数与起始 prompt 的**唯一公式**（ADR-0031「断言合并成一个公式」）。
+ * 轮数与起始 prompt 的**唯一公式**（「断言合并成一个公式」）。
  *
  * - 协议轮数 = 一次模型调用数 = `steps.length`；
  * - 起始 prompt 条数 = 零步为零、否则为一。
  *
  * 历史（one-shot）档那边它是 `prompts.length === protocolRounds`；两种形态共用本函数，
  * 于是「两套写入口径」这件事在代码里就不存在。**刻意不提供「步数为 1 的退化分支」**：
- * 那会变成第二套公式，而它不产生任何新信息（ADR-0031 已裁决删掉）。
+ * 那会变成第二套公式，而它不产生任何新信息（已裁决删掉）。
  */
 export const archiveRoundFieldsOf = (
   input: AgentArchiveInput,

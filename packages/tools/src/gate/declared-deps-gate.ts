@@ -7,7 +7,7 @@
  * (`transpileModule` 不存在),depcruise 又把可用编译器硬编码为 `>=2.0.0 <7.0.0`——直接巡航 `src`
  * 得到的是「0 modules, 0 dependencies」+ exit 0 的**假绿**(`.dependency-cruiser.js` 顶部有实测记录)。
  * 所以巡航入口是各包的 `dist`,而本包不在其中。这是**取舍不是疏漏**:本包产 JS 就要让快门禁付一次构建,
- * 而快门禁必须零构建(hld §2.2.1 里 Node 下限取 22.18 的成因之一,ADR-0003 里那组实测数字)。
+ * 而快门禁必须零构建(hld §2.2.1 里 Node 下限取 22.18 的成因之一的那组实测数字)。
  *
  * 代价有两块,本门禁只补其中一块,另一半明确记在 `.dependency-cruiser.js` 头注里:
  *   - **第三方依赖面(本门禁管)**:`src` 里 import `oxc-parser` / `vitest` / `ajv` 而 package.json

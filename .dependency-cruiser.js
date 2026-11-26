@@ -31,7 +31,7 @@
  * ── `packages/tools` **有意**在本图的巡航范围之外 ──
  * 该包以源码形态执行(`emitDeclarationOnly`,dist 里没有 .js),因此它不在本图的巡航范围内
  * (实测巡航出的模块里一个 tools 的都没有)。这是取舍不是疏漏:让该包产 `.js` 就要让快门禁
- * 付一次构建,而快门禁必须零构建(hld §2.2.1 的 Node 下限成因之一,ADR-0003 有实测数字)。
+ * 付一次构建,而快门禁必须零构建(hld §2.2.1 的 Node 下限成因之一)。
  * 缺掉的覆盖面分两块,一块已补、一块仍开着:
  *
  *   - **第三方依赖面:已由 `check:declared-deps` 兜住。** `packages/tools/src/gate/declared-deps-gate.ts`
@@ -46,7 +46,7 @@
  *   - **包图方向:只由 tsc 兜,本门禁看不到。** tools 正式声明了 `@model-war/schema` 为依赖并加了
  *     project reference(hld §3.2:工具包只允许 import 真源包这一个根包,这条边指向依赖图的根)。
  *     pnpm 只软链已声明的包,于是 `packages/tools/src` 里 import `@model-war/engine` ⇒ **TS2307**,
- *     `tsc -b` 非零退出。注意这条边是新的(混合传输的生成器一侧,ADR-0003),而**编译器只拦「没声明」,
+ *     `tsc -b` 非零退出。注意这条边是新的(混合传输的生成器一侧),而**编译器只拦「没声明」,
  *     拦不住「声明了但方向反了」**——真源包不得反向 import tools 这条,仍靠规范而非门禁。
  *
  * @type {import('dependency-cruiser').IConfiguration}

@@ -215,7 +215,7 @@ it("单模型失败不吞:退出码非零,且失败档写下来", { timeout: 30_
     }),
   );
   expect(code).toBe(1);
-  // 一次都没成功的会话落成同形失败档(ADR-0031)。
+  // 一次都没成功的会话落成同形失败档。
   const entries = readdirSync(join(root, "archive/alpha"));
   expect(entries.some((name) => name.startsWith("failed-"))).toBe(true);
 });
@@ -246,7 +246,7 @@ it("一批两模型一败一成:退出码非零,但成功那个照旧冻结", { 
     }),
   );
   expect(code).toBe(1);
-  // 失败不中止同批:成功的那个照旧冻结(ADR-0036 的保证)。
+  // 失败不中止同批:成功的那个照旧冻结(保证)。
   expect(readdirSync(join(root, "archive/alpha")).some((n) => n.startsWith("failed-"))).toBe(false);
   expect(readdirSync(join(root, "archive/beta")).some((n) => n.startsWith("failed-"))).toBe(true);
 });
@@ -293,7 +293,7 @@ it(
 
 it("配置缺 contextLength 时该模型失败,不静默跳过上下文守卫", { timeout: 30_000 }, async () => {
   const root = writeRoot(modelsYaml(entry("alpha").replace("    contextLength: 100000\n", "")));
-  // 「单模型失败不中止整批」把异常收成该模型的一次失败(ADR-0036 的保证),
+  // 「单模型失败不中止整批」把异常收成该模型的一次失败(保证),
   // 所以判据是退出码与 stderr,而不是 reject。
   const code = await withPlainSandbox(() =>
     runGeneration({

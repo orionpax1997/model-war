@@ -174,7 +174,7 @@ function loop() {
 it("类型环境只引入脚本 API 的那一份声明:types 恰好一项,typeRoots 不碰 @types", () => {
   // 读的是 `tsc --showConfig` 给出的**解析后**那份,不是配置文件的文本:那份输出是纯 JSON,
   // 而配置文件里有注释与行尾逗号(`JSON.parse` 读不了),手写一个去注释的正则去读它就成了
-  // 「解析一份文档抽东西」——那份做法在 adr/0004 里已经逐条驳过,不在这里重开一次。
+  // 「解析一份文档抽东西」——那份做法已经逐条驳过,不在这里重开一次。
   // 问编译器自己「你最后看到的类型环境是什么」也没有第二份答案可说。
   const shown = spawnSync(TSC, ["--showConfig", "-p", SCRIPT_CONFIG], {
     cwd: repoRoot,

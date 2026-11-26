@@ -91,7 +91,7 @@ const CONTRACT_INDEX = "# contract\n\n- rules.md:机制\n- api.md:接口\n";
 /**
  * 一条「把脚本写进 /workspace」的工具调用。
  *
- * 走 heredoc:模型在沙箱里写文件的自然写法,也是 ADR-0032 举的那一种(重定向 + heredoc)。
+ * 走 heredoc:模型在沙箱里写文件的自然写法,也是常见的那一种(重定向 + heredoc)。
  * 写成 `bash` 的 `command` 而不是裸脚本正文,是 agent 形态与 one-shot 的分界线——裸正文不会
  * 被解析成任何动作。
  */
@@ -363,7 +363,7 @@ it(
       const root = mkRoot(endpoint.baseUrl);
       const result = await runCli(["gen", "--config", "models.yaml", "--root", root]);
       // 这条用例验的是**接线**:CLI → 真 HTTP 适配器 → 假端点 → 单会话 loop → 真网格 → 落档。
-      // 真网格接上之后,那次 evaluate 有成绩 → 有候选 → 成功档、退出 0(ADR-0030)。
+      // 真网格接上之后,那次 evaluate 有成绩 → 有候选 → 成功档、退出 0。
       expect(result.status, result.stderr).toBe(0);
 
       // 真打到了假端点：POST /chat/completions，带上 Bearer 鉴权头；三步各一次调用。
@@ -413,14 +413,14 @@ it(
       expect(meta.prompts).toHaveLength(1);
       expect(meta.termination).toBe("done");
       expect(meta.atStep).toBe(3);
-      // 身份从第一份 agent 档起就写(ADR-0034)。
+      // 身份从第一份 agent 档起就写。
       expect(meta.harnessDigest).toMatch(/^[0-9a-f]{64}$/);
       // 用真源常量,不抄字面量:票 06 把代号换成 `tool-call/1.0` 时这条断言留在了旧世界,
       // 而它只在 sandbox 项目里跑,`verify` 覆盖不到——抄字面量就会这样静默过期。
       expect(meta.harnessVersion).toBe(HARNESS_VERSION);
       expect(meta.contextLength).toBe(100_000);
 
-      // evaluate 那一步的 stdout 只给聚合对差表与一行路径(ADR-0030「观测外置」)。
+      // evaluate 那一步的 stdout 只给聚合对差表与一行路径(「观测外置」)。
       const evaluateStdout = meta.steps[1]?.stdout ?? "";
       expect(evaluateStdout).toContain("evaluate:通过");
       expect(evaluateStdout).toContain("一、对差表");
@@ -478,7 +478,7 @@ it(
         ),
       ).toBe(true);
 
-      // 派生视图(聚合 + 逐场 + 最差三场)留在工作区,不进档案(ADR-0030/0031)。
+      // 派生视图(聚合 + 逐场 + 最差三场)留在工作区,不进档案。
       const observationsDir = join(workspaceOf(root, runId), ".observations");
       expect(readdirSync(observationsDir)).toEqual(["1.md"]);
       const view = readFileSync(join(observationsDir, "1.md"), "utf8");
@@ -498,7 +498,7 @@ it(
   { timeout: 120_000 },
   async () => {
     // 写惯犯脚本 → evaluate(真试跑,32 场照样判拦)。被拦下的一次不产出候选,
-    // 所以这次会话零候选 → 失败档(ADR-0030「失败 = 一个候选都没有」)。
+    // 所以这次会话零候选 → 失败档(「失败 = 一个候选都没有」)。
     const endpoint = await startFakeEndpoint([
       writeScriptAction("bash", HABITUAL_SCRIPT),
       toolAction("evaluate"),

@@ -73,7 +73,7 @@ export type RulesetKeyUnit =
 
 /**
  * 键的 JSON 值类型。与 `ruleset.ts` 的 `Ruleset` 类型、规则集 JSON Schema 的 `properties`
- * 说的是同一件事(TS 类型 → JSON Schema 手工对齐,ADR-0003),三者的错位由类型级断言抓住。
+ * 说的是同一件事(TS 类型 → JSON Schema 手工对齐),三者的错位由类型级断言抓住。
  */
 export type RulesetValueType =
   /** 非负整数。 */
@@ -272,7 +272,7 @@ export const RULESET_KEY_CATALOG = {
   },
 
   // ── 8 个预算键(handoff §2.1;第 9 行「内存软阈」是派生展示项,明令不入键清单)──────
-  // 它们全部必填。标定状态逐键表达:计数与异常三键、内存两键、墙钟两键与体积键已全部定稿;`rulesets/v1.json` 就地写入终值(ADR-0009),键的 `calibration.state`
+  // 它们全部必填。标定状态逐键表达:计数与异常三键、内存两键、墙钟两键与体积键已全部定稿;`rulesets/v1.json` 就地写入终值,键的 `calibration.state`
   // 由未定值翻成定稿,面向模型的数值表随之从「未定」渲染成数字。
   //
   // 判据**只是** `calibration.state`,不是「值是不是 0」:上面的 `worker.damage` 就是真的 0,
