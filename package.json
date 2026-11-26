@@ -55,6 +55,7 @@
     "test:vm": "vitest run --project vm",
     "test:property": "vitest run --project property",
     "test:gates": "vitest run --project gates",
+    "test:mutation": "vitest run --project mutation",
     "test:slow": "vitest run --project slow",
     "test:kernel": "vitest run --project sandbox",
     "observe:test": "node packages/tools/src/vitest/run-test-report.ts",

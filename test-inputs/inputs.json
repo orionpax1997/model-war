@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "fingerprint": "0c8d977f75c622af",
+  "fingerprint": "78be38e7ede9ccd4",
   "files": {
     "apps/cli/src/agent-session-archive.test.ts": [
       "packages/tools/src/ast.ts",
@@ -1392,6 +1392,7 @@
       "packages/tools/src/gate/vacuous.test.ts",
       "packages/tools/src/gate/vacuous.ts",
       "packages/tools/src/gates-harness.ts",
+      "packages/tools/src/gates-mutation.test.ts",
       "packages/tools/src/gates-slow.test.ts",
       "packages/tools/src/gates.test.ts",
       "packages/tools/src/generate/api-surface.ts",

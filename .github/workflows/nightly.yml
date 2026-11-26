@@ -7,7 +7,7 @@
 #
 # ── 硬门禁 vs 观测项 ──
 # 单 job matrix + 矩阵项级 continue-on-error(不是 job 级!job 级会把红吞成 success)。
-#   硬门禁(check / test:gates / test:slow / gate:selfproof / gate:cross-process /
+#   硬门禁(check / test:gates / test:slow / test:mutation / gate:selfproof / gate:cross-process /
 #           gate:limits / gate:budget:recheck / mutate):红 = 该 job 红。
 #   观测项(scan):只落盘不设红线(ADR-0010、spec §7),红了不阻断别的 leg,
 #           但 steps.run.outcome 会写进产物——「今晚观测项自己红了」不被抹掉。
@@ -49,6 +49,10 @@ jobs:
           - { script: "verify:wide", slug: "verify-wide", advisory: false, timeout: 60 }
           - { script: "test:gates", slug: "test-gates", advisory: false, timeout: 60 }
           - { script: "test:slow", slug: "test-slow", advisory: false, timeout: 120 }
+          # 变异棘轮的真跑那一半:跑一次 `mutate:replay` 验入库基线字节不变。它在本地只由
+          # `stryker/**` 的半径选中(独立 project `mutation`),夜里则每次都跑一遍——
+          # 「没人动它”不等于“这件事仍然成立”。
+          - { script: "test:mutation", slug: "test-mutation", advisory: false, timeout: 60 }
           - { script: "gate:selfproof", slug: "gate-selfproof", advisory: false, timeout: 60 }
           - {
               script: "gate:cross-process",

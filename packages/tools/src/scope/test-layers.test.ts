@@ -35,14 +35,17 @@ import {
   probeApplies,
 } from "./change-radius.js";
 import {
+  PROBE_CONCURRENCY,
   describeDeleted,
+  mapLimit,
+  probeOnceThenRetry,
   probeTargets,
   runsFor,
   unobservedGap,
   unobservedHalves,
 } from "./check.js";
 import { scriptProjects } from "./plan.js";
-import { STRUCTURAL_TESTS } from "./related-probe.js";
+import { STRUCTURAL_TESTS, type ProbeOutcome } from "./related-probe.js";
 import {
   classifyInput,
   currentFingerprint,
@@ -465,6 +468,77 @@ describe("decide:图与表各管半边", () => {
 });
 
 describe("链的组成:编辑循环窄,收口宽", () => {
+  /**
+   * 探针的**重试**:判据是“真红要两次都红”,而且“它红过”的事不能埋。
+   *
+   * 为什么需要它:4 路探针自己会起 worker,带超时的子进程用例在互抢下偶发红。假红输出的是
+   * 「先修它」,而那东西没坏。反面也同样要钉:不能因为多给一次机会就把真红放成绿。
+   */
+  it("探针重试:只重试失败,真红两次都红,偶发红被标出来", async () => {
+    const failed: ProbeOutcome = { kind: "failed", files: ["packages/a/x.test.ts"], failed: 1 };
+    const ran: ProbeOutcome = {
+      kind: "ran",
+      behavior: ["packages/a/x.test.ts"],
+      structural: [],
+      tests: 3,
+      selfOnly: true,
+    };
+    const noTests: ProbeOutcome = { kind: "no-tests" };
+
+    let calls = 0;
+    const sequence = (...outcomes: readonly ProbeOutcome[]): (() => Promise<ProbeOutcome>) => {
+      calls = 0;
+      return async () => {
+        const outcome = outcomes[Math.min(calls, outcomes.length - 1)] as ProbeOutcome;
+        calls += 1;
+        return outcome;
+      };
+    };
+
+    // 真红:两次都红才红,且只问两次(不多问)。
+    const both = await probeOnceThenRetry(sequence(failed, failed));
+    expect(both.outcome.kind).toBe("failed");
+    expect(both.flaky).toBe(false);
+    expect(calls).toBe(2);
+
+    // 偶发:第一次红、重跑绿 → 绿,但打出“它红过”。
+    const once = await probeOnceThenRetry(sequence(failed, ran));
+    expect(once.outcome.kind).toBe("ran");
+    expect(once.flaky).toBe(true);
+
+    // 不红的结论不重试:重试只针对“判据在喊”那一种,`no-tests` 是算出来的,不是抳出来的。
+    const cheap = await probeOnceThenRetry(sequence(noTests));
+    expect(cheap.outcome.kind).toBe("no-tests");
+    expect(cheap.flaky).toBe(false);
+    expect(calls, "不红的结论不该再 spawn 一次").toBe(1);
+  });
+
+  /**
+   * 探针的并发器:限流与**顺序**。
+   *
+   * 顺序是判据的一部分,不是实现细节。探针的两种红(候选红了 / 读不到报告)带着路径给出处方，
+   * 并发之后若按完成顺序上报,同一棵树两次跑会得到两张不同的脸——而“哪一条先红”对人读日志
+   * 是有意义的:`work` 故意让前面的慢、后面的快,顺序错了立刻能看出来。
+   */
+  it("探针并发器:不超上限、结果按输入顺序", async () => {
+    const items = [3, 1, 2, 5, 4];
+    let peak = 0;
+    let live = 0;
+    const results = await mapLimit(items, 2, async (delay) => {
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((settle) => setTimeout(settle, delay * 5));
+      live -= 1;
+      return `done-${String(delay)}`;
+    });
+    expect(results, "结果没按输入顺序回:红的先后就变成不确定的了").toEqual(
+      items.map((item) => `done-${String(item)}`),
+    );
+    expect(peak, "并发超了上限").toBeLessThanOrEqual(2);
+    // 空集不是错:没有盲文件时这条路径本来就不跑。
+    expect(await mapLimit([], PROBE_CONCURRENCY, async () => 1)).toEqual([]);
+  });
+
   it("默认 test 不含真 VM / 进程级 e2e(否则每次业务改动都付 290s 的账)", () => {
     const test = manifest().scripts["test"] ?? "";
     expect(test).not.toContain("--project e2e");
@@ -1157,7 +1231,6 @@ describe("门禁自测的粒度:按文件缩到 -t 子集", () => {
         "三个观测入口都在场,但不在任何常跑入口与流水线上,且不改判据",
         "反例:抬基线命令被塞进 quick → 断言红,还原 → 绿(纯文本,不真改 package.json)",
         "跑完变异入口的棘轮比较后,入库基线的字节不变",
-        "真实跑一次 mutate:replay 之后,stryker/baseline/replay.json 的字节逐字不变",
         "抬基线命令:缺分片非零、未知分片非零、已知分片只写临时路径、空转报告拒绝入基线",
         "抬基线命令只抬本分片:指到别的分片的基线上 → 非零,且那份文件原样不动",
         "棘轮门禁:低一分夹具 → 红,等于/高于 → 绿,无基线 → 首次,判不了 → 红",
@@ -1434,10 +1507,15 @@ describe("测试文件的归属:配置说了算,不是兜底说了算", () => {
         `计划里没有拾取它的那一族(实际:${decision.scripts.join(", ")})`,
       ).toBe(true);
 
-      // 探针写死问 `--project all`:它答不出这个文件的候选,而 0 条会被读成「确知为零」。
+      // 探针只答源码:池外的测试文件去问它结构上只能得到「0 条」(被读成「确知为零」——假话)。
       expect(probeApplies(file), `${file} 仍会进逐文件探针,而它不在 all 的池子里`).toBe(false);
-      // 反方向:池子里的测试文件照旧问图——豁免只对池子外的那几族开。
-      expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(true);
+      // 反方向也变了:池内的测试文件**也不探**。池内探一遍等于把同一个文件执行两遍(它白
+      // `test:related` 那条腿已经跑过),而那条腿一定选中它这个前提由 `related-probe.test.ts`
+      // 里真跑一遍的那条用例看着——不在这里靠推理。
+      expect(probeApplies("packages/tools/src/ci.test.ts")).toBe(false);
+      expect(inRelatedPool("packages/tools/src/ci.test.ts"), "豁免仍然只对池内的测试文件开").toBe(
+        true,
+      );
     },
   );
 

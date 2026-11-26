@@ -41,7 +41,7 @@
  * 探针的报告文件落在 `tmpdir()` 下、用完即删;探针不往仓库里写文件。
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -275,32 +275,91 @@ export const probeRelated = (input: ProbeInput): ProbeOutcome => {
   // 这条不归 `no-tests` 管,两者的处方相反:一个要补用例,一个要先修探针。
   if (!clearReport(reportPath)) return { kind: "no-report", exit: null };
   try {
-    const result = spawnSync(
-      process.execPath,
-      [
-        join(input.repoRoot, "node_modules", "vitest", "vitest.mjs"),
-        "related",
-        "--run",
-        ...input.projects.flatMap((project) => ["--project", project]),
-        "--passWithNoTests=false",
-        "--reporter=json",
-        `--outputFile=${reportPath}`,
-        ...input.paths,
-      ],
-      { cwd: input.repoRoot, stdio: "ignore" },
-    );
-    let json: string | undefined;
-    try {
-      json = readFileSync(reportPath, "utf8");
-    } catch {
-      // 报告没写出来(目录不可写、进程没跑起来、报告器没装):交给 classify 判 no-report。
-      json = undefined;
-    }
-    const report = json === undefined ? undefined : parseReport(json, input.repoRoot);
-    return classify(report, STRUCTURAL_TESTS, result.status, input.paths);
+    const result = spawnSync(process.execPath, vitestArgs(input, reportPath), {
+      cwd: input.repoRoot,
+      stdio: "ignore",
+    });
+    return finish(input, reportPath, result.status);
   } finally {
-    // 清理是尽力而为:判据已经算完,清理失败不改结论(最坏是 tmpdir 里多留一个文件)。
-    clearReport(reportPath);
-    if (owned) rmSync(dirname(reportPath), { recursive: true, force: true });
+    cleanup(reportPath, owned);
   }
+};
+
+/**
+ * 同一条探针的**异步**版本:`check` 用它把多个文件并行问(`check` 里有十四个文件时要等 40s)。
+ *
+ * 判据一个字都没变:两个版本跑的是同一条命令行、同一份 `classify`(见 `vitestArgs` 与
+ * `finish`)。并行能在观察上成立的原因只有一个:`spawn` 的 `stdio` 是 `ignore`、报告落在
+ * 各自的临时目录里——不共享 stdout,也不共享落点。
+ *
+ * 差异只在失败形状:`spawnSync` 在进程起不来时返回 `status: null`(交给 `classify` 判
+ * `no-report`),`spawn` 则发 `error` 事件。这里把两者折回同一个值,null——“进程没跑起来”
+ * 与“报告读不到”本来就是同一条处方:先修探针。
+ */
+export const probeRelatedAsync = async (input: ProbeInput): Promise<ProbeOutcome> => {
+  const owned = input.reportPath === undefined;
+  const reportPath = input.reportPath ?? tempReportPath();
+  assertUnderTemp(reportPath);
+  if (!clearReport(reportPath)) return { kind: "no-report", exit: null };
+  try {
+    const status = await spawnStatus(
+      process.execPath,
+      vitestArgs(input, reportPath),
+      input.repoRoot,
+    );
+    return finish(input, reportPath, status);
+  } finally {
+    cleanup(reportPath, owned);
+  }
+};
+
+const spawnStatus = (
+  command: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<number | null> =>
+  new Promise((settle) => {
+    const child = spawn(command, [...args], { cwd, stdio: "ignore" });
+    child.on("error", () => settle(null));
+    child.on("close", (code) => settle(code));
+  });
+
+/** 探针的命令行。两个版本共用一份:命令行分叉过一次(`--project all` 写死),代价是整族漏选。 */
+/**
+ * 探针的命令行。两个版本共用一份:命令行分叉过一次(`--project all` 写死),代价是整族漏选。
+ *
+ * `--maxWorkers=1` 不是省资源,是**修假红**:`check` 同时跑 4 路探针,而 vitest 默认按核数
+ * 起 worker——4 路 × N 个 worker 在 8 核机器上互抢,最先抳不住的是带超时的用例
+ * (实测:`apps/cli/src/selection/grid-selection.ts` 那 13 条里一条 30s 超时的子进程用例
+ * 在 4 路下红、单跑全绿)。假红比慢坏得多:它叫人去“先修它”,而那东西没坏。
+ */
+const vitestArgs = (input: ProbeInput, reportPath: string): readonly string[] => [
+  join(input.repoRoot, "node_modules", "vitest", "vitest.mjs"),
+  "related",
+  "--run",
+  "--maxWorkers=2",
+  ...input.projects.flatMap((project) => ["--project", project]),
+  "--passWithNoTests=false",
+  "--reporter=json",
+  `--outputFile=${reportPath}`,
+  ...input.paths,
+];
+
+/** 读报告 → 解析 → 分类。命名与退出码已定,判据只有 `classify` 一处。 */
+const finish = (input: ProbeInput, reportPath: string, status: number | null): ProbeOutcome => {
+  let json: string | undefined;
+  try {
+    json = readFileSync(reportPath, "utf8");
+  } catch {
+    // 报告没写出来(目录不可写、进程没跑起来、报告器没装):交给 classify 判 no-report。
+    json = undefined;
+  }
+  const report = json === undefined ? undefined : parseReport(json, input.repoRoot);
+  return classify(report, STRUCTURAL_TESTS, status, input.paths);
+};
+
+/** 清理是尽力而为:判据已经算完,清理失败不改结论(最坏是 tmpdir 里多留一个文件)。 */
+const cleanup = (reportPath: string, owned: boolean): void => {
+  clearReport(reportPath);
+  if (owned) rmSync(dirname(reportPath), { recursive: true, force: true });
 };

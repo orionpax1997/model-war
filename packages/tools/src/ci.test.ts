@@ -58,6 +58,7 @@ const NIGHTLY_HARD_GATES = [
   "verify:wide",
   "test:gates",
   "test:slow",
+  "test:mutation",
   "gate:selfproof",
   "gate:cross-process",
   "gate:limits",
@@ -177,7 +178,7 @@ it("PR 上 check 收到 `--since=origin/<base>`;push 上不传,退回 check.ts �
  * `argv.find(...)`,**第一个命中就赢**。于是 PR 对着 `main` 算半径(41 个提交),并红在与本 PR
  * 无关的门禁上。三层缺陷叠在一起:脚本里那份默认值、`find` 的取值方向、`pnpm … -- …` 递进来的 `--`。
  *
- * 所以三条一起钉住。默认值 `main` 只有**一个**家:`check.ts` 的 `parseArgs`。
+ * 所以三条一起钉住。默认基准(`HEAD`:只比工作区)只有**一个**家:`check.ts` 的 `parseArgs`。
  */
 it("`check` 脚本里不写基准:默认值只住在 check.ts 一处", () => {
   expect(manifest().scripts.check, "check 脚本不见了").toBeDefined();
@@ -187,7 +188,7 @@ it("`check` 脚本里不写基准:默认值只住在 check.ts 一处", () => {
   ).not.toContain("--since");
 });
 
-it("`parseArgs`:命令行是显式覆盖,最后一个赢;`--` 不参与解析;空值退回 main", async () => {
+it("`parseArgs`:命令行是显式覆盖,最后一个赢;`--` 不参与解析;空值退回默认基准", async () => {
   const { parseArgs } = await import("./scope/check.ts");
 
   // 1. 正常形态:两个开关各自生效。
@@ -213,22 +214,22 @@ it("`parseArgs`:命令行是显式覆盖,最后一个赢;`--` 不参与解析;�
   });
 
   // 4. 空 `--since=` 退回默认值,不解析成空串(空串会让 `git` 以别的错红,而不是退回默认基准)。
-  expect(parseArgs(["--since="]).since).toBe("main");
-  // 5. 不传 `--since` 就是默认基准:CI 的 push 形态靠的就是这一条。
-  expect(parseArgs(["--full"]).since).toBe("main");
+  expect(parseArgs(["--since="]).since).toBe("HEAD");
+  // 5. 不传 `--since` 就是默认基准(`HEAD`:只比工作区)。CI 的 push 形态靠的就是这一条。
+  expect(parseArgs(["--full"]).since).toBe("HEAD");
 });
 
 /**
  * push 到 `main` 的形态要**走完整条路**才算证明:`$SINCE` 为空 → shell 里消失的词 →
  * `check` 收到 `--full` → `parseArgs` 给出默认基准。分段断言(`$SINCE` 为空是一个消失的词、
- * 不传 `--since` 得到 `main`)各自绿、接起来却可能错——接起来的这一步就是这里要的。
+ * 不传 `--since` 得到默认基准)各自绿、接起来却可能错——接起来的这一步就是这里要的。
  */
-it("push 形态(`$SINCE` 为空)端到端得到默认基准 `main`", async () => {
+it("push 形态(`$SINCE` 为空)端到端得到默认基准 `HEAD`", async () => {
   const { parseArgs } = await import("./scope/check.ts");
   const pushArgs = checkStepArgs({ yaml: fast, event: "push", baseRef: "main" });
   expect(pushArgs, "push 形态的实参解不出来").toBeDefined();
   // `pnpm run check -- …` 会把分隔符递给脚本,所以这里也带着它。
-  expect(parseArgs([...(pushArgs ?? []), "--"]).since).toBe("main");
+  expect(parseArgs([...(pushArgs ?? []), "--"]).since).toBe("HEAD");
 });
 
 it("反例:把 base 写死成某个分支名,表达式就认不出来(红而不是静默用错基准)", () => {
@@ -353,8 +354,8 @@ const nightlyArtifactNames = (yaml: string): readonly string[] =>
   matrixLegs(yaml).map((leg) => `nightly-${leg.slug}-42`);
 
 it("夜间链产物名合法且唯一(upload-artifact 不许冒号等字符,同名直接失败)", () => {
-  // 一共十条腿,十份产物:名字字符面与唯一性都靠 slug 承担。
-  expect(nightlyArtifactNames(nightly)).toHaveLength(10);
+  // 一共十一条腿，十一份产物:名字字符面与唯一性都靠 slug 承担。
+  expect(nightlyArtifactNames(nightly)).toHaveLength(11);
   expect(artifactNameViolations(nightlyArtifactNames(nightly))).toEqual([]);
   // 产物名只能取 slug:一旦有人改回 `matrix.script`,上传步会以非法字符失败。
   expect(nightly).not.toContain("nightly-${{ matrix.script }}");

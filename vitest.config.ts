@@ -25,6 +25,15 @@ const GATES_TEST = "packages/tools/src/gates.test.ts";
 /** 门禁自测里慢的那一半:契约自证的四问与三个反例。见该文件的头注。 */
 const SLOW_TEST = "packages/tools/src/gates-slow.test.ts";
 
+/**
+ * 变异棘轮的**真跑**那一半:跑一次 `mutate:replay` 验 `stryker/baseline/replay.json` 的字节不变。
+ *
+ * 它从前在 `gates.test.ts` 里,是本族最贵的一条(约 50s)——于是改 `packages/tools` 任何文件都
+ * 要为一颗“只有改 `stryker/**` 才更新”的信息付 50s。单独一个 project 之后,它由
+ * `change-radius.ts` 的半径指名(`test:mutation`),nightly 也单独跑一腿。
+ */
+const MUTATION_TEST = "packages/tools/src/gates-mutation.test.ts";
+
 /** 真 bwrap 下的真会话:要内核能力(非特权 user namespace)与系统装的 bubblewrap。 */
 const SANDBOX_TEST = "apps/cli/src/agent-real-session.test.ts";
 
@@ -141,7 +150,14 @@ export default defineConfig({
         test: {
           name: "all",
           include: ["apps/*/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
-          exclude: [...NEVER_TEST, GATES_TEST, SLOW_TEST, SANDBOX_TEST, GEN_CLI_TEST],
+          exclude: [
+            ...NEVER_TEST,
+            GATES_TEST,
+            SLOW_TEST,
+            MUTATION_TEST,
+            SANDBOX_TEST,
+            GEN_CLI_TEST,
+          ],
           setupFiles: ["./vitest.kernel-guard.setup.ts", RECORD_SETUP],
           execArgv: RECORD_EXEC_ARGV,
         },
@@ -154,6 +170,7 @@ export default defineConfig({
             ...NEVER_TEST,
             GATES_TEST,
             SLOW_TEST,
+            MUTATION_TEST,
             SANDBOX_TEST,
             GEN_CLI_TEST,
             ...E2E_TESTS,
@@ -186,6 +203,18 @@ export default defineConfig({
           // 超时定得太紧的后果是「门禁跑不完」被报成「门禁失败」,两件事的处方完全不同,所以留足。
           testTimeout: 600_000,
           hookTimeout: 600_000,
+        },
+      },
+      {
+        // 变异棘轮的真跑:跑一次 `mutate:replay`(本机约 50s),证明跑完入口后入库基线的字节不变。
+        // 它自己一个 project(而不是住 `gates`)的唯一理由就是这 50s:见 `MUTATION_TEST` 的注释。
+        test: {
+          name: "mutation",
+          include: [MUTATION_TEST],
+          exclude: NEVER_TEST,
+          // 一条真 Stryker 分片:超时给足,别让“跑不完”被报成“失败”。
+          testTimeout: 900_000,
+          hookTimeout: 900_000,
         },
       },
       {

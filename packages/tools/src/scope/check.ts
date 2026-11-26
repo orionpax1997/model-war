@@ -8,6 +8,19 @@
  * pnpm run check -- --full  # 收口:与 CI 同一条定义(`FULL_CHAIN`),再补齐默认计划里链没覆盖的部分
  * ```
  *
+ * ── 基准默认是**工作区**(`--since=HEAD`),不是 `main` ──
+ *
+ * 这条命令在编辑循环里被反复跑,所以默认回答的是“我刚改的这几行要不要跑东西”。拿分叉点当
+ * 基准的代价是**整条变更流**都在里面:实测一条 66 个文件的流把 `test:gates` / `test:all` 拖进来,
+ * 四分钟;同一棵树上只比工作区是五秒。
+ *
+ * 分支级的口径没丢,它只是变显式:本地 `--since=main`,CI 用 `--since=origin/<base>`
+ * (`.github/workflows/fast.yml`)。**代价也得说清:已提交的改动不在默认判定里**,所以改动集为
+ * 空时会把“什么都没判定”与“改完了”分开报——两者在输出上是两回事。
+ *
+ * 探针并发跑(`PROBE_CONCURRENCY`),但结论按文件顺序重放:红的处方指向具体文件,
+ * “先报哪个”不能靠完成次序。
+ *
  * 三源合流由 ADR-0038 定下,优先级从硬到软:
  *
  * 1. **代码改动交给依赖图**(`vitest related`)。前提是拿**产物路径**去问:跨包边指向 `dist/`,
@@ -60,6 +73,7 @@ import {
   UnregisteredPathError,
   decide,
   mustObserve,
+  inRelatedPool,
   probeApplies,
   ruleFor,
   suitesFor,
@@ -74,7 +88,7 @@ import {
   type ChangeEntry,
 } from "./change-set.ts";
 import { chainProjects, fullPlan, scriptProjects, type RunItem, type Scripts } from "./plan.ts";
-import { probeRelated, type ProbeOutcome } from "./related-probe.ts";
+import { probeRelatedAsync, type ProbeOutcome } from "./related-probe.ts";
 import { currentFingerprint, invert, loadInputsMap, snapshotStaleMessage } from "./test-inputs.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -92,6 +106,63 @@ export interface Options {
 }
 
 /**
+ * 探针的并发路数。
+ *
+ * 并发有收益,但**远不是线性**:每个探针是一个真的 vitest 进程,而「相关集合」那一步本来就是
+ * CPU 活。关键是同时压住**两层**并行:这里限路数,每路自己那层由 `vitestArgs` 的
+ * `--maxWorkers=2` 压住。不压第二层的时候,4 路 × 每路按核数起 worker 会在 8 核机器上把机器
+ * 挠穿:慢倒还在其次,最先塌的是带超时的子进程用例——实测 7 个盲文件跑出过两次**假红**
+ * (候选接 30s 超时,单跑全绿)。
+ *
+ * 实测(8 核,同 7 个盲文件):4 路不设上限 ~371s 且有假红 · **4 路 × 每路 2 worker 137.9s
+ * 全绿** · 7 个轻文件(6 个 `src/scope` 下的)上 2 路 29.1s / 4 路 22.8s / 8 路 24.0s。
+ *
+ * 所以是一个常数而不是 `availableParallelism()`:两层相乘接近核数才是对的,而机器换了
+ * (CI 上核更少)该变的量是每路的 worker,不是“再开几个 vitest” ——两条一起改才会出现
+ * 「越快越假」的坏形状。
+ */
+export const PROBE_CONCURRENCY = 4;
+
+/**
+ * 探针红了要不要再问一遍:**要,且只再问一次**。
+ *
+ * 原因不是“怕自己错”,是并发本身会造出**假红**:`check` 同时跑 4 路探针,而每路自己还会起
+ * worker;带超时的子进程用例在这种机器上最先抳不住(实测:`grid-selection.ts` 的 13 条里一条
+ * 30s 超时的用例在4 路下红过一次,单跑与重跑均全绿,两轮 4 路重试也没再复现)。
+ *
+ * 假红比慢坏:它输出的是「先修它」,而那东西没坏。真红不会被这一下放走——红的结论要求**两
+ * 次都红**;且重跑后变绿的事实不埋起来,交由调用方打印。
+ *
+ * 与 vitest 的 `retry` 方向相反:那个是在**同一次**运行里重试,把偶发藏进绿里;这里是先记账
+ * (第一次红了),再给一次机会,并把“它红过”说出来。
+ */
+export const probeOnceThenRetry = async (
+  probe: () => Promise<ProbeOutcome>,
+): Promise<{ readonly outcome: ProbeOutcome; readonly flaky: boolean }> => {
+  const first = await probe();
+  if (first.kind !== "failed") return { outcome: first, flaky: false };
+  const second = await probe();
+  return { outcome: second, flaky: second.kind !== "failed" };
+};
+
+/** 限并发地跑完每一项。结果按**输入顺序**返回——调用方靠这个顺序决定先报哪一个红。 */
+export const mapLimit = async <T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> => {
+  const results: R[] = Array.from({ length: items.length }, () => undefined as R);
+  let next = 0;
+  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (let index = next++; index < items.length; index = next++) {
+      results[index] = await work(items[index] as T);
+    }
+  });
+  await Promise.all(lanes);
+  return results;
+};
+
+/**
  * 命令行 → 选项。**纯函数,导出的唯一目的是被断言**:这里的每一条口径都红过。
  *
  * - `--` 是 `pnpm run check -- …` 的分隔符,**它自己也会进 argv**;它不是参数,不参与解析。
@@ -107,7 +178,7 @@ export const parseArgs = (argv: readonly string[]): Options => {
     .at(-1)
     ?.slice("--since=".length);
   return {
-    since: since === undefined || since === "" ? "main" : since,
+    since: since === undefined || since === "" ? "HEAD" : since,
     print: args.includes("--print"),
     full: args.includes("--full"),
   };
@@ -361,7 +432,7 @@ const runItem = (item: RunItem): number => {
   }
 };
 
-const main = (argv: readonly string[]): number => {
+const main = async (argv: readonly string[]): Promise<number> => {
   const options = parseArgs(argv);
   const scripts = readScripts();
   const workspaces = workspacesOf(repoRoot);
@@ -390,6 +461,14 @@ const main = (argv: readonly string[]): number => {
   }
   const files = changeSet.files;
   process.stdout.write(`${describeChangeSet(changeSet)}\n`);
+  if (files.length === 0) {
+    // 「基准是工作区」的直接后果:提交过的改动看不见。这不能不说话——它与“没改动”在输出上
+    // 是同一句话,而两者的处方相反(一个是去干活,一个是去看分支)。
+    process.stdout.write(
+      `\n这次没有任何改动进判据(基准是工作区:与 \`HEAD\` 比)。\n` +
+        `已提交的改动不在里面:分支级判定用 \`--since=main\`,收口用 \`pnpm run check -- --full\`。\n`,
+    );
+  }
 
   // 删除的那几条**不走探针**,也不登记未观测;但必须**打印出来**——静默跳过与"没人观测"在输出上
   // 是同一句话,而它们的处方完全相反(前者无事可做,后者要补用例)。判据与措辞都在 `probeTargets`。
@@ -571,14 +650,27 @@ const main = (argv: readonly string[]): number => {
    * 代码的答案要等图跑完才知道(有没有测试 import 它),行为输入的答案现在就有(没有任何测试
    * 读过它)。两者共用一张债务表,理由相同:能看见的债好过看不见的零。
    */
-  const unobserved = targets.probe.filter(
+  const unobservedAll = targets.probe.filter(
     (path) =>
       observedByInput.get(path) === undefined &&
       !debt.has(path) &&
-      mustObserve({ path, workspaces }) &&
-      // 探针问的是 `--project all`:表把池子外的一族指给这个文件时,问图等于问错池子
-      // (0 条会被读成「确知为零」),判据是那一族本身,而它已经在计划里被真的执行。
-      probeApplies(path),
+      mustObserve({ path, workspaces }),
+  );
+  /**
+   * 没人观测到、也不需要观测:池内的测试文件。
+   *
+   * 它的判据是它自己的断言,而 `test:related` 那条腿会选中并跑掉它——再探一遍等于把同一个
+   * 文件执行两遍(实测 14 个盲文件里的 200s 大部分花在这里,而 `related-probe.test.ts` 这类
+   * 文件本身就是在 vitest 里再起 vitest)。
+   *
+   * 但**“不需要观测”必须被看见**:所以它们照样被收集并打印,和它被探到时一样出声。
+   * 不打印的后果就是从“绿但有注”变成“根本不提”。
+   */
+  const selfEvident = unobservedAll.filter((path) => !probeApplies(path) && inRelatedPool(path));
+  const unobserved = unobservedAll.filter((path) =>
+    // 探针只答源码。表把池子外的一族指给某个测试文件时,问图等于问错池子(0 条会被读成
+    // 「确知为零」),判据是那一族本身,而它已经在计划里被真的执行。
+    probeApplies(path),
   );
   const { inputs: unobservedInputs, code: blindCode } = unobservedHalves({
     paths: unobserved,
@@ -594,30 +686,49 @@ const main = (argv: readonly string[]): number => {
    * 「`test:all` 跑过了」不等于「有人看着这个文件」:全量跑的是既有用例,一个没人 import 的新
    * 模块在它里面照样是零候选。这一步就是 ADR-0038 §六那条红线的落点。
    *
-   * 代价是每个未观测文件一次 `test:related`(实测:零候选约 2s,有候选要真跑那些测试,最坏
-   * ~24s)。所以先把成本说在前面——不说的话,agent 会以为进程卡死然后去杀它。
+   * 代价是每个未观测文件一次 `test:related`(实测:零候选约 3s——其中几乎全是 vitest 自己的
+   * 启动,与选中几条无关)。所以先把成本说在前面——不说的话,agent 会以为进程卡死然后去杀它。
+   *
+   * **并发跑,但按文件顺序出结论。** 探针之间互不依赖(各自的 `stdio` 是 ignore、报告落在
+   * 各自的临时目录),串行的代价只是等启动。但两种红的处方指向具体文件,所以"先报哪个"
+   * 必须是确定的:结论按 `blindCode` 的原顺序重放,不按完成顺序——否则同样的改动两次跑
+   * 会拿到两张不同的脸。代价是失败时已经把其余探针也跑了:它们本来就在跑(并发),而把
+   * 已经在飞的进程杀掉换来的是不确定的次序。
    */
   if (blindCode.length > 0) {
     process.stdout.write(
-      `\n要逐个探 ${String(blindCode.length)} 个文件有没有测试候选:典型的每次约 3s,最坏 24s。\n`,
+      `\n要逐个探 ${String(blindCode.length)} 个文件有没有测试候选:典型的每次约 3s,` +
+        `并发 ${String(PROBE_CONCURRENCY)} 路。\n`,
     );
   }
   const gaps: { readonly path: string; readonly why: string }[] = [];
-  /** 只有「被改的测试文件自己」出庭的路径:绿,但它是**它自己的**判据。 */
-  const selfObserved: string[] = [];
+  /** 第一次红了、重跑绿了的路径:绿,但“它红过”这件事不能埋。 */
+  const flaky: string[] = [];
   // 探针与依赖图必须问**同一个池子**,而池子的定义只有一处:`test:related` 的 project 集。
   // 写死 `all` 会让 `.prop.ts` 在两边同时恒 0——图漏选、探针再把「问错池子」读成「确知为零」。
   const relatedProjects = [...scriptProjects(scripts, "test:related")];
-  for (const path of blindCode) {
-    const outputs = buildOutputsOf(path, workspaces);
-    const outcome = probeRelated({
-      repoRoot,
-      paths: [path, ...outputs.filter((output) => existsSync(join(repoRoot, output)))],
-      projects: relatedProjects,
-    });
+  const probed = await mapLimit(blindCode, PROBE_CONCURRENCY, (path) =>
+    probeOnceThenRetry(() =>
+      probeRelatedAsync({
+        repoRoot,
+        paths: [
+          path,
+          ...buildOutputsOf(path, workspaces).filter((output) =>
+            existsSync(join(repoRoot, output)),
+          ),
+        ],
+        projects: relatedProjects,
+      }),
+    ),
+  );
+  for (const [index, run] of probed.entries()) {
+    const path = blindCode[index] ?? "";
+    const { outcome } = run;
+    if (run.flaky) flaky.push(path);
     switch (outcome.kind) {
       case "ran":
-        if (outcome.selfOnly) selfObserved.push(path);
+        // `selfOnly` 在这里不再有意义:探针只探源码,而源码不可能成为它自己的候选。
+        // 那个字段留在 `related-probe.ts` 里(它是报告层面的一个真实结论,有它自己的用例)。
         break;
       case "failed":
         // 候选红了不是"没有判据",是"判据在喊":先修它,别把两种红混成一条。
@@ -641,12 +752,22 @@ const main = (argv: readonly string[]): number => {
   }
   if (gaps.length > 0) return reportUnobserved(gaps, "code");
 
-  if (selfObserved.length > 0) {
-    // 说清楚这一条绿是什么:测试文件自己跑过了,而它没有证明**别的东西**的行为。
+  if (flaky.length > 0) {
+    // 重跑一次就绿的探针:结论是绿,但“它红过”要留在输出里——下一回真红时这份记录就是线索。
     process.stdout.write(
-      `\n改动落在测试文件自己身上,选中并跑过的是它自己的断言(不是生产代码的行为覆盖):\n${selfObserved
+      `\n这几份的探针第一次红了、重跑绿了(并发下的偶发,不是绿):\n${flaky
         .map((path) => `  ${path}\n`)
         .join("")}`,
+    );
+  }
+
+  if (selfEvident.length > 0) {
+    // 说清楚这一条绿是什么:测试文件自己跑过了,而它没有证明**别的东西**的行为。
+    process.stdout.write(
+      `\n这几份是测试文件自己,没有别的东西观测到它 —— 判据是它自己的断言,` +
+        `由 \`test:related\` 那条腿选中并跑过(不是生产代码的行为覆盖):\n${selfEvident
+          .map((path) => `  ${path}\n`)
+          .join("")}`,
     );
   }
 
@@ -686,5 +807,5 @@ const reportUnobserved = (
  * CI 用的是 22)。
  */
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2));
 }

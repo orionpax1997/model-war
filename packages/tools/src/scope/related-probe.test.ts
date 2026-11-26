@@ -37,6 +37,7 @@ import {
   messageOf,
   parseReport,
   probeRelated,
+  probeRelatedAsync,
   type ProbeOutcome,
   type ProbeReport,
 } from "./related-probe.ts";
@@ -396,4 +397,58 @@ describe("真探针:报告是唯一的判据", () => {
     ).toThrow(/tmpdir/u);
     expect(existsSync(join(repoRoot, "related-probe-report.json"))).toBe(false);
   });
+
+  /**
+   * 异步版与同步版**必须给出同一个结论**:`check` 走异步(并发),这里走同步。
+   *
+   * 差一步就会是“探针说的”与“计划跑的”不一致——而两处都很安静。只拿同一个靶子跑一遍异步、
+   * 跟共用那次同步的结果逐字比:两个版本的命令行与 `classify` 是同一份(`vitestArgs` / `finish`),
+   * 这条用例的职责是钉住这个共用。
+   */
+  it("集成:异步版与同步版对同一个靶子给出逐字相同的结论", { timeout: 240_000 }, async () => {
+    const { outcome } = runSmallProbe();
+    const asyncOutcome = await probeRelatedAsync({
+      repoRoot,
+      paths: [SMALL_TARGET],
+      projects: PROBE_PROJECTS(),
+    });
+    expect(asyncOutcome).toEqual(outcome);
+  });
+
+  /**
+   * **`check` 不再逐文件探池内测试文件的那条前提,在这里真跑一遍。**
+   *
+   * 前提是:被改的路径本身是池内的测试文件时,`test:related` 会把它选出来并跑掉——所以再探
+   * 一遍等于把同一个文件执行两遍(重的那些是自己的测试,实测每个几十秒,而它们已经在计划
+   * 里那条腿上跑过)。
+   *
+   * 这是**别人(Vitest)的行为**,不能靠推理也不靠配置告状:只能真跑。样本取**磁盘上的两份**
+   * (池子的两道 include 各一份:一个 `*.test.ts`、一个 `*.prop.ts`),不取 include 里的 glob
+   * ——拿它当样本会变成自证。
+   *
+   * 前提不成立时的形状很安静:那个文件根本不会被跑(`selfOnly` 也就不再出现),而 `check`
+   * 已经把它的那一半交给这条腿了。所以这里红的意思是“对池内测试文件,`check` 无事可做”。
+   */
+  it(
+    "集成:池内的测试文件去问相关腿,选中的是它自己(探针不再探它们的前提)",
+    { timeout: 240_000 },
+    async () => {
+      for (const sample of [
+        "packages/tools/src/scope/fixtures/probe-target.test.ts",
+        "packages/tools/src/rules/no-float.prop.ts",
+      ]) {
+        const outcome = await probeRelatedAsync({
+          repoRoot,
+          paths: [sample],
+          projects: PROBE_PROJECTS(),
+        });
+        expect(outcome.kind, `${sample} 不在计划的池子里?`).toBe("ran");
+        if (outcome.kind !== "ran") continue;
+        expect(outcome.behavior, `${sample} 没被相关腿拾取`).toEqual([sample]);
+        // 只有它自己:没有别人观测到它,而这正是那个前提要说的。
+        expect(outcome.selfOnly).toBe(true);
+        expect(outcome.tests).toBeGreaterThan(0);
+      }
+    },
+  );
 });

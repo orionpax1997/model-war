@@ -42,6 +42,10 @@ export const SUITES: readonly string[] = [
   "test:e2e",
   "test:gates",
   "test:slow",
+  // 变异棘轮的真跑那一半(`mutation` project)。与 `test:slow` 同形:它**不在** `all` 的
+  // 池子里、也不在收口链上,但它是真实存在的验证族——改变异入口或 `stryker/**` 时只有它能
+  // 证明「跑完入口基线没被改写」。
+  "test:mutation",
   "test:all",
   // 真 bwrap 那一族(`sandbox` project)。它**不在**常跑链上,也不在 `all` 的池子里——但它是
   // 一条真实存在的验证族:改它自己的用例文件时,只有它能证明「改完还跑得起来」。
@@ -94,6 +98,17 @@ export const RADIUS: readonly Radius[] = [
     area: "packages/tools/src/vitest",
     suites: ["test"],
     why: "vitest 侧接线(报告汇总、内核探针)的判据是同目录的 `.test.ts`,在 `unit` 池子里——这一档只补 `test`,不牵扯门禁自测",
+  },
+  {
+    area: "packages/tools/src/gates-mutation.test.ts",
+    suites: ["test:mutation"],
+    why: "它住在 `mutation` project 里(跑一次真 `stryker run`,约 50s),兜底会把它送去 `test:gates`:既多跑一整族,又**没跑它自己**",
+  },
+  {
+    area: "packages/tools/src/mutation",
+    suites: ["test:mutation", "test:gates"],
+    fallback: true,
+    why: "变异棘轮的实现:一半的判据在门禁自测里(喂夹具报告验三态判决),另一半要真跑一次 `mutate:replay` 才能证明跑完入口基线没被改写。兜底标志是因为它的测试文件本身(`diagnose` / `history` / `ratchet` / `diagnose-html`)住在 `all` 的池子里——它们自己的判据就是它自己",
   },
   {
     area: "packages/tools/src/gates-slow.test.ts",
@@ -181,8 +196,8 @@ export const RADIUS: readonly Radius[] = [
   },
   {
     area: "stryker",
-    suites: [],
-    why: "变异测试配置,只在 mutate:* 里生效",
+    suites: ["test:mutation"],
+    why: "改变异分片配置后要真跑一次最小的那一片,证明跑完入口入库基线没被改写(`mutate:*` 本身不在常跑链上)",
   },
   {
     area: "probes",
@@ -306,8 +321,8 @@ export const RADIUS: readonly Radius[] = [
   },
   {
     area: "stryker.config.mjs",
-    suites: [],
-    why: "变异测试总配置,只在 mutate:* 里生效",
+    suites: ["test:mutation"],
+    why: "变异测试总配置,只在 mutate:* 里生效;但那一条真跑入口的断言会读它展开出来的分片",
   },
   {
     area: "AGENTS.md",
@@ -361,6 +376,7 @@ const isTestCaseFile = (path: string): boolean => /\.(?:test|prop)\.ts$/u.test(p
 export const GRAPH_BLIND_TESTS: readonly string[] = [
   "packages/tools/src/gates.test.ts",
   "packages/tools/src/gates-slow.test.ts",
+  "packages/tools/src/gates-mutation.test.ts",
   "apps/cli/src/agent-real-session.test.ts",
   "apps/cli/src/gen-cli.test.ts",
 ];
@@ -391,14 +407,25 @@ export const suitesFor = (path: string): readonly string[] => {
 /**
  * **逐文件探针答得出这个路径吗?**
  *
- * 探针与依赖图问的是同一个池子(`test:related` 的 project 集)。池子外的测试文件(`sandbox` /
- * `gates` / `slow` 那几份)那条命令结构上只能答「0 条」——而 0 条在这里会被读成「确知为零,
- * 没人看着它」,那是一句假话:问错了池子,不是没人看。这类文件的判据是它自己那一族,而那一族
- * **就是 `check` 会真的执行的那一条**(`decide` 已经把名字算进计划)。
+ * 只答源码。测试文件一律不探,理由一半在探针的适用范围、一半在代价:
  *
- * 其余路径一视同仁地问图——源码恒问(它的候选由 import 它的测试提供),池子里的测试文件也问。
+ * - **池内**(`inRelatedPool`)的测试文件:它的判据就是它自己的断言,而 `test:related` 那条腿
+ *   会把它选出来并跑掉——不要再问一次图,那等于把同一个文件执行两遍。这条前提不是推理,
+ *   是实测的(`related-probe.test.ts` 里那条集成用例:池内的测试文件去问相关腿,选中的
+ *   是它自己)。改一份 `check.test.ts` 原先要探它一遍(~3s,重的那些是自己的测试,**几十秒**,
+ *   而它们已经在计划里的那条腿上跑过),这条分支整条砍掉。
+ * - **池外**(`GRAPH_BLIND_TESTS`)的测试文件:那条命令结构上只会答「0 条」,而 0 条会被读成
+ *   「确知为零」,那是假话。它们的判据是它自己那一族,而那一族由 `decide` 算进了计划。
+ *
+ * 代价必须写清楚:**这个函数现在恒等于「不是测试文件」**,所以它不携带任何池子信息了——池子
+ * 归属由 `inRelatedPool`(兜底豁免)与 `related-probe.test.ts` 那条实测前提各自看着。
+ * `GRAPH_BLIND_TESTS` 的改动不再会因为「要不要探」而在探针那一侧静默变形。
+ *
+ * 什么时候要重新评估:相关腿不再把被改的测试文件自己选进去(`related-probe.test.ts` 会红),
+ * 或“没有任何 `it` 的测试文件”不能被 `gate:vacuous` 拦住。两边漏一条,池内测试文件的
+ * 「零断言」就从“看得见的绿”变成“看不见的绿”。
  */
-export const probeApplies = (path: string): boolean => !isTestCaseFile(path) || inRelatedPool(path);
+export const probeApplies = (path: string): boolean => !isTestCaseFile(path);
 
 /** 顶层里**允许不登记**的条目:仓库元数据与产物,改了不影响任何判据。 */
 export const IGNORED_AREAS: readonly string[] = [
