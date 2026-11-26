@@ -70,7 +70,7 @@ hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 
 | 文档           | 唯一拥有                                                             | 不写（留指针）                         |
 | -------------- | -------------------------------------------------------------------- | -------------------------------------- |
-| CONTEXT.md     | 领域词汇与容易误用的概念                                             | 规则、架构、决策                       |
+| GLOSSARY.md    | 领域词汇与容易误用的概念                                             | 规则、架构、决策                       |
 | docs/vision.md | 定位、服务对象、核心差异、非目标与产品取舍、长期风险                 | 规则机制、工程方案、验收条款           |
 | docs/gdd.md    | 玩法设计意图、不可从代码推导的约束、规则侧决策记录                   | 精确规则与结算顺序、参数取值、工程实现 |
 | docs/hld.md    | 架构与包拓扑、进程模型、确定性手段、沙箱威胁模型、不可破坏的工程约束 | 玩法规则、参数取值、需求条目           |
@@ -85,7 +85,7 @@ hotfix 落到 `main` 后，立刻把各活跃变更流分支 rebase 一遍。
 
 ## Domain docs
 
-When exploring a domain area, read the relevant `CONTEXT.md` and ADRs first. See [docs/agents/domain.md](docs/agents/domain.md) for the lookup rules.
+When exploring a domain area, read the relevant `GLOSSARY.md` and ADRs first. See [docs/agents/domain.md](docs/agents/domain.md) for the lookup rules.
 
 <!-- CODEGRAPH_START -->
 

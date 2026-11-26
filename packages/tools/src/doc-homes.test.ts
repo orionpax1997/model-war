@@ -1,6 +1,6 @@
 /**
  * 「每个事实只有一个家」的一道**窄断言**:参赛脚本**入口签名的形态**归面向模型那份 `api.md`
- * §1.1,设计文档与 `CONTEXT.md` 里不许再出现 `function loop` 这个字面量。
+ * §1.1,设计文档与 `GLOSSARY.md` 里不许再出现 `function loop` 这个字面量。
  *
  * ── 它补的是哪一个洞 ──
  * 入口签名是一条**契约事实**,它的家是面向模型那份 `api.md`(返回类型可省略,两种写法都对)。
@@ -14,7 +14,7 @@
  * 只禁**那一个签名形态的字面量**,不禁 `loop()`:那些文档里提到「四方 `loop()` 串行执行」
  * 「VM 调得动 `loop`」是工程叙述,禁掉就是收罚正常改写。禁形状不禁名字,误报面就压在这一行上。
  *
- * ── 为什么集合里只有设计文档 + `CONTEXT.md`,没有契约那两份 ──
+ * ── 为什么集合里只有设计文档 + `GLOSSARY.md`,没有契约那两份 ──
  * `api.md` 是家;`rules.md` 是同伴,它引签名是**引用**不是**复制**。「引用还是复制」要看上下文,
  * 一条字面量断言判不了,硬把它拉进集合就是给门禁埋一个必然误报的口子。收窄到工程/规则/需求/
  * 可行性那侧,这五份里出现签名形态一定是复制,没有例外。
@@ -28,7 +28,7 @@ import { expect, it } from "vitest";
 const SIGNATURE_HOME = "docs/rules-v2/api.md";
 
 /** 不许再抄一份的那些文档。 */
-const NOT_THE_HOME = ["docs/hld.md", "docs/gdd.md", "docs/vision.md", "CONTEXT.md"] as const;
+const NOT_THE_HOME = ["docs/hld.md", "docs/gdd.md", "docs/vision.md", "GLOSSARY.md"] as const;
 
 const read = (relativeToRepoRoot: string): string =>
   readFileSync(fileURLToPath(new URL(`../../../${relativeToRepoRoot}`, import.meta.url)), "utf8");
@@ -52,7 +52,7 @@ it("家那份确实写着入口签名(正向对照:不是「没人写签名」�
   expect(home).toContain("返回类型可省略");
 });
 
-it("设计文档与 CONTEXT 现在都不再抄入口签名", () => {
+it("设计文档与 GLOSSARY 现在都不再抄入口签名", () => {
   for (const doc of NOT_THE_HOME) {
     expect(copiesEntrySignature(read(doc)), `${doc} 里出现了入口签名的第二份`).toBe(false);
   }

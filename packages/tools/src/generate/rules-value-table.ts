@@ -57,7 +57,7 @@ const truthPathOf = (relative: string): string =>
 /**
  * 「未定」这个渲染词。
  *
- * 它是 CONTEXT.md《未定值》词条的措辞:该词只认「机制已定、终值交给后续的图」这一种情形,
+ * 它是 GLOSSARY.md《未定值》词条的措辞:该词只认「机制已定、终值交给后续的图」这一种情形,
  * 不表示「字段暂缺」或「还没想好」。判据是键身上的 `calibration.state`,所以这个词写在生产
  * 函数里(文档渲染的家在这里),而**判据**不写进正文——它在键清单的注释里,抄一份进文档就会漂移。
  */
@@ -150,7 +150,7 @@ const parameterTable = (truth: Ruleset, truthRelativePath: string): string[] => 
   ...RULESET_KEYS.filter((key) => RULESET_KEY_CATALOG[key].valueType === "integer").map((key) => {
     const entry = RULESET_KEY_CATALOG[key];
     // **判据是 `calibration.state`,不是「值是不是 0」**:`worker.damage` 就是真的 0,
-    // 写成 `value === 0` 会把「未定」与「一个真的 0」混成一件(CONTEXT.md《未定值》)。
+    // 写成 `value === 0` 会把「未定」与「一个真的 0」混成一件(GLOSSARY.md《未定值》)。
     const shown =
       entry.calibration.state === "undetermined"
         ? UNDETERMINED_LABEL

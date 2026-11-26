@@ -9,7 +9,7 @@
  * 不跟着改,模型照着一张过期的表写脚本,而且没有任何东西会变红。本模块是那个洞上的一道窄缝。
  *
  * **它扫哪些**:**四份面向模型的契约文档**(当前 active 的 `docs/rules-v2/` 与历史快照
- * `docs/rules-v1/`,四份都挂了生成区块)、设计文档与 `CONTEXT.md`(显式清单,见
+ * `docs/rules-v1/`,四份都挂了生成区块)、设计文档与 `GLOSSARY.md`(显式清单,见
  * `PROSE_SCANNED_DOCS`),外加 `benchmarks/README.md` 与**整个 `docs/adr/` 目录**(见
  * `PROSE_SCANNED_DIRS`)。**它不扫 gdd**——gdd 是规则侧的家,那里出现的参数取值绝大多数是
  * **标定环那一轮的证据口径**(「这一批 1336 场跑在 `resourcePerSite=200` 上」),删掉它们会毁掉
@@ -300,7 +300,7 @@ export const PROSE_SCANNED_DOCS: readonly ProseScanTarget[] = [
   { label: "docs/rules-v2/README.md", path: "docs/rules-v2/README.md" },
   { label: "docs/hld.md", path: "docs/hld.md" },
   { label: "docs/vision.md", path: "docs/vision.md" },
-  { label: "CONTEXT.md", path: "CONTEXT.md" },
+  { label: "GLOSSARY.md", path: "GLOSSARY.md" },
   // 基准说明是给接手的人读的散文面,同样会「顺手抄一个取值」。它今天有一处变更记账命中
   // (v2 豁免记),靠箭头例外放行,不靠「不扫这份文件」。
   { label: "benchmarks/README.md", path: "benchmarks/README.md" },

@@ -330,7 +330,7 @@ export const RADIUS: readonly Radius[] = [
     why: "agent 指令,按路径读,没有判据依赖它",
   },
   {
-    area: "CONTEXT.md",
+    area: "GLOSSARY.md",
     suites: [],
     why: "领域词汇,按路径读,没有判据依赖它",
   },

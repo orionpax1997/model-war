@@ -1350,7 +1350,7 @@
       "packages/schema/src/contract-identity.ts"
     ],
     "packages/tools/src/doc-homes.test.ts": [
-      "CONTEXT.md",
+      "GLOSSARY.md",
       "docs/gdd.md",
       "docs/hld.md",
       "docs/rules-v2/api.md",
@@ -1518,7 +1518,7 @@
       "packages/tools/src/vitest/test-report.ts"
     ],
     "packages/tools/src/rules-doc-prose.test.ts": [
-      "CONTEXT.md",
+      "GLOSSARY.md",
       "benchmarks/README.md",
       "docs/adr/0026-mutation-score-is-a-ratchet.md",
       "docs/adr/0033-sandbox-executor.md",
